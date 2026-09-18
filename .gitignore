@@ -1,0 +1,28 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+*.egg-info/
+.venv/
+venv/
+data/*.db
+data/noc_agents.db
+# WAL sidecars: since Phase 1 the migration turns on journal_mode=WAL, so SQLite
+# keeps a -wal and a -shm file beside every database. They are not tracked and
+# must NOT be copied around on their own — a .db without its -wal can be missing
+# committed transactions. scripts/restore_db.py folds them in for you.
+data/*.db-wal
+data/*.db-shm
+# Pre-migration backups written by db/migrate.py before any schema change.
+# Keep these on disk locally (they are the rollback path) but never commit them:
+# they are full copies of production data.
+data/backups/
+data/shift_ledgers/**/*.xlsx
+# The Phase 0 step (f) throwaway venv, if anyone creates it inside the repo.
+.venv-mcp/
+frontend/node_modules/
+frontend/dist/
+.DS_Store
+.env
+.env.local
+*.log

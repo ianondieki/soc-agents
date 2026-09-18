@@ -1,0 +1,5 @@
+# Active operator profile for this deployment
+operator_profile: safaricom
+timezone: Africa/Nairobi
+database_url: sqlite:///./data/noc_agents.db
+autonomy_level: L2_GUARDED

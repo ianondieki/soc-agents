@@ -1,0 +1,37 @@
+# =============================================================================
+# Demo seed set v2 — contract_faq (spec §7.0.7: "one FAQ row"; DDL §7.8.1)
+# =============================================================================
+# One row, on purpose. §7.8.3 puts the FAQ ahead of every generation path
+# ("an active contract_faq hit is returned as official=true, source=faq before
+# any generation"), so a single row is enough to prove that ordering works, and
+# golden.yaml q07 is the question that exercises it.
+#
+# THE ANSWER BELOW QUOTES TWO SYNTHETIC SAMPLE CONTRACTS. It is not legal
+# advice, not a commercial position, and not an approved answer in any real
+# sense: `approved_by` names the seed file, not a lawyer. The moment a real
+# contract is ingested this row must be deleted or re-approved by Legal.
+# -----------------------------------------------------------------------------
+seed_version: "v2-2026-09"
+
+contract_faq:
+  - id: faq-sample-dispute-window
+    operator_id: safaricom
+    contract_refs:
+      - SAMPLE-MSA-EGYPRO-2026-01
+      - SAMPLE-SLA-TETRANET-2026-01
+    question: "How long does a vendor have to dispute a line in the monthly performance report?"
+    approved_answer: >-
+      Ten (10) working days from receipt of the monthly report, under clause
+      10.2 of the SAMPLE (SYNTHETIC) Managed Services Agreement and clause 6.2
+      of the SAMPLE (SYNTHETIC) Service Level Schedule. A line that is not
+      disputed within that period is treated as agreed. Both sources are
+      SYNTHETIC SAMPLE documents written for this demo and neither states the
+      operator's real contractual position — confirm with Legal/Commercial
+      before relying on this or quoting it outside the NOC.
+    clause_refs:
+      - {contract_ref: SAMPLE-MSA-EGYPRO-2026-01, clause: "10.2"}
+      - {contract_ref: SAMPLE-SLA-TETRANET-2026-01, clause: "6.2"}
+    approved_by: "seed:data/seed/v2/contracts/faq.yaml — NOT a legal approval"
+    approved_at: "2026-01-01T00:00:00Z"
+    active: 1
+    synthetic: true

@@ -1,0 +1,155 @@
+# =============================================================================
+# Cross-border transfer register — AIRTEL profile (demo)
+# Read by src/noc_agents/services/external_calls.py:record_transfer().
+#
+# Shape: {recipient_key: {entity, country, dpia_ref, tia_ref, scc_ref,
+#                         confirmed_by, confirmed_at}}
+#
+#   recipient_key  slug of the recipient name the adapter passes to record_transfer
+#                  ("Anthropic API" -> anthropic_api); matched on the key, its slug, or
+#                  the `entity` value.
+#   entity         the CONTRACTING entity (who the operator's contract is with)
+#   country        where that entity sits (ISO-3166 alpha-2). KE => domestic.
+#   dpia_ref       Data Protection Act 2019 s.31 Data Protection Impact Assessment ref
+#   tia_ref        Transfer Impact Assessment ref (ODPC Guidance Note on Cross-border
+#                  Data Transfers, April 2026; keyed to General Regulations reg 40)
+#   scc_ref        the safeguard instrument: ODPC-issued standard contractual clauses or
+#                  an equivalent. RECORDED, not enforced by the gate.
+#   confirmed_by   the named person in Legal/DPO who signed the entry off
+#   confirmed_at   ISO date of that sign-off
+#
+# THE GATE. A recipient outside Kenya (or any MCP card with residency: abroad) needs a
+# non-empty dpia_ref AND tia_ref here before the first live call. Without them
+# record_transfer raises TransferPaperworkMissing and the caller falls back to its
+# deterministic template path — nothing is sent and nothing is recorded, because nothing
+# left the machine. Under NOC_ENV=demo the gate logs one warning and records
+# tia_ref: DEMO-UNFILED instead, so the demo register shows the gap rather than hiding it.
+#
+# The refs below are EMPTY ON PURPOSE. They are legal filings, not configuration: Legal
+# fills each one in (with confirmed_by/confirmed_at) when the DPIA and TIA are actually
+# filed. Entities and countries below still need confirmation against the signed
+# contracts — they are the publicly known corporate names, not verified contract parties.
+# =============================================================================
+
+# ----------------------------------------------------------------- Kenya-domiciled (KE)
+# Recorded like everything else so the register is complete; filtered out of the
+# cross-border view by country: KE. No DPIA/TIA gate applies to these.
+africas_talking:
+  entity: "Africa's Talking Limited" # UNVERIFIED: confirm the contracting entity
+  country: KE
+  dpia_ref: ""
+  tia_ref: ""
+  scc_ref: ""
+  confirmed_by: ""
+  confirmed_at: ""
+
+ollama_local:
+  entity: "Self-hosted (operator infrastructure, Nairobi)"
+  country: KE
+  dpia_ref: ""
+  tia_ref: ""
+  scc_ref: ""
+  confirmed_by: ""
+  confirmed_at: ""
+
+# ------------------------------------------------------------------------ cross-border
+# Each of these needs dpia_ref + tia_ref before its first production call.
+anthropic_api:
+  entity: "Anthropic PBC" # UNVERIFIED: confirm the contracting entity and its country
+  country: US
+  dpia_ref: ""
+  tia_ref: ""
+  scc_ref: ""
+  confirmed_by: ""
+  confirmed_at: ""
+
+gmail_smtp:
+  entity: "Google LLC" # UNVERIFIED: may contract via Google Ireland Limited (IE)
+  country: US
+  dpia_ref: ""
+  tia_ref: ""
+  scc_ref: ""
+  confirmed_by: ""
+  confirmed_at: ""
+
+meta_graph:
+  entity: "Meta Platforms Ireland Limited" # UNVERIFIED: WhatsApp Cloud API / Graph API
+  country: IE
+  dpia_ref: ""
+  tia_ref: ""
+  scc_ref: ""
+  confirmed_by: ""
+  confirmed_at: ""
+
+x_api:
+  entity: "X Corp." # UNVERIFIED
+  country: US
+  dpia_ref: ""
+  tia_ref: ""
+  scc_ref: ""
+  confirmed_by: ""
+  confirmed_at: ""
+
+# Remote MCP servers carrying residency: abroad in orchestrator/registry.py
+pagerduty:
+  entity: "PagerDuty, Inc." # UNVERIFIED
+  country: US
+  dpia_ref: ""
+  tia_ref: ""
+  scc_ref: ""
+  confirmed_by: ""
+  confirmed_at: ""
+
+slack:
+  entity: "Slack Technologies, LLC (Salesforce)" # UNVERIFIED
+  country: US
+  dpia_ref: ""
+  tia_ref: ""
+  scc_ref: ""
+  confirmed_by: ""
+  confirmed_at: ""
+
+atlassian_rovo:
+  entity: "Atlassian Pty Ltd" # UNVERIFIED: Jira + Confluence Rovo MCP
+  country: AU
+  dpia_ref: ""
+  tia_ref: ""
+  scc_ref: ""
+  confirmed_by: ""
+  confirmed_at: ""
+
+datadog:
+  entity: "Datadog, Inc." # UNVERIFIED
+  country: US
+  dpia_ref: ""
+  tia_ref: ""
+  scc_ref: ""
+  confirmed_by: ""
+  confirmed_at: ""
+
+servicenow:
+  entity: "ServiceNow, Inc." # UNVERIFIED
+  country: US
+  dpia_ref: ""
+  tia_ref: ""
+  scc_ref: ""
+  confirmed_by: ""
+  confirmed_at: ""
+
+google_sheets:
+  entity: "Google LLC" # UNVERIFIED
+  country: US
+  dpia_ref: ""
+  tia_ref: ""
+  scc_ref: ""
+  confirmed_by: ""
+  confirmed_at: ""
+
+microsoft_work_iq:
+  entity: "Microsoft Corporation" # UNVERIFIED
+  country: US
+  dpia_ref: ""
+  tia_ref: ""
+  scc_ref: ""
+  confirmed_by: ""
+  confirmed_at: ""

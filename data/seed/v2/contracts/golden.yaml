@@ -1,0 +1,204 @@
+# =============================================================================
+# Demo seed set v2 — contract retrieval golden set (spec §7.0.7: 12 questions)
+# =============================================================================
+# This is an EVAL SET, not table data. Nothing loads it into the database.
+# §7.8.3 uses it for one decision only: "Semantic retrieval only if the golden
+# set shows BM25 recall@20 < 0.9". Recall is measured against `expect.clauses`.
+#
+# EVERY EXPECTED ANSWER POINTS AT A SYNTHETIC SAMPLE CONTRACT. The clause
+# numbers below are clause numbers in fiction written for this repository. A
+# passing score here says the retriever found the right paragraph of a made-up
+# document; it says nothing whatever about any real agreement.
+#
+# The set is deliberately mixed, because a golden set of twelve easy lookups
+# would prove nothing:
+#   * 7 single-contract lookups (q01-q06, q09)
+#   * 2 cross-contract questions where BOTH samples answer and the answer
+#     differs between them (q07, q08) — retrieval must not collapse them
+#   * 1 question answered in only one of the two samples, asked while scoped to
+#     the other, which MUST refuse rather than borrow (q10)
+#   * 1 negative-answer question, where the clause says "no" (q11)
+#   * 1 out-of-scope question with no governing clause, which MUST refuse and
+#     offer nearest clauses (q12) — this is the refusal-rate case behind M8
+# -----------------------------------------------------------------------------
+seed_version: "v2-2026-09"
+corpus:
+  - contract_ref: SAMPLE-MSA-EGYPRO-2026-01
+    file: egypro_msa_sample.md
+    synthetic: true
+  - contract_ref: SAMPLE-SLA-TETRANET-2026-01
+    file: tetranet_sla_sample.md
+    synthetic: true
+
+questions:
+  - id: q01
+    question: "What is the response time for a Priority 1 fault?"
+    asked_by_role: shift_supervisor
+    scope_contract_refs: [SAMPLE-MSA-EGYPRO-2026-01]
+    expect:
+      source: [faq, llm, deterministic]
+      must_refuse: false
+      clauses:
+        - {contract_ref: SAMPLE-MSA-EGYPRO-2026-01, clause: "4.1"}
+      answer_contains: ["10 minutes"]
+    notes: >-
+      The sample says 10 minutes; cfg.sla_minutes says 5. If an answer quotes 5
+      it has read the config, not the contract, and the test should fail.
+
+  - id: q02
+    question: "How long does the contractor have to attend a rural site more than 90 km from the regional store?"
+    asked_by_role: msp_coordinator
+    scope_contract_refs: [SAMPLE-SLA-TETRANET-2026-01]
+    expect:
+      source: [llm, deterministic]
+      must_refuse: false
+      clauses:
+        - {contract_ref: SAMPLE-SLA-TETRANET-2026-01, clause: "2.2"}
+      answer_contains: ["240 minutes"]
+    notes: "Answer lives in a markdown table row, not a sentence — chunking must keep the table with clause 2.2."
+
+  - id: q03
+    question: "What service credit applies if the service level is missed for three consecutive months?"
+    asked_by_role: management
+    scope_contract_refs: [SAMPLE-MSA-EGYPRO-2026-01]
+    expect:
+      source: [llm, deterministic]
+      must_refuse: false
+      clauses:
+        - {contract_ref: SAMPLE-MSA-EGYPRO-2026-01, clause: "7.2"}
+        - {contract_ref: SAMPLE-MSA-EGYPRO-2026-01, clause: "7.4"}
+      answer_contains: ["50%"]
+    notes: "Two clauses: the escalating scale and the 50% aggregate cap. Citing 7.2 alone is incomplete."
+
+  - id: q04
+    question: "Can a stop clock be recorded after the incident has been closed?"
+    asked_by_role: duty_manager
+    scope_contract_refs: [SAMPLE-MSA-EGYPRO-2026-01, SAMPLE-SLA-TETRANET-2026-01]
+    expect:
+      source: [llm, deterministic]
+      must_refuse: false
+      clauses:
+        - {contract_ref: SAMPLE-MSA-EGYPRO-2026-01, clause: "6.8"}
+        - {contract_ref: SAMPLE-SLA-TETRANET-2026-01, clause: "5.3"}
+      answer_contains: ["not valid"]
+    notes: "Both samples say no, by different routes (60-minute recording window vs after-close bar)."
+
+  - id: q05
+    question: "Is a public electricity supply failure a valid reason to suspend the restoration clock?"
+    asked_by_role: noc_analyst
+    scope_contract_refs: [SAMPLE-MSA-EGYPRO-2026-01]
+    expect:
+      source: [llm, deterministic]
+      must_refuse: false
+      clauses:
+        - {contract_ref: SAMPLE-MSA-EGYPRO-2026-01, clause: "6.5"}
+      answer_contains: ["standby"]
+    notes: "Conditional yes — only while the site is on generator or battery. A flat 'yes' is wrong."
+
+  - id: q06
+    question: "What is the escalation ladder when a Priority 1 fault is not acknowledged in time?"
+    asked_by_role: shift_supervisor
+    scope_contract_refs: [SAMPLE-MSA-EGYPRO-2026-01]
+    expect:
+      source: [llm, deterministic]
+      must_refuse: false
+      clauses:
+        - {contract_ref: SAMPLE-MSA-EGYPRO-2026-01, clause: "5.2"}
+        - {contract_ref: SAMPLE-MSA-EGYPRO-2026-01, clause: "5.3"}
+        - {contract_ref: SAMPLE-MSA-EGYPRO-2026-01, clause: "5.4"}
+        - {contract_ref: SAMPLE-MSA-EGYPRO-2026-01, clause: "5.5"}
+    notes: "Four consecutive clauses. Tests that a multi-clause answer keeps them in order."
+
+  - id: q07
+    question: "How long does a vendor have to dispute a line in the monthly performance report?"
+    asked_by_role: msp_coordinator
+    scope_contract_refs: [SAMPLE-MSA-EGYPRO-2026-01, SAMPLE-SLA-TETRANET-2026-01]
+    expect:
+      source: [faq]
+      official: true
+      must_refuse: false
+      clauses:
+        - {contract_ref: SAMPLE-MSA-EGYPRO-2026-01, clause: "10.2"}
+        - {contract_ref: SAMPLE-SLA-TETRANET-2026-01, clause: "6.2"}
+      answer_contains: ["10 working days"]
+    notes: >-
+      The one question covered by the seeded contract_faq row, so it must come
+      back as source=faq with official=true BEFORE any generation is attempted
+      (§7.8.3 "FAQ first"). If this returns source=llm the FAQ path is broken.
+
+  - id: q08
+    question: "What availability percentage has each vendor committed to?"
+    asked_by_role: management
+    scope_contract_refs: [SAMPLE-MSA-EGYPRO-2026-01, SAMPLE-SLA-TETRANET-2026-01]
+    expect:
+      source: [llm, deterministic]
+      must_refuse: false
+      clauses:
+        - {contract_ref: SAMPLE-MSA-EGYPRO-2026-01, clause: "4.4"}
+        - {contract_ref: SAMPLE-SLA-TETRANET-2026-01, clause: "2.7"}
+      answer_contains: ["99.3", "99.1"]
+    notes: >-
+      The two samples differ on purpose (99.3% vs 99.1%). An answer that gives
+      one figure for both vendors has merged the documents.
+
+  - id: q09
+    question: "What happens if more than ten per cent of restore times in a month were inferred rather than recorded?"
+    asked_by_role: duty_manager
+    scope_contract_refs: [SAMPLE-MSA-EGYPRO-2026-01]
+    expect:
+      source: [llm, deterministic]
+      must_refuse: false
+      clauses:
+        - {contract_ref: SAMPLE-MSA-EGYPRO-2026-01, clause: "8.4"}
+      answer_contains: ["no service credit"]
+    notes: "Mirrors the §7.6.6 data-quality gate (max_inferred_restore_pct), so the demo can show config and contract agreeing."
+
+  - id: q10
+    question: "How many hours of generator fuel must be held on site?"
+    asked_by_role: noc_analyst
+    scope_contract_refs: [SAMPLE-MSA-EGYPRO-2026-01]
+    expect:
+      source: [refused]
+      must_refuse: true
+      escalated_to_legal: true
+      must_not_cite:
+        - {contract_ref: SAMPLE-SLA-TETRANET-2026-01, clause: "2.5"}
+    notes: >-
+      Tetranet sample clause 2.5 answers this (72 hours) but the ask is scoped
+      to the Egypro sample, which is silent. The scoping in §7.8.3
+      (allowed_contract_ids derived server-side) must hold: answering 72 hours
+      here means the allow-set leaked. This is the most important row in the set.
+
+  - id: q11
+    question: "Can the contractor blame a shortage of its own vehicles or spares for missing a restoration target?"
+    asked_by_role: shift_supervisor
+    scope_contract_refs: [SAMPLE-SLA-TETRANET-2026-01]
+    expect:
+      source: [llm, deterministic]
+      must_refuse: false
+      clauses:
+        - {contract_ref: SAMPLE-SLA-TETRANET-2026-01, clause: "5.5"}
+      answer_contains: ["may not"]
+    notes: "Negative answer. The clause exists and says no; a refusal here is also a failure."
+
+  - id: q12
+    question: "What is the liquidated damages rate for late delivery of a fibre rollout in Turkana county?"
+    asked_by_role: planning
+    scope_contract_refs: [SAMPLE-MSA-EGYPRO-2026-01, SAMPLE-SLA-TETRANET-2026-01]
+    expect:
+      source: [refused]
+      must_refuse: true
+      escalated_to_legal: true
+      nearest_clauses_min: 3
+    notes: >-
+      Neither sample has a rollout or liquidated-damages clause. Expected output
+      is the §7.8.3 refusal template plus the top-3 nearest clauses. An invented
+      rate here is the worst failure this system can produce, which is why the
+      refusal case is in the golden set rather than only in the metric.
+
+# Scoring, for whoever wires this up in Phase 5:
+#   recall@k  = (expected clauses retrieved in top k) / (expected clauses), over
+#               the 10 non-refusal rows only. §7.8.3 gate: recall@20 >= 0.9.
+#   refusals  = q10 and q12 must both refuse. A run that answers either of them
+#               fails outright regardless of recall, and refusal rate is
+#               reported separately from citation rate (M8).

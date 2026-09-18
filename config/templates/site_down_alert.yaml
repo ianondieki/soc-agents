@@ -1,0 +1,278 @@
+# OWNER DECISION D4 (2026-09-17): message language is ENGLISH ONLY.
+# Kiswahili is out of scope -- the translations_pending blocks below are permanent,
+# not a to-do, and no reviewer is being sought. See docs/DECISIONS.md.
+# =============================================================================
+# site_down_alert -- the first message that leaves the NOC when a site drops.
+#
+# Loaded by src/noc_agents/services/templates.py:TemplateRegistry.sync() into the
+# `message_templates` table (spec 6.3). One file per template_key; the shared
+# search path is config/templates/, and config/operators/<op>/templates/ overrides
+# it per operator (nothing overrides today).
+#
+# THE BYTE CONTRACT. `SMS/en@1` and `EMAIL/en@1` are not "a template for the site
+# down alert" in any abstract sense -- they are services/composition.py:compose_sms
+# and compose_email, character for character, expressed as Jinja. That equality is
+# what tests/unit/test_alerts_envelope.py proved for the envelope and what
+# tests/unit/test_templates.py re-proves for these rows. Do not tidy the wording,
+# the spacing or the em dash: changing any of them is a new version (see below),
+# never an edit of this one.
+#
+# VERSIONS. `version:` is the version this wording was written and approved as.
+# The seeder fingerprints the content; if a body changes under a pinned version it
+# INSERTS the next version instead of mutating the row, and the new row starts
+# DRAFT -- the old approval described the old words. That is how the NOC can still
+# answer "which exact wording went out at 02:14 last Tuesday" months later.
+#
+# APPROVAL. `approval:` is the status a row is CREATED with. Once a row exists the
+# seeder never touches its approval again; transitions go through
+# templates.py:TemplateRegistry.set_status (the service behind
+# PUT /api/v1/templates/{id}/status). Only APPROVED is sendable.
+# =============================================================================
+template_key: site_down_alert
+title: "Site down / service-affecting alert (first notification)"
+notes: >
+  Sent by the BROADCAST node to RNIO and the field engineer on the configured
+  channels. Audience selection, HITL gating and recipients are the envelope's job
+  (services/alerts.py:build_alert); this file only decides wording.
+
+channels:
+
+  # ---------------------------------------------------------------------------
+  SMS:
+    version: 1
+    # Acknowledged, not accidental: the em dash in the body below forces UCS-2 (67 septets
+    # per concatenated segment instead of 153). The seeder REFUSES an SMS template whose
+    # literal text leaves GSM-7 unless the file says so here, so a pasted smart quote can
+    # never triple the bill silently.
+    encoding: UCS2
+    params:
+      priority: string
+      incident_number: string
+      site_id: string
+      region_code: string
+      failure_domain: string
+      users_affected: integer
+      headline: string
+      assignee_name: string
+    languages:
+      en:
+        # compose_sms(inc), byte for byte. `cut(80)` is inc.title[:80].
+        # The em dash below forces UCS-2 (67 septets/segment instead of 153). That is
+        # a known, deliberate cost of the v1 wording: services/render/sms.py reports it
+        # while ALERT_ENVELOPE_V2 is off and refuses it once the flag is on. The GSM-7
+        # replacement is a NEW version, not an edit here -- see spec 6.2/12 D3.
+        body: |-
+          [{{ priority }}] {{ incident_number }} {{ site_id }} {{ region_code }}
+          {{ failure_domain }}|est.users {{ users_affected }}
+          {{ headline | cut(80) }}
+          Owner:{{ assignee_name }} — ticket notes for updates
+        approval:
+          status: APPROVED
+          # NOT a person, and deliberately not dressed up as one. This wording is the
+          # wording the frozen fidelity tests pin, so the approver of record is the byte
+          # contract itself -- the same "policy:<something>" convention build_alert uses
+          # for an auto-sent broadcast (governance.approved_by = "policy:L2_GUARDED").
+          # Naming a human here who never reviewed anything would be a fabricated audit
+          # trail. Product decision: who the standing human approver of NOC wording is;
+          # they replace this value through set_status, which records them and the time.
+          approved_by: "policy:v1_fidelity"
+          approved_at: 2026-09-16T00:00:00Z
+          note: >
+            Approved as the wording already in production before the registry existed.
+    translations_pending:
+      sw:
+        # DELIBERATELY UNTRANSLATED. See the report in the module docstring of
+        # services/templates.py. Short version: this SMS goes to RNIOs and field
+        # engineers, who work in English, and half of it is register-specific NOC
+        # jargon ("failure domain", "est.users", "ticket notes") with no settled
+        # Kiswahili equivalent in Kenyan telecom practice. A wrong word here reaches
+        # an engineer standing at a site at 02:00. Absent beats invented.
+        reason: >
+          Internal engineering SMS in NOC register; no confident Kiswahili for
+          "failure domain" / "est. users" / "ticket notes". Needs the named native
+          reviewer that spec 6.4 requires (decision D4) before any sw row exists.
+
+    # ------------------------------------------------------------- @2 DRAFT --
+    # UNAPPROVED DRAFT. NOT SEEDED. READ docs/TEMPLATE_V2_REVIEW.md FIRST.
+    #
+    # This block is deliberately invisible to the seeder. templates.py:_load_channel
+    # reads only `version`, `encoding`, `params`, `provider_*` and `languages`, so
+    # nothing here reaches `message_templates` and nothing here can be sent. It is a
+    # proposal sitting next to the wording it proposes to replace.
+    #
+    # WHY IT IS SHAPED LIKE A CHANNEL BLOCK. It IS one, key for key. Promoting @2 is
+    # a copy, not a rewrite: replace this channel's `version:`/`encoding:`/`params:`/
+    # `languages:` with the four below and delete this wrapper. The @1 row already in
+    # the table is NOT touched by that -- sync fingerprints content and INSERTs the
+    # next version, so @1 stays exactly as it was sent (templates.py, "a template is
+    # never edited in place").
+    #
+    # WHY THE SEEDER CANNOT HOLD BOTH TODAY. One YAML file declares one version per
+    # (channel, template_key, language): `channels:` is a mapping, so a second `SMS:`
+    # key is not expressible, and two files in one seed root claiming one lineage is a
+    # TemplateSeedError. So "@1 and @2 side by side in config" is not a shape the
+    # loader has. That is an engineering gap in services/templates.py, reported, not
+    # worked around here.
+    #
+    # WHAT CHANGED FROM @1: one character. `—` (U+2014 EM DASH) -> `-` (HYPHEN-MINUS).
+    # Nothing else -- not a word, not a space, not the line order. The em dash is the
+    # single reason every SMS is refused `sms_not_gsm7` with ALERT_ENVELOPE_V2=true,
+    # and one non-GSM-7 character re-encodes the WHOLE message as UCS-2: 70 chars per
+    # segment instead of 160 (67/153 once it concatenates). Measured, not assumed --
+    # see the table in docs/TEMPLATE_V2_REVIEW.md.
+    #
+    # WHAT IS STILL BROKEN AFTER THIS. The rendered body is headline-carried, and
+    # agents/ticket.py:37 builds every incident title with an em dash of its own
+    # ("HUB POWER — Embakasi East ..."). Approving @2 alone does NOT make today's
+    # messages GSM-7; it removes the template's contribution. The title is a separate
+    # file and a separate change.
+    version_2_draft:
+      version: 2
+      encoding: GSM7
+      params:
+        priority: string
+        incident_number: string
+        site_id: string
+        region_code: string
+        failure_domain: string
+        users_affected: integer
+        headline: string
+        assignee_name: string
+      languages:
+        en:
+          body: |-
+            [{{ priority }}] {{ incident_number }} {{ site_id }} {{ region_code }}
+            {{ failure_domain }}|est.users {{ users_affected }}
+            {{ headline | cut(80) }}
+            Owner:{{ assignee_name }} - ticket notes for updates
+          approval:
+            # DRAFT, and no approved_by. A message template is customer-facing text in
+            # a regulated telecom: a named human approves it, not a coding agent, and
+            # not a "policy:" string standing in for one. Spec 12 D3 additionally
+            # requires a shadow shift before ALERT_ENVELOPE_V2 flips.
+            status: DRAFT
+            note: >
+              Drafted by an agent from the measured GSM-7 failure; no human has read
+              the wording. Not sendable. See docs/TEMPLATE_V2_REVIEW.md for the
+              before/after measurement and the approval command.
+
+  # ---------------------------------------------------------------------------
+  EMAIL:
+    version: 1
+    params:
+      email_subject: string
+      service_affecting: boolean
+      users_affected: integer
+      services_impacted: array
+      failure_domain: string
+      mpesa_risk: boolean
+      headline: string
+      body: string
+      assignee_name: string
+      root_cause_hypothesis: string
+      instruction: string
+    languages:
+      en:
+        # v1 keeps the subject PRECOMPUTED by build_alert (rendering.email.subject) and
+        # passes it through, because compose_email's subject needs cfg.display_name,
+        # which is not an envelope field and a renderer may not read config. The later
+        # version that assembles the subject from parts needs the envelope to carry the
+        # operator display name first; incident_update@1 shows the assembled form.
+        subject: "{{ email_subject }}"
+        # compose_email(inc, cfg) after the "Subject: ...\n\n" prefix, byte for byte,
+        # including the single trailing newline.
+        body: |
+          Service affecting: {{ 'YES' if service_affecting else 'NO' }}
+          Est. users: {{ users_affected }}
+          Services: {{ services_impacted | join(', ') }}
+          Failure domain: {{ failure_domain }}
+          M-PESA corridor risk: {{ 'YES' if mpesa_risk else 'NO' }}
+
+          Summary: {{ headline }}
+
+          Narrative:
+          {{ body }}
+
+          Owner: {{ assignee_name }}
+          Hypothesis: {{ root_cause_hypothesis }}
+
+          {{ instruction }}
+        approval:
+          status: APPROVED
+          approved_by: "policy:v1_fidelity"
+          approved_at: 2026-09-16T00:00:00Z
+          note: >
+            Approved as the wording already in production before the registry existed.
+    translations_pending:
+      sw:
+        reason: >
+          Same audience and same register as the SMS, plus "M-PESA corridor risk" and
+          "Hypothesis", which are internal risk vocabulary rather than plain language.
+          Untranslated until a named native NOC reviewer signs it off (spec 6.4, D4).
+
+    # ------------------------------------------------------------- @2 DRAFT --
+    # UNAPPROVED DRAFT. NOT SEEDED. READ docs/TEMPLATE_V2_REVIEW.md FIRST.
+    # Same wrapper, same reasons, as the SMS block above.
+    #
+    # WHAT CHANGED FROM @1: two lines added at the top of the facts block, one line
+    # added under Owner. Nothing removed, nothing reworded, same "Label: value" shape
+    # the NOC already reads.
+    #
+    #   + Incident: INC000123 (P1)
+    #   + Region: Nairobi East
+    #   + Next update: 14:02 EAT
+    #
+    # WHY. Spec 6.2 requires the EMAIL BODY to carry the incident number, the priority,
+    # the region label and the next-update EAT time. @1 carries the first three in the
+    # SUBJECT only and has no next-update line at all, so with ALERT_ENVELOPE_V2=true
+    # every email is refused `email_missing_incident_number`. Subjects get truncated by
+    # phone clients, stripped by ticket-to-email gateways and lost when an MSP forwards
+    # the body into their own system -- which is exactly why 6.2 asks for the body.
+    #
+    # The subject is unchanged and still passed through precomputed: assembling it here
+    # would drop the operator display name, which is config and not an envelope field.
+    version_2_draft:
+      version: 2
+      params:
+        email_subject: string
+        incident_number: string
+        priority: string
+        region_label: string
+        next_update_eat: string
+        service_affecting: boolean
+        users_affected: integer
+        services_impacted: array
+        failure_domain: string
+        mpesa_risk: boolean
+        headline: string
+        body: string
+        assignee_name: string
+        root_cause_hypothesis: string
+        instruction: string
+      languages:
+        en:
+          subject: "{{ email_subject }}"
+          body: |
+            Incident: {{ incident_number }} ({{ priority }})
+            Region: {{ region_label }}
+            Service affecting: {{ 'YES' if service_affecting else 'NO' }}
+            Est. users: {{ users_affected }}
+            Services: {{ services_impacted | join(', ') }}
+            Failure domain: {{ failure_domain }}
+            M-PESA corridor risk: {{ 'YES' if mpesa_risk else 'NO' }}
+
+            Summary: {{ headline }}
+
+            Narrative:
+            {{ body }}
+
+            Owner: {{ assignee_name }}
+            Hypothesis: {{ root_cause_hypothesis }}
+            Next update: {{ next_update_eat }}
+
+            {{ instruction }}
+          approval:
+            status: DRAFT
+            note: >
+              Drafted by an agent from the measured 6.2 validator failures; no human
+              has read the wording. Not sendable. See docs/TEMPLATE_V2_REVIEW.md.

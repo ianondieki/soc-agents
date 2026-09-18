@@ -1,0 +1,4 @@
+# Never rewrite line endings. The suite pins byte-exact template and message bytes
+# (tests/system/test_contracts.py, tests/unit/test_templates.py); a CRLF round-trip
+# on checkout would change those bytes and fail the golden tests on someone else clone.
+* -text

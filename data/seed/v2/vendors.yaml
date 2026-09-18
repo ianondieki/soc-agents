@@ -1,0 +1,241 @@
+# =============================================================================
+# Demo seed set v2 — vendors  (spec §7.0.7, target table §7.6.1 `vendors`)
+# =============================================================================
+# DERIVED, NOT INVENTED.
+#   code         <- the key of each entry in cfg.msp_contacts
+#   contacts     <- that entry verbatim (email / sms / domains)
+#   display_name <- the spelling the same profile already uses in prose
+#                   (safaricom.yaml "assignment_by_region" comment block:
+#                    "Power: Egypro / Remote Egypro. TX fibre: Egypro Fibre.",
+#                    "Fibre ecosystem (TX): Ecta, Camusat, Egypro Fibre,
+#                     Soliton (Mt-Kenya), Adrian Fibre, Alan Dick")
+#   sources:     config/operators/safaricom.yaml  lines 139-183  (11 codes)
+#                config/operators/airtel.yaml     lines  63-72   (3 codes)
+#
+# NOT DERIVED — these need a human to confirm before anyone quotes them:
+#   type           a first-pass classification into the §7.6.1 enum
+#                  (MSP | FE_CONTRACTOR | OEM | TOWERCO). Every row carries
+#                  `type_basis` saying what the guess rests on. REVIEW THESE.
+#   contract_ref   only the two SYNTHETIC sample contracts in contracts/ are
+#                  referenced. Every other vendor is deliberately null: this
+#                  repo holds no real contract reference and must not pretend to.
+#   active_from    a demo placeholder date, identical for every row, chosen only
+#                  so the §7.6.1 UNIQUE (operator_id, code, active_from) has a
+#                  value. It is NOT a commencement date.
+#
+# The e-mail addresses and MSISDNs below are the @example.com / +2547110000xx
+# placeholders already in the operator profiles. They are not contact details.
+# -----------------------------------------------------------------------------
+seed_version: "v2-2026-09"
+placeholder_active_from: &active_from "2026-01-01"   # demo placeholder, not a real date
+
+vendors:
+  # --- Safaricom profile (config/operators/safaricom.yaml: msp_contacts) ------
+  - id: vendor-sfc-egypro
+    operator_id: safaricom
+    code: EGYPRO
+    display_name: Egypro
+    type: MSP
+    type_basis: "power MSP for NBI_E/MTK in assignment_by_region; REVIEW"
+    contract_ref: SAMPLE-MSA-EGYPRO-2026-01      # -> contracts/egypro_msa_sample.md (SYNTHETIC)
+    active_from: *active_from
+    active_to: null
+    contacts:
+      email: egypro.power.ke@example.com
+      sms: "+254711000001"
+      domains: [power]
+
+  - id: vendor-sfc-egypro-remote
+    operator_id: safaricom
+    code: EGYPRO_REMOTE
+    display_name: Egypro Remote
+    type: MSP
+    type_basis: "second power pool entry beside EGYPRO in NBI_E/MTK; REVIEW"
+    contract_ref: null
+    active_from: *active_from
+    active_to: null
+    contacts:
+      email: egypro.remote.ke@example.com
+      sms: "+254711000002"
+      domains: [power]
+
+  - id: vendor-sfc-egypro-fibre
+    operator_id: safaricom
+    code: EGYPRO_FIBRE
+    display_name: Egypro Fibre
+    type: MSP
+    type_basis: "tx_fiber/tx_mw pools in assignment_by_region; REVIEW"
+    contract_ref: null
+    active_from: *active_from
+    active_to: null
+    contacts:
+      email: egypro.fibre.ke@example.com
+      sms: "+254711000003"
+      domains: [tx_fiber, tx_mw]
+
+  - id: vendor-sfc-tetranet
+    operator_id: safaricom
+    code: TETRANET
+    display_name: Tetranet
+    type: MSP
+    type_basis: "sole power pool for RFT and WNY in assignment_by_region; REVIEW"
+    contract_ref: SAMPLE-SLA-TETRANET-2026-01    # -> contracts/tetranet_sla_sample.md (SYNTHETIC)
+    active_from: *active_from
+    active_to: null
+    contacts:
+      email: tetranet.ke@example.com
+      sms: "+254711000004"
+      domains: [power]
+
+  - id: vendor-sfc-atc
+    operator_id: safaricom
+    code: ATC
+    display_name: ATC
+    type: TOWERCO
+    type_basis: >-
+      safaricom.yaml routing comment "Power often ATC/Camusat where passive
+      shared (ATC had some power sites)" reads as shared passive infrastructure
+      rather than a contracted field crew. LOW CONFIDENCE — REVIEW.
+    contract_ref: null
+    active_from: *active_from
+    active_to: null
+    contacts:
+      email: atc.power.ke@example.com
+      sms: "+254711000005"
+      domains: [power]
+
+  - id: vendor-sfc-camusat
+    operator_id: safaricom
+    code: CAMUSAT
+    display_name: Camusat
+    type: MSP
+    type_basis: "appears in both power and tx_fiber pools; REVIEW"
+    contract_ref: null
+    active_from: *active_from
+    active_to: null
+    contacts:
+      email: camusat.ke@example.com
+      sms: "+254711000006"
+      domains: [tx_fiber, power]
+
+  - id: vendor-sfc-ecta
+    operator_id: safaricom
+    code: ECTA
+    display_name: Ecta
+    type: MSP
+    type_basis: "tx_fiber pool, listed under \"Fibre ecosystem (TX)\"; REVIEW"
+    contract_ref: null
+    active_from: *active_from
+    active_to: null
+    contacts:
+      email: ecta.fibre.ke@example.com
+      sms: "+254711000007"
+      domains: [tx_fiber]
+
+  - id: vendor-sfc-soliton
+    operator_id: safaricom
+    code: SOLITON
+    display_name: Soliton
+    type: MSP
+    type_basis: "Mt-Kenya TX pool head in assignment_by_region; REVIEW"
+    contract_ref: null
+    active_from: *active_from
+    active_to: null
+    contacts:
+      email: soliton.tx.ke@example.com
+      sms: "+254711000008"
+      domains: [tx_fiber, tx_mw]
+
+  - id: vendor-sfc-adrian-fibre
+    operator_id: safaricom
+    code: ADRIAN_FIBRE
+    display_name: Adrian Fibre
+    type: MSP
+    type_basis: "tx_fiber pool, listed under \"Fibre ecosystem (TX)\"; REVIEW"
+    contract_ref: null
+    active_from: *active_from
+    active_to: null
+    contacts:
+      email: adrian.fibre.ke@example.com
+      sms: "+254711000009"
+      domains: [tx_fiber]
+
+  - id: vendor-sfc-alan-dick
+    operator_id: safaricom
+    code: ALAN_DICK
+    display_name: Alan Dick
+    type: MSP
+    type_basis: "tx_fiber pool, listed under \"Fibre ecosystem (TX)\"; REVIEW"
+    contract_ref: null
+    active_from: *active_from
+    active_to: null
+    contacts:
+      email: alandick.ke@example.com
+      sms: "+254711000010"
+      domains: [tx_fiber]
+
+  - id: vendor-sfc-huawei-radio
+    operator_id: safaricom
+    code: HUAWEI_RADIO
+    display_name: Huawei Radio
+    type: OEM
+    type_basis: >-
+      safaricom.yaml locale_notes "radio OEM is Huawei-only in Nairobi-West &
+      Coast" and radio_oem: HUAWEI on NBI_W/CST — the profile itself calls this
+      an OEM, so this is the one type value the config states rather than implies.
+    contract_ref: null
+    active_from: *active_from
+    active_to: null
+    contacts:
+      email: huawei.radio.ke@example.com
+      sms: "+254711000011"
+      domains: [radio]
+
+  # --- Airtel profile (config/operators/airtel.yaml: msp_contacts) -----------
+  # The airtel profile spells the same three keys in title case and carries no
+  # `domains`. Codes are upper-cased to match the safaricom convention; that
+  # normalisation is the only change, and it is flagged on each row.
+  - id: vendor-atl-atc
+    operator_id: airtel
+    code: ATC
+    display_name: ATC
+    type: TOWERCO
+    type_basis: "same classification as the safaricom ATC row; REVIEW"
+    contract_ref: null
+    active_from: *active_from
+    active_to: null
+    source_note: "airtel.yaml key \"ATC\"; code left as-is"
+    contacts:
+      email: atc.airtel.ke@example.com
+      sms: "+254700000011"
+      domains: []
+
+  - id: vendor-atl-camusat
+    operator_id: airtel
+    code: CAMUSAT
+    display_name: Camusat
+    type: MSP
+    type_basis: "same classification as the safaricom Camusat row; REVIEW"
+    contract_ref: null
+    active_from: *active_from
+    active_to: null
+    source_note: "airtel.yaml key \"Camusat\"; upper-cased to CAMUSAT"
+    contacts:
+      email: camusat.airtel.ke@example.com
+      sms: "+254700000012"
+      domains: []
+
+  - id: vendor-atl-egypro
+    operator_id: airtel
+    code: EGYPRO
+    display_name: Egypro
+    type: MSP
+    type_basis: "same classification as the safaricom Egypro row; REVIEW"
+    contract_ref: null
+    active_from: *active_from
+    active_to: null
+    source_note: "airtel.yaml key \"Egypro\"; upper-cased to EGYPRO"
+    contacts:
+      email: egypro.airtel.ke@example.com
+      sms: "+254700000013"
+      domains: []

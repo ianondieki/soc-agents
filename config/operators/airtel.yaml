@@ -1,0 +1,150 @@
+# Airtel Kenya — secondary profile (same agent stack, different thresholds)
+operator_id: airtel
+display_name: "Airtel Kenya (demo profile)"
+incident_prefix: "ATL"
+problem_prefix: "APB"
+numbering_style: "dated"
+timezone: Africa/Nairobi
+autonomy_level: L2_GUARDED
+locale_notes: Challenger MNO; secondary profile; dated ticket numbers.
+
+priority_thresholds:
+  P4_max_users: 19999
+  P3_max_users: 99999
+  P2_max_users: 399999
+
+site_type_priority_floor:
+  HUB: P2
+  CORE: P1
+  BSC: P2
+  RNC: P2
+  TX: P3
+  POWER: P3
+  ENODEB: P4
+  GNODEB: P4
+  BTS: P4
+  NODEB: P4
+  OTHER: P4
+
+p1_force_rules:
+  multi_region: true
+  site_types: [CORE]
+  child_sites_down_gte: 15
+  users_affected_gte: 400000
+
+correlation:
+  window_minutes: 15
+  fingerprint_fields: [site_id, alarm_code, failure_domain]
+
+sla_minutes:
+  P1: { ack: 5, restore: 60, note_interval: 15 }
+  P2: { ack: 10, restore: 120, note_interval: 30 }
+  P3: { ack: 20, restore: 240, note_interval: 60 }
+  P4: { ack: 30, restore: 480, note_interval: 120 }
+
+region_sla_note_multiplier:
+  NBI: 1.0
+  CKA: 1.1
+  CST: 1.25
+  RVA: 1.15
+  WST: 1.15
+  NYZ: 1.2
+  EST: 1.5
+  NEA: 1.6
+
+assignment_matrix:
+  power_passive: [ATC, Camusat]
+  transmission_fiber: [Egypro]
+  transmission_mw: [Egypro, FIELD_ENGINEER]
+  radio_active: [FIELD_ENGINEER]
+  core: [NOC]
+  unknown: [NOC]
+
+msp_contacts:
+  ATC:
+    email: atc.airtel.ke@example.com
+    sms: "+254700000011"
+  Camusat:
+    email: camusat.airtel.ke@example.com
+    sms: "+254700000012"
+  Egypro:
+    email: egypro.airtel.ke@example.com
+    sms: "+254700000013"
+
+regions:
+  NBI:
+    label: "Nairobi Metro"
+    rnio: "ATL-RNIO-NBI"
+    fe_oncall: "ATL-FE-NBI-01"
+    counties: [Nairobi, Kiambu]
+  CKA:
+    label: "Central & Mt Kenya"
+    rnio: "ATL-RNIO-CKA"
+    fe_oncall: "ATL-FE-CKA-01"
+  CST:
+    label: "Coast"
+    rnio: "ATL-RNIO-CST"
+    fe_oncall: "ATL-FE-CST-01"
+  RVA:
+    label: "Rift Valley"
+    rnio: "ATL-RNIO-RVA"
+    fe_oncall: "ATL-FE-RVA-01"
+  WST:
+    label: "Western"
+    rnio: "ATL-RNIO-WST"
+    fe_oncall: "ATL-FE-WST-01"
+  NYZ:
+    label: "Nyanza"
+    rnio: "ATL-RNIO-NYZ"
+    fe_oncall: "ATL-FE-NYZ-01"
+  EST:
+    label: "Eastern"
+    rnio: "ATL-RNIO-EST"
+    fe_oncall: "ATL-FE-EST-01"
+  NEA:
+    label: "North Eastern"
+    rnio: "ATL-RNIO-NEA"
+    fe_oncall: "ATL-FE-NEA-01"
+
+shifts:
+  day:
+    start: "08:00"
+    end: "20:00"
+    handover_to: night
+    distribution_list: [airtel.noc.day@example.com]
+  night:
+    start: "20:00"
+    end: "08:00"
+    handover_to: day
+    distribution_list: [airtel.noc.night@example.com]
+
+management_distribution_list:
+  - airtel.noc.duty.manager@example.com
+
+recurrence:
+  threshold_count: 3
+  lookback_days: 30
+  auto_open_problem: true
+
+broadcast:
+  channels: [EMAIL, SMS]
+  p1_audiences: [RNIO, FIELD_ENGINEER, MSP, MANAGEMENT]
+  p2_audiences: [RNIO, FIELD_ENGINEER, MSP, MANAGEMENT]
+  p3_audiences: [RNIO, FIELD_ENGINEER, MSP]
+  p4_audiences: [RNIO, FIELD_ENGINEER]
+
+mpesa_risk:
+  enable: false
+  site_types: []
+  regions: []
+
+user_estimate_defaults:
+  CORE: 800000
+  HUB_NBI: 200000
+  HUB_OTHER: 90000
+  ENODEB_URBAN: 12000
+  ENODEB_RURAL: 4000
+  BTS_RURAL: 2000
+  GNODEB: 8000
+  TX: 25000
+  DEFAULT: 3000

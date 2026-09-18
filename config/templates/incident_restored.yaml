@@ -1,0 +1,193 @@
+# OWNER DECISION D4 (2026-09-17): message language is ENGLISH ONLY.
+# Kiswahili is out of scope -- the translations_pending blocks below are permanent,
+# not a to-do, and no reviewer is being sought. See docs/DECISIONS.md.
+# =============================================================================
+# incident_restored -- service is back. The message everyone actually waits for,
+# and the one a regulator is most likely to ask about months later ("when did you
+# say it was back, and in what words?").
+#
+# STATUS: DRAFT, on purpose -- same reason as incident_update. Nothing in the
+# codebase composes a restore message today (services/lifecycle.py:record_restore
+# writes restored_at / restored_source / restored_by; it sends nothing), so this
+# wording was DRAFTED here and nobody has approved it. A DRAFT template is not
+# sendable.
+#
+# `restored_at_eat` and `onset_eat` are EAT wall-clock, because "02:14" means the
+# Nairobi 02:14 to every person who will ever read this message, while the stored
+# value is naive UTC. The conversion is services/clock.fmt_eat, applied by the
+# registry when it builds the render context -- never by hand in a template.
+# =============================================================================
+template_key: incident_restored
+title: "Service restored notification"
+notes: >
+  DRAFTED, NOT APPROVED. Times are EAT wall-clock. The envelope decides the
+  audience; lifecycle reads MONITORING on restore and RESOLVED once closed.
+
+channels:
+
+  # ---------------------------------------------------------------------------
+  SMS:
+    version: 1
+    params:
+      priority: string
+      incident_number: string
+      site_id: string
+      region_code: string
+      restored_at_eat: string
+      users_affected: integer
+      headline: string
+    languages:
+      en:
+        # GSM-7 throughout (no em dash): a restore notice is the widest-fanout
+        # message the NOC sends, so the per-segment cost matters most here.
+        body: |-
+          [{{ priority }}] {{ incident_number }} {{ site_id }} {{ region_code }} RESTORED
+          Service restored {{ restored_at_eat }}|est.users {{ users_affected }}
+          {{ headline | cut(80) }}
+          Monitoring - ticket notes for updates
+        approval:
+          status: DRAFT
+          note: >
+            Drafted in this file; no human has reviewed the wording. Not sendable
+            until a named approver moves it to APPROVED.
+    # NO @2 FOR THIS CHANNEL. Measured, not assumed: the literal text of the body
+    # above is GSM-7 clean and it already carries the incident number and the priority
+    # token 6.2's SMS validator requires. Nothing here for @2 to fix.
+    # tests/unit/test_template_v2.py measures this rather than trusting the comment.
+    translations_pending:
+      sw:
+        # This is the one template where Kiswahili would genuinely earn its place,
+        # because a restore notice is what reaches a CUSTOMER audience. That is
+        # exactly why it is not guessed here: a customer-facing sentence in the
+        # wrong register, or a mistranslated "restored", goes out to every affected
+        # subscriber at once and cannot be recalled. Spec 6.4 forbids an APPROVED
+        # sw row without a named native reviewer anyway, so an invented body could
+        # only ever sit here looking finished.
+        reason: >
+          Highest-value Kiswahili target (customer-facing) and therefore the highest
+          cost to get wrong. Requires the named native reviewer of spec 6.4 (decision
+          D4), who also decides which audiences receive Kiswahili by default.
+
+  # ---------------------------------------------------------------------------
+  EMAIL:
+    version: 1
+    params:
+      priority: string
+      incident_number: string
+      site_name: string
+      site_type: string
+      region_label: string
+      lifecycle: string
+      restored_at_eat: string
+      onset_eat: string
+      users_affected: integer
+      services_impacted: array
+      failure_domain: string
+      mpesa_risk: boolean
+      headline: string
+      body: string
+      assignee_name: string
+      root_cause_hypothesis: string
+      instruction: string
+    languages:
+      en:
+        subject: "[{{ priority }}] {{ incident_number }} RESTORED | {{ site_name }} ({{ site_type }}) | {{ region_label }}"
+        body: |
+          Status: {{ lifecycle }}
+          Service restored at: {{ restored_at_eat }}
+          Outage start: {{ onset_eat }}
+          Est. users affected: {{ users_affected }}
+          Services: {{ services_impacted | join(', ') }}
+          Failure domain: {{ failure_domain }}
+          M-PESA corridor risk: {{ 'YES' if mpesa_risk else 'NO' }}
+
+          Summary: {{ headline }}
+
+          Narrative:
+          {{ body }}
+
+          Owner: {{ assignee_name }}
+          Hypothesis: {{ root_cause_hypothesis }}
+
+          {{ instruction }}
+        approval:
+          status: DRAFT
+          note: >
+            Drafted in this file; no human has reviewed the wording. Not sendable
+            until a named approver moves it to APPROVED.
+    translations_pending:
+      sw:
+        reason: >
+          See the SMS note above. Untranslated until a named native NOC reviewer
+          signs it off (spec 6.4, D4).
+
+    # ------------------------------------------------------------- @2 DRAFT --
+    # UNAPPROVED DRAFT. NOT SEEDED. READ docs/TEMPLATE_V2_REVIEW.md FIRST.
+    # The seeder does not read this key (templates.py:_load_channel), so nothing here
+    # reaches `message_templates` and nothing here can be sent.
+    #
+    # WHAT CHANGED FROM @1: three lines added. Nothing removed, nothing reworded.
+    #
+    #   + Incident: INC000123 (P1) RESTORED
+    #   + Region: Nairobi East
+    #   + Next update: 15:45 EAT
+    #
+    # OPEN QUESTION FOR THE APPROVER -- the "Next update" line. Spec 6.2 requires a
+    # next-update EAT time in every email body and the renderer supplies one from
+    # timing.expires, so the line is there to satisfy the validator. But on a RESTORED
+    # notice it promises a further update that the NOC may not intend to send: the
+    # honest wording is arguably "No further updates; PIR to follow" or "Closure note:
+    # HH:MM EAT". An agent should not choose between those. The plainest form is
+    # drafted here and the decision is yours -- it is the one line in this file worth
+    # arguing about.
+    version_2_draft:
+      version: 2
+      params:
+        priority: string
+        incident_number: string
+        site_name: string
+        site_type: string
+        region_label: string
+        lifecycle: string
+        restored_at_eat: string
+        onset_eat: string
+        next_update_eat: string
+        users_affected: integer
+        services_impacted: array
+        failure_domain: string
+        mpesa_risk: boolean
+        headline: string
+        body: string
+        assignee_name: string
+        root_cause_hypothesis: string
+        instruction: string
+      languages:
+        en:
+          subject: "[{{ priority }}] {{ incident_number }} RESTORED | {{ site_name }} ({{ site_type }}) | {{ region_label }}"
+          body: |
+            Incident: {{ incident_number }} ({{ priority }}) RESTORED
+            Region: {{ region_label }}
+            Status: {{ lifecycle }}
+            Service restored at: {{ restored_at_eat }}
+            Outage start: {{ onset_eat }}
+            Est. users affected: {{ users_affected }}
+            Services: {{ services_impacted | join(', ') }}
+            Failure domain: {{ failure_domain }}
+            M-PESA corridor risk: {{ 'YES' if mpesa_risk else 'NO' }}
+
+            Summary: {{ headline }}
+
+            Narrative:
+            {{ body }}
+
+            Owner: {{ assignee_name }}
+            Hypothesis: {{ root_cause_hypothesis }}
+            Next update: {{ next_update_eat }}
+
+            {{ instruction }}
+          approval:
+            status: DRAFT
+            note: >
+              Drafted by an agent; no human has read the wording, and the "Next
+              update" line on a restored notice is an open question for the approver.
+              See docs/TEMPLATE_V2_REVIEW.md.

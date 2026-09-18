@@ -1,0 +1,374 @@
+# =============================================================================
+# SAFARICOM PLC — primary NOC profile (demo)
+# Grounded in operator floor practice (~7,000 sites, 50M+ subscribers,
+# six geographical regions). Neutral demo — not an official Safaricom system.
+# =============================================================================
+operator_id: safaricom
+display_name: "Safaricom PLC (demo profile)"
+# Ticket numbers: exactly 9 chars, system-generated, e.g. INC000042
+incident_prefix: "INC"
+problem_prefix: "PRB"
+numbering_style: "inc9"   # INC + 6 digits
+timezone: Africa/Nairobi
+autonomy_level: L2_GUARDED
+locale_notes: >
+  ~7000 sites / 50M+ subscribers across six regions.
+  Power MSP and fibre MSP differ by region; radio OEM is Huawei-only in
+  Nairobi-West & Coast, mixed Nokia/Huawei in Western-Nyanza.
+
+network_stats:
+  approx_sites: 7000
+  approx_subscribers: 50000000
+  geographical_regions: 6
+
+# ---------------------------------------------------------------------------
+# Priority (subscriber impact) — as used on the floor:
+#   P4: < 50,000
+#   P3: < 100,000  (and ≥ 50,000)
+#   P2: ≥ 100,000 and < 500,000
+#   P1: ≥ 500,000
+# ---------------------------------------------------------------------------
+priority_thresholds:
+  P4_max_users: 49999
+  P3_max_users: 99999
+  P2_max_users: 499999
+
+site_type_priority_floor:
+  HUB: P2
+  CORE: P1
+  BSC: P2
+  RNC: P2
+  TX: P3
+  POWER: P3
+  ENODEB: P4
+  GNODEB: P4
+  BTS: P4
+  NODEB: P4
+  OTHER: P4
+
+p1_force_rules:
+  multi_region: true
+  site_types: [CORE]
+  child_sites_down_gte: 20
+  users_affected_gte: 500000
+
+correlation:
+  window_minutes: 15
+  fingerprint_fields: [site_id, alarm_code, failure_domain]
+
+# Expected resolution / SLA restore targets (minutes) by priority
+sla_minutes:
+  P1: { ack: 5, restore: 60, note_interval: 15 }
+  P2: { ack: 10, restore: 120, note_interval: 30 }
+  P3: { ack: 20, restore: 240, note_interval: 60 }
+  P4: { ack: 30, restore: 480, note_interval: 120 }
+
+region_sla_note_multiplier:
+  NBI_E: 1.0
+  NBI_W: 1.0
+  MTK: 1.15
+  CST: 1.25
+  RFT: 1.15
+  WNY: 1.2
+
+# Legacy fallback pools (used only if region matrix missing)
+assignment_matrix:
+  power_passive: [EGYPRO, TETRANET, ATC]
+  transmission_fiber: [EGYPRO_FIBRE, CAMUSAT, ECTA]
+  transmission_mw: [EGYPRO_FIBRE, FIELD_ENGINEER]
+  radio_active: [HUAWEI_RADIO, FIELD_ENGINEER]
+  core: [NOC]
+  environment: [TETRANET, ATC]
+  unknown: [NOC]
+
+# ---------------------------------------------------------------------------
+# PRIMARY ROUTING — region × domain (Safaricom field reality)
+#
+# 1) MT-KENYA + NAIROBI EAST:
+#      Power → Egypro / Remote Egypro
+#      TX fibre → Egypro Fibre (Mt-Kenya also Soliton for TX)
+# 2) NAIROBI-WEST + COAST:
+#      Huawei sites only → radio failures → Huawei Radio
+#      Power often ATC/Camusat where passive shared (ATC had some power sites)
+# 3) RIFT:
+#      Power → Tetranet
+# 4) WESTERN-NYANZA:
+#      Power → Tetranet; radio OEM mix Nokia + Huawei
+#
+# Fibre ecosystem (TX): Ecta, Camusat, Egypro Fibre, Soliton (Mt-Kenya),
+#   Adrian Fibre, Alan Dick; power also ATC on some sites.
+# ---------------------------------------------------------------------------
+assignment_by_region:
+  NBI_E:
+    power: [EGYPRO, EGYPRO_REMOTE]
+    tx_fiber: [EGYPRO_FIBRE, CAMUSAT, ECTA]
+    tx_mw: [EGYPRO_FIBRE, FIELD_ENGINEER]
+    radio: [FIELD_ENGINEER]
+    radio_oem: MIXED
+  MTK:
+    power: [EGYPRO, EGYPRO_REMOTE]
+    tx_fiber: [SOLITON, EGYPRO_FIBRE, CAMUSAT]
+    tx_mw: [SOLITON, EGYPRO_FIBRE, FIELD_ENGINEER]
+    radio: [FIELD_ENGINEER]
+    radio_oem: MIXED
+  NBI_W:
+    power: [ATC, CAMUSAT, EGYPRO]
+    tx_fiber: [CAMUSAT, ECTA, ADRIAN_FIBRE, ALAN_DICK, EGYPRO_FIBRE]
+    tx_mw: [FIELD_ENGINEER, CAMUSAT]
+    radio: [HUAWEI_RADIO, FIELD_ENGINEER]
+    radio_oem: HUAWEI
+  CST:
+    power: [ATC, CAMUSAT, EGYPRO]
+    tx_fiber: [CAMUSAT, ECTA, ADRIAN_FIBRE, ALAN_DICK, EGYPRO_FIBRE]
+    tx_mw: [FIELD_ENGINEER, CAMUSAT]
+    radio: [HUAWEI_RADIO, FIELD_ENGINEER]
+    radio_oem: HUAWEI
+  RFT:
+    power: [TETRANET]
+    tx_fiber: [CAMUSAT, ECTA, EGYPRO_FIBRE, ADRIAN_FIBRE]
+    tx_mw: [TETRANET, FIELD_ENGINEER]
+    radio: [FIELD_ENGINEER]
+    radio_oem: MIXED
+  WNY:
+    power: [TETRANET]
+    tx_fiber: [CAMUSAT, ECTA, EGYPRO_FIBRE, ADRIAN_FIBRE]
+    tx_mw: [TETRANET, FIELD_ENGINEER]
+    radio: [FIELD_ENGINEER, HUAWEI_RADIO]
+    radio_oem: MIXED   # Nokia + Huawei sites
+
+msp_contacts:
+  EGYPRO:
+    email: egypro.power.ke@example.com
+    sms: "+254711000001"
+    domains: [power]
+  EGYPRO_REMOTE:
+    email: egypro.remote.ke@example.com
+    sms: "+254711000002"
+    domains: [power]
+  EGYPRO_FIBRE:
+    email: egypro.fibre.ke@example.com
+    sms: "+254711000003"
+    domains: [tx_fiber, tx_mw]
+  TETRANET:
+    email: tetranet.ke@example.com
+    sms: "+254711000004"
+    domains: [power]
+  ATC:
+    email: atc.power.ke@example.com
+    sms: "+254711000005"
+    domains: [power]
+  CAMUSAT:
+    email: camusat.ke@example.com
+    sms: "+254711000006"
+    domains: [tx_fiber, power]
+  ECTA:
+    email: ecta.fibre.ke@example.com
+    sms: "+254711000007"
+    domains: [tx_fiber]
+  SOLITON:
+    email: soliton.tx.ke@example.com
+    sms: "+254711000008"
+    domains: [tx_fiber, tx_mw]
+  ADRIAN_FIBRE:
+    email: adrian.fibre.ke@example.com
+    sms: "+254711000009"
+    domains: [tx_fiber]
+  ALAN_DICK:
+    email: alandick.ke@example.com
+    sms: "+254711000010"
+    domains: [tx_fiber]
+  HUAWEI_RADIO:
+    email: huawei.radio.ke@example.com
+    sms: "+254711000011"
+    domains: [radio]
+
+# ---------------------------------------------------------------------------
+# Six geographical regions (~7000 sites network-wide)
+# ---------------------------------------------------------------------------
+regions:
+  NBI_E:
+    label: "Nairobi East"
+    rnio: "RNIO-NBI-E"
+    fe_oncall: "FE-NBI-E-01"
+    description: >
+      Nairobi East cluster. Power: Egypro / Remote Egypro. TX fibre: Egypro Fibre.
+      Part of densest metro footprint serving large share of 50M+ subscribers.
+    coverage_areas:
+      - Eastlands (Umoja, Kayole, Pipeline, Donholm)
+      - Embakasi / Airport corridor
+      - Industrial Area east
+      - Ruiru / Juja fringe east
+    counties: [Nairobi, Kiambu, Machakos]
+    hub_sites_hint: [SFC-NBIE-HUB-EMB, SFC-NBIE-HUB-EST]
+    radio_oem: MIXED
+    power_msp_primary: EGYPRO
+    tx_msp_primary: EGYPRO_FIBRE
+
+  NBI_W:
+    label: "Nairobi West"
+    rnio: "RNIO-NBI-W"
+    fe_oncall: "FE-NBI-W-01"
+    description: >
+      Nairobi West — historically Huawei radio sites. Radio faults → Huawei Radio.
+      Power/passive often ATC or Camusat on shared towers.
+    coverage_areas:
+      - Westlands / Parklands / Gigiri
+      - CBD west / Upper Hill
+      - Karen / Langata / Ngong Road
+      - Kawangware / Kangemi
+    counties: [Nairobi, Kajiado, Kiambu]
+    hub_sites_hint: [SFC-NBIW-HUB-WLD, SFC-NBIW-HUB-KRN]
+    radio_oem: HUAWEI
+    power_msp_primary: ATC
+    tx_msp_primary: CAMUSAT
+
+  MTK:
+    label: "Mt Kenya"
+    rnio: "RNIO-MTK"
+    fe_oncall: "FE-MTK-01"
+    description: >
+      Mt Kenya / Central highlands. Power: Egypro / Remote Egypro.
+      TX: Soliton + Egypro Fibre primary.
+    coverage_areas:
+      - Thika / Murang'a
+      - Nyeri / Karatina
+      - Meru / Nanyuki
+      - Embu / Kirinyaga
+    counties: [Kiambu, Murang'a, Nyeri, Kirinyaga, Embu, Meru, Laikipia]
+    hub_sites_hint: [SFC-MTK-HUB-THK, SFC-MTK-HUB-NYR]
+    radio_oem: MIXED
+    power_msp_primary: EGYPRO
+    tx_msp_primary: SOLITON
+
+  CST:
+    label: "Coast"
+    rnio: "RNIO-CST"
+    fe_oncall: "FE-CST-01"
+    description: >
+      Coast region — Huawei radio sites. Radio → Huawei Radio.
+      Humidity, salt, access issues common; fibre vendors Camusat/Ecta/Adrian.
+    coverage_areas:
+      - Mombasa Island / Tudor
+      - Nyali / Bamburi / Shanzu
+      - Changamwe / Port
+      - Kilifi / Malindi / Kwale / Diani
+    counties: [Mombasa, Kilifi, Kwale, Lamu, Taita-Taveta]
+    hub_sites_hint: [SFC-CST-HUB-MSA, SFC-CST-HUB-NYL]
+    radio_oem: HUAWEI
+    power_msp_primary: ATC
+    tx_msp_primary: CAMUSAT
+
+  RFT:
+    label: "Rift Valley"
+    rnio: "RNIO-RFT"
+    fe_oncall: "FE-RFT-01"
+    description: >
+      Rift Valley. Power at sites: Tetranet. Long-haul corridors Nakuru–Eldoret.
+    coverage_areas:
+      - Nakuru / Naivasha
+      - Eldoret / Turbo
+      - Kericho / Bomet
+      - Kitale / Narok
+    counties: [Nakuru, Uasin Gishu, Nandi, Kericho, Bomet, Trans-Nzoia, Narok, Baringo]
+    hub_sites_hint: [SFC-RFT-HUB-NKR, SFC-RFT-HUB-ELD]
+    radio_oem: MIXED
+    power_msp_primary: TETRANET
+    tx_msp_primary: CAMUSAT
+
+  WNY:
+    label: "Western-Nyanza"
+    rnio: "RNIO-WNY"
+    fe_oncall: "FE-WNY-01"
+    description: >
+      Western + Nyanza combined ops region. Power: Tetranet.
+      Radio OEM mix: Nokia and Huawei sites.
+    coverage_areas:
+      - Kisumu lakeside metro
+      - Kakamega / Bungoma / Busia
+      - Kisii / Nyamira highlands
+      - Homabay / Migori / Siaya
+    counties: [Kisumu, Kakamega, Bungoma, Busia, Vihiga, Siaya, Homabay, Migori, Kisii, Nyamira]
+    hub_sites_hint: [SFC-WNY-HUB-KSM, SFC-WNY-HUB-KKG]
+    radio_oem: MIXED
+    power_msp_primary: TETRANET
+    tx_msp_primary: CAMUSAT
+
+# Demo field engineers (any names for demonstration)
+field_engineers_demo:
+  NBI_E: [FE-NBI-E-01, FE-NBI-E-02, FE-NBI-E-Kamau]
+  NBI_W: [FE-NBI-W-01, FE-NBI-W-02, FE-NBI-W-Wanjiku]
+  MTK: [FE-MTK-01, FE-MTK-02, FE-MTK-Mwangi]
+  CST: [FE-CST-01, FE-CST-02, FE-CST-Hassan]
+  RFT: [FE-RFT-01, FE-RFT-02, FE-RFT-Kipchoge]
+  WNY: [FE-WNY-01, FE-WNY-02, FE-WNY-Otieno]
+
+shifts:
+  day:
+    start: "08:00"
+    end: "20:00"
+    handover_to: night
+    distribution_list: [safaricom.noc.day@example.com]
+  night:
+    start: "20:00"
+    end: "08:00"
+    handover_to: day
+    distribution_list: [safaricom.noc.night@example.com]
+
+management_distribution_list:
+  - safaricom.noc.duty.manager@example.com
+  - safaricom.ran.manager@example.com
+
+recurrence:
+  threshold_count: 3
+  lookback_days: 30
+  auto_open_problem: true
+
+broadcast:
+  channels: [EMAIL, SMS]
+  p1_audiences: [RNIO, FIELD_ENGINEER, MSP, MANAGEMENT]
+  p2_audiences: [RNIO, FIELD_ENGINEER, MSP, MANAGEMENT]
+  p3_audiences: [RNIO, FIELD_ENGINEER, MSP]
+  p4_audiences: [RNIO, FIELD_ENGINEER]
+
+mpesa_risk:
+  enable: true
+  site_types: [CORE, HUB]
+  regions: [NBI_E, NBI_W, CST, WNY, RFT]
+
+tt_categories:
+  POWER_GRID: "Commercial power failure"
+  POWER_GENSET: "Genset fail / not starting"
+  POWER_FUEL: "Fuel low / theft / dry tank"
+  POWER_RECTIFIER: "Rectifier / battery low voltage"
+  TX_FIBRE: "Fibre cut / dark fibre"
+  TX_MW: "Microwave hop down / high BER"
+  RADIO_VSWR: "VSWR / RF unit fault"
+  RADIO_CELL: "Cell / sector down"
+  CORE_NODE: "Core / PS-Core degradation"
+  ENV_TEMP: "High temperature / AC fail"
+  ENV_ACCESS: "Site access / flooding / security"
+  OTHER: "Other / under investigation"
+
+site_class_by_type:
+  CORE: CRITICAL
+  HUB: CRITICAL
+  BSC: MAJOR
+  RNC: MAJOR
+  TX: MAJOR
+  ENODEB: STANDARD
+  GNODEB: STANDARD
+  BTS: STANDARD
+  NODEB: STANDARD
+  POWER: MAJOR
+  OTHER: STANDARD
+
+user_estimate_defaults:
+  CORE: 2500000
+  HUB_NBI: 450000
+  HUB_OTHER: 180000
+  ENODEB_URBAN: 22000
+  ENODEB_RURAL: 8000
+  BTS_RURAL: 3500
+  GNODEB: 15000
+  TX: 50000
+  DEFAULT: 5000

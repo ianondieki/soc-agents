@@ -1,0 +1,67 @@
+# =============================================================================
+# Demo seed set v2 — three maintenance plans
+# (spec §7.0.7 "maintenance_plans.yaml (three plans)"; DDL §7.5.1)
+# =============================================================================
+# Every interval and every standard_ref below is copied from the §7.5.1
+# `maintenance.intervals` defaults, including the spec's own warning that the
+# standards behind them are PAYWALLED and therefore SECONDARY-SOURCED. Nobody
+# here has read NFPA 110, IEEE 1187/1188 or TIA-222. The plans are scheduling
+# defaults for a demo, not a compliance position.
+#
+# Scope: §7.5.1 allows site_id OR site_class ("one of the two"). Two plans are
+# class-scoped and one is site-scoped, so both branches have something to show.
+#
+# owner_vendor_id is null on the class-scoped plans ON PURPOSE: a network-wide
+# class has no single owner, and §7.5.3 already resolves the assignee from the
+# region roster (fe_oncall / owner vendor contact) at plan_due time. Pinning one
+# vendor to every HUB in the country would be an invented commercial fact.
+# Site ids are real entries in data/seed/safaricom_sites.json.
+# -----------------------------------------------------------------------------
+seed_version: "v2-2026-09"
+
+maintenance_plans:
+  - id: mplan-sfc-genset-exercise-hub
+    operator_id: safaricom
+    site_id: null
+    site_class: HUB
+    task_type: GENERATOR_EXERCISE
+    interval_days: 30
+    interval_hours: null
+    consumption_driven: 0
+    owner_vendor_id: null           # resolved from the region roster (§7.5.3)
+    standard_ref: "NFPA 110 practice (SECONDARY SOURCE, not read): monthly >=30 min at >=30% nameplate"
+    active: 1
+    demo_note: >-
+      Covers the seven HUB-class sites in data/seed/safaricom_sites.json, so
+      /maintenance has a non-empty due list on day 30 of a demo run.
+
+  - id: mplan-sfc-battery-check-macro
+    operator_id: safaricom
+    site_id: null
+    site_class: MACRO
+    task_type: BATTERY_CHECK
+    interval_days: 7
+    interval_hours: null
+    consumption_driven: 0
+    owner_vendor_id: null           # resolved from the region roster (§7.5.3)
+    standard_ref: "IEEE 1187/1188 practice (SECONDARY SOURCE, not read): weekly voltage check"
+    active: 1
+    demo_note: >-
+      Weekly cadence is the fastest-recurring plan in the set, so a demo that
+      runs for more than a week shows repeat tasks rather than a single batch.
+
+  - id: mplan-sfc-tower-visual-mtk-tx-sol01
+    operator_id: safaricom
+    site_id: SFC-MTK-TX-SOL01
+    site_class: null
+    task_type: TOWER_VISUAL
+    interval_days: 365
+    interval_hours: null
+    consumption_driven: 0
+    owner_vendor_id: vendor-sfc-soliton
+    standard_ref: "TIA-222 practice (SECONDARY SOURCE, not read): annual visual inspection"
+    active: 1
+    demo_note: >-
+      The one site-scoped plan. Owner is Soliton because assignment_by_region
+      puts SOLITON at the head of the MTK tx_fiber/tx_mw pools and this is an
+      MTK TX site — a routing fact from config, not a contractual one.

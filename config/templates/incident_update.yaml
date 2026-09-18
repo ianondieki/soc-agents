@@ -1,0 +1,191 @@
+# OWNER DECISION D4 (2026-09-17): message language is ENGLISH ONLY.
+# Kiswahili is out of scope -- the translations_pending blocks below are permanent,
+# not a to-do, and no reviewer is being sought. See docs/DECISIONS.md.
+# =============================================================================
+# incident_update -- the "we are still on it" message, sent on the note cadence
+# (sla_minutes[P].note_interval x the region multiplier) until the site is back.
+#
+# STATUS: DRAFT, on purpose. Unlike site_down_alert@1 there is no wording already
+# in production to be faithful to -- nothing in the codebase composes an update
+# message today. So this wording was DRAFTED here, and nobody has approved it.
+# A DRAFT template is not sendable: TemplateRegistry.for_send() and .render()
+# refuse it. It becomes sendable when a named human moves it to APPROVED through
+# set_status, and only then.
+#
+# It is written in the house style of the alert it follows (same field order, same
+# shape), with two deliberate differences from site_down_alert@1:
+#   * the SMS uses "-", not the em dash, so the body stays GSM-7 (153 septets per
+#     segment instead of 67). An update goes out repeatedly; paying double for
+#     every one of them to keep a typographic flourish is not defensible.
+#   * the email subject is ASSEMBLED from envelope fields rather than passed
+#     through, so it carries the update sequence. It therefore drops the operator
+#     display name, which is config and not an envelope field.
+# =============================================================================
+template_key: incident_update
+title: "Incident progress update (recurring, until restored)"
+notes: >
+  DRAFTED, NOT APPROVED. The cadence is the envelope's (timing.expires); this file
+  only decides wording. `sequence` is the envelope's per-incident counter, so the
+  first update after the alert reads "UPDATE 2".
+
+channels:
+
+  # ---------------------------------------------------------------------------
+  SMS:
+    version: 1
+    params:
+      priority: string
+      incident_number: string
+      site_id: string
+      region_code: string
+      sequence: integer
+      lifecycle: string
+      users_affected: integer
+      headline: string
+      next_update_eat: string
+    languages:
+      en:
+        body: |-
+          [{{ priority }}] {{ incident_number }} {{ site_id }} {{ region_code }} UPDATE {{ sequence }}
+          {{ lifecycle }}|est.users {{ users_affected }}
+          {{ headline | cut(80) }}
+          Next update {{ next_update_eat }} - ticket notes for updates
+        approval:
+          status: DRAFT
+          note: >
+            Drafted in this file; no human has reviewed the wording. Not sendable
+            until a named approver moves it to APPROVED.
+    # NO @2 FOR THIS CHANNEL. Measured, not assumed: the literal text of the body
+    # above is GSM-7 clean (it was drafted with "-", never an em dash) and it already
+    # carries the incident number and the priority token that 6.2's SMS validator
+    # requires. There is nothing here for @2 to fix, so no version is proposed.
+    # tests/unit/test_template_v2.py measures this rather than trusting the comment.
+    translations_pending:
+      sw:
+        reason: >
+          Internal engineering SMS in NOC register ("lifecycle", "est. users",
+          "ticket notes"). Not translated -- see site_down_alert.yaml. The English
+          itself is not approved yet, so translating it now would be translating a
+          draft.
+
+  # ---------------------------------------------------------------------------
+  EMAIL:
+    version: 1
+    params:
+      priority: string
+      incident_number: string
+      sequence: integer
+      site_name: string
+      site_type: string
+      region_label: string
+      lifecycle: string
+      service_affecting: boolean
+      users_affected: integer
+      services_impacted: array
+      failure_domain: string
+      mpesa_risk: boolean
+      headline: string
+      body: string
+      assignee_name: string
+      root_cause_hypothesis: string
+      next_update_eat: string
+      instruction: string
+    languages:
+      en:
+        subject: "[{{ priority }}] {{ incident_number }} UPDATE {{ sequence }} | {{ site_name }} ({{ site_type }}) | {{ region_label }}"
+        body: |
+          Status: {{ lifecycle }}
+          Service affecting: {{ 'YES' if service_affecting else 'NO' }}
+          Est. users: {{ users_affected }}
+          Services: {{ services_impacted | join(', ') }}
+          Failure domain: {{ failure_domain }}
+          M-PESA corridor risk: {{ 'YES' if mpesa_risk else 'NO' }}
+
+          Summary: {{ headline }}
+
+          Narrative:
+          {{ body }}
+
+          Owner: {{ assignee_name }}
+          Hypothesis: {{ root_cause_hypothesis }}
+          Next update: {{ next_update_eat }}
+
+          {{ instruction }}
+        approval:
+          status: DRAFT
+          note: >
+            Drafted in this file; no human has reviewed the wording. Not sendable
+            until a named approver moves it to APPROVED.
+    translations_pending:
+      sw:
+        reason: >
+          Same register as the SMS, and the English is still a draft. Untranslated
+          until a named native NOC reviewer signs it off (spec 6.4, D4).
+
+    # ------------------------------------------------------------- @2 DRAFT --
+    # UNAPPROVED DRAFT. NOT SEEDED. READ docs/TEMPLATE_V2_REVIEW.md FIRST.
+    # The seeder does not read this key (templates.py:_load_channel), so nothing here
+    # reaches `message_templates` and nothing here can be sent. Promoting it is a copy
+    # of the four keys below over the channel block's own, and @1 stays in the table.
+    #
+    # WHAT CHANGED FROM @1: two lines added at the top. Nothing removed, nothing
+    # reworded. @1 already ends with "Next update: {{ next_update_eat }}", so that
+    # half of the 6.2 body rule was already satisfied here; the incident number, the
+    # priority and the region label were in the SUBJECT only.
+    #
+    #   + Incident: INC000123 (P2) UPDATE 3
+    #   + Region: Nairobi East
+    #
+    # The "UPDATE {{ sequence }}" repeat is deliberate: an RNIO reading the fourth
+    # update of a night needs to know which one this is without the subject line.
+    # No new params -- all four were already declared for the subject.
+    version_2_draft:
+      version: 2
+      params:
+        priority: string
+        incident_number: string
+        sequence: integer
+        site_name: string
+        site_type: string
+        region_label: string
+        lifecycle: string
+        service_affecting: boolean
+        users_affected: integer
+        services_impacted: array
+        failure_domain: string
+        mpesa_risk: boolean
+        headline: string
+        body: string
+        assignee_name: string
+        root_cause_hypothesis: string
+        next_update_eat: string
+        instruction: string
+      languages:
+        en:
+          subject: "[{{ priority }}] {{ incident_number }} UPDATE {{ sequence }} | {{ site_name }} ({{ site_type }}) | {{ region_label }}"
+          body: |
+            Incident: {{ incident_number }} ({{ priority }}) UPDATE {{ sequence }}
+            Region: {{ region_label }}
+            Status: {{ lifecycle }}
+            Service affecting: {{ 'YES' if service_affecting else 'NO' }}
+            Est. users: {{ users_affected }}
+            Services: {{ services_impacted | join(', ') }}
+            Failure domain: {{ failure_domain }}
+            M-PESA corridor risk: {{ 'YES' if mpesa_risk else 'NO' }}
+
+            Summary: {{ headline }}
+
+            Narrative:
+            {{ body }}
+
+            Owner: {{ assignee_name }}
+            Hypothesis: {{ root_cause_hypothesis }}
+            Next update: {{ next_update_eat }}
+
+            {{ instruction }}
+          approval:
+            status: DRAFT
+            note: >
+              Drafted by an agent; no human has read the wording. @1 was never
+              approved either, so approving @2 approves this template for the first
+              time. See docs/TEMPLATE_V2_REVIEW.md.

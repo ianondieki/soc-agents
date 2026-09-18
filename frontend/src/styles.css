@@ -1,0 +1,1086 @@
+@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap");
+
+:root {
+  --bg-deep: #050a14;
+  --bg: #0a1220;
+  --bg2: #0d1829;
+  --panel: rgba(16, 28, 48, 0.92);
+  --panel-solid: #101c30;
+  --panel-elevated: #152338;
+  --border: #2a3f5f;
+  --border-bright: #3d5a80;
+  --text: #f0f6ff;
+  --text-bright: #ffffff;
+  --muted: #a8bdd6;
+  --muted-dim: #7a92b0;
+  --p1: #ff3b5c;
+  --p2: #ff9f1a;
+  --p3: #f5d000;
+  --p4: #8ba3c1;
+  --ok: #2ee59d;
+  --warn: #ffc14d;
+  --accent: #3ecbff;
+  --accent-2: #5b8cff;
+  --hitl: #c4a1ff;
+  --glow-p1: rgba(255, 59, 92, 0.35);
+  --glow-accent: rgba(62, 203, 255, 0.2);
+  --radius: 14px;
+  --font: "IBM Plex Sans", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, monospace;
+  color: var(--text);
+  background: var(--bg-deep);
+  font-family: var(--font);
+  font-size: 15px;
+  line-height: 1.45;
+}
+
+* { box-sizing: border-box; }
+html, body, #root { min-height: 100%; }
+body {
+  margin: 0;
+  background:
+    radial-gradient(1200px 600px at 10% -10%, rgba(62, 203, 255, 0.12), transparent 55%),
+    radial-gradient(900px 500px at 100% 0%, rgba(91, 140, 255, 0.1), transparent 50%),
+    radial-gradient(800px 400px at 50% 100%, rgba(196, 161, 255, 0.06), transparent 45%),
+    var(--bg-deep);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+}
+a { color: inherit; text-decoration: none; }
+code {
+  font-family: var(--mono);
+  font-size: 0.85em;
+  background: rgba(62, 203, 255, 0.1);
+  border: 1px solid var(--border);
+  padding: 0.1rem 0.35rem;
+  border-radius: 6px;
+  color: var(--accent);
+}
+
+/* Layout */
+.app {
+  display: grid;
+  grid-template-columns: 248px 1fr;
+  min-height: 100vh;
+}
+.nav {
+  background: linear-gradient(180deg, #0c1628 0%, #0a1220 100%);
+  border-right: 1px solid var(--border);
+  padding: 1.25rem 0.85rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
+}
+.nav .brand {
+  font-weight: 700;
+  font-size: 1.05rem;
+  color: var(--text-bright);
+  margin-bottom: 0.35rem;
+  letter-spacing: 0.02em;
+}
+.nav .brand .muted {
+  font-weight: 500;
+  font-size: 0.78rem;
+  color: var(--accent);
+  margin-top: 0.2rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.nav a {
+  padding: 0.65rem 0.8rem;
+  border-radius: 10px;
+  color: var(--muted);
+  font-size: 0.9rem;
+  font-weight: 500;
+  border: 1px solid transparent;
+  transition: 0.15s ease;
+}
+.nav a:hover {
+  background: rgba(62, 203, 255, 0.08);
+  color: var(--text-bright);
+  border-color: rgba(62, 203, 255, 0.15);
+}
+.nav a.active {
+  background: linear-gradient(90deg, rgba(62, 203, 255, 0.18), rgba(91, 140, 255, 0.1));
+  color: var(--text-bright);
+  border-color: rgba(62, 203, 255, 0.35);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.main { display: flex; flex-direction: column; min-width: 0; }
+.topbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.85rem 1.4rem;
+  border-bottom: 1px solid var(--border);
+  background: rgba(8, 14, 26, 0.85);
+  backdrop-filter: blur(14px);
+  position: sticky;
+  top: 0;
+  z-index: 20;
+}
+.chips { display: flex; flex-wrap: wrap; gap: 0.45rem; align-items: center; }
+.chip {
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 0.32rem 0.65rem;
+  border-radius: 999px;
+  border: 1px solid var(--border-bright);
+  background: var(--panel-elevated);
+  color: var(--text);
+  letter-spacing: 0.02em;
+}
+.chip.accent {
+  color: var(--accent);
+  border-color: rgba(62, 203, 255, 0.45);
+  background: rgba(62, 203, 255, 0.1);
+}
+.chip.hitl {
+  color: #e9d5ff;
+  border-color: rgba(196, 161, 255, 0.5);
+  background: rgba(196, 161, 255, 0.12);
+}
+.chip.ok {
+  color: var(--ok);
+  border-color: rgba(46, 229, 157, 0.45);
+  background: rgba(46, 229, 157, 0.1);
+}
+.chip.bad {
+  color: #ffb4c0;
+  border-color: rgba(255, 59, 92, 0.5);
+  background: rgba(255, 59, 92, 0.12);
+  animation: pulse 1.4s infinite;
+}
+
+.content { padding: 1.25rem 1.5rem 2.5rem; max-width: 1600px; }
+
+/* Hero */
+.hero {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 1.25rem;
+  padding: 1.25rem 1.35rem;
+  border-radius: calc(var(--radius) + 4px);
+  border: 1px solid var(--border-bright);
+  background:
+    linear-gradient(135deg, rgba(62, 203, 255, 0.1), transparent 45%),
+    linear-gradient(225deg, rgba(91, 140, 255, 0.08), transparent 40%),
+    var(--panel-solid);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+}
+.hero h1 {
+  margin: 0 0 0.35rem;
+  font-size: 1.55rem;
+  font-weight: 700;
+  color: var(--text-bright);
+  letter-spacing: -0.02em;
+}
+.hero .lead {
+  margin: 0;
+  color: var(--muted);
+  max-width: 52ch;
+  font-size: 0.95rem;
+}
+.hero-actions { display: flex; flex-wrap: wrap; gap: 0.55rem; align-items: center; }
+
+/* KPI */
+.kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 1.15rem;
+}
+.kpi {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.95rem 1rem;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+  transition: border-color 0.15s, transform 0.15s;
+}
+.kpi:hover {
+  border-color: var(--border-bright);
+  transform: translateY(-1px);
+}
+.kpi .label {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.kpi .value {
+  font-size: 1.75rem;
+  font-weight: 700;
+  margin-top: 0.35rem;
+  color: var(--text-bright);
+  font-variant-numeric: tabular-nums;
+  font-family: var(--mono);
+}
+
+.grid-2 { display: grid; grid-template-columns: 1.25fr 1fr; gap: 1rem; }
+.grid-3 { display: grid; grid-template-columns: 1.1fr 1fr 0.9fr; gap: 1rem; }
+@media (max-width: 1100px) {
+  .grid-3 { grid-template-columns: 1fr; }
+  .grid-2 { grid-template-columns: 1fr; }
+}
+@media (max-width: 960px) {
+  .app { grid-template-columns: 1fr; }
+  .nav {
+    position: relative;
+    height: auto;
+    flex-direction: row;
+    flex-wrap: wrap;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1rem 1.1rem;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.22);
+}
+.panel h3 {
+  margin: 0 0 0.85rem;
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--text-bright);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+}
+.panel-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+.panel-head h3 { margin: 0; }
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  max-height: 440px;
+  overflow: auto;
+  padding-right: 0.15rem;
+}
+.list::-webkit-scrollbar { width: 8px; }
+.list::-webkit-scrollbar-thumb {
+  background: var(--border-bright);
+  border-radius: 8px;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 0.7rem;
+  align-items: center;
+  padding: 0.7rem 0.8rem;
+  border-radius: 11px;
+  background: rgba(8, 16, 30, 0.9);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  transition: 0.15s ease;
+}
+.row:hover {
+  border-color: rgba(62, 203, 255, 0.45);
+  background: rgba(62, 203, 255, 0.06);
+  box-shadow: 0 0 0 1px rgba(62, 203, 255, 0.1);
+}
+.row.flash {
+  animation: rowFlash 1.2s ease;
+}
+@keyframes rowFlash {
+  0% { box-shadow: 0 0 0 0 var(--glow-accent); border-color: var(--accent); }
+  100% { box-shadow: none; }
+}
+
+.pill {
+  font-size: 0.68rem;
+  font-weight: 700;
+  padding: 0.22rem 0.5rem;
+  border-radius: 7px;
+  font-family: var(--mono);
+  letter-spacing: 0.04em;
+}
+.pill.P1 { background: var(--p1); color: #fff; box-shadow: 0 0 12px var(--glow-p1); }
+.pill.P2 { background: var(--p2); color: #1a0f00; }
+.pill.P3 { background: var(--p3); color: #1a1500; }
+.pill.P4 { background: var(--p4); color: #0a1220; }
+
+.muted { color: var(--muted); font-size: 0.84rem; }
+.muted.dim { color: var(--muted-dim); }
+
+.btn {
+  border: 1px solid var(--border-bright);
+  background: var(--panel-elevated);
+  color: var(--text-bright);
+  border-radius: 10px;
+  padding: 0.55rem 0.95rem;
+  cursor: pointer;
+  font-size: 0.88rem;
+  font-weight: 600;
+  font-family: var(--font);
+  transition: 0.15s ease;
+}
+.btn:hover {
+  border-color: var(--accent);
+  background: rgba(62, 203, 255, 0.12);
+  color: var(--text-bright);
+}
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.btn.primary {
+  background: linear-gradient(135deg, #1a8fd4, #2563eb);
+  border-color: #3ecbff;
+  color: #fff;
+  box-shadow: 0 4px 16px rgba(37, 99, 235, 0.35);
+}
+.btn.primary:hover {
+  filter: brightness(1.08);
+}
+.btn.danger {
+  background: linear-gradient(135deg, #b91c3c, #9f1239);
+  border-color: #ff3b5c;
+  color: #fff;
+}
+.btn.good {
+  background: linear-gradient(135deg, #0f766e, #166534);
+  border-color: #2ee59d;
+  color: #fff;
+}
+.btn.storm {
+  background: linear-gradient(135deg, #0e7490, #1d4ed8 50%, #6d28d9);
+  border-color: #7dd3fc;
+  color: #fff;
+  box-shadow: 0 6px 24px rgba(29, 78, 216, 0.4);
+  font-size: 0.92rem;
+  padding: 0.7rem 1.15rem;
+}
+
+table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+th, td {
+  text-align: left;
+  padding: 0.6rem 0.5rem;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+}
+th {
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+tr:hover td { background: rgba(62, 203, 255, 0.04); }
+
+.workflow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+.node {
+  min-width: 96px;
+  padding: 0.55rem 0.55rem;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: rgba(8, 16, 30, 0.95);
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-align: center;
+  color: var(--muted);
+}
+.node.succeeded {
+  border-color: rgba(46, 229, 157, 0.55);
+  color: var(--ok);
+  background: rgba(46, 229, 157, 0.08);
+}
+.node.waiting_hitl {
+  border-color: rgba(196, 161, 255, 0.65);
+  color: #e9d5ff;
+  background: rgba(196, 161, 255, 0.12);
+  box-shadow: 0 0 16px rgba(196, 161, 255, 0.2);
+}
+.node.running {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(62, 203, 255, 0.1);
+  animation: pulse 1.1s infinite;
+}
+.node.failed {
+  border-color: var(--p1);
+  color: #ffb4c0;
+  background: rgba(255, 59, 92, 0.1);
+}
+.node.pending { opacity: 0.55; }
+.arrow { color: var(--muted-dim); font-size: 0.85rem; }
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+
+/* Live agent ticker */
+.ticker {
+  margin-top: 0;
+  padding: 0;
+  border: none;
+  max-height: 320px;
+  overflow: auto;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+}
+.ticker-line {
+  display: grid;
+  grid-template-columns: 72px 1fr;
+  gap: 0.55rem;
+  padding: 0.45rem 0.55rem;
+  border-bottom: 1px solid rgba(42, 63, 95, 0.6);
+  color: var(--muted);
+  animation: fadeIn 0.35s ease;
+}
+.ticker-line:first-child {
+  background: rgba(62, 203, 255, 0.08);
+  border-left: 3px solid var(--accent);
+  color: var(--text);
+}
+.ticker-line strong { color: var(--accent); font-weight: 600; }
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: none; }
+}
+
+.live-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ok);
+  box-shadow: 0 0 10px var(--ok);
+  margin-right: 0.4rem;
+  animation: pulse 1.5s infinite;
+}
+.live-dot.off { background: var(--p1); box-shadow: 0 0 10px var(--p1); }
+
+.region-bars { display: flex; flex-direction: column; gap: 0.55rem; }
+.region-bar-row { display: grid; grid-template-columns: 64px 1fr 28px; gap: 0.5rem; align-items: center; }
+.region-bar-track {
+  height: 10px;
+  border-radius: 999px;
+  background: rgba(8, 16, 30, 0.9);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+.region-bar-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  transition: width 0.4s ease;
+}
+
+.storm-banner {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.85rem 1rem;
+  margin-bottom: 1rem;
+  border-radius: var(--radius);
+  border: 1px solid rgba(125, 211, 252, 0.35);
+  background: linear-gradient(90deg, rgba(14, 116, 144, 0.25), rgba(109, 40, 217, 0.15));
+  color: var(--text);
+}
+.storm-banner strong { color: var(--text-bright); }
+.storm-progress {
+  font-family: var(--mono);
+  font-size: 0.85rem;
+  color: var(--accent);
+}
+
+.wallboard {
+  min-height: 100vh;
+  background:
+    radial-gradient(800px 400px at 20% 0%, rgba(255, 59, 92, 0.12), transparent),
+    #030712;
+  padding: 1.75rem;
+  color: var(--text-bright);
+}
+.wallboard h1 {
+  font-size: 2.1rem;
+  margin: 0 0 1.1rem;
+  letter-spacing: -0.02em;
+}
+.wb-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 1rem;
+}
+.wb-card {
+  border-radius: 18px;
+  padding: 1.3rem;
+  border: 2px solid var(--border-bright);
+  background: rgba(15, 23, 42, 0.95);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
+}
+.wb-card.P1 {
+  border-color: var(--p1);
+  box-shadow: 0 0 28px var(--glow-p1);
+}
+.wb-card.P2 { border-color: var(--p2); }
+.wb-card .big {
+  font-size: 1.45rem;
+  font-weight: 800;
+  font-family: var(--mono);
+}
+
+.form-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  margin-bottom: 0.65rem;
+  align-items: center;
+}
+input, select, textarea {
+  background: rgba(8, 16, 30, 0.95);
+  border: 1px solid var(--border-bright);
+  color: var(--text-bright);
+  border-radius: 10px;
+  padding: 0.55rem 0.7rem;
+  font-size: 0.9rem;
+  font-family: var(--font);
+}
+input::placeholder, textarea::placeholder { color: var(--muted-dim); }
+input:focus, select:focus, textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(62, 203, 255, 0.15);
+}
+textarea { width: 100%; min-height: 90px; }
+.detail-grid { display: grid; grid-template-columns: 1.1fr 1fr; gap: 1rem; }
+@media (max-width: 960px) { .detail-grid { grid-template-columns: 1fr; } }
+
+.empty {
+  color: var(--muted);
+  padding: 1.25rem 0.5rem;
+  font-size: 0.92rem;
+  text-align: center;
+  line-height: 1.55;
+}
+.pre {
+  white-space: pre-wrap;
+  background: rgba(8, 16, 30, 0.95);
+  border-radius: 10px;
+  padding: 0.85rem;
+  border: 1px solid var(--border);
+  font-size: 0.84rem;
+  line-height: 1.5;
+  color: var(--text);
+  font-family: var(--mono);
+}
+
+.agent-card {
+  padding: 0.85rem;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: rgba(8, 16, 30, 0.85);
+}
+.agent-card h4 {
+  margin: 0 0 0.35rem;
+  color: var(--text-bright);
+  font-size: 0.92rem;
+}
+.agent-card .status-pill {
+  display: inline-block;
+  margin-top: 0.45rem;
+  font-size: 0.7rem;
+  font-weight: 700;
+  padding: 0.2rem 0.5rem;
+  border-radius: 999px;
+  background: rgba(46, 229, 157, 0.12);
+  color: var(--ok);
+  border: 1px solid rgba(46, 229, 157, 0.35);
+}
+
+/* ------------------------------------------------------------------ *
+ * Quiet mode (night shift). Set by App as data-quiet="on" on <html>,  *
+ * so it covers the standalone /wallboard route too.                   *
+ *                                                                     *
+ * Purely subtractive: it stops motion. No colour, size, spacing or    *
+ * layout changes, and nothing is hidden — P1/P2 cards, HITL chips and *
+ * every status colour stay exactly as they are, just still. Removing  *
+ * the attribute restores the design byte for byte.                    *
+ * ------------------------------------------------------------------ */
+:root[data-quiet="on"] .live-dot,
+:root[data-quiet="on"] .chip.bad,
+:root[data-quiet="on"] .node.running,
+:root[data-quiet="on"] .ticker-line,
+:root[data-quiet="on"] .row.flash {
+  animation: none !important;
+}
+:root[data-quiet="on"] .row,
+:root[data-quiet="on"] .region-bar-fill {
+  transition: none !important;
+}
+
+/* ------------------------------------------------------------------ *
+ * HITL approval inbox — side-by-side card (spec §6.5).                *
+ *                                                                     *
+ * Purely additive: nothing above this line is edited. The card reuses  *
+ * the existing tokens, the .panel surface values, .chip, .pill and     *
+ * .pre, so it reads as the same product. No animation is introduced,  *
+ * so quiet mode has nothing new to suppress.                          *
+ * ------------------------------------------------------------------ */
+
+/* Two chip tones the card needs and the sheet did not have yet.       */
+.chip.warn {
+  color: var(--warn);
+  border-color: rgba(255, 193, 77, 0.45);
+  background: rgba(255, 193, 77, 0.1);
+}
+.chip.danger {
+  color: #ffb4c0;
+  border-color: rgba(255, 59, 92, 0.5);
+  background: rgba(255, 59, 92, 0.12);
+}
+
+/*
+ * Deliberately NOT `.list`: that class caps its scroller at 440px, which is
+ * right for the Mission Control side panels and wrong here — it would hide the
+ * second half of a card the supervisor is being asked to read. The inbox is a
+ * full page, so it scrolls with the page.
+ */
+.hitl-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+
+.hitl-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1rem 1.1rem;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.22);
+  border-left-width: 4px;
+  border-left-color: var(--border-bright);
+}
+.hitl-card.P1 { border-left-color: var(--p1); }
+.hitl-card.P2 { border-left-color: var(--p2); }
+.hitl-card.P3 { border-left-color: var(--p3); }
+.hitl-card.P4 { border-left-color: var(--p4); }
+
+.hitl-card-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  align-items: center;
+}
+.hitl-inc {
+  color: var(--text-bright);
+  font-family: var(--mono);
+  font-size: 0.98rem;
+  letter-spacing: 0.01em;
+}
+.hitl-created { margin-left: auto; font-size: 0.74rem; white-space: nowrap; }
+
+.hitl-effect {
+  margin: 0.6rem 0 0.7rem;
+  max-width: 100ch;
+}
+.hitl-effect strong { color: var(--text); }
+
+/* Facts strip: the justification, one glance, no scrolling. */
+.hitl-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-bottom: 0.8rem;
+}
+.hitl-fact {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.35rem;
+  padding: 0.28rem 0.6rem;
+  border-radius: 9px;
+  border: 1px solid var(--border);
+  background: rgba(8, 16, 30, 0.85);
+  font-size: 0.78rem;
+}
+.hitl-fact-label {
+  color: var(--muted-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-size: 0.66rem;
+  font-weight: 700;
+}
+.hitl-fact-value { color: var(--text-bright); font-weight: 600; }
+.hitl-fact.danger { border-color: rgba(255, 59, 92, 0.5); background: rgba(255, 59, 92, 0.1); }
+.hitl-fact.danger .hitl-fact-value { color: #ffb4c0; }
+.hitl-fact.warn { border-color: rgba(255, 193, 77, 0.45); background: rgba(255, 193, 77, 0.08); }
+.hitl-fact.warn .hitl-fact-value { color: var(--warn); }
+.hitl-fact.ok { border-color: rgba(46, 229, 157, 0.4); background: rgba(46, 229, 157, 0.08); }
+.hitl-fact.ok .hitl-fact-value { color: var(--ok); }
+
+.hitl-section-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin: 0 0 0.5rem;
+}
+.hitl-section-head h4 {
+  margin: 0;
+  font-size: 0.74rem;
+  font-weight: 700;
+  color: var(--text-bright);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+}
+.hitl-expand { margin-left: auto; padding: 0.3rem 0.6rem; font-size: 0.76rem; }
+
+/*
+ * THE POINT OF THE WHOLE CARD. auto-fit + minmax keeps SMS and email genuinely
+ * side by side on any NOC screen and stacks them below ~700px of card width
+ * rather than squeezing both into unreadable columns.
+ */
+.hitl-channels {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 0.7rem;
+  align-items: start;
+  margin-bottom: 0.85rem;
+}
+.hitl-channel {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: rgba(8, 16, 30, 0.6);
+  padding: 0.6rem 0.65rem;
+  min-width: 0; /* let a long unbroken line wrap instead of widening the grid */
+}
+.hitl-channel-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  align-items: center;
+  margin-bottom: 0.45rem;
+}
+.hitl-channel-name {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+.hitl-channel-subject {
+  font-weight: 600;
+  color: var(--text-bright);
+  font-size: 0.84rem;
+  margin-bottom: 0.4rem;
+  word-break: break-word;
+}
+/*
+ * The body scrolls inside itself so a 20-line email can never push the
+ * Approve / Reject bar off the bottom of the screen. "Full text" lifts the cap.
+ */
+.hitl-channel-body {
+  margin: 0;
+  max-height: 16rem;
+  overflow: auto;
+  word-break: break-word;
+}
+.hitl-channel-body.full { max-height: none; }
+
+.hitl-nochannel {
+  border: 1px dashed rgba(255, 193, 77, 0.45);
+  border-radius: 10px;
+  padding: 0.7rem 0.8rem;
+  margin-bottom: 0.85rem;
+  color: var(--warn);
+  font-size: 0.84rem;
+}
+
+.hitl-fields { margin-bottom: 0.6rem; }
+.hitl-fields h4 {
+  margin: 0 0 0.35rem;
+  font-size: 0.74rem;
+  font-weight: 700;
+  color: var(--text-bright);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+}
+.hitl-field-key { width: 12rem; white-space: nowrap; }
+.hitl-field-pre { margin: 0; max-height: 18rem; overflow: auto; word-break: break-word; }
+
+.hitl-raw { margin-bottom: 0.7rem; }
+.hitl-raw summary { cursor: pointer; font-size: 0.78rem; }
+.hitl-raw > pre { margin-top: 0.45rem; }
+
+.hitl-error {
+  border: 1px solid rgba(255, 59, 92, 0.5);
+  background: rgba(255, 59, 92, 0.1);
+  color: #ffb4c0;
+  border-radius: 10px;
+  padding: 0.6rem 0.75rem;
+  font-size: 0.85rem;
+  margin-bottom: 0.7rem;
+}
+
+.hitl-actions {
+  border-top: 1px solid var(--border);
+  padding-top: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.hitl-reason { min-height: 0; width: 100%; }
+.hitl-reason-quick { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+.hitl-quick { cursor: pointer; font-family: var(--font); }
+.hitl-quick:hover { border-color: var(--accent); color: var(--accent); }
+.hitl-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+/* ------------------------------------------------------------------ *
+ * Wallboard weather risk strip (spec §7.3, Phase 3).                  *
+ *                                                                     *
+ * Purely additive: nothing above this line is edited, and the strip    *
+ * reuses the existing tokens so it reads as the same product.         *
+ *                                                                     *
+ * THE RULE THIS SHEET ENFORCES: the strip must never be the brightest *
+ * thing on a screen whose job is P1 incidents. So — no box-shadow, no *
+ * glow, no animation (quiet mode therefore has nothing new to         *
+ * suppress), no --p1, and tinted backgrounds capped at 8% alpha. A    *
+ * STORM tile is quieter than a .wb-card.P2 and far quieter than the    *
+ * red-glowing .wb-card.P1 grid beneath it.                            *
+ *                                                                     *
+ * AND THE SECOND RULE: colour is a claim about *now*, so a stale tile  *
+ * gives it up. Hatched, dashed, monochrome, dimmed — recognisable as   *
+ * "not current" from across the room before a character is read.      *
+ * ------------------------------------------------------------------ */
+
+.wb-risk {
+  margin: 0 0 1.1rem;
+}
+
+.wb-risk-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.55rem;
+  margin-bottom: 0.5rem;
+}
+.wb-risk-title {
+  font-size: 0.86rem;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  color: var(--muted);
+}
+.wb-risk-sub {
+  font-size: 0.76rem;
+  color: var(--muted-dim);
+  letter-spacing: 0.02em;
+}
+.wb-risk-cap {
+  font-family: var(--mono);
+  font-size: 0.74rem;
+  color: var(--muted-dim);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.12rem 0.5rem;
+}
+.wb-risk-cap.stale {
+  border-style: dashed;
+  color: var(--muted);
+}
+
+/*
+ * Six regions across a wall screen, wrapping to three or two on anything
+ * narrower. minmax keeps a tile wide enough for "STORM" at tracking without
+ * letting one region hog the row.
+ */
+.wb-risk-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(178px, 1fr));
+  gap: 0.6rem;
+}
+
+.wb-risk-tile {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 0.6rem 0.7rem 0.55rem;
+  background: rgba(8, 16, 30, 0.72);
+  min-width: 0;
+}
+
+.wb-risk-tile-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+  margin-bottom: 0.18rem;
+}
+
+/* The region code is what the eye lands on: mono, tracked, unmissable at 4 m. */
+.wb-risk-region {
+  font-family: var(--mono);
+  font-size: 1.3rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  color: var(--text);
+}
+
+/* The one-word verdict — the whole tile in under two seconds. */
+.wb-risk-word {
+  font-size: 1.22rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  line-height: 1.15;
+  color: var(--text);
+}
+.wb-risk-plus {
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  margin-left: 0.35rem;
+  color: var(--accent);
+  vertical-align: 0.18em;
+}
+
+.wb-risk-nums {
+  font-family: var(--mono);
+  font-size: 0.82rem;
+  color: var(--muted);
+  margin-top: 0.22rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Measured precision / provider / kept-age. Present, but never competing. */
+.wb-risk-foot {
+  font-size: 0.71rem;
+  color: var(--muted-dim);
+  margin-top: 0.22rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---- the badge, which is the point ------------------------------- */
+.wb-risk-badge {
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  padding: 0.1rem 0.42rem;
+  border-radius: 7px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  white-space: nowrap;
+}
+/* Fresh: an age, stated plainly, no colour spent on good news. */
+.wb-risk-badge.fresh {
+  color: var(--muted-dim);
+  border-color: transparent;
+  padding-left: 0;
+  padding-right: 0;
+}
+/* Ageing: at least one 15-minute poll missed. A hint, not a warning. */
+.wb-risk-badge.ageing {
+  color: var(--warn);
+  border-color: rgba(255, 193, 77, 0.4);
+  background: rgba(255, 193, 77, 0.07);
+}
+/* STALE: the loudest thing the strip is permitted to say, and still no glow. */
+.wb-risk-badge.stale {
+  color: var(--text-bright);
+  border-color: var(--muted);
+  border-style: dashed;
+  background: rgba(168, 189, 214, 0.14);
+}
+
+/* ---- tones. Only a FRESH tile is allowed colour ------------------- */
+.wb-risk-tile.storm {
+  border-color: rgba(255, 193, 77, 0.5);
+  background: rgba(255, 193, 77, 0.07);
+}
+.wb-risk-tile.storm .wb-risk-word { color: var(--warn); }
+
+.wb-risk-tile.flood {
+  border-color: rgba(62, 203, 255, 0.45);
+  background: rgba(62, 203, 255, 0.06);
+}
+.wb-risk-tile.flood .wb-risk-word { color: var(--accent); }
+
+/* CLEAR is not green: a good forecast is not news and must not draw the eye. */
+.wb-risk-tile.clear .wb-risk-word { color: var(--muted); }
+
+/*
+ * AGEING gets no tile treatment at all — only the amber age badge above. Giving
+ * it a border would fight the tone borders for specificity (an ageing STORM tile
+ * would lose its amber edge) and would spend a second visual channel on a state
+ * that is a hint, not a warning. Three distinct looks, one channel each:
+ *   fresh  — coloured border, dim age;
+ *   ageing — coloured border, amber age badge;
+ *   stale  — dashed + hatched + monochrome + the word STALE.
+ */
+
+/*
+ * STALE. Hatching is the cue that carries across a room, and being a static
+ * gradient it adds no motion for quiet mode to strip. Everything else
+ * desaturates: no tint, dashed edge, dimmed content. The reading stays legible
+ * — it is still the best information available — it simply stops claiming to
+ * describe now.
+ */
+.wb-risk-tile.stale {
+  border-style: dashed;
+  border-color: var(--muted-dim);
+  background:
+    repeating-linear-gradient(
+      -45deg,
+      rgba(168, 189, 214, 0.07) 0 6px,
+      rgba(168, 189, 214, 0) 6px 12px
+    ),
+    rgba(8, 16, 30, 0.72);
+}
+.wb-risk-tile.stale .wb-risk-region,
+.wb-risk-tile.stale .wb-risk-word,
+.wb-risk-tile.stale .wb-risk-plus { color: var(--muted-dim); }
+.wb-risk-tile.stale .wb-risk-nums { color: var(--muted-dim); }
+/*
+ * On a stale tile the footer carries the actual age ("kept · 3h 5m old"), so it
+ * is the one thing that gets *more* legible rather than less: STALE answers the
+ * across-the-room question, this answers the next one.
+ */
+.wb-risk-tile.stale .wb-risk-foot { font-size: 0.79rem; color: var(--muted); }
+/*
+ * Deliberately NOT struck through. A line through the word "STORM" reads as
+ * "storm cancelled" — it negates the content when the thing being negated is
+ * only its currency. The hatch, the dashed edge, the monochrome and the STALE
+ * badge say "not current" without ever saying "not storming".
+ */
+
+@media (max-width: 720px) {
+  .wb-risk-region { font-size: 1.1rem; }
+  .wb-risk-word { font-size: 1.05rem; }
+}

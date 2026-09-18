@@ -1,0 +1,5 @@
+cd C:\Users\PC\Desktop\second-brain\soc-agents
+python -m pytest -q
+python -m noc_agents.scripts.demo_safaricom
+python -m uvicorn noc_agents.main:app --app-dir src --port 8000
+# UI: cd frontend && npm run dev

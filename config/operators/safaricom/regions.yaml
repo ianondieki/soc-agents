@@ -1,0 +1,52 @@
+# =============================================================================
+# County -> weather-cache region — SAFARICOM profile (demo)
+# Read by src/noc_agents/agents/enrich.py:county_region_map().
+#
+# WHAT THIS FILE IS FOR
+# `external_signals` rows are cached per `region_code` (pollers/weather.py polls
+# one forecast per region centroid). ENRICH knows a site's `county` from the
+# seed. This is the county -> region_code direction, kept in config so a region
+# boundary moves in YAML and never in code.
+#
+# THE BASE MAP IS NOT REPEATED HERE
+# It is INVERTED at read time from `regions[*].counties` in
+# ../safaricom.yaml, which is the operator's own source of truth and stays the
+# only place a county is added to a region. Duplicating those 33 counties here
+# would create a second truth that silently drifts.
+#
+# This file carries only the two things inversion cannot decide:
+#
+#   county_region:  the winner for a county that SEVERAL regions claim.
+#                   Wins over the inverted base map.
+#   extra:          a county NO region lists. Weather is geography, not
+#                   coverage: a site can sit in a county the ops region list
+#                   never mentions, and it still has weather.
+#
+# -----------------------------------------------------------------------------
+# AMBIGUOUS COUNTIES IN THIS PROFILE  (inversion result, verified 2026-09-17)
+#
+#   Nairobi -> NBI_E, NBI_W                (also split 4/3 in the site seed)
+#   Kiambu  -> NBI_E, NBI_W, MTK
+#
+# Both are deliberately left UNRESOLVED. Which side of Nairobi a ~10 km forecast
+# grid point belongs to is an owner call (the D14 threshold-tuning lane), not a
+# guess this file may make: picking one silently would hand an operator Westlands
+# rain labelled as Embakasi rain.
+#
+# Unresolved county => county_region_map() omits it => the COUNTY fallback yields
+# no region => no weather context, exactly as if no row had been cached. That
+# costs nothing in practice, because the county path is only a FALLBACK: ENRICH
+# uses `event.region_code` whenever it names a configured region, which every
+# event the pipeline has ever carried does. The fallback exists for an event that
+# arrives with a blank or unknown region code but a known county.
+#
+# To resolve one later, uncomment and set a single region code, e.g.
+#   county_region:
+#     Nairobi: NBI_E
+# -----------------------------------------------------------------------------
+
+county_region: {}
+
+# Counties with sites but no ops region list. None known in this profile; the
+# seed's ten counties all invert cleanly or appear above as ambiguous.
+extra: {}

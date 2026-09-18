@@ -1,0 +1,57 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kenya-noc-agents"
+version = "0.1.0"
+description = "Kenya telecom NOC multi-agent incident system (Safaricom-first, Airtel secondary)"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.115.0",
+  "uvicorn[standard]>=0.32.0",
+  "sqlalchemy>=2.0.36",
+  "pydantic>=2.10.0",
+  "pydantic-settings>=2.6.0",
+  "pyyaml>=6.0.2",
+  "openpyxl>=3.1.5",
+  "jinja2>=3.1.4",
+  "httpx>=0.28.0",
+  "python-dateutil>=2.9.0",
+  "structlog>=24.4.0",
+  "python-dotenv>=1.0",
+  # REQUIRED, not optional: services/numbering.py, services/ledger.py and
+  # services/handover.py all call ZoneInfo("Africa/Nairobi"). Windows ships no
+  # system tz database and slim Linux images drop theirs, so without this the
+  # incident numbering path raises ZoneInfoNotFoundError. Found by the Phase 0
+  # step (f) clean-venv run: 9 tests failed purely for the want of it.
+  "tzdata",
+]
+
+[project.optional-dependencies]
+llm      = ["anthropic>=1.6,<2"]
+# Gate passed 2026-09-16 (Phase 0 step (f)): the full suite is green on pydantic 2.13.5 with
+# mcp 2.2.0 + anthropic 1.6.0 installed, so Phase 7 runs the MCP client in-process and the
+# sidecar fallback of spec §7.1.5 is not needed. Evidence in docs/RUNBOOK.md -> "MCP install facts".
+# Install into a SHORT venv path on Windows: the Anthropic SDK has a 96-char filename and
+# long-path support is off on the reference machine, so a deep path fails mid-install.
+mcp      = ["anthropic[mcp]>=1.6,<2", "mcp>=2.2,<3", "pydantic>=2.12", "pywin32>=311; sys_platform == 'win32'"]
+signals  = ["pdfplumber>=0.11", "feedparser>=6.0"]
+calendar = ["icalendar>=7.3"]
+sms      = ["africastalking"]
+rag      = ["sqlite-vec>=0.1.9", "model2vec>=0.9"]
+dev      = ["pytest>=8.3.0", "pytest-asyncio>=0.24.0", "respx>=0.22", "freezegun>=1.5"]
+
+[project.scripts]
+noc-api = "noc_agents.main:run"
+noc-demo = "noc_agents.scripts.demo_safaricom:main"
+noc-seed-v2 = "noc_agents.scripts.seed_v2:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["src"]
