@@ -51,6 +51,13 @@ export const api = {
   ledger: () => req<any[]>("/api/v1/shifts/ledger"),
   handover: () => req<any>("/api/v1/shifts/handover", { method: "POST" }),
   sites: () => req<any[]>("/api/v1/sites"),
+  /**
+   * Agent memory M0 (spec §7.11): prior resolved incidents at one site, for the
+   * "Earlier at this site" workspace panel. Answers 200 with an empty list when the site is
+   * unknown or `MEMORY_ENABLED` is off, so a caller never has to treat it as a failure path.
+   * `site_id` is a NOC-typed string and goes in a path segment, hence the encode.
+   */
+  siteMemory: (siteId: string) => req<any>(`/api/v1/memory/sites/${encodeURIComponent(siteId)}`),
   brief: (id: string) => req<any>(`/api/v1/briefs/${id}`),
   session: () => req<any>("/api/v1/session"),
   setSession: (body: any) =>
@@ -81,6 +88,12 @@ export const api = {
    * is today.
    */
   weatherRegions: () => req<any>("/api/v1/signals/weather/regions"),
+  /**
+   * Regions dashboard (spec §7.4.2). One row per region on the operator profile —
+   * including regions with nothing open, which is the point. The response shape is
+   * pinned server-side by `tests/unit/test_dashboard_regions.py`.
+   */
+  dashboardRegions: () => req<any>("/api/v1/dashboard/regions"),
 };
 
 /**

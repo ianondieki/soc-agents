@@ -1,0 +1,107 @@
+# =============================================================================
+# SLA terms -- the versioned contract terms a vendor scorecard is computed against
+# (spec §7.6.1: "`sla_terms` live in YAML, versioned, defaulting from `sla_minutes`")
+# =============================================================================
+#
+# WHERE THIS FILE LIVES, AND ITS TWIN
+#   This is the RUNTIME file: services/vendors.py:load_sla_terms() reads it (the
+#   SLA_TERMS_PATH environment variable overrides the path, the same way
+#   LLM_PRICES_PATH overrides config/llm_prices.yaml -- terms are config, not code).
+#   data/seed/v2/sla_terms.yaml is the DEMO SEED SET's copy of the same block, which
+#   `noc-seed-v2` parses and validates on every run. The two are the same today. They
+#   are ALLOWED to differ in a real deployment: the seed set stays the demo, while
+#   this file receives the terms Supply Chain actually supplies (§7.6.5). What may
+#   never differ is the derived part -- the `default` bands -- which both files, and
+#   the tests on both, pin to config/operators/<profile>.yaml -> sla_minutes.
+#
+# VERSIONING
+#   `version` is stamped on every scorecard (vendor_scorecards.sla_terms_version) so a
+#   card can be re-computed against the terms that were in force when it was issued.
+#   Any change to a band, a credit shape or a credit percentage is a NEW version
+#   string, never an edit under the same one. §7.6.2's shadow rule re-arms on a
+#   version change: the first period after it is SHADOW again, so a human looks at the
+#   first card produced by new terms before a vendor does.
+#
+# KEY SPELLING (decision, previously flagged open in the seed file)
+#   Spec §7.6.1's YAML block uses `ack` / `restore` / `note_interval`; the same
+#   section's vendor_scorecard_lines DDL comment shows a yaml_path of
+#   "sla_terms.vendors.EGYPRO.P1.ack_minutes". One had to give. THIS FILE USES
+#   `ack` / `restore` / `note_interval`, because those are byte-for-byte the field
+#   names of `cfg.sla_minutes` (config.py SlaBand), so "defaulting from sla_minutes"
+#   is a key-for-key merge with no renaming layer to get wrong. Every `yaml_path`
+#   the loader emits (e.g. "sla_terms.default.P1.ack",
+#   "sla_terms.vendors.EGYPRO.P1.restore") therefore points at a key that really
+#   exists in this file, and a test walks the file to prove it. `ack_minutes` is not
+#   a key anywhere and never will be.
+#
+# DERIVED (copied from config/operators/safaricom.yaml -> sla_minutes; if they
+# disagree the operator profile wins and this file is stale -- a test enforces it):
+#   default.P1..P4
+# NOT DERIVED -- placeholders until Supply Chain / Legal supply the real values
+# (§7.6.5 lists exactly this as a human dependency). Nothing below is a commercial
+# term this repository is entitled to assert:
+#   default.availability_target_pct   the spec's illustrative figure, not a contract
+#   default.credit_shape              `none` -- no credit is ever computed by default
+#   vendors.*                          the two ILLUSTRATIVE shapes named in the spec
+#                                     text itself, pointing at SYNTHETIC sample
+#                                     contracts; `contract_is_synthetic: true` marks
+#                                     them and the card must read "defaults, not
+#                                     contract" (§7.6.6). Credits stay PROPOSED until
+#                                     Supply Chain / Legal accepts (§7.6.2).
+#
+# PER-VENDOR BANDS
+#   A vendor block MAY carry its own P1..P4 (a contract that buys a 45-minute P1
+#   restore, say). Any priority it omits falls back to `default`, and the loader's
+#   yaml_path says which one was used, so a scorecard line always cites the value it
+#   was really computed from. Neither illustrative block below overrides a band.
+# -----------------------------------------------------------------------------
+sla_terms:
+  version: "2026-09"
+  source: "defaults copied from cfg.sla_minutes; no contract has been read"
+  default:
+    P1: {ack: 5, restore: 60, note_interval: 15}
+    P2: {ack: 10, restore: 120, note_interval: 30}
+    P3: {ack: 20, restore: 240, note_interval: 60}
+    P4: {ack: 30, restore: 480, note_interval: 120}
+    availability_target_pct: 99.5
+    credit_shape: none
+  vendors:
+    EGYPRO:
+      contract_ref: SAMPLE-MSA-EGYPRO-2026-01     # SYNTHETIC -- data/seed/v2/contracts/egypro_msa_sample.md
+      contract_is_synthetic: true
+      credit_shape: escalating_consecutive       # AT&T CALNET-style shape; selectable, PROPOSED only
+      credit_pct: [15, 30, 50]
+      note: "illustrative shape named in spec §7.6.1; PROPOSED only, never billed"
+    TETRANET:
+      contract_ref: SAMPLE-SLA-TETRANET-2026-01   # SYNTHETIC -- data/seed/v2/contracts/tetranet_sla_sample.md
+      contract_is_synthetic: true
+      credit_shape: per_occurrence
+      credit_pct: [25]
+      note: "illustrative shape named in spec §7.6.1; PROPOSED only, never billed"
+
+# Policy knobs for the scorecard job (§7.6.1), not contract terms. Read by the
+# scorecard lane through SlaTerms.scorecards; kept here so one file answers "what
+# were the rules when this card was issued".
+scorecards:
+  period: MONTH
+  dispute_window_working_days: 10
+  max_inferred_restore_pct: 10          # D9 data-quality gate -> WITHHELD above this
+  bands:
+    SLA_COMPLIANCE_PCT: {green: 95, amber: 90}
+    NOTE_COMPLIANCE_PCT: {green: 90, amber: 80}
+    AVAILABILITY_PCT: {green: 99.5, amber: 99.0}
+  normalise_with: region_sla_note_multiplier   # cfg values 1.0/1.0/1.15/1.25/1.15/1.2; shown BESIDE raw, never instead
+  late_scc_opening_minutes: 60          # §7.6.2 operator discipline counter: SCC recorded > 60 min after started_at
+
+# Regulatory clocks (§7.6.1), read by the regulatory lane. Deadlines are statutory,
+# not negotiable; the significance rule is D15.
+regulatory:
+  deadlines_hours: {CA_OUTAGE_24H: 24, ODPC_BREACH_72H: 72, CII_24H: 24}
+  significance:
+    priorities: [P1]
+    site_types: [CORE, HUB]
+    users_affected_gte: 100000
+    multi_region: true
+  compliance_threshold_pct: 80
+  # spec §7.6.1: the draft 2026 regs proposing 90 %/quarterly/county are
+  # UNVERIFIED and not gazetted. 80 is the current figure; do not raise it here.

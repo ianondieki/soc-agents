@@ -446,9 +446,46 @@ def test_with_scheduler_disabled_nothing_starts(make_client, monkeypatch):
                 "consecutive_failures": 0,
                 "circuit_open": False,
             },
+            {
+                # Phase 4 PIR lane (§7.7.3). Same default_enabled=False reasoning.
+                "name": "pir_autoopen",
+                "interval_s": 300,
+                "enabled": False,
+                "last_started_at": None,
+                "last_status": None,
+                "consecutive_failures": 0,
+                "circuit_open": False,
+            },
+            {
+                # Phase 4 regulatory clock (§7.6). Sweeps deadlines and announces
+                # countdowns; it can never send a notice on its own.
+                "name": "regulatory_sweep",
+                "interval_s": 300,
+                "enabled": False,
+                "last_started_at": None,
+                "last_status": None,
+                "consecutive_failures": 0,
+                "circuit_open": False,
+            },
+            {
+                # Phase 4 housekeeping (§5.3.22). The ONLY scheduled job that can delete
+                # rows, so "enabled": False with the flag unset matters more here than
+                # anywhere else -- and even enabling it only permits a dry run, because
+                # deleting for real needs HOUSEKEEPING_APPLY as well.
+                "name": "housekeeping",
+                "interval_s": 86400,
+                "enabled": False,
+                "last_started_at": None,
+                "last_status": None,
+                "consecutive_failures": 0,
+                "circuit_open": False,
+            },
         ],
     }
-    assert [c.name for c in SCHEDULED_JOBS] == ["outbox_dispatch", "monitor_tick", "weather_regions"]
+    assert [c.name for c in SCHEDULED_JOBS] == [
+        "outbox_dispatch", "monitor_tick", "weather_regions",
+        "pir_autoopen", "regulatory_sweep", "housekeeping",
+    ]
 
 
 def test_with_scheduler_enabled_the_lifespan_ticks_and_releases_on_shutdown(make_client, monkeypatch):

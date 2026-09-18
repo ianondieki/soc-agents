@@ -1,0 +1,244 @@
+# Retention and purge by column class — spec §9.4, enforced by HousekeepingAgent
+# (src/noc_agents/services/housekeeping.py). Read by load_policy(); nothing else parses it.
+#
+# READ THIS BEFORE YOU EDIT. This is the only file in the system that authorises the
+# deletion of data. Three rules make an edit here safe, and the loader enforces all three:
+#
+#   1. ANYTHING NOT LISTED IS KEPT. There is no wildcard and no "purge everything older
+#      than N". A table with no rule, or a rule whose class resolves to `keep`, is never
+#      touched. Forgetting to classify a new table therefore over-retains, which is a
+#      privacy question for Legal; it can never under-retain, which is a licence breach.
+#   2. THE LICENCE FLOOR IS NOT NEGOTIABLE. CA Network Facilities Provider Tier 1 licence
+#      Condition 12.2 requires operational records to be kept for at least 3 years.
+#      `licence_floor_days` below is that floor in days. Any rule that would delete rows
+#      from a table classed `network_facts` — at any age — is REFUSED by validate_policy()
+#      and the whole purge declines to run rather than delete a record early. A retention
+#      job that deletes an incident record early is a regulatory breach, not a bug.
+#   3. DELETION IS DRY-RUN BY DEFAULT. `posture.dry_run: true` means the job counts and
+#      reports what it WOULD delete and writes nothing. Deleting for real needs BOTH this
+#      set to false AND HOUSEKEEPING_APPLY=true in the environment: a config edit alone,
+#      or an env flag alone, cannot start deleting. Pseudonymisation, the outbox payload
+#      archive and the memory seam obey the same posture.
+#
+# Every class carries its legal basis in `legal_basis`. If you cannot write a legal basis
+# for a deletion, it does not belong in this file.
+#
+# D14 (§12) has Legal confirm these numbers. Until then they are the spec's defaults.
+
+version: 1
+
+posture:
+  # Dry-run by default for the first release (§5.3.22 ships behind HOUSEKEEPING_ENABLED=false
+  # anyway). Flip to false AND set HOUSEKEEPING_APPLY=true to let the job delete, pseudonymise
+  # and archive for real. Both keys are reported in every run summary and audit row, so
+  # "did it actually delete anything?" is answerable from the audit trail alone.
+  dry_run: true
+
+# CA Network Facilities Provider Tier 1 licence Condition 12.2: operational records ≥ 3 years.
+# 1095 days = 3 × 365. No leap-year fudge: the floor is a minimum, so rounding down the
+# year length would be the unsafe direction and rounding up is free.
+licence_floor_days: 1095
+
+backups:
+  # §9.4 "Backups: 14 daily + one per migration | rotate". `dir` is relative to the database
+  # file's own folder when it is the bare default; an absolute path is used as given.
+  dir: data/backups
+  keep_daily: 14
+
+outbox:
+  # §5.3.22 / §9.4 "Outbox | outbox SENT/DEAD | 90 days | archive summary, delete payload".
+  archive_after_days: 90
+
+redaction_scan:
+  # §9.6: rows SENT in the last 24 h are re-scanned for MSISDN/email patterns.
+  lookback_hours: 24
+
+# ---------------------------------------------------------------------------- classes
+#
+# action vocabulary:
+#   keep            never deleted by this job (the default for anything unclassified)
+#   delete          rows older than `days` are removed
+#   pseudonymise    the row survives; the personal COLUMNS are replaced by role tokens
+#   archive_payload the row survives with its status untouched; the payload is replaced
+#                   by a summary (used for the outbox only)
+#   rotate          file rotation, not rows (backups)
+#   memory_lane     owned by the §7.11 memory lane's expire_memory(); this job only calls
+#                   the seam — see `memory` below
+#   manual          retention is real but not computable from a timestamp column here;
+#                   a human deletes it. Treated exactly like `keep` by the engine.
+classes:
+
+  network_facts:
+    action: keep
+    licence_floor: true
+    legal_basis: >-
+      CA Network Facilities Provider Tier 1 licence Condition 12.2 — operational records
+      must be retained for at least 3 years. KICA Licensing & QoS Regulations 2010 reg 16
+      adds a ≥ 12-month floor for QoS records. Incident ids and numbers, site, region,
+      failure domain, timestamps, counts, SCC events, scorecards and evidence packs are all
+      in this class. UNVERIFIED for the operator's actual licence class (§12 D14): confirm
+      the Condition 12 wording with Legal before shortening anything here.
+
+  personal_staff_vendor:
+    action: pseudonymise
+    days: 400
+    legal_basis: >-
+      Data Protection Act 2019 s.25(g) — personal data shall be kept no longer than is
+      necessary. Staff and vendor names are not operational records in their own right:
+      the network facts they sit beside are, so the row is kept and the name is replaced
+      by the role token that carries the same operational meaning (which engineer lane,
+      which region), and the incident keeps its ≥ 3-year life under `network_facts`.
+
+  complainants:
+    action: delete
+    days: 30
+    legal_basis: >-
+      DPA 2019 s.25(g), s.28–s.30 and the ODPC ruling on social-media reuse. Social signals
+      are collected without consent under legitimate interest and are only ever used in
+      aggregate; the derived `complaint_buckets` aggregates survive, so deleting the raw
+      rows at 30 days costs no operational capability. §5.3.15 sets the same 30 days on
+      `social_signals.retention_until`.
+
+  relationship_complaints:
+    action: pseudonymise
+    days: 730
+    legal_basis: >-
+      DPA 2019 s.25(g) and s.26 (access right). §7.8/§5.3.21: after 24 months the free-text
+      description is reduced to its category and resolution; the category counts survive so
+      the complaint record still exists for the subject-access export.
+
+  llm_call_records:
+    action: keep
+    days: 400
+    legal_basis: >-
+      DPA 2019 s.25(h) and General Regulations reg 41(2) — the per-transfer record (date,
+      recipient, justification, data description) is the evidence that a cross-border
+      transfer was lawful, and it contains no prompt or response content (§9.5). It is kept,
+      not deleted: destroying the register would remove the proof, not the risk.
+
+  contract_text:
+    action: manual
+    legal_basis: >-
+      §9.4 "contract life + 1 year". Contract expiry is not derivable from a row timestamp,
+      so no automatic rule can express it; Legal deletes a corpus when its contract ends.
+      Treated as `keep` by the engine until `contracts.expires_at` exists to key it on.
+
+  outbox_terminal:
+    action: archive_payload
+    days: 90
+    legal_basis: >-
+      DPA 2019 s.25(g). The outbox payload is the message body that went to staff, vendors
+      or customers; after 90 days the delivery record (kind, status, timestamps, provider
+      id) is what the operator needs for a dispute, not the prose. The row and its status
+      are NEVER changed — see the sweep's own comments: a status change here could put a
+      terminal row back on the dispatcher's queue and re-send a customer SMS.
+
+  memory_lane:
+    action: memory_lane
+    legal_basis: >-
+      §7.11.8 / §9.4. Person-scoped memory facts are HARD DELETED at
+      cfg.memory.party_lookback_days (90), derived network facts have their validity windows
+      closed rather than being deleted (bi-temporal), memos expire at memo_max_age_days and
+      episodes are pruned at 24 months. All of it belongs to memory/consolidate.expire_memory(),
+      which housekeeping calls regardless of MEMORY_ENABLED so retention never depends on a
+      read flag. This job owns the CALL, not the SQL.
+
+  backups:
+    action: rotate
+    keep: 14
+    legal_basis: >-
+      §9.4 "14 daily + one per migration". Rotation removes only this job's own daily files;
+      pre-migration backups are the rollback path for a damaged file (db/migrate.py) and are
+      never rotated away by age.
+
+# ----------------------------------------------------------------------------- tables
+#
+# `class` picks the rule. `timestamp_column` is the column the age is measured from and is
+# required for `delete` and `archive_payload`. `statuses`, when present, narrows the rule to
+# rows in those statuses. A table that is not in this file's `tables:` map, or not yet in the
+# schema (the lanes that own it have not shipped), is skipped and reported as skipped —
+# never guessed at.
+tables:
+
+  # --- present in the schema today -------------------------------------------------------
+  incidents:
+    class: network_facts        # the ROWS are never deleted: Condition 12.2
+    timestamp_column: created_at
+    personal:
+      class: personal_staff_vendor
+      # Exactly the columns §9.4 names for this table. Each name column becomes a role token
+      # rendered from the row's own surviving network facts, so the operational meaning is
+      # preserved without the person: "who was on this" becomes "which lane was on this".
+      # Fields in the template are taken from the row; a missing/empty one renders UNKNOWN.
+      role_tokens:
+        assignee_name: "{assignee_type}-{region_code}"
+        fe_name: "FE-{region_code}"
+        rnio_name: "RNIO-{region_code}"
+        restored_by: "RESTORER-{region_code}"
+      # Free text cannot become a role token, so it goes through the SAME scrubber the
+      # pre-send path uses (llm/redaction.scrub_text with a NameMap seeded from this row's
+      # own name fields) — e-mails, Kenyan MSISDNs and the row's own names are replaced.
+      scrub_text_columns:
+        - access_notes
+
+  outbox:
+    class: outbox_terminal
+    timestamp_column: updated_at
+    statuses: [SENT, DEAD]
+
+  llm_calls:
+    class: llm_call_records
+    timestamp_column: created_at
+
+  audit_events:
+    class: llm_call_records     # §9.4 groups audit_events(external.call) with llm_calls
+    timestamp_column: ts
+
+  # work_notes, broadcasts, shift_ledger, incident_briefs, agent_runs, agent_run_steps,
+  # hitl_tasks, problems, delivery_receipts, external_signals, message_templates:
+  # deliberately unlisted. §9.4 classifies columns, and none of these tables' columns appear
+  # in its personal or deletable classes, so the default (keep, never delete) is the correct
+  # and conservative answer. work_notes.author and work_notes.body in particular DO carry
+  # names typed free-form; §7.11's own risk table says the compensating controls are the
+  # pre-send validate_no_contacts and this agent's daily redaction scan, not deletion.
+  # If Legal wants them pseudonymised, add a `personal:` block here — do not widen a class.
+
+  # --- classified now, enforced when the owning lane ships -------------------------------
+  # These tables are in §9.4 but not yet in this schema. The engine reports each as
+  # "skipped: not in this schema" so the file stays a complete statement of policy and the
+  # rule starts working the day the table appears, with no edit here.
+  social_signals:
+    class: complainants
+    timestamp_column: fetched_at
+
+  relationship_complaints:
+    class: relationship_complaints
+    timestamp_column: created_at
+    personal:
+      class: relationship_complaints
+      role_tokens: {}
+      scrub_text_columns:
+        - description
+
+  contract_clauses:
+    class: contract_text
+
+  vendors:
+    class: personal_staff_vendor
+    personal:
+      class: personal_staff_vendor
+      role_tokens: {}
+      scrub_text_columns:
+        - contacts_json
+
+  subject_persons:
+    class: personal_staff_vendor
+
+  memory_facts:
+    class: memory_lane
+  memory_episodes:
+    class: memory_lane
+  memory_shift_memo:
+    class: memory_lane
+  memory_playbooks:
+    class: memory_lane

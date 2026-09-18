@@ -33,6 +33,10 @@ NEW_TABLES = {
     "message_templates", "delivery_receipts",
     # schema_version 4 (Phase 3, §7.3.1) — the weather/CAP/flood/KPLC signal cache
     "external_signals",
+    # schema_version 5 (Phase 4) — accountability and learning
+    "vendors", "incident_clock_events",              # §7.6.1 Lane 4A
+    "post_incident_reviews", "pir_action_items",     # §7.7.1 Lane 4B
+    "regulatory_notifications", "evidence_packs",    # §7.6.1 Lane 4A
 }
 NEW_INCIDENT_COLUMNS = {
     "restored_source", "restored_by", "vendor_id", "context_json",
@@ -138,6 +142,18 @@ def test_v1_file_migrates_to_current_schema(tmp_path, restore_db_globals):
         "ALTER TABLE incidents ADD COLUMN access_risk INTEGER DEFAULT 0",
         "ALTER TABLE incidents ADD COLUMN child_site_ids_json TEXT DEFAULT '[]'",
         "ALTER TABLE incidents ADD COLUMN assignment_confidence TEXT DEFAULT 'high'",
+        # schema_version 5 (Phase 4, §7.7.1): the known-error fields on problems. Ordered
+        # before hitl_tasks because the list follows Base.metadata.sorted_tables, which is
+        # dependency order -- problems has no foreign keys, hitl_tasks depends on incidents.
+        "ALTER TABLE problems ADD COLUMN root_cause TEXT",
+        "ALTER TABLE problems ADD COLUMN workaround TEXT",
+        "ALTER TABLE problems ADD COLUMN is_known_error INTEGER DEFAULT 0",
+        "ALTER TABLE problems ADD COLUMN known_error_since DATETIME",
+        "ALTER TABLE problems ADD COLUMN permanent_fix_plan TEXT",
+        "ALTER TABLE problems ADD COLUMN owner_token TEXT",
+        "ALTER TABLE problems ADD COLUMN target_date DATETIME",
+        "ALTER TABLE problems ADD COLUMN closed_at DATETIME",
+        "ALTER TABLE problems ADD COLUMN closure_summary TEXT",
         "ALTER TABLE hitl_tasks ADD COLUMN run_id TEXT",
         "ALTER TABLE hitl_tasks ADD COLUMN entity_type TEXT DEFAULT 'incident'",
         "ALTER TABLE hitl_tasks ADD COLUMN entity_id TEXT",

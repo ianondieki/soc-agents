@@ -11,6 +11,7 @@ import ShiftDesk from "./pages/ShiftDesk";
 import Wallboard from "./pages/Wallboard";
 import Agents from "./pages/Agents";
 import Problems from "./pages/Problems";
+import Regions from "./pages/Regions";
 import Audit from "./pages/Audit";
 import Settings from "./pages/Settings";
 import WorkflowMap from "./pages/WorkflowMap";
@@ -104,6 +105,7 @@ export default function App() {
           <NavLink to="/agents">Agent Observatory</NavLink>
           <NavLink to="/workflow">Workflow Map</NavLink>
           <NavLink to="/problems">Problems</NavLink>
+          <NavLink to="/regions">Regions</NavLink>
           <NavLink to="/audit">Audit</NavLink>
           <NavLink to="/wallboard">Wallboard</NavLink>
           <NavLink to="/settings">Settings / Inject</NavLink>
@@ -189,6 +191,16 @@ export default function App() {
               <Route path="/agents" element={<Agents tick={revisions.runs + manualTick} />} />
               <Route path="/workflow" element={<WorkflowMap profile={profile} />} />
               <Route path="/problems" element={<Problems tick={revisions.problems + manualTick} />} />
+              {/* Regions dashboard (§7.4.2). Refetches on the incidents, problems and
+                  signals slices — the three things a region card actually shows. */}
+              <Route
+                path="/regions"
+                element={
+                  <Regions
+                    tick={revisions.incidents + revisions.problems + revisions.signals + manualTick}
+                  />
+                }
+              />
               <Route path="/audit" element={<Audit tick={revisions.audit + manualTick} />} />
               <Route
                 path="/settings"

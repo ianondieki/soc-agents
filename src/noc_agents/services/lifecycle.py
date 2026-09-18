@@ -9,7 +9,8 @@ from sqlalchemy.orm import Session
 from noc_agents.config import OperatorConfig, get_settings
 from noc_agents.db.models import IncidentBriefRow, IncidentRow, WorkNoteRow, utcnow
 from noc_agents.domain.enums import IncidentStatus
-from noc_agents.realtime.hub import RealtimeEvent, hub
+from noc_agents.realtime.commit_hook import buffer_event
+from noc_agents.realtime.hub import RealtimeEvent
 from noc_agents.services.composition import compose_brief
 from noc_agents.services.hitl import sync_incident_hitl_scalars
 
@@ -250,7 +251,11 @@ def close_incident(
     sync_incident_hitl_scalars(session, inc)  # open tasks are not cancelled on close (deferred); keep scalars honest
     session.flush()
     upsert_brief(session, inc)  # defect #24: a closed ticket must not brief as "investigating"
-    hub.publish_sync(
+    # Buffered, not published: this runs inside the caller's transaction (the route commits
+    # after it returns), and a rollback here would leave the UI showing a ticket as CLOSED
+    # that the database still holds open — the §7.0.4 defect. The commit hook releases it.
+    buffer_event(
+        session,
         RealtimeEvent(
             type="incident.closed",
             operator_id=inc.operator_id,
@@ -292,7 +297,11 @@ def reassign_incident(
         )
     )
     session.flush()
-    hub.publish_sync(
+    # Buffered for the same reason as close_incident: the flush above is not a commit, and the
+    # route commits only after this returns. Announcing the new owner from inside the open
+    # transaction would tell the UI about a handover a rollback then throws away.
+    buffer_event(
+        session,
         RealtimeEvent(
             type="incident.reassigned",
             operator_id=inc.operator_id,

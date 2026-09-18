@@ -417,7 +417,14 @@ def test_external_signals_table_shape_and_schema_version(tmp_db):
     indexes = {r[1]: r[2] for r in session.execute(text("PRAGMA index_list(external_signals)")).fetchall()}
     assert "ix_signals_region_valid" in indexes
     assert any(unique for name, unique in indexes.items() if name.startswith("sqlite_autoindex") or "uq_" in name)
-    assert session.execute(text("SELECT MAX(version) FROM schema_version")).scalar() == SCHEMA_VERSION == 4
+    # Two separate claims. The first -- stamped version == SCHEMA_VERSION -- is the real
+    # invariant: a freshly created file is stamped with the version the code believes it
+    # wrote. The trailing literal is a CANARY: it fires on any bump so that somebody has to
+    # look at the migration rather than let a schema change ride along unnoticed. It fired
+    # on 4 -> 5 (Phase 4: vendors, clock events, PIR, regulatory, evidence packs, and the
+    # known-error columns on problems), the migration was reviewed, and the literal moved.
+    # Keep the canary; move it deliberately, with the reason recorded, every time.
+    assert session.execute(text("SELECT MAX(version) FROM schema_version")).scalar() == SCHEMA_VERSION == 5
 
     now = datetime(2026, 9, 17, 11, 0)
     common = dict(operator_id=OPERATOR, source=OPEN_METEO, source_url="mock://", region_code="NBI_W", fetched_at=now, valid_until=now, payload_json="{}", external_id="NBI_W:2026-09-17T11:00Z")

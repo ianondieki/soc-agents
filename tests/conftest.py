@@ -31,6 +31,18 @@ os.environ["SCHEDULER_ENABLED"] = "false"
 # means no ticker starts, so no job runs; pinning the per-job flag as well would stop
 # test_scheduler_lease.py from exercising the outbox job when it enables the scheduler
 # itself, which is real behaviour worth testing.
+# Phase 4 feature lanes. Every one of these defaults to false in code, so pinning them
+# changes nothing about what the suite tests -- it stops a developer who has exported one
+# in their shell from testing a DIFFERENT system than CI does. That is not hypothetical:
+# with HOUSEKEEPING_ENABLED and HOUSEKEEPING_APPLY both exported, the housekeeping job is
+# the one piece of this codebase that DELETES rows, and the suite runs against real
+# database files. Tests that need a lane on turn it on themselves with monkeypatch.
+os.environ["SCORECARDS_ENABLED"] = "false"
+os.environ["PIR_ENABLED"] = "false"
+os.environ["REGULATORY_ENABLED"] = "false"
+os.environ["HOUSEKEEPING_ENABLED"] = "false"
+os.environ["HOUSEKEEPING_APPLY"] = "false"
+os.environ["MEMORY_ENABLED"] = "false"
 for _key in (
     "GMAIL_ADDRESS",
     "GMAIL_APP_PASSWORD",

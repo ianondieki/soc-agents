@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { api } from "../api";
+import EarlierAtThisSite from "../components/EarlierAtThisSite";
 import { fmtDateTime } from "../lib/time";
 import { useIncidentRevision } from "../realtime/RealtimeContext";
 
@@ -290,6 +291,12 @@ export default function IncidentWorkspace({ session }: { session: any }) {
           </div>
         </div>
       </div>
+
+      {/* Agent memory M0 (spec §7.11): what has happened at this mast before, read from the
+          incidents already in the database. Self-contained — it owns its fetch and swallows its
+          own failures — so it cannot affect anything above it, and removing it is deleting this
+          line and the import. Advisory only (MEM1): it sets no field on this ticket. */}
+      <EarlierAtThisSite siteId={inc.site_id} />
 
       <div className="panel" style={{ marginTop: "1rem" }}>
         <h3>Unified timeline (EAT)</h3>

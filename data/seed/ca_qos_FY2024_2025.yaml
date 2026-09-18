@@ -1,0 +1,131 @@
+# =============================================================================
+# CA Quality of Service report FY 2024-2025 — regulatory baseline seed (§7.4.3)
+# =============================================================================
+# The Regions dashboard shows, next to each region's live fault picture, what the
+# REGULATOR last measured. That is the only number on the card that an operator
+# cannot move by working harder tonight, and it is the number a licence hangs on,
+# so it is seeded from a published report and never computed from our own data.
+#
+# This is a SEED, not a fetch. §7.4 is explicit: no live call to ca.go.ke, ever,
+# from this codebase — the figures below were read off the published PDF once, by
+# hand, and they change once a year. A poller would add a network dependency, a
+# TLS surface and a parser for a document that moves annually; a YAML file that a
+# human edits once a year has none of those, and a reviewer can diff it.
+#
+# WHAT IS VERIFIED HERE
+# ---------------------
+# The three `overall_pct` figures, the 80 % pass mark, the "five regional
+# clusters" count and "Safaricom met its targets in all five" come from §7.4.3 of
+# the spec, which cites the PDF at `source_url` below. Nothing else does.
+#
+# WHAT IS NOT — AND MUST NOT BE GUESSED
+# -------------------------------------
+# `clusters` is EMPTY and `cluster_to_region` maps every region to null. That is
+# deliberate and it is the honest state of this file today: **nobody on this
+# project has opened the PDF.** The report names its five clusters and gives a
+# score per cluster; those names and scores are not reproduced anywhere in the
+# spec, so writing them here would be inventing a regulatory citation — the one
+# kind of wrong number that survives review because it looks authoritative.
+#
+# Until a human parses the report, `services/dashboards.py` falls back to the
+# operator-wide figure and reports `granularity: "operator"` on the card, so the
+# screen says which grain the number is at rather than implying a per-region
+# measurement that does not exist.
+#
+# §7.4.3 also warns that the report's five clusters do NOT map 1:1 onto this
+# dashboard's six regions (nor onto a seventh `NEP` if D6 adds one). So the
+# mapping below is many-to-one on purpose: several regions may share one cluster,
+# and a region that straddles two clusters has no honest answer — leave it null
+# rather than picking the nicer score. `granularity` is therefore never "region".
+#
+# The report's "drive tests in all 47 counties" claim is UNVERIFIED (§7.4.3) and
+# is deliberately absent from this file. Add it only with the PDF page number.
+#
+# HOW TO FINISH THIS FILE (≈ 30 minutes, once a year)
+# ---------------------------------------------------
+#   1. Open `source_url`. Find the table of results by regional cluster.
+#   2. For each cluster add an entry under `clusters:` — `name` spelled exactly
+#      as the report prints it, `scores` per operator id, and `page` so the next
+#      reader can check you without re-reading the whole PDF.
+#   3. Fill `cluster_to_region` for the regions you can defend. Leave the rest
+#      null; an unmapped region still renders, on the operator-wide figure.
+#   4. Set `parsed_by` (a role token, never a person's name — §7.4.6) and
+#      `parsed_at`.
+#   5. `tests/unit/test_dashboard_regions.py` checks the mapping only names
+#      clusters that exist and that every score is a percentage. It will fail if
+#      step 2 and step 3 disagree.
+# -----------------------------------------------------------------------------
+ca_qos:
+  report: "FY2024-2025"
+  # Shown prominently on the card (§7.4.3): a 2026-03 publication describing the
+  # 2024-25 financial year is already historic when a night shift reads it, and a
+  # baseline without its date is an invitation to treat it as current.
+  report_date: "2026-03"
+  source_url: "https://www.ca.go.ke/sites/default/files/2026-03/Quality%20of%20Service%20(QoS)%20Performance%20by%20Mobile%20Network%20Operators%20%20Report%20FY%202024-2025.pdf"
+  source_note: >
+    Communications Authority of Kenya, "Quality of Service (QoS) Performance by
+    Mobile Network Operators Report FY 2024-2025". Figures below transcribed from
+    the spec's citation of that report (§7.4.3), not from an automated fetch.
+
+  # The compliance threshold the report scores against.
+  pass_mark_pct: 80.0
+
+  # How many grains the report actually reports at. Kept as data, not prose, so
+  # the dashboard can say "1 of 5 clusters mapped" instead of implying full cover.
+  cluster_count: 5
+
+  # Who transcribed the PDF, and when. Both null = nobody has. The dashboard uses
+  # this to mark the baseline as UNPARSED rather than pretending it is current.
+  parsed_by: null
+  parsed_at: null
+
+  # Operator-wide scores. VERIFIED against §7.4.3. Keys are `operator_id` as it
+  # appears in config/operators/*.yaml, so a profile switch picks up its own row.
+  operators:
+    safaricom:
+      display_name: "Safaricom"
+      overall_pct: 89.72
+      # §7.4.3: "with Safaricom meeting targets in all five [clusters]".
+      met_targets_in_all_clusters: true
+    airtel:
+      display_name: "Airtel"
+      overall_pct: 81.14
+      # Above the 80 % pass mark overall; the per-cluster picture is not stated
+      # in the spec, so this stays null rather than being inferred from the mean.
+      met_targets_in_all_clusters: null
+    telkom:
+      display_name: "Telkom"
+      # Well below the pass mark. Present because the card names the field and a
+      # future profile may be Telkom; no Telkom operator profile exists today.
+      overall_pct: 52.76
+      met_targets_in_all_clusters: null
+
+  # UNPARSED. See "HOW TO FINISH THIS FILE" above. Shape, for whoever fills it:
+  #
+  #   clusters:
+  #     - name: "<cluster name exactly as printed in the report>"
+  #       page: 00                      # PDF page the table appears on
+  #       scores: {safaricom: 00.00, airtel: 00.00, telkom: 00.00}
+  clusters: []
+
+  # region_code -> cluster name, per operator. Every value null today: no cluster
+  # names exist to map to. The region codes are listed so the person parsing the
+  # report has the exact vocabulary in front of them and cannot invent a code —
+  # they are the `regions:` keys of the matching config/operators/*.yaml.
+  cluster_to_region:
+    safaricom:
+      NBI_E: null
+      NBI_W: null
+      MTK: null
+      CST: null
+      RFT: null
+      WNY: null
+    airtel:
+      NBI: null
+      CKA: null
+      CST: null
+      RVA: null
+      WST: null
+      NYZ: null
+      EST: null
+      NEA: null

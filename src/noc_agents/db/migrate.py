@@ -43,8 +43,23 @@ from noc_agents.db.models import Base, SchemaVersionRow, utcnow
 # 1 = pre-Phase-1 (no schema_version table); 2 = Phase 1 platform tables (outbox, scheduler,
 # llm_calls, incident restore provenance); 3 = Phase 2 message tables (message_templates,
 # delivery_receipts) and hitl_tasks.{run_id, entity_type, entity_id, created_by, edited};
-# 4 = Phase 3 early-warning cache (external_signals, §7.3.1).
-SCHEMA_VERSION = 4  # bump per release that adds tables/columns
+# 4 = Phase 3 early-warning cache (external_signals, §7.3.1);
+# 5 = Phase 4 accountability and learning: vendors + incident_clock_events (§7.6.1),
+#     post_incident_reviews + pir_action_items (§7.7.1), regulatory_notifications +
+#     evidence_packs (§7.6.1), and the known-error columns on problems (§7.7.1).
+SCHEMA_VERSION = 5  # bump per release that adds tables/columns
+
+# Why the bump is not optional when a release adds COLUMNS, even though new TABLES seem to
+# appear without one: init_db() calls Base.metadata.create_all() after migrate_additive(),
+# and create_all creates missing tables but never missing columns. So a release that forgets
+# to bump gets its new tables silently (and with NO pre-migration backup, because the backup
+# only runs when the version moves) while every new column is quietly absent -- and the first
+# query that selects one fails with "no such column" at runtime, not at startup.
+#
+# That is not hypothetical: this repo's own dev database sat at version 4 with a `vendors`
+# table present and `problems.root_cause` missing, and GET /api/v1/dashboard/regions raised
+# OperationalError: no such column: problems.root_cause. Bump the version in the SAME change
+# that adds the column.
 
 log = logging.getLogger("noc_agents.db.migrate")
 

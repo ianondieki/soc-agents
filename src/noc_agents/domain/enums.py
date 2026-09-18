@@ -65,6 +65,10 @@ class HitlTaskType(str, Enum):
     APPROVE_PRIORITY = "APPROVE_PRIORITY"
     APPROVE_ASSIGNMENT = "APPROVE_ASSIGNMENT"
     APPROVE_EXEC_BRIEF = "APPROVE_EXEC_BRIEF"
+    # Phase 4 (§7.6). The gate on a notice to the Communications Authority: metric M10 is
+    # "100 % drafted, 0 auto-sent", so this card is the ONLY thing that lets a regulatory
+    # draft reach the outbox, and approving it is a separate act from sending it.
+    APPROVE_REGULATORY_NOTICE = "APPROVE_REGULATORY_NOTICE"
     GENERIC = "GENERIC"
     # v2 (§7.1.2): gates for write-capable MCP cards; exercised only when such a card is actually connected.
     APPROVE_TICKET_SYNC = "APPROVE_TICKET_SYNC"

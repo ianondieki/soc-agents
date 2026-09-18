@@ -153,6 +153,27 @@ def _weather_job() -> JobCard:
     return WEATHER_JOB
 
 
+def _pir_job() -> JobCard:
+    """The Phase 4 PIR auto-open card, imported lazily for the same reason as the weather one."""
+    from noc_agents.services.pir import PIR_JOB
+
+    return PIR_JOB
+
+
+def _regulatory_job() -> JobCard:
+    """The Phase 4 regulatory sweep's card, imported lazily for the same reason as the weather one."""
+    from noc_agents.services.regulatory import REGULATORY_JOB
+
+    return REGULATORY_JOB
+
+
+def _housekeeping_job() -> JobCard:
+    """The Phase 4 housekeeping card, imported lazily for the same reason as the weather one."""
+    from noc_agents.services.housekeeping import HOUSEKEEPING_JOB
+
+    return HOUSEKEEPING_JOB
+
+
 SCHEDULED_JOBS: tuple[JobCard, ...] = (
     JobCard("outbox_dispatch", 5, outbox_dispatch_job, "OUTBOX_DISPATCH_ENABLED", "BroadcastCommsAgent", "outbox", max_seconds=30),
     JobCard("monitor_tick", 60, tick_job, "SCHEDULER_MONITOR_ENABLED", "WorklogMonitorAgent", "monitor"),
@@ -161,6 +182,19 @@ SCHEDULED_JOBS: tuple[JobCard, ...] = (
     # and the poller re-checks the flag itself. Imported lazily: pollers.weather imports the
     # scheduler's JobCard, so a top-level import either way round is a cycle.
     _weather_job(),
+    # Phase 4 PIR lane (§7.7.3): opens a DRAFT review for incidents that just restored or
+    # closed and match a trigger rule. PIR_ENABLED defaults OFF and auto_open re-checks it.
+    _pir_job(),
+    # Phase 4 regulatory clock (§7.6): sweeps open notices and announces the 12 h and 2 h
+    # countdowns. It never sends: releasing a notice needs an APPROVED HITL card and a
+    # separate supervisor act. REGULATORY_ENABLED defaults OFF.
+    _regulatory_job(),
+    # Phase 4 housekeeping (§5.3.22): retention, outbox sweep, redaction scan, daily backup.
+    # HOUSEKEEPING_ENABLED defaults OFF, and deleting for real needs a SECOND key
+    # (HOUSEKEEPING_APPLY) plus posture.dry_run: false in config/retention.yaml -- this is
+    # the only scheduled job that can remove rows, so an unset flag must read as off here
+    # too, which is what default_enabled=False on the card guarantees.
+    _housekeeping_job(),
 )
 
 
