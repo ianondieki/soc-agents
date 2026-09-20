@@ -47,7 +47,10 @@ from noc_agents.db.models import Base, SchemaVersionRow, utcnow
 # 5 = Phase 4 accountability and learning: vendors + incident_clock_events (§7.6.1),
 #     post_incident_reviews + pir_action_items (§7.7.1), regulatory_notifications +
 #     evidence_packs (§7.6.1), and the known-error columns on problems (§7.7.1).
-SCHEMA_VERSION = 5  # bump per release that adds tables/columns
+# 6 = Phase 5 scheduling and knowledge: maintenance_plans/tasks/windows (§7.5),
+#     contracts + contract_clauses + contract_faq + contract_queries (§7.8),
+#     relationship_complaints + subject_persons (§7.8).
+SCHEMA_VERSION = 6  # bump per release that adds tables/columns
 
 # Why the bump is not optional when a release adds COLUMNS, even though new TABLES seem to
 # appear without one: init_db() calls Base.metadata.create_all() after migrate_additive(),

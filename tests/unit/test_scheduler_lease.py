@@ -468,6 +468,36 @@ def test_with_scheduler_disabled_nothing_starts(make_client, monkeypatch):
                 "circuit_open": False,
             },
             {
+                # Phase 5 complaint follow-up (§7.8.3).
+                "name": "complaints_followup",
+                "interval_s": 3600,
+                "enabled": False,
+                "last_started_at": None,
+                "last_status": None,
+                "consecutive_failures": 0,
+                "circuit_open": False,
+            },
+            {
+                # Phase 5 maintenance planner (§7.5). Proposes; never schedules.
+                "name": "maintenance_plan_due",
+                "interval_s": 3600,
+                "enabled": False,
+                "last_started_at": None,
+                "last_status": None,
+                "consecutive_failures": 0,
+                "circuit_open": False,
+            },
+            {
+                # Phase 5 maintenance window sweep (§7.5).
+                "name": "maintenance_window_sweep",
+                "interval_s": 300,
+                "enabled": False,
+                "last_started_at": None,
+                "last_status": None,
+                "consecutive_failures": 0,
+                "circuit_open": False,
+            },
+            {
                 # Phase 4 housekeeping (§5.3.22). The ONLY scheduled job that can delete
                 # rows, so "enabled": False with the flag unset matters more here than
                 # anywhere else -- and even enabling it only permits a dry run, because
@@ -484,7 +514,9 @@ def test_with_scheduler_disabled_nothing_starts(make_client, monkeypatch):
     }
     assert [c.name for c in SCHEDULED_JOBS] == [
         "outbox_dispatch", "monitor_tick", "weather_regions",
-        "pir_autoopen", "regulatory_sweep", "housekeeping",
+        "pir_autoopen", "regulatory_sweep",
+        "complaints_followup", "maintenance_plan_due", "maintenance_window_sweep",
+        "housekeeping",
     ]
 
 

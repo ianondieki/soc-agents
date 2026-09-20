@@ -121,6 +121,14 @@ shifts:
 management_distribution_list:
   - airtel.noc.duty.manager@example.com
 
+# Outbound recipient register (§7.0.2) — see the long note in safaricom.yaml.
+# A `recipients_ref` that is missing here, or whose list is empty, REFUSES the
+# dispatch; it never falls back to DEMO_EMAIL_TO.
+notification_recipients:
+  # Communications Authority of Kenya. EMPTY ON PURPOSE: the notification mailbox
+  # is this operator's own licence correspondence, not public configuration.
+  regulatory.recipients.CA: []
+
 recurrence:
   threshold_count: 3
   lookback_days: 30

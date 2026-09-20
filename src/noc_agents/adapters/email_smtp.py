@@ -91,11 +91,6 @@ def send_email(
         )
 
     user = (os.getenv("GMAIL_ADDRESS") or os.getenv("SMTP_USER") or "").strip()
-    password = (os.getenv("GMAIL_APP_PASSWORD") or os.getenv("SMTP_PASSWORD") or "").strip()
-    # Gmail app passwords are often shown with spaces
-    password = password.replace(" ", "")
-    host = os.getenv("SMTP_HOST", "smtp.gmail.com")
-    port = int(os.getenv("SMTP_PORT", "587"))
     from_addr = os.getenv("SMTP_FROM") or user
 
     msg = EmailMessage()
@@ -107,6 +102,70 @@ def send_email(
         msg.add_alternative(body, subtype="html")
     else:
         msg.set_content(body)
+
+    return _deliver(msg, recipients)
+
+
+def send_message(msg: EmailMessage, *, to: Sequence[str] | None = None) -> EmailResult:
+    """Send an ALREADY BUILT message (the iMIP calendar invite, §7.5.6 / RFC 6047).
+
+    ``send_email`` builds its own single-part ``EmailMessage``, so there is nowhere to put a
+    ``text/calendar; method=REQUEST`` part — an invite sent through it arrives as prose and
+    no client draws an Accept button. This entry point takes the finished message from
+    ``services/ics.build_imip_message`` and does only the transport.
+
+    Two things it deliberately does NOT do, both of which ``send_email`` does:
+
+    * it does not fall back to ``demo_recipients()``. The recipients are the attendees the
+      calendar object names, and an invite quietly rerouted to the demo mailbox is an
+      engineer who never learns about the window (and a mailbox that gets an event for a
+      site it has nothing to do with). No recipients means no send;
+    * it does not overwrite ``From:``. RFC 6047 §3 expects ``From:`` to equal the ORGANIZER,
+      and several clients silently drop an invite where the two disagree — so the caller
+      owns that header. NOTE for the operator: the relay must be allowed to send as that
+      organiser address (Gmail refuses otherwise), which is an SMTP 5xx the outbox records,
+      not something this adapter can paper over.
+
+    Same ``EmailResult`` contract as ``send_email``: mock when unconfigured, never raises.
+    """
+    recipients = [str(a).strip() for a in (to if to is not None else _recipients_of(msg)) if str(a).strip()]
+    if not recipients:
+        return EmailResult(ok=True, mode="mock", detail="No recipients on the message — nothing sent (mock)", to=[])
+    if not email_configured():
+        return EmailResult(
+            ok=True,
+            mode="mock",
+            detail=f"SMTP not configured — would have sent to {recipients} (mock)",
+            to=recipients,
+        )
+    return _deliver(msg, recipients)
+
+
+def _recipients_of(msg: EmailMessage) -> list[str]:
+    """Addresses from To/Cc/Bcc of a built message, in header order."""
+    from email.utils import getaddresses
+
+    headers = [str(v) for field in ("To", "Cc", "Bcc") for v in msg.get_all(field, [])]
+    return [addr for _name, addr in getaddresses(headers) if addr]
+
+
+def _deliver(msg: EmailMessage, recipients: Sequence[str]) -> EmailResult:
+    """The one SMTP conversation, shared by ``send_email`` and ``send_message``.
+
+    Extracted unchanged from ``send_email``: same STARTTLS sequence, same 30 s timeout, same
+    result strings (the mock/disabled decisions stay with the callers, because they differ —
+    ``send_email`` may fall back to the demo mailbox and ``send_message`` may not).
+    """
+    user = (os.getenv("GMAIL_ADDRESS") or os.getenv("SMTP_USER") or "").strip()
+    password = (os.getenv("GMAIL_APP_PASSWORD") or os.getenv("SMTP_PASSWORD") or "").strip()
+    # Gmail app passwords are often shown with spaces
+    password = password.replace(" ", "")
+    host = os.getenv("SMTP_HOST", "smtp.gmail.com")
+    port = int(os.getenv("SMTP_PORT", "587"))
+    recipients = list(recipients)
+    if not msg["From"]:  # a caller-set From (the iMIP ORGANIZER) is never overwritten
+        del msg["From"]  # no-op when absent; without it an empty header would be duplicated
+        msg["From"] = os.getenv("SMTP_FROM") or user
 
     try:
         context = ssl.create_default_context()

@@ -7,7 +7,9 @@ incident and a rollback takes it away. ``dispatch_incident_email`` keeps its his
 name: the BROADCAST node still calls it, and raising from it still fails the node closed.
 
 Dispatcher side — called by ``orchestrator.outbox.drain_once`` AFTER commit, never inside
-a transaction. ``transmit_email`` sends through the SMTP adapter; ``record_email_outcome``
+a transaction. ``transmit_email`` resolves the payload's ``recipients_ref`` (see
+``resolve_recipients``: a ref that does not resolve refuses the send rather than falling
+back to the demo mailbox) and sends through the SMTP adapter; ``record_email_outcome``
 and ``record_sms_outcome`` flip the ``BroadcastRow`` drafts, write the
 ``("BroadcastCommsAgent", "email")`` WorkNote and return the ``email.sent`` /
 ``email.failed`` event for the dispatcher to publish once the outcome has committed.
@@ -16,6 +18,7 @@ and ``record_sms_outcome`` flip the ``BroadcastRow`` drafts, write the
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime
 from typing import TYPE_CHECKING
 
@@ -23,6 +26,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from noc_agents.adapters.email_smtp import EmailResult, parse_subject_body, send_email
+from noc_agents.config import AppSettings, get_settings
 from noc_agents.db.models import BroadcastRow, IncidentRow, OutboxRow, WorkNoteRow, new_id
 from noc_agents.realtime.hub import RealtimeEvent
 
@@ -31,6 +35,17 @@ if TYPE_CHECKING:  # typing only: orchestrator.outbox imports this module at run
 
 EMAIL_NOTE_AUTHOR = "BroadcastCommsAgent"
 QUEUED = "QUEUED"  # BroadcastRow status between enqueue and dispatch (6 chars: fits String(16))
+
+#: The one ref that is NOT looked up: it means "whatever DEMO_EMAIL_TO / GMAIL_ADDRESS says",
+#: which is the adapter's own default and the only recipient the demo has ever had.
+DEMO_RECIPIENTS_REF = "DEMO_EMAIL_TO"
+
+#: A resolved recipient must look like an address before it reaches SMTP. Deliberately strict,
+#: because the ``recipients_ref`` vocabulary also contains ROLE tokens
+#: (``regions.NBI_W.rnio`` → ``"RNIO-NBI-W"``, ``audience:MANAGEMENT``): handing one of those
+#: to ``send_email`` is either an SMTP error at best or, in the shape this module had before,
+#: a silent fallback to the demo mailbox.
+_EMAIL_RE = re.compile(r"^[^@\s,;:<>\"]+@[^@\s,;:<>\"]+\.[A-Za-z]{2,}$")
 
 
 # --- producer side: render + enqueue ------------------------------------------------------
@@ -205,9 +220,95 @@ def handover_email_response(session: Session, outbox_id: str, report: DrainRepor
 # --- dispatcher side: transmit + record the outcome ----------------------------------------
 
 
+class UnresolvedRecipients(RuntimeError):
+    """A ``recipients_ref`` could not be turned into a list of addresses — so nothing is sent.
+
+    Raised out of ``transmit_email`` on purpose rather than returning a failed ``EmailResult``:
+    ``outbox.dispatch`` classifies any non-transient exception as **DEAD**, which is the
+    outcome this case needs. DEAD is terminal (no retry — a missing config entry will not
+    appear during a 3-attempt backoff), it records the ref in ``outbox.last_error``, it
+    publishes ``outbox.failed`` to the wallboard, and ``record_email_outcome`` still runs, so
+    the incident gets the ``[BroadcastCommsAgent] EMAIL → … | mode=error | to=[(none)]`` work
+    note. A human therefore sees an unsent notification instead of a silently misdirected one.
+    """
+
+
+def resolve_recipients(ref: str, *, operator_id: str | None, settings: AppSettings | None = None) -> list[str]:
+    """``recipients_ref`` → real addresses from the operator profile, or raise.
+
+    WHY THIS FAILS CLOSED (Phase 4 blocker 1). Until this existed, ``transmit_email`` called
+    ``send_email(subject=…, body=…)`` with no ``to``, so the adapter resolved EVERY message —
+    including the Communications Authority notice the regulatory lane queues with
+    ``recipients_ref="regulatory.recipients.CA"`` — to ``DEMO_EMAIL_TO``. With
+    ``EMAIL_ENABLED`` and ``REGULATORY_ENABLED`` both on, that is two failures at once: the
+    statutory notification never reaches the regulator, and an incident disclosure marked
+    ``scope=RESTRICTED`` lands in a demo inbox.
+
+    So an unresolvable ref REFUSES the dispatch. Falling back to the demo mailbox is not an
+    option — it is the bug. Sending to *some* address is not the conservative choice when the
+    right address is unknown: an unsent notice is one visible, fixable problem, while a notice
+    sent to the wrong mailbox is a disclosure that cannot be taken back and a regulatory
+    obligation that looks discharged. The operator fills the address in (it comes from their
+    own licence correspondence, not from this repo), and the refusal is what tells them to.
+
+    A ref resolves only when the operator profile's ``notification_recipients`` names it AND
+    every value under it looks like an e-mail address. ``settings`` is an override for tests
+    and for callers that already hold the resolved profile.
+    """
+    key = (ref or "").strip()
+    if not key:
+        raise UnresolvedRecipients("empty recipients_ref: nothing to resolve, refusing to send")
+    if settings is None:
+        if not operator_id:
+            raise UnresolvedRecipients(f"recipients_ref {key!r} carries no operator_id; cannot resolve a profile")
+        try:
+            settings = get_settings(operator_id)
+        except Exception as exc:  # noqa: BLE001 — an unloadable profile is an unresolvable ref
+            raise UnresolvedRecipients(f"recipients_ref {key!r}: operator profile {operator_id!r} did not load ({type(exc).__name__})") from exc
+    op = settings.operator.operator_id
+    register = settings.operator.notification_recipients or {}
+    if key not in register:
+        raise UnresolvedRecipients(
+            f"recipients_ref {key!r} is not in notification_recipients for operator {op!r} "
+            f"(config/operators/{op}.yaml); refusing to send rather than falling back to {DEMO_RECIPIENTS_REF}"
+        )
+    addresses = [str(a).strip() for a in (register.get(key) or []) if str(a).strip()]
+    if not addresses:
+        raise UnresolvedRecipients(
+            f"recipients_ref {key!r} is declared but empty in config/operators/{op}.yaml; "
+            f"fill in the real recipient before this lane is switched on"
+        )
+    # Counted, never quoted: the ref and how many values failed is enough to fix the YAML, and
+    # ``last_error`` is a stored, exportable field (§9.5 — an audit record does not repeat its
+    # own finding). A role token or a phone number here is a config mistake, not a recipient.
+    bad = [a for a in addresses if not _EMAIL_RE.match(a)]
+    if bad:
+        raise UnresolvedRecipients(
+            f"recipients_ref {key!r}: {len(bad)} of {len(addresses)} configured value(s) are not "
+            f"e-mail addresses (config/operators/{op}.yaml); refusing to send"
+        )
+    return addresses
+
+
 def transmit_email(payload: dict) -> EmailResult:
-    """The one SMTP call. Runs in the dispatcher only, after commit."""
-    return send_email(subject=payload["subject"], body=payload["body"])
+    """The one SMTP call. Runs in the dispatcher only, after commit.
+
+    ``recipients_ref`` decides where it goes (§7.0.2: a payload carries a REF, never an
+    address, so a queued row cannot pin a mailbox that has since changed hands):
+
+    * absent, empty or ``DEMO_EMAIL_TO`` → the historical demo path, byte-for-byte: no ``to``
+      argument, so ``adapters/email_smtp`` resolves ``DEMO_EMAIL_TO`` / ``GMAIL_ADDRESS`` and
+      still returns ``mode="mock"`` when neither is set. Every incident, handover and HITL
+      release email goes this way, and none of them change behaviour;
+    * anything else → resolved from the operator profile, or the dispatch is refused (see
+      ``resolve_recipients``). There is no third branch on purpose: a ref this process cannot
+      resolve must not silently become the demo mailbox.
+    """
+    ref = (payload.get("recipients_ref") or "").strip()
+    if not ref or ref == DEMO_RECIPIENTS_REF:
+        return send_email(subject=payload["subject"], body=payload["body"])
+    recipients = resolve_recipients(ref, operator_id=payload.get("operator_id"))
+    return send_email(subject=payload["subject"], body=payload["body"], to=recipients)
 
 
 def record_email_outcome(

@@ -22,17 +22,35 @@ anything; `data/backups/noc_agents.4-to-5.*.db` is the rollback point for the v5
 
 ## Before you switch anything on
 
-**1. A regulatory notice would currently go to the demo mailbox.**
-`services/notify.py:transmit_email` calls `send_email(subject=..., body=...)` and ignores the
-payload's `recipients_ref`, which `adapters/email_smtp` resolves to `DEMO_EMAIL_TO`. The
-regulatory lane sets `recipients_ref="regulatory.recipients.CA"` ready for it, but nothing
-reads that yet. Harmless while `EMAIL_ENABLED` and `REGULATORY_ENABLED` are both false.
-**Do not turn both on in production until recipient resolution honours `recipients_ref`.**
+**1. ~~A regulatory notice would go to the demo mailbox.~~ FIXED in Phase 5 — now fill in the
+address.** `services/notify.resolve_recipients` honours `recipients_ref`, and an unresolvable
+ref fails **closed**: the outbox row goes `DEAD` (terminal, no retry — a missing config entry
+will not appear during a backoff), `outbox.failed` reaches the wallboard and the incident gets
+an error work note. The shipped operator profiles declare
+`notification_recipients['regulatory.recipients.CA']` as an **empty list** on purpose: the CA
+notification mailbox comes from the operator's own licence correspondence, and an invented
+address would read as configured. **Fill it in before `REGULATORY_ENABLED` goes on**, or every
+approved notice will refuse at dispatch.
 
-**2. The outbox has no `LLM_CALL` transmitter.**
-`POST /pir/{id}/draft/llm` enqueues a redacted row exactly as §7.7.3 requires, but
-`orchestrator/outbox._TRANSMITTERS` has no `LLM_CALL` entry, so a drain marks the row `DEAD`
-with "no transmitter for outbox kind". Needs a transmitter before `PIR_ENABLED` goes on.
+**2. ~~The outbox has no `LLM_CALL` transmitter.~~ FIXED in Phase 5 — but the draft has no
+sink.** The transmitter goes through the LLM port, so the G13 subscription guard, the spend
+circuit and `llm_calls` recording all apply, and §7.0.10's reg 41(2) paperwork gate is enforced
+for a hosted model. `LLM_ENABLED=false` is inert and writes no rows at all.
+
+What it does **not** do is store the drafted text anywhere. There is no column or sink function
+for it, and the token→name map is deliberately dropped at enqueue, so a draft would carry
+unresolvable `<PERSON_n>` tokens. So today `PIR_ENABLED` + `LLM_ENABLED` buys an audited,
+budgeted, recorded call whose output nobody receives. The follow-up is one function in
+`services/pir.py` — apply the draft under the blameless validator and a DRAFT/IN_REVIEW status
+guard, never overwriting a human's words. The dispatcher deliberately did not invent a
+review-editing policy.
+
+**2b. A last-gate redaction backstop now exists, and it found a real weakness.** Redaction does
+happen at enqueue (`services/pir.queue_llm_draft`), but **nothing enforced it**: `outbox.enqueue`
+takes any payload, so a future producer of an `LLM_CALL` row could have handed the transmitter
+raw text and the dispatcher would have posted it abroad. The transmitter now re-scans the
+outgoing block with redaction's own patterns and refuses, reporting counts only. It catches
+contact identifiers; there is still no NER, so a person named only in free text is not detected.
 
 **3. Housekeeping deletes data, and needs two keys on purpose.**
 `HOUSEKEEPING_APPLY=true` **and** `posture.dry_run: false` in `config/retention.yaml`. The YAML

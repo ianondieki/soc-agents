@@ -239,3 +239,62 @@ re-run; **any fix that changes a golden literal is forbidden** (guardrail G2). R
 fall back to the sidecar design in spec §7.1.5, and record the decision here.
 
 The throwaway venv is disposable: `Remove-Item -Recurse -Force C:\Users\PC\.venvmcp`.
+
+---
+
+## 6. Turning a feature lane on (Phases 3–5)
+
+Every lane added after the Phase 3 stop line ships **off**. With its flag unset the routes 404,
+its scheduled jobs report `enabled: false`, and nothing about the incident pipeline changes.
+That is deliberate: it means a lane can be merged, reviewed and shipped long before anyone has
+done the paperwork it needs.
+
+Turning one on is three steps, in this order. Do not skip step 1.
+
+### Step 1 — check what the lane still needs from a person
+
+`docs/PHASE4.md` and `docs/PHASE5.md` each have a "before you switch anything on" section. Those
+are not a wish-list; they are the things that make the lane *wrong* rather than merely absent.
+The two that bite hardest:
+
+* **Recipients must resolve.** A lane that emails anyone (regulatory notices, maintenance
+  invites, complaint reminders) resolves a `recipients_ref` against the operator profile. If the
+  key is missing the dispatch is **refused**, on purpose — the alternative is that a notice to
+  the Communications Authority, or a reminder that a confidential complaint exists, lands in
+  whatever `DEMO_EMAIL_TO` points at. A refusal is visible; a misdirected disclosure is not.
+* **Paperwork gates are real gates.** Anything that sends clause text or complaint text to a
+  hosted model needs a reg 41(2) transfer record first. The code fails closed to a deterministic
+  path without one, which looks like "the AI answer is missing" rather than an error.
+
+### Step 2 — turn the flag on in ONE place and watch it
+
+Set the flag in `.env` (see `.env.example` for the list and what each one covers), restart, and
+check `GET /api/v1/scheduler/status`. A lane's job should move from `enabled: false` to `true`;
+if it does not, the flag name is wrong — the status surface reads the same env var the job does,
+which is exactly why it is there.
+
+### Step 3 — the ones that need more than a flag
+
+* **`HOUSEKEEPING_ENABLED` does not delete anything on its own.** Deleting needs
+  `HOUSEKEEPING_APPLY=true` **and** `posture.dry_run: false` in `config/retention.yaml`. Two
+  keys, because the YAML is the document Legal signs off and the env flag is the operator's
+  decision, and neither party should be able to start removing operational records alone. With
+  the flag on and apply off you get a report of what *would* go. Read that report first.
+* **`SCORECARDS_ENABLED` must not publish before a shadow period.** §7.6 requires one shadow
+  shift covering the first scorecard period before any scorecard is PUBLISHED. These numbers
+  decide vendor money.
+* **`MAINTENANCE_ENABLED` needs `maintenance.recipients.FE_ONCALL`** in the operator profile, and
+  Legal's confirmation of CA licence Condition 9.1 — the code enforces a `ca_approval_ref` for
+  REGION and NETWORK windows and labels it UNVERIFIED until someone checks the licence class.
+* **`ICS_UID_DOMAIN` is set once and never changed.** It is the right-hand side of every calendar
+  invite's UID. Changing it after invites have gone out gives every attendee a **duplicate**
+  event rather than an update.
+* **`UPLOAD_DIR` must never point inside `frontend/dist`.** Every accepted file would become a
+  URL. The code refuses and warns, but do not rely on that.
+
+### Turning a lane back off
+
+Unset the flag and restart. No data is deleted and no schema changes — the tables stay, the rows
+stay, the routes go back to 404. A lane that has been on and is then turned off leaves its audit
+rows behind on purpose: "this was enabled between these dates" is itself a thing a regulator may
+ask about.

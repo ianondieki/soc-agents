@@ -167,6 +167,27 @@ def _regulatory_job() -> JobCard:
     return REGULATORY_JOB
 
 
+def _complaints_job() -> JobCard:
+    """The Phase 5 complaint follow-up card, imported lazily for the same reason as the weather one."""
+    from noc_agents.services.complaints import COMPLAINTS_JOB
+
+    return COMPLAINTS_JOB
+
+
+def _maintenance_plan_due_job() -> JobCard:
+    """The Phase 5 maintenance planner card, imported lazily for the same reason as the weather one."""
+    from noc_agents.services.maintenance import MAINTENANCE_PLAN_DUE_JOB
+
+    return MAINTENANCE_PLAN_DUE_JOB
+
+
+def _maintenance_window_sweep_job() -> JobCard:
+    """The Phase 5 maintenance window-sweep card, imported lazily for the same reason as the weather one."""
+    from noc_agents.services.maintenance import MAINTENANCE_WINDOW_SWEEP_JOB
+
+    return MAINTENANCE_WINDOW_SWEEP_JOB
+
+
 def _housekeeping_job() -> JobCard:
     """The Phase 4 housekeeping card, imported lazily for the same reason as the weather one."""
     from noc_agents.services.housekeeping import HOUSEKEEPING_JOB
@@ -189,6 +210,17 @@ SCHEDULED_JOBS: tuple[JobCard, ...] = (
     # countdowns. It never sends: releasing a notice needs an APPROVED HITL card and a
     # separate supervisor act. REGULATORY_ENABLED defaults OFF.
     _regulatory_job(),
+    # Phase 5 complaint intake (§7.8.3): reminders for complaints past follow_up_due_at
+    # (counts and references only -- a reminder that quotes the complaint is a second copy
+    # of it in an inbox) and the 24-month free-text reduction. COMPLAINTS_ENABLED is OFF.
+    _complaints_job(),
+    # Phase 5 maintenance lane (§7.5). plan_due proposes tasks coming due inside the notice
+    # horizon and raises APPROVE_SCHEDULE; window_sweep completes windows whose night is
+    # over and marks unfinished work MISSED. NEITHER can schedule a window: that needs an
+    # APPROVED APPROVE_MAINTENANCE_WINDOW card and a separate supervisor act, because a
+    # window takes live customers off air on purpose. MAINTENANCE_ENABLED is OFF.
+    _maintenance_plan_due_job(),
+    _maintenance_window_sweep_job(),
     # Phase 4 housekeeping (§5.3.22): retention, outbox sweep, redaction scan, daily backup.
     # HOUSEKEEPING_ENABLED defaults OFF, and deleting for real needs a SECOND key
     # (HOUSEKEEPING_APPLY) plus posture.dry_run: false in config/retention.yaml -- this is

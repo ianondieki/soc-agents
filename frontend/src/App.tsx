@@ -12,9 +12,11 @@ import Wallboard from "./pages/Wallboard";
 import Agents from "./pages/Agents";
 import Problems from "./pages/Problems";
 import Regions from "./pages/Regions";
+import Maintenance from "./pages/Maintenance";
 import Audit from "./pages/Audit";
 import Settings from "./pages/Settings";
 import WorkflowMap from "./pages/WorkflowMap";
+import Contracts from "./pages/Contracts";
 
 export default function App() {
   const [profile, setProfile] = useState<any>(null);
@@ -106,7 +108,9 @@ export default function App() {
           <NavLink to="/workflow">Workflow Map</NavLink>
           <NavLink to="/problems">Problems</NavLink>
           <NavLink to="/regions">Regions</NavLink>
+          <NavLink to="/maintenance">Maintenance</NavLink>
           <NavLink to="/audit">Audit</NavLink>
+          <NavLink to="/contracts">Contracts</NavLink>
           <NavLink to="/wallboard">Wallboard</NavLink>
           <NavLink to="/settings">Settings / Inject</NavLink>
         </nav>
@@ -201,7 +205,9 @@ export default function App() {
                   />
                 }
               />
+              <Route path="/maintenance" element={<Maintenance tick={revisions.incidents + manualTick} />} />
               <Route path="/audit" element={<Audit tick={revisions.audit + manualTick} />} />
+              <Route path="/contracts" element={<Contracts />} />
               <Route
                 path="/settings"
                 element={

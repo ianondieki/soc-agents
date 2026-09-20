@@ -69,6 +69,12 @@ class HitlTaskType(str, Enum):
     # "100 % drafted, 0 auto-sent", so this card is the ONLY thing that lets a regulatory
     # draft reach the outbox, and approving it is a separate act from sending it.
     APPROVE_REGULATORY_NOTICE = "APPROVE_REGULATORY_NOTICE"
+    # Phase 5 (§7.5). Planned maintenance touches live customers on purpose, so both the
+    # plan and each individual window are gated: APPROVE_SCHEDULE signs off the programme,
+    # APPROVE_MAINTENANCE_WINDOW signs off going ahead on the night, which is where the
+    # rain guard and the customer notice actually bite.
+    APPROVE_SCHEDULE = "APPROVE_SCHEDULE"
+    APPROVE_MAINTENANCE_WINDOW = "APPROVE_MAINTENANCE_WINDOW"
     GENERIC = "GENERIC"
     # v2 (§7.1.2): gates for write-capable MCP cards; exercised only when such a card is actually connected.
     APPROVE_TICKET_SYNC = "APPROVE_TICKET_SYNC"

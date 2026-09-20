@@ -94,6 +94,34 @@ export const api = {
    * pinned server-side by `tests/unit/test_dashboard_regions.py`.
    */
   dashboardRegions: () => req<any>("/api/v1/dashboard/regions"),
+  /** Contracts lane (spec §7.8). Every route is 404 while CONTRACTS_ENABLED=false; the page and drawer read that as "off". */
+  contractsStatus: () => req<any>("/api/v1/contracts/status"),
+  contracts: () => req<any[]>("/api/v1/contracts"),
+  contractsSearch: (q: string, incidentId?: string | null) => req<any>(`/api/v1/contracts/clauses/search?q=${encodeURIComponent(q)}${incidentId ? `&incident_id=${encodeURIComponent(incidentId)}` : ""}`),
+  contractsAsk: (body: any) => req<any>("/api/v1/contracts/ask", { method: "POST", body: JSON.stringify(body) }),
+  /**
+   * Planned maintenance (spec §7.5). The whole lane 404s while `MAINTENANCE_ENABLED` is off —
+   * the shipped default — so `pages/Maintenance.tsx` reads a 404 as "the feature is off" and
+   * renders how to turn it on, rather than an error.
+   *
+   * There is deliberately no `approve` here: an `APPROVE_SCHEDULE` or
+   * `APPROVE_MAINTENANCE_WINDOW` card is approved on the ordinary HITL Inbox through
+   * `api.approve`, so raiser≠approver and the audit trail have one home.
+   * `maintenanceScheduleWindow` is what acts on that approval, and it answers 403 until the
+   * window's OWN card is approved — a task's schedule approval never releases a window.
+   */
+  maintenanceWindows: () => req<any[]>("/api/v1/maintenance/windows"),
+  maintenanceWindow: (id: string) => req<any>(`/api/v1/maintenance/windows/${id}`),
+  maintenanceTasks: (qs = "") => req<any[]>(`/api/v1/maintenance/tasks${qs}`),
+  maintenancePlans: () => req<any[]>("/api/v1/maintenance/plans"),
+  maintenanceRequestWindowApproval: (id: string) =>
+    req<any>(`/api/v1/maintenance/windows/${id}/request-approval`, { method: "POST", body: "{}" }),
+  maintenanceScheduleWindow: (id: string, overrides?: { override_rain?: boolean; override_reason?: string }) =>
+    req<any>(`/api/v1/maintenance/windows/${id}/schedule`, { method: "POST", body: JSON.stringify(overrides || {}) }),
+  maintenanceCancelWindow: (id: string, reason: string) =>
+    req<any>(`/api/v1/maintenance/windows/${id}/cancel`, { method: "POST", body: JSON.stringify({ reason }) }),
+  maintenanceStopClockProposal: (incidentId: string) =>
+    req<any>(`/api/v1/maintenance/incidents/${incidentId}/stop-clock-proposal`),
 };
 
 /**

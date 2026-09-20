@@ -18,8 +18,12 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from noc_agents.api.routers import (
+    capacity,
     clocks,
+    complaints,
+    contracts,
     dashboards,
+    maintenance,
     memory,
     pir,
     regulatory,
@@ -35,6 +39,11 @@ ROUTERS: tuple[APIRouter, ...] = (
     pir.router,
     dashboards.router,
     memory.router,
+    # Phase 5 lanes
+    maintenance.router,
+    capacity.router,
+    contracts.router,
+    complaints.router,
 )
 
 __all__ = ["ROUTERS"]

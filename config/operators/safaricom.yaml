@@ -318,6 +318,31 @@ management_distribution_list:
   - safaricom.noc.duty.manager@example.com
   - safaricom.ran.manager@example.com
 
+# ---------------------------------------------------------------------------
+# Outbound recipient register (§7.0.2). An outbox payload carries a
+# `recipients_ref`, never an address; services/notify.resolve_recipients looks
+# the ref up HERE at dispatch time. A ref that is missing from this map, or
+# whose list is empty, REFUSES the dispatch (the outbox row goes DEAD with the
+# ref in last_error, the incident gets a work note and the wallboard gets
+# outbox.failed) — it never falls back to DEMO_EMAIL_TO.
+#
+# `DEMO_EMAIL_TO` is deliberately NOT a key here: that ref means "whatever the
+# DEMO_EMAIL_TO / GMAIL_ADDRESS environment says", which is the demo path and
+# is resolved by the adapter, not by this file.
+# ---------------------------------------------------------------------------
+notification_recipients:
+  # Communications Authority of Kenya — the address the regulatory lane sends an
+  # approved outage notification to (services/regulatory.NOTICE_RECIPIENTS_REF).
+  #
+  # EMPTY ON PURPOSE. The mailbox a licensee files outage notifications to comes
+  # from that operator's own licence correspondence with the CA; it is not public
+  # configuration and inventing a plausible-looking one here would be worse than
+  # having none, because it would READ as configured. Until it is filled in, an
+  # approved CA notice refuses to dispatch and says so — which is the safe half
+  # of the failure, and is why REGULATORY_ENABLED + EMAIL_ENABLED can now both be
+  # switched on without a regulator notice reaching the demo inbox.
+  regulatory.recipients.CA: []
+
 recurrence:
   threshold_count: 3
   lookback_days: 30

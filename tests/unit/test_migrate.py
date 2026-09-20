@@ -37,6 +37,10 @@ NEW_TABLES = {
     "vendors", "incident_clock_events",              # §7.6.1 Lane 4A
     "post_incident_reviews", "pir_action_items",     # §7.7.1 Lane 4B
     "regulatory_notifications", "evidence_packs",    # §7.6.1 Lane 4A
+    # schema_version 6 (Phase 5) — scheduling and knowledge
+    "maintenance_plans", "maintenance_tasks", "maintenance_windows",   # §7.5 Lane 5A
+    "contracts", "contract_clauses", "contract_faq", "contract_queries",  # §7.8 Lane 5B
+    "relationship_complaints", "subject_persons",                      # §7.8 Lane 5B
 }
 NEW_INCIDENT_COLUMNS = {
     "restored_source", "restored_by", "vendor_id", "context_json",

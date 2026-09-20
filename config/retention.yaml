@@ -213,7 +213,11 @@ tables:
 
   relationship_complaints:
     class: relationship_complaints
-    timestamp_column: created_at
+    # §7.8.1 names this column `filed_at`; there is no `created_at` on this table, so the
+    # generic pass was reporting a skip ("timestamp column 'created_at' is not on this
+    # table") and the rule never ran. A retention rule that silently does nothing is worse
+    # than an absent one -- the policy document claims a control that is not in force.
+    timestamp_column: filed_at
     personal:
       class: relationship_complaints
       role_tokens: {}
@@ -225,6 +229,18 @@ tables:
 
   vendors:
     class: personal_staff_vendor
+    # KNOWN GAP, recorded rather than papered over. This entry has no `timestamp_column`, so
+    # the generic pass skips it and vendor contact pseudonymisation does not currently run.
+    # It cannot simply be filled in: §7.6.1's `vendors` table carries no record-creation
+    # timestamp at all -- only `active_from`/`active_to`, which are the CONTRACT window, not
+    # the age of the row. Measuring from `active_from` would scrub the contacts of a vendor
+    # who is currently engaged, which is an outage waiting to happen (those contacts are how
+    # the NOC reaches the MSP at 02:00). Measuring from `active_to` is the right semantics --
+    # scrub once the engagement has ended -- but `active_to` is NULL for every active vendor
+    # and the engine has no "NULL means never expire" rule today.
+    # Fix properly by adding `active_to`-based handling with an explicit NULL guard, or by
+    # giving `vendors` a real `created_at`. Do NOT just name a column here to make the skip
+    # go away. Found by the Phase 5 complaints lane while fixing the same bug on its own row.
     personal:
       class: personal_staff_vendor
       role_tokens: {}

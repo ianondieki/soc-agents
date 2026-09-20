@@ -29,8 +29,8 @@ Rules the rest of the code base relies on:
 The cross-border transfer register (spec §7.0.10, §9.2)
 -------------------------------------------------------
 
-This is the only path in the running application that puts personal data on a wire, so it
-is where the Kenya DPA 2019 / General Regs reg 41(2) record is written:
+This is the path the running application puts personal data on a wire from, so it is where
+the Kenya DPA 2019 / General Regs reg 41(2) record is written:
 ``services/external_calls.record_transfer`` runs inside ``drain_once`` immediately before
 the transmit. Three decisions, each argued rather than defaulted:
 
@@ -53,8 +53,9 @@ Recording that would tell the ODPC that incident data reached a US relay when it
 left the process — the register is a statement of fact about what crossed the border, not
 a log of intentions, and a register padded with transfers that never happened is unusable
 for the reg 41(2) return and indefensible the first time anyone checks one row against the
-mail server. ``transfer_plan`` therefore returns ``None`` for a mock, for SMS (no adapter
-until P3) and for ``EXCEL_ROW`` (a local workbook). The register's completeness is bought
+mail server. ``transfer_plan`` therefore returns ``None`` for a mock (of either SMTP kind
+— an ``ICS_INVITE`` with no attendees or no relay configured moves nothing either), for SMS
+(no adapter until P3) and for ``EXCEL_ROW`` (a local workbook). The register's completeness is bought
 back by the test that drives the configured path with the transport mocked.
 
 **The paperwork gate records the gap here; it does not block the mail.** §7.0.10 scopes
@@ -63,8 +64,17 @@ cards; the SMTP relay is on the *record* list, not the *gate* list. Whether an u
 should also silence outage notifications to the NOC's own staff is the operator's call,
 not this module's — see ``TRANSFER_GATE_BLOCKS_SEND`` below.
 
-``dispatch()`` remains the bare transmit primitive and writes no record; ``drain_once`` is
-the compliant path and the only one the application uses.
+**``LLM_CALL`` records its own transfer, inside the transmitter.** It is the one kind whose
+record has to be linked to something else — ``llm_calls.audit_id`` points at the reg 41(2)
+row — so the transmitter opens its own short session and writes both there, in the same
+record-then-commit-then-call order argued above. ``transfer_plan`` therefore covers the two
+SMTP kinds only (``EMAIL`` and ``ICS_INVITE``) and ``_register_then_dispatch`` is untouched
+by that lane. The §7.0.10 paperwork gate is ON
+for it (``enforce_gate=True``), unlike the SMTP relay: the spec makes the TIA a gating
+artefact for a hosted model provider, and no draft is worth being the first unlawful transfer.
+
+``dispatch()`` remains the bare transmit primitive and writes no record for the channel
+kinds; ``drain_once`` is the compliant path and the only one the application uses.
 """
 
 from __future__ import annotations
@@ -80,16 +90,21 @@ import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any, Callable
+from urllib.parse import urlparse
 
+from pydantic import BaseModel
 from sqlalchemy import insert, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from noc_agents.adapters import email_smtp
 from noc_agents.config import get_settings
-from noc_agents.db.models import OutboxRow, new_id, utcnow
+from noc_agents.db.models import OutboxRow, get_session, new_id, utcnow
+from noc_agents.llm import client as llm_client
+from noc_agents.llm.port import record_llm_call
+from noc_agents.llm.redaction import EMAIL_RE, PHONE_RE
 from noc_agents.realtime.hub import RealtimeEvent, hub
-from noc_agents.services import notify
+from noc_agents.services import ics, notify
 from noc_agents.services.external_calls import TransferPaperworkMissing, record_transfer
 from noc_agents.services.ledger import append_excel_row
 
@@ -105,6 +120,10 @@ DEFAULT_MAX_ATTEMPTS = 3
 
 # kinds
 EMAIL, SMS, WHATSAPP, ICS_INVITE, EXCEL_ROW = "EMAIL", "SMS", "WHATSAPP", "ICS_INVITE", "EXCEL_ROW"
+# An out-of-band model call (§7.7.3). NOT a channel kind: nothing is delivered to a person, so
+# the HITL approval gate below does not apply to it — the human gate on this lane is that a
+# named reviewer publishes the review, never that a draft was requested.
+LLM_CALL = "LLM_CALL"
 CHANNEL_KINDS = frozenset({EMAIL, SMS, WHATSAPP, ICS_INVITE})  # the kinds an approval gates
 
 # statuses
@@ -315,16 +334,295 @@ def _transmit_sms(row: OutboxRow) -> DispatchResult:
     )
 
 
+def _transmit_ics_invite(row: OutboxRow) -> DispatchResult:
+    """The iMIP maintenance-window invite (§7.5.6, RFC 6047).
+
+    ``services/ics`` hands over a finished ``EmailMessage``, so this is the EMAIL path with
+    two differences, both of which matter to whether a calendar client accepts the invite:
+
+    * the recipients are the ATTENDEES named in the calendar object, taken from the payload
+      and never from ``DEMO_EMAIL_TO`` — an invite rerouted to the demo mailbox is an
+      engineer who never learns about the window;
+    * ``From:`` is the ORGANIZER, which ``adapters/email_smtp.send_message`` leaves alone.
+
+    A payload this dispatcher does not understand (an unknown ``payload_version``, a missing
+    calendar object, no attendees) is DEAD, not retried: ``build_imip_message`` refuses to
+    guess, and a second attempt would guess no better.
+    """
+    payload = _payload(row)
+    try:
+        msg = ics.build_imip_message(payload)
+    except ics.IcsValidationError as exc:
+        return DispatchResult(DEAD, last_error=f"refused: {exc}"[:2000])
+    result = email_smtp.send_message(msg)
+    delivery = {"mode": result.mode, "to": list(result.to), "detail": result.detail}
+    if result.ok:
+        return DispatchResult(SENT, provider=result.mode, delivery=delivery)
+    # Same reading as _transmit_email: the adapter swallows its own exceptions, so the
+    # transient/permanent call comes from the SMTP reply code it quotes.
+    status = FAILED if _email_error_is_transient(result.detail) else DEAD
+    return DispatchResult(status, last_error=result.detail, provider=result.mode, delivery=delivery)
+
+
 def _transmit_excel_row(row: OutboxRow) -> DispatchResult:
     payload = _payload(row)
     path = append_excel_row(payload["operator_id"], payload["file"], payload["cells"])
     return DispatchResult(SENT, provider="openpyxl", provider_message_id=str(path))
 
 
+# --- LLM_CALL: the out-of-band model draft (§7.7.3, §7.0.9) ----------------------------------
+#
+# Why this is a transmitter at all: ``POST /pir/{id}/draft/llm`` writes a redacted row and
+# returns, because nothing may hold a SQLite write lock across a call that can take a minute.
+# Without an entry in ``_TRANSMITTERS`` the drain marked that row DEAD ("no transmitter for
+# outbox kind 'LLM_CALL'"), so the lane queued work nobody could do.
+
+LLM_INERT_PROVIDER = "none"  # provider recorded when no model call was made at all
+LLM_DRAFT_EFFORT = "low"  # drafting, not reasoning: §5.3.18 keeps Fable off this lane
+LLM_DRAFT_MAX_TOKENS = 2048
+LLM_DEFAULT_AGENT = "outbox.dispatcher"
+
+
+class PirDraftText(BaseModel):
+    """The five DRAFT text fields §7.7.3 lets a model propose, and nothing else.
+
+    The shape lives beside its only caller rather than in ``llm/outputs.py`` because it is
+    the wire contract of ONE outbox purpose: the field list is asserted against
+    ``payload["fields"]`` below, so a producer that queues a different field list gets a
+    refusal instead of a model quietly answering a question nobody asked. All five are
+    required: an answer missing one is unusable output, which the port already reports as
+    ``rec.ok=False``.
+
+    Status, reviewer, action items and metrics are absent on purpose — the model drafts
+    prose, a named human publishes (§7.7.6).
+    """
+
+    summary: str
+    root_causes: str
+    went_well: str
+    went_poorly: str
+    got_lucky: str
+
+
+#: The PIR drafting guardrails. A sibling of ``llm/assist.GUARDRAILS`` and deliberately a
+#: separate text: this lane is blameless-first (``services/pir.blameless_violation`` rejects a
+#: person's name on the way into a review), and assist's wording does not say that.
+PIR_DRAFT_SYSTEM = (
+    "You assist a Kenyan telecom NOC writing a blameless post-incident review. Use only the "
+    "facts in the JSON you are given; do not invent alarms, causes or timings. Person names "
+    "appear as tokens like <PERSON_1>: keep them verbatim and never guess who they are. "
+    "Describe what the system allowed, not who did it — prefer role tokens (RNIO, FE, "
+    "MSP_POWER). You draft text a named human will review and publish; you do not decide "
+    "status, reviewers, action items or metrics."
+)
+
+# purpose -> (output shape, system prompt, the agent the llm_calls row is attributed to).
+# "pir_draft" is ``services/pir.LLM_DRAFT_PURPOSE`` (quoted, not imported: services/pir.py
+# imports this module, so the edge has to point one way).
+_LLM_PURPOSES: dict[str, tuple[type[BaseModel], str, str]] = {
+    "pir_draft": (PirDraftText, PIR_DRAFT_SYSTEM, "PostIncidentReviewAgent"),
+}
+
+
+def llm_recipient_identity() -> tuple[str, str, str]:
+    """``(recipient, recipient_country, residency)`` for the configured model provider.
+
+    Same contract as ``smtp_relay_identity``: the names slug to keys that already exist in
+    ``config/operators/<op>/transfers.yaml`` (``"Anthropic API"`` → ``anthropic_api``,
+    ``"Ollama local"`` → ``ollama_local``), so the register and the paperwork line up with no
+    second mapping table. A loopback or RFC-1918 OpenAI-compatible endpoint is the operator's
+    own box in Kenya; anything else reads as abroad, which is the conservative side.
+    """
+    if llm_client.llm_provider() == llm_client.PROVIDER_OPENAI_COMPAT:
+        host = (urlparse(llm_client.openai_compat_base_url()).hostname or "").strip().lower()
+        if host in _LOOPBACK_HOSTS or _PRIVATE_HOST.match(host) or host.endswith(".local"):
+            return "Ollama local", "KE", "local"
+        return f"OpenAI-compatible endpoint ({host or 'unknown'})", "??", "abroad"
+    return "Anthropic API", "US", "abroad"
+
+
+def unredacted_findings(payload: dict) -> dict[str, int]:
+    """Counts of e-mail addresses / MSISDNs found in what is about to be sent. ``{}`` is clean.
+
+    The last gate before the bytes leave. ``services/pir.queue_llm_draft`` redacts with
+    ``llm/redaction.redact_incident`` BEFORE the row is written, which is the right place —
+    the outbox row itself must not hold identifiers. But ``enqueue`` cannot enforce that, so a
+    future producer of an ``LLM_CALL`` row could hand this transmitter raw text, and this
+    module would be the thing that posted it abroad. Re-checking with redaction's own patterns
+    costs one regex pass over a payload we are about to serialise anyway.
+
+    It catches contact identifiers only — there is no NER here, so a person named purely
+    inside free text is not detected (the same limitation ``llm/redaction`` documents). It is
+    a backstop for a producer that forgot to redact, not a substitute for redacting.
+
+    COUNTS ONLY, never the matched text: ``last_error`` is stored and exportable, and a
+    finding that quotes the identifier it found is a second copy of it (§9.5).
+    """
+    blob = json.dumps(payload, default=str)
+    found = {"emails": len(EMAIL_RE.findall(blob)), "msisdns": len(PHONE_RE.findall(blob))}
+    return {k: v for k, v in found.items() if v}
+
+
+def _llm_inert(reason: str, *, detail: str) -> DispatchResult:
+    """No model call was made, and that is not a failure.
+
+    SENT, exactly as ``_transmit_sms`` records a channel with no adapter: the row is finished,
+    it is not retried, and no ``outbox.failed`` alarm fires — with ``LLM_ENABLED=false`` the
+    whole LLM layer's contract is "the deterministic path happens instead", and for a PIR the
+    deterministic path is the human writing the review. ``last_error`` still carries the
+    reason for everything except the plain off switch, so a spend cap or a missing credential
+    is visible on the row rather than silent.
+    """
+    return DispatchResult(
+        SENT,
+        last_error=None if reason == "disabled" else f"no model call: {reason}",
+        provider=LLM_INERT_PROVIDER,
+        delivery={"mode": "inert", "to": [], "detail": detail},
+    )
+
+
+def _transmit_llm_call(row: OutboxRow) -> DispatchResult:
+    """One model call for a queued ``LLM_CALL`` row, through the §7.0.9 port.
+
+    Through the port, never a fresh API call: ``get_llm_port()`` is what applies the G13
+    subscription guard, the provider choice and the spend circuit, and ``record_llm_call``
+    is what puts the tokens and the estimated cost in ``llm_calls`` where the budget reads
+    them back. A bespoke HTTP call here would be invisible to all three.
+
+    **It opens its own session.** Every other transmitter is pure I/O because ``drain_once``
+    deliberately holds no transaction while an adapter runs. This one has two records of its
+    own to write — the reg 41(2) transfer BEFORE the call and the ``llm_calls`` row after —
+    and they belong to the call, not to the row's outcome: they must survive even if the
+    outcome commit later fails and the lease hands the row to another drainer. A separate
+    short-lived session keeps that true without ever opening a transaction on the drain's.
+
+    **The drafted TEXT is deliberately not written anywhere here.** Review text is
+    ``services/pir.py``'s business: it is blameless-validated on the way in and published by
+    a named human, and a dispatcher that wrote it straight into ``post_incident_reviews``
+    would walk around both. Until that lane grows a sink for drafted text (a pir service
+    function that applies it under the validator and the DRAFT/IN_REVIEW status guard), this
+    transmitter proves the call and records it and its cost, and stops there: what a draft is
+    allowed to overwrite in a review is that lane's decision, not the dispatcher's.
+    """
+    payload = _payload(row)
+    purpose = str(payload.get("purpose") or "")
+    spec = _LLM_PURPOSES.get(purpose)
+    if spec is None:  # an unknown purpose has no output shape: refuse, do not improvise one
+        return DispatchResult(DEAD, last_error=f"no output shape for LLM_CALL purpose {purpose!r}")
+    output_model, system, agent = spec
+    fields = list(payload.get("fields") or [])
+    if fields and fields != list(output_model.model_fields):
+        return DispatchResult(
+            DEAD,
+            last_error=f"LLM_CALL {purpose!r} asks for fields {fields} but the {output_model.__name__} shape drafts {list(output_model.model_fields)}",
+        )
+    body = payload.get("redacted_incident")
+    if not isinstance(body, dict) or not body:
+        return DispatchResult(DEAD, last_error=f"LLM_CALL {purpose!r} carries no redacted_incident payload")
+
+    # Asked BEFORE any session is opened, so a suite (or a deployment) with the layer off
+    # never touches the database for a row that is going to do nothing.
+    reason = llm_client.llm_unavailable_reason()
+    port = None if reason else llm_client.get_llm_port()
+    if port is None:
+        reason = reason or "port_unavailable"
+        return _llm_inert(reason, detail=f"LLM layer unavailable ({reason}) — {purpose} not drafted")
+
+    leaks = unredacted_findings(body)
+    if leaks:
+        # Fail closed and loudly: this is a producer bug, and one more attempt would send the
+        # same identifiers again, so it is DEAD rather than retried.
+        log.error("outbox: LLM_CALL row %s refused — payload still carries %s (see queue_llm_draft's redaction)", row.id, leaks)
+        return DispatchResult(DEAD, last_error=f"refused: payload is not redacted ({leaks}); nothing was sent")
+
+    model = str(payload.get("model") or llm_client.MODEL_DRAFTING)
+    session = get_session()  # our own session — see the docstring
+    try:
+        gate = llm_client.spend_gate(session, operator_id=row.operator_id)
+        if gate:  # spend_cap | budget_exhausted: the ceiling is a decision, not an error
+            return _llm_inert(gate, detail=f"spend gate open ({gate}) — {purpose} not drafted")
+        recipient, country, residency = llm_recipient_identity()
+        try:
+            audit = record_transfer(
+                session,
+                recipient=recipient,
+                recipient_country=country,
+                justification=(
+                    f"Post-incident review drafting assistance ({purpose}) on a redacted "
+                    f"incident record (outbox {row.kind} {row.id}, attempt {row.attempts}). "
+                    f"Lawful basis and safeguards: the DPIA/TIA on file for this recipient."
+                ),
+                data_description=(
+                    "Pseudonymised incident record and work notes: network and operational "
+                    "fields only, person names replaced by <PERSON_n> tokens, e-mail addresses "
+                    "and MSISDNs removed before the row was queued (llm/redaction.py)."
+                ),
+                actor=TRANSFER_ACTOR,
+                actor_role=TRANSFER_ACTOR_ROLE,
+                incident_id=row.incident_id,
+                residency=residency,
+                settings=get_settings(row.operator_id),
+                # The gate is ON here, unlike the SMTP relay: §7.0.10 makes the TIA a gating
+                # artefact for exactly this case — a hosted model provider. An unfiled DPIA/TIA
+                # therefore refuses the call, and no draft is worth being the first unlawful
+                # transfer. (NOC_ENV=demo records DEMO-UNFILED and lets it through, as
+                # everywhere else, so the demo shows the gap instead of hiding it.)
+                enforce_gate=True,
+            )
+            session.commit()  # durable BEFORE the call: a crash in the gap loses a draft, never a record
+        except TransferPaperworkMissing as exc:
+            session.rollback()
+            log.warning("outbox: LLM_CALL row %s refused by the transfer paperwork gate: %s", row.id, exc)
+            return DispatchResult(DEAD, last_error=f"refused: {exc}"[:2000])
+        audit_id = audit.id
+
+        parsed, rec = port.draft(
+            model=model,
+            system=system,
+            user=json.dumps(body, default=str),
+            output_model=output_model,
+            effort=LLM_DRAFT_EFFORT,
+            max_tokens=LLM_DRAFT_MAX_TOKENS,
+            timeout=llm_client.timeout_s(),
+        )
+        provider = getattr(port, "provider", llm_client.llm_provider())
+        try:
+            record_llm_call(
+                session,
+                operator_id=row.operator_id,
+                agent=payload.get("agent") or agent or LLM_DEFAULT_AGENT,
+                purpose=purpose,
+                provider=provider,
+                rec=rec,
+                audit_id=audit_id,
+                run_id=row.run_id,
+                incident_id=row.incident_id,
+                validated=parsed is not None,
+            )
+            session.commit()
+        except Exception:  # noqa: BLE001 — the call already happened and is already in the register
+            # The llm_calls row is the engineering detail; the reg 41(2) record above is the
+            # legal one and is already committed. Losing the outcome of a call that DID happen
+            # would mean retrying it, which costs money and sends the data a second time.
+            session.rollback()
+            log.exception("outbox: llm_calls row for %s (%s) could not be written", row.id, purpose)
+
+        delivery = {"mode": provider, "to": [], "detail": f"{purpose} via {rec.model_used or model}", "model": rec.model_used}
+        if rec.ok and parsed is not None:
+            return DispatchResult(SENT, provider=provider, provider_message_id=rec.model_used, delivery=delivery)
+        if rec.refused:  # a refusal is deterministic: the next attempt refuses too
+            return DispatchResult(DEAD, last_error=f"model refused: {rec.error}"[:2000], provider=provider, delivery=delivery)
+        return DispatchResult(FAILED, last_error=f"no usable draft: {rec.error}"[:2000], provider=provider, delivery=delivery)
+    finally:
+        session.close()
+
+
 _TRANSMITTERS: dict[str, Callable[[OutboxRow], DispatchResult]] = {
     EMAIL: _transmit_email,
     SMS: _transmit_sms,
     EXCEL_ROW: _transmit_excel_row,
+    ICS_INVITE: _transmit_ics_invite,
+    LLM_CALL: _transmit_llm_call,
 }
 
 
@@ -406,7 +704,42 @@ def _email_transfer_plan(job: OutboxRow) -> TransferPlan | None:
     )
 
 
-_TRANSFER_PLANS: dict[str, Callable[[OutboxRow], TransferPlan | None]] = {EMAIL: _email_transfer_plan}
+def _ics_transfer_plan(job: OutboxRow) -> TransferPlan | None:
+    """``None`` when this invite will not actually leave the machine.
+
+    Same predicate as the EMAIL plan, with one substitution: an invite has no demo fallback,
+    so what decides whether bytes move is the payload's own attendee list, not
+    ``demo_recipients()``. Attendee mailbox addresses are personal data and they travel in
+    the calendar object as well as the SMTP envelope, which is why §7.5.6 asks for this row.
+    """
+    payload = _payload(job)
+    recipients = [str(a).strip() for a in (payload.get("to") or []) if str(a).strip()]
+    if not recipients or not email_smtp.email_configured():
+        return None
+    recipient, country, residency = smtp_relay_identity(os.getenv("SMTP_HOST") or DEFAULT_SMTP_HOST)
+    return TransferPlan(
+        recipient=recipient,
+        recipient_country=country,
+        residency=residency,
+        justification=(
+            f"Maintenance window invitation ({payload.get('method') or 'REQUEST'}) for window "
+            f"{payload.get('window_id') or 'unknown'} to {len(recipients)} attendee mailbox(es), "
+            f"transmitted through the configured SMTP relay (outbox {job.kind} {job.id}, "
+            f"attempt {job.attempts}). Lawful basis and safeguards: the DPIA/TIA on file for "
+            f"this recipient."
+        ),
+        data_description=(
+            "Calendar invitation (iMIP/RFC 5545): maintenance window summary, location, start "
+            "and end times and description; organiser and attendee mailbox addresses in the "
+            "calendar object and in the SMTP envelope."
+        ),
+    )
+
+
+_TRANSFER_PLANS: dict[str, Callable[[OutboxRow], TransferPlan | None]] = {
+    EMAIL: _email_transfer_plan,
+    ICS_INVITE: _ics_transfer_plan,
+}
 
 
 def transfer_plan(job: OutboxRow) -> TransferPlan | None:
@@ -414,6 +747,8 @@ def transfer_plan(job: OutboxRow) -> TransferPlan | None:
 
     ``EXCEL_ROW`` writes a local workbook; ``SMS`` has no adapter until P3 and is a mock; a
     mock EMAIL transmits nothing. None of those are transfers, so none of them get a row.
+    ``LLM_CALL`` genuinely is one, but writes its own record inside ``_transmit_llm_call``
+    (it needs the audit row's id for ``llm_calls.audit_id``) — see the module docstring.
     """
     planner = _TRANSFER_PLANS.get(job.kind)
     return planner(job) if planner is not None else None

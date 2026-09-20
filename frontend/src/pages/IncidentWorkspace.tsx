@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { api } from "../api";
 import EarlierAtThisSite from "../components/EarlierAtThisSite";
+import ContractsDrawer from "../components/ContractsDrawer";
 import { fmtDateTime } from "../lib/time";
 import { useIncidentRevision } from "../realtime/RealtimeContext";
 
@@ -297,6 +298,11 @@ export default function IncidentWorkspace({ session }: { session: any }) {
           own failures — so it cannot affect anything above it, and removing it is deleting this
           line and the import. Advisory only (MEM1): it sets no field on this ticket. */}
       <EarlierAtThisSite siteId={inc.site_id} />
+      {/* Contract clause lookup (spec 7.8), scoped to THIS incident: the drawer passes
+          incidentId so the allow-set is derived from the incident's vendor and the
+          asker's role. It cannot widen that scope -- the route ignores any allow-set in
+          the request body. Self-contained and advisory, like the panel above it. */}
+      <ContractsDrawer incidentId={inc.id} />
 
       <div className="panel" style={{ marginTop: "1rem" }}>
         <h3>Unified timeline (EAT)</h3>

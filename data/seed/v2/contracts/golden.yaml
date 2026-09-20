@@ -202,3 +202,203 @@ questions:
 #   refusals  = q10 and q12 must both refuse. A run that answers either of them
 #               fails outright regardless of recall, and refusal rate is
 #               reported separately from citation rate (M8).
+
+# =============================================================================
+# Phase 5 extension (spec §7.8.7: "30–50 items over the synthetic sample
+# contracts, deterministic"). Read by services/contracts.evaluate_retrieval and
+# tests/unit/test_contract_eval.py TOGETHER with `questions` above.
+#
+# It lives under its own key because `questions` is a frozen twelve-row contract:
+# scripts/seed_v2.validate_seed_set and tests/unit/test_seed_v2.py both insist on
+# exactly 12 entries there (§7.0.7), and the seed report prints "12 entries".
+# Adding rows to `questions` would break both; adding a key breaks neither.
+#
+# Same rules as above: every row points at a SYNTHETIC clause; a pass here says
+# the retriever found the right paragraph of fiction. Questions are paraphrased
+# on purpose — a golden set that copies the clause's own words measures nothing.
+# Rows are scored for recall@k / MRR only when they carry `expect.clauses`.
+# -----------------------------------------------------------------------------
+eval_supplement:
+  - id: s01
+    question: "When does the response clock start — when the provider is notified, or when it first posts an update?"
+    scope_contract_refs: [SAMPLE-MSA-EGYPRO-2026-01]
+    expect:
+      clauses: [{contract_ref: SAMPLE-MSA-EGYPRO-2026-01, clause: "1.3"}]
+  - id: s02
+    question: "Is the service provider allowed to work on our radio or transmission equipment?"
+    scope_contract_refs: [SAMPLE-MSA-EGYPRO-2026-01]
+    expect:
+      clauses: [{contract_ref: SAMPLE-MSA-EGYPRO-2026-01, clause: "2.2"}]
+  - id: s03
+    question: "Can a fault at a hub or aggregation site ever be classified as Priority 3?"
+    scope_contract_refs: [SAMPLE-MSA-EGYPRO-2026-01]
+    expect:
+      clauses: [{contract_ref: SAMPLE-MSA-EGYPRO-2026-01, clause: "3.4"}]
+  - id: s04
+    question: "If we upgrade a ticket from Priority 3 to Priority 1, do the tighter targets apply retrospectively?"
+    scope_contract_refs: [SAMPLE-MSA-EGYPRO-2026-01]
+    expect:
+      clauses: [{contract_ref: SAMPLE-MSA-EGYPRO-2026-01, clause: "3.2"}]
+  - id: s05
+    question: "How often must an open Priority 2 ticket be updated?"
+    scope_contract_refs: [SAMPLE-MSA-EGYPRO-2026-01]
+    expect:
+      clauses: [{contract_ref: SAMPLE-MSA-EGYPRO-2026-01, clause: "4.1"}]
+    notes: "Table row again ('every 45 minutes'); the update interval column."
+  - id: s06
+    question: "Is there any extension of the restoration target for a site far from the nearest store?"
+    scope_contract_refs: [SAMPLE-MSA-EGYPRO-2026-01]
+    expect:
+      clauses: [{contract_ref: SAMPLE-MSA-EGYPRO-2026-01, clause: "4.3"}]
+  - id: s07
+    question: "The same site failed again for the same reason the next morning — is that a new fault or the same one?"
+    scope_contract_refs: [SAMPLE-MSA-EGYPRO-2026-01]
+    expect:
+      clauses: [{contract_ref: SAMPLE-MSA-EGYPRO-2026-01, clause: "4.5"}]
+  - id: s08
+    question: "Does escalating a fault up the ladder pause the restoration clock?"
+    scope_contract_refs: [SAMPLE-MSA-EGYPRO-2026-01]
+    expect:
+      clauses: [{contract_ref: SAMPLE-MSA-EGYPRO-2026-01, clause: "5.6"}]
+  - id: s09
+    question: "The landlord's representative did not turn up and the site could not be accessed — does that suspend the restoration time?"
+    scope_contract_refs: [SAMPLE-MSA-EGYPRO-2026-01]
+    expect:
+      clauses: [{contract_ref: SAMPLE-MSA-EGYPRO-2026-01, clause: "6.3"}]
+  - id: s10
+    question: "Within how many days after month end can the operator reverse a stop clock?"
+    scope_contract_refs: [SAMPLE-MSA-EGYPRO-2026-01]
+    expect:
+      clauses: [{contract_ref: SAMPLE-MSA-EGYPRO-2026-01, clause: "6.9"}]
+  - id: s11
+    question: "Does the escalating credit scale go back to zero after a month where the targets were met?"
+    scope_contract_refs: [SAMPLE-MSA-EGYPRO-2026-01]
+    expect:
+      clauses: [{contract_ref: SAMPLE-MSA-EGYPRO-2026-01, clause: "7.3"}]
+  - id: s12
+    question: "Is there a performance bonus for beating the targets for several months in a row?"
+    scope_contract_refs: [SAMPLE-MSA-EGYPRO-2026-01]
+    expect:
+      clauses: [{contract_ref: SAMPLE-MSA-EGYPRO-2026-01, clause: "7.6"}]
+  - id: s13
+    question: "Must the monthly report flag a fault whose restoration time was inferred, and does it count towards the target?"
+    scope_contract_refs: [SAMPLE-MSA-EGYPRO-2026-01]
+    expect:
+      clauses: [{contract_ref: SAMPLE-MSA-EGYPRO-2026-01, clause: "8.3"}]
+  - id: s14
+    question: "Can a technician decline to attend a site they believe is unsafe without the provider breaching the SLA?"
+    scope_contract_refs: [SAMPLE-MSA-EGYPRO-2026-01]
+    expect:
+      clauses: [{contract_ref: SAMPLE-MSA-EGYPRO-2026-01, clause: "9.1"}]
+  - id: s15
+    question: "We turned a crew away because they had no working-at-height certificate — is the time lost a stop clock?"
+    scope_contract_refs: [SAMPLE-MSA-EGYPRO-2026-01]
+    expect:
+      clauses: [{contract_ref: SAMPLE-MSA-EGYPRO-2026-01, clause: "9.4"}]
+  - id: s16
+    question: "How much notice is needed to terminate for a material breach that was not remedied?"
+    scope_contract_refs: [SAMPLE-MSA-EGYPRO-2026-01]
+    expect:
+      clauses: [{contract_ref: SAMPLE-MSA-EGYPRO-2026-01, clause: "11.3"}]
+  - id: s17
+    question: "Can either party move personal data outside Kenya under this agreement?"
+    scope_contract_refs: [SAMPLE-MSA-EGYPRO-2026-01]
+    expect:
+      clauses: [{contract_ref: SAMPLE-MSA-EGYPRO-2026-01, clause: "12.3"}]
+  - id: s18
+    question: "How quickly must the contractor acknowledge an outage after we escalate it?"
+    scope_contract_refs: [SAMPLE-SLA-TETRANET-2026-01]
+    expect:
+      clauses: [{contract_ref: SAMPLE-SLA-TETRANET-2026-01, clause: "2.1"}]
+  - id: s19
+    question: "Does a technician who arrives without the spares count as having attended the site?"
+    scope_contract_refs: [SAMPLE-SLA-TETRANET-2026-01]
+    expect:
+      clauses: [{contract_ref: SAMPLE-SLA-TETRANET-2026-01, clause: "1.4"}]
+  - id: s20
+    question: "What happens when an open outage gets no ticket update for more than two hours?"
+    scope_contract_refs: [SAMPLE-SLA-TETRANET-2026-01]
+    expect:
+      clauses: [{contract_ref: SAMPLE-SLA-TETRANET-2026-01, clause: "2.4"}]
+  - id: s21
+    question: "How soon must a generator be refuelled once the tank drops below forty percent?"
+    scope_contract_refs: [SAMPLE-SLA-TETRANET-2026-01]
+    expect:
+      clauses: [{contract_ref: SAMPLE-SLA-TETRANET-2026-01, clause: "2.5"}]
+  - id: s22
+    question: "What battery backup autonomy must each site keep, and when must a weak string be replaced?"
+    scope_contract_refs: [SAMPLE-SLA-TETRANET-2026-01]
+    expect:
+      clauses: [{contract_ref: SAMPLE-SLA-TETRANET-2026-01, clause: "2.6"}]
+  - id: s23
+    question: "For a critical site still down after twice the restoration time, can we go straight to the contractor's director?"
+    scope_contract_refs: [SAMPLE-SLA-TETRANET-2026-01]
+    expect:
+      clauses: [{contract_ref: SAMPLE-SLA-TETRANET-2026-01, clause: "3.3"}]
+  - id: s24
+    question: "Does the 25 percent credit get bigger when the contractor misses the target in consecutive months?"
+    scope_contract_refs: [SAMPLE-SLA-TETRANET-2026-01]
+    expect:
+      clauses:
+        - {contract_ref: SAMPLE-SLA-TETRANET-2026-01, clause: "4.1"}
+        - {contract_ref: SAMPLE-SLA-TETRANET-2026-01, clause: "4.2"}
+  - id: s25
+    question: "What is the ceiling on total service credits in one month under the schedule?"
+    scope_contract_refs: [SAMPLE-SLA-TETRANET-2026-01]
+    expect:
+      clauses: [{contract_ref: SAMPLE-SLA-TETRANET-2026-01, clause: "4.4"}]
+  - id: s26
+    question: "Is an approved maintenance window a valid reason to suspend the service levels?"
+    scope_contract_refs: [SAMPLE-SLA-TETRANET-2026-01]
+    expect:
+      clauses: [{contract_ref: SAMPLE-SLA-TETRANET-2026-01, clause: "5.2"}]
+  - id: s27
+    question: "Can we publish the contractor's performance figures to the press?"
+    scope_contract_refs: [SAMPLE-SLA-TETRANET-2026-01]
+    expect:
+      clauses: [{contract_ref: SAMPLE-SLA-TETRANET-2026-01, clause: "6.5"}]
+  - id: s28
+    question: "From when does an agreed change to a service level take effect?"
+    scope_contract_refs: [SAMPLE-SLA-TETRANET-2026-01]
+    expect:
+      clauses: [{contract_ref: SAMPLE-SLA-TETRANET-2026-01, clause: "7.2"}]
+  - id: s29
+    question: "If the contractor's own logs disagree with our ticketing system, which record counts?"
+    scope_contract_refs: [SAMPLE-SLA-TETRANET-2026-01]
+    expect:
+      clauses: [{contract_ref: SAMPLE-SLA-TETRANET-2026-01, clause: "6.1"}]
+  - id: s30
+    question: "When the schedule and the master agreement disagree on how service levels are measured, which prevails?"
+    scope_contract_refs: [SAMPLE-SLA-TETRANET-2026-01]
+    expect:
+      clauses: [{contract_ref: SAMPLE-SLA-TETRANET-2026-01, clause: "1.2"}]
+  - id: s31
+    question: "What monthly restoration compliance percentage has each vendor signed up to?"
+    scope_contract_refs: [SAMPLE-MSA-EGYPRO-2026-01, SAMPLE-SLA-TETRANET-2026-01]
+    expect:
+      clauses:
+        - {contract_ref: SAMPLE-MSA-EGYPRO-2026-01, clause: "4.2"}
+        - {contract_ref: SAMPLE-SLA-TETRANET-2026-01, clause: "2.3"}
+    notes: "Cross-contract: 90% vs 88%. Both must be in the top 20 with both contracts in scope."
+  - id: s32
+    question: "How many hours does the contractor have to report an injury or a fire at a site?"
+    scope_contract_refs: [SAMPLE-MSA-EGYPRO-2026-01]
+    expect:
+      clauses: [{contract_ref: SAMPLE-MSA-EGYPRO-2026-01, clause: "9.3"}]
+  - id: s33
+    question: "Must the monthly report show the raw measured figure as well as the one after regional allowances?"
+    scope_contract_refs: [SAMPLE-MSA-EGYPRO-2026-01]
+    expect:
+      clauses: [{contract_ref: SAMPLE-MSA-EGYPRO-2026-01, clause: "8.2"}]
+  - id: s34
+    question: "Is a shortage of the contractor's own fuel a cause it can rely on to suspend service levels?"
+    scope_contract_refs: [SAMPLE-SLA-TETRANET-2026-01]
+    expect:
+      clauses: [{contract_ref: SAMPLE-SLA-TETRANET-2026-01, clause: "5.5"}]
+  - id: s35
+    question: "What is the vehicle for resolving a dispute the operations managers cannot settle?"
+    scope_contract_refs: [SAMPLE-MSA-EGYPRO-2026-01, SAMPLE-SLA-TETRANET-2026-01]
+    expect:
+      clauses:
+        - {contract_ref: SAMPLE-MSA-EGYPRO-2026-01, clause: "10.3"}
+        - {contract_ref: SAMPLE-SLA-TETRANET-2026-01, clause: "6.4"}

@@ -106,6 +106,12 @@ class OperatorConfig(BaseModel):
     regions: dict[str, RegionConfig]
     shifts: dict[str, ShiftConfig]
     management_distribution_list: list[str] = Field(default_factory=list)
+    # Outbound recipient register: ``{recipients_ref: [address, ...]}`` (§7.0.2). Outbox
+    # payloads carry a REF, never an address; ``services/notify.resolve_recipients`` looks the
+    # ref up here at dispatch time. Additive with a ``{}`` default on purpose: a profile that
+    # names no recipients still loads, it simply cannot send to a named ref — and a ref that
+    # is missing or empty REFUSES the dispatch instead of falling back to DEMO_EMAIL_TO.
+    notification_recipients: dict[str, list[str]] = Field(default_factory=dict)
     recurrence: dict[str, Any] = Field(default_factory=dict)
     broadcast: dict[str, Any] = Field(default_factory=dict)
     mpesa_risk: MpesaRiskConfig = Field(default_factory=MpesaRiskConfig)

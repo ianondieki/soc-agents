@@ -9,6 +9,10 @@ fail at runtime rather than at startup. Adding a model module means adding it he
 from __future__ import annotations
 
 from noc_agents.db import (  # noqa: F401  (imported for the side effect of registering tables)
+    models_capacity,
+    models_complaints,
+    models_contracts,
+    models_maintenance,
     models_memory,
     models_pir,
     models_regulatory,
