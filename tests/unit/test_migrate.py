@@ -41,6 +41,8 @@ NEW_TABLES = {
     "maintenance_plans", "maintenance_tasks", "maintenance_windows",   # §7.5 Lane 5A
     "contracts", "contract_clauses", "contract_faq", "contract_queries",  # §7.8 Lane 5B
     "relationship_complaints", "subject_persons",                      # §7.8 Lane 5B
+    # schema_version 7 (Phase 5) — capacity, §7.5.1 Lane 5A
+    "capacity_observations", "capacity_advisories",
 }
 NEW_INCIDENT_COLUMNS = {
     "restored_source", "restored_by", "vendor_id", "context_json",

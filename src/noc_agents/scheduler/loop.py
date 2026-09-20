@@ -188,6 +188,13 @@ def _maintenance_window_sweep_job() -> JobCard:
     return MAINTENANCE_WINDOW_SWEEP_JOB
 
 
+def _capacity_scan_job() -> JobCard:
+    """The Phase 5 capacity scan card, imported lazily for the same reason as the weather one."""
+    from noc_agents.services.capacity import CAPACITY_SCAN_JOB
+
+    return CAPACITY_SCAN_JOB
+
+
 def _housekeeping_job() -> JobCard:
     """The Phase 4 housekeeping card, imported lazily for the same reason as the weather one."""
     from noc_agents.services.housekeeping import HOUSEKEEPING_JOB
@@ -221,6 +228,11 @@ SCHEDULED_JOBS: tuple[JobCard, ...] = (
     # window takes live customers off air on purpose. MAINTENANCE_ENABLED is OFF.
     _maintenance_plan_due_job(),
     _maintenance_window_sweep_job(),
+    # Phase 5 capacity lane (§7.5.3): reads cells with recent busy-hour data and opens a
+    # capacity ADVISORY for the sustained ones. That is its entire vocabulary of action --
+    # it cannot propose a task, book a window or touch an incident. CAPACITY_ENABLED is OFF,
+    # and it is its OWN flag: arming the maintenance calendar must not also open an ingest.
+    _capacity_scan_job(),
     # Phase 4 housekeeping (§5.3.22): retention, outbox sweep, redaction scan, daily backup.
     # HOUSEKEEPING_ENABLED defaults OFF, and deleting for real needs a SECOND key
     # (HOUSEKEEPING_APPLY) plus posture.dry_run: false in config/retention.yaml -- this is

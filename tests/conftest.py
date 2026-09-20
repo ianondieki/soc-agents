@@ -48,6 +48,7 @@ os.environ["MAINTENANCE_ENABLED"] = "false"
 os.environ["CONTRACTS_ENABLED"] = "false"
 os.environ["COMPLAINTS_ENABLED"] = "false"
 os.environ["UPLOADS_ENABLED"] = "false"
+os.environ["CAPACITY_ENABLED"] = "false"
 for _key in (
     "GMAIL_ADDRESS",
     "GMAIL_APP_PASSWORD",

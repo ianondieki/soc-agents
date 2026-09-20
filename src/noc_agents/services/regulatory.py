@@ -27,6 +27,20 @@ structural, not conventional, and it is layered:
 4. ``regulatory_notifications`` has no ``APPROVED`` status for code to mistake for
    permission (see ``db/models_regulatory.py``).
 
+``sent_at`` MEANS "THIS LEFT THE BUILDING"
+------------------------------------------
+Releasing a notice and transmitting it are two different events, separated by a commit and a
+dispatcher pass, and the second one can fail terminally — most often because
+``regulatory.recipients.CA`` is an empty list in the operator profile and
+``services/notify.resolve_recipients`` refuses rather than falling back to the demo mailbox.
+So :func:`release_notice` writes ``QUEUED`` and leaves ``sent_at`` NULL, and only
+:func:`record_dispatch_outcome` — called from the dispatcher once the outbox row is terminal
+— writes ``SENT``/``sent_at``, or ``SEND_FAILED`` with the reason. This table is the evidence
+for M10 and for the Condition 9.2 24-hour obligation; "sent at 14:02" on a notice that never
+left is a false assurance of a statutory duty, which is worse than a visible failure.
+Lateness is judged on the *transmission*, not on the enqueue: see
+``significance_json.dispatch``.
+
 THE CLOCK STARTS AT ``failure_time``
 ------------------------------------
 Not at detection, not at row creation. CA licence Condition 9.2 gives 24 hours from the
@@ -96,10 +110,14 @@ __all__ = [
     "DEADLINE_EVENT",
     "DEFAULT_DEADLINE_HOURS",
     "DEFAULT_SIGNIFICANCE",
+    "DISPATCH_KEY",
     "REGULATORY_ENABLED_ENV",
     "REGULATORY_JOB",
     "REGULATORY_RAISER",
+    "QUEUED",
     "REGULATORY_TASK_TYPE",
+    "SEND_FAILED",
+    "SERVICE_STATUSES",
     "ClockStartUnknown",
     "NoticeNotApproved",
     "NoticeStateError",
@@ -113,6 +131,7 @@ __all__ = [
     "evaluate_significance",
     "incident_notifications",
     "notice_text",
+    "record_dispatch_outcome",
     "regulatory_enabled",
     "release_notice",
     "request_approval",
@@ -176,6 +195,55 @@ COUNTDOWN_THRESHOLDS_H: tuple[int, ...] = (12, 2)
 COUNTDOWN_FIRED_KEY = "countdown_fired"
 REASON_FOR_DELAY_KEY = "reason_for_delay"
 RELEASE_KEY = "release"
+#: The terminal outcome of the outbox row, written by :func:`record_dispatch_outcome`.
+DISPATCH_KEY = "dispatch"
+
+# ----------------------------------------------------------------- TWO STATUSES §7.6.1 OMITS
+#
+# **§7.6.1 enumerates four**: ``DRAFT | PENDING_APPROVAL | SENT | NOT_REQUIRED``. These two
+# are not in that list. They exist anyway, for the same reason ``api/routers/pir.py`` ships a
+# ``PATCH .../actions/{action_id}`` the spec's route list omits: the spec's own data model
+# makes a state reachable that its vocabulary cannot name.
+#
+# THE BUG THEY CLOSE. Releasing a notice and transmitting it are two events separated by a
+# commit and a dispatcher pass, and the second one can fail terminally — today it fails
+# terminally by *default*, because ``regulatory.recipients.CA`` ships as an empty list in
+# every profile and ``services/notify.resolve_recipients`` refuses rather than falling back
+# to the demo mailbox. SMTP 5xx and the reg 41(2) paperwork gate fail the same way. With only
+# four statuses the release had to write ``SENT`` + ``sent_at`` at *enqueue* time, so every
+# one of those failures left a row reading "notified the Authority at 14:02" about a notice
+# that never left the building. This table is the evidence for M10 and for the Condition 9.2
+# 24-hour obligation; a false "yes, in time" there is worse than a visible failure, because
+# nobody goes looking for a discharged obligation.
+#
+# WHY NOT REUSE THE FOUR. ``PENDING_APPROVAL`` for an approved-and-queued notice is a lie in
+# the other direction (and ``is_open`` would put it back on the countdown and let the redraft
+# route rewrite text already on its way to a regulator). ``DRAFT`` is worse. Leaving it
+# ``SENT`` is the bug. There is no fourth option: the spec's vocabulary has no word for
+# "approved, queued, nothing transmitted yet", and that state exists whether or not it does.
+#
+# WHY THEY ARE SAFE HERE. Neither is a permission. The module docstring's rule 4 — "no
+# ``APPROVED`` status for code to mistake for permission" — is untouched: ``QUEUED`` is
+# reached only *after* :func:`approval_of` has passed, and ``SEND_FAILED`` is a failure.
+# Permission is still the APPROVED ``HitlTaskRow`` and nothing else.
+#
+# COST: none in DDL. ``regulatory_notifications.status`` is a plain TEXT column with no CHECK
+# and no enum, so there is no ``SCHEMA_VERSION`` bump and no migration; and per
+# ``db/models_regulatory.py``'s own docstring — "the transitions and the vocabulary are
+# enforced by ``services/regulatory.py``, which is also the only module allowed to write this
+# table" — the vocabulary's home is here, not in the model module. ``is_open`` treats both as
+# closed, which is exactly how it treated ``SENT`` before: the sweep skips them and the
+# redraft route answers 409, so no downstream behaviour moves.
+
+#: Approved, released to the outbox, **nothing transmitted**. ``sent_at`` is still NULL.
+QUEUED = "QUEUED"
+#: The outbox row reached a terminal non-SENT outcome (DEAD, REJECTED_UNAPPROVED, or FAILED
+#: with no attempts left). The reason is in ``significance_json.dispatch.error``; ``sent_at``
+#: is still NULL, because nothing left the building.
+SEND_FAILED = "SEND_FAILED"
+#: The four the spec lists plus the two above, in lifecycle order. Exported for readers and
+#: tests; nothing in the database constrains the column to it.
+SERVICE_STATUSES: tuple[str, ...] = (DRAFT, PENDING_APPROVAL, QUEUED, SENT, SEND_FAILED, NOT_REQUIRED)
 
 #: §7.6.1 YAML (``regulatory.deadlines_hours``). ``CBK_FACTSHEET`` is deliberately absent:
 #: the spec lists it as a kind but gives it no deadline, and inventing a statutory deadline is
@@ -677,6 +745,13 @@ def request_approval(
     """
     if notice.status == SENT:
         raise NoticeStateError(f"{notice.kind} for {inc.incident_number} is already SENT")
+    if notice.status == QUEUED:
+        # Approved and on the outbox already. A second card would invite a second release of
+        # a notice whose first copy may be transmitted between the two clicks.
+        raise NoticeStateError(
+            f"{notice.kind} for {inc.incident_number} is already QUEUED on the outbox; "
+            "it needs no second approval"
+        )
     if notice.status == NOT_REQUIRED:
         raise NoticeStateError(
             f"{notice.kind} for {inc.incident_number} is NOT_REQUIRED; re-evaluate significance before asking for approval"
@@ -807,12 +882,31 @@ def release_notice(
     timestamp, so ``orchestrator.outbox.dispatch`` refuses it independently should that
     approval ever be cleared. The idempotency key is derived from the notice id and carries no
     uuid: a second release attempt returns the same row instead of queueing a second notice to
-    a regulator, on top of the ``status == SENT`` guard above it.
+    a regulator, on top of the status guards above it. The key gains an attempt ordinal ONLY
+    after a previous row has been recorded terminally failed (``SEND_FAILED``), which is the
+    one case where a second row provably cannot mean two notices at the regulator — nothing
+    left the building the first time. See :func:`_dispatch_attempt`.
+
+    **This does not send, and it no longer says it did.** The notice moves to ``QUEUED`` and
+    ``sent_at`` stays NULL; ``SENT``/``sent_at`` are written by
+    :func:`record_dispatch_outcome` when the dispatcher reports a real transmission. The
+    ``release`` record's ``late`` flag is therefore "late *at enqueue*", which is what the
+    §9.2 refusal below is judged on; whether the *transmission* was late is a separate fact
+    recorded under ``dispatch`` (a notice queued at due_at − 1 min and transmitted at
+    due_at + 5 min is late, and the row has to say so).
 
     Transmits nothing — the drain after the caller's commit does that.
     """
     if notice.status == SENT:
         raise NoticeStateError(f"{notice.kind} for {inc.incident_number} has already been sent")
+    if notice.status == QUEUED:
+        # The guard that used to be "already SENT". A QUEUED notice has a live outbox row
+        # that no one has dispatched yet; releasing again would be a second notification to a
+        # regulator for one incident, which is its own kind of regulatory mess.
+        raise NoticeStateError(
+            f"{notice.kind} for {inc.incident_number} has already been released to the outbox "
+            "and is awaiting transmission; it cannot be released twice"
+        )
     if notice.status == NOT_REQUIRED:
         raise NoticeStateError(f"{notice.kind} for {inc.incident_number} is NOT_REQUIRED")
 
@@ -827,11 +921,12 @@ def release_notice(
             "a late notification must record reason_for_delay (DPA 2019 s.43; §9.2)"
         )
 
+    attempt = _dispatch_attempt(notice)
     draft = notice.draft_alert or {}
     row = outbox.enqueue(
         session,
         kind=outbox.EMAIL,
-        idempotency_key=f"EMAIL:regulatory:{notice.id}",
+        idempotency_key=f"EMAIL:regulatory:{notice.id}" if attempt == 1 else f"EMAIL:regulatory:{notice.id}:{attempt}",
         payload={
             "operator_id": inc.operator_id,
             "incident_number": inc.incident_number,
@@ -853,8 +948,10 @@ def release_notice(
         operator_id=inc.operator_id,
     )
 
-    notice.status = SENT
-    notice.sent_at = now
+    # QUEUED, not SENT, and sent_at stays NULL: nothing has been transmitted at this point in
+    # the story and the row must not say otherwise. record_dispatch_outcome writes the rest.
+    notice.status = QUEUED
+    notice.sent_at = None
     notice.approved_by = task.resolved_by
     notice.approved_at = task.resolved_at
     if external_ref:
@@ -868,8 +965,15 @@ def release_notice(
         "released_by": actor,
         "released_at": now.isoformat(),
         "approved_by": task.resolved_by,
+        # Late AT ENQUEUE — the fact the §9.2 reason_for_delay refusal above was judged on.
+        # ``dispatch.late`` is the one that answers "was the Authority notified in time?".
         "late": late,
+        "attempt": attempt,
     }
+    # A retry after a terminal failure supersedes the previous outcome, but must not erase it:
+    # the failed attempt is moved aside so "we tried at 14:02 and it bounced" survives.
+    if attempt > 1 and data.get(DISPATCH_KEY):
+        data.setdefault(f"{DISPATCH_KEY}_history", []).append(data.pop(DISPATCH_KEY))
     notice.significance = data
 
     session.add(
@@ -879,7 +983,8 @@ def release_notice(
             author_role="NOC",
             body=(
                 f"Regulatory notification {notice.kind} released to the outbox after approval by "
-                f"{task.resolved_by}." + (f" Late; reason recorded: {reason}" if late else "")
+                f"{task.resolved_by}. Nothing has been transmitted yet; the dispatcher records the "
+                f"outcome on the notice." + (f" Late; reason recorded: {reason}" if late else "")
             ),
             source="regulatory",
         )
@@ -888,7 +993,10 @@ def release_notice(
         session,
         inc,
         actor=actor,
-        action="regulatory.sent",
+        # Was ``regulatory.sent``. It never described a send — it fires at enqueue — and an
+        # audit trail a regulator reads back must not call a queue action a transmission.
+        # ``regulatory.sent`` is now written by record_dispatch_outcome, where it is true.
+        action="regulatory.released",
         entity_id=notice.id,
         rationale=f"{notice.kind} released after APPROVE_REGULATORY_NOTICE {task.id} approved by {task.resolved_by}",
         payload={
@@ -901,6 +1009,146 @@ def release_notice(
     )
     session.flush()
     return row
+
+
+def _dispatch_attempt(notice: RegulatoryNotificationRow) -> int:
+    """Which release attempt this is: 1, or one more than the terminal failures recorded.
+
+    The ordinal exists only to give a retry a *different* idempotency key. It is derived from
+    ``significance_json`` rather than counted from the outbox, because the invariant it has to
+    preserve is "a second row exists only where a first one is recorded as having transmitted
+    nothing" — and that record is on the notice. A notice that has never failed is attempt 1
+    and keeps the original, uuid-free key, so nothing about the existing happy path moves.
+    """
+    history = notice.significance.get(f"{DISPATCH_KEY}_history") or []
+    latest = notice.significance.get(DISPATCH_KEY) or {}
+    return len(history) + (1 if latest else 0) + 1
+
+
+def record_dispatch_outcome(
+    session: Session,
+    row: outbox.OutboxRow,
+    *,
+    notification_id: str,
+    final_status: str,
+    now: datetime,
+    error: str | None = None,
+    provider: str | None = None,
+) -> RegulatoryNotificationRow | None:
+    """The dispatcher's terminal outcome, written back onto the notice. THE FIX FOR M10's
+    EVIDENCE TABLE.
+
+    Called from ``orchestrator.outbox._finalize`` once, when the outbox row has reached a
+    status it will not leave (SENT, DEAD, REJECTED_UNAPPROVED, or FAILED with no attempts
+    left). Only here does ``status = SENT`` and ``sent_at`` get written, because only here is
+    it true. Everything else becomes ``SEND_FAILED`` with the reason on the row: a notice that
+    was refused for want of a CA address, bounced by a 5xx, or stopped by the reg 41(2)
+    paperwork gate must read as a failure, never as a discharged obligation.
+
+    **Lateness is judged here, on the transmission.** ``release_notice`` refuses a late
+    *enqueue* without a ``reason_for_delay``, but a notice queued a minute before ``due_at``
+    and transmitted five minutes after it is still a late notification under Condition 9.2 /
+    DPA s.43, and no reason was ever asked for. That case is recorded honestly
+    (``late=True``, ``reason_for_delay_recorded=False``) rather than papered over — this
+    function must not invent the disclosure the statute asks a human for.
+
+    Returns the notice, or ``None`` when there is nothing to write to. Never raises for a
+    missing or foreign row: it runs inside the drain's per-row transaction, and a notice that
+    has been deleted must not stop the outbox recording the outbox's own outcome.
+    """
+    notice = session.get(RegulatoryNotificationRow, notification_id)
+    if notice is None:
+        log.warning("regulatory: outbox row %s names notification %s, which does not exist", row.id, notification_id)
+        return None
+    # Scoped by explicit comparison, NOT by ``_owned``: that helper reads the active
+    # operator from request context, and the drainer runs on the scheduler thread where
+    # there is none. Comparing the two rows' own ``operator_id`` is the same guarantee
+    # without depending on ambient state.
+    if notice.operator_id != row.operator_id:
+        log.error(
+            "regulatory: outbox row %s (operator %s) names notification %s belonging to operator %s; refusing",
+            row.id, row.operator_id, notice.id, notice.operator_id,
+        )
+        return None
+    if notice.status not in (QUEUED, SEND_FAILED):
+        # A late or duplicated outcome for a notice that has moved on. Recording it would
+        # overwrite a truthful state with a stale one, so it is logged and dropped.
+        log.warning(
+            "regulatory: outbox row %s reported %s for notification %s, which is %s — ignored",
+            row.id, final_status, notice.id, notice.status,
+        )
+        return None
+
+    # ``SENT`` is spelled the same in both vocabularies (outbox.SENT and the notice status)
+    # and this is the one place the two meet: an outbox row that really transmitted is the
+    # only thing that may put the notice into SENT.
+    transmitted = final_status == outbox.SENT
+    late = now > notice.due_at
+    data = notice.significance
+    data[DISPATCH_KEY] = {
+        "attempt": (data.get(RELEASE_KEY) or {}).get("attempt", 1),
+        "outbox_id": row.id,
+        "outbox_status": final_status,
+        "at": now.isoformat(),
+        "provider": provider,
+        "error": error,
+        # For a transmission: it went out after the deadline. For a failure: the deadline had
+        # already passed with nothing transmitted. Both are the same bad news for Condition 9.2.
+        "late": late,
+        # False here on a late SEND means the §9.2 disclosure was never captured, because the
+        # enqueue was on time and nobody was asked for one. Saying so is the honest answer.
+        "reason_for_delay_recorded": bool((data.get(REASON_FOR_DELAY_KEY) or "").strip()),
+    }
+    notice.significance = data
+    if transmitted:
+        notice.status = SENT
+        notice.sent_at = now
+    else:
+        notice.status = SEND_FAILED
+        notice.sent_at = None  # belt and braces: nothing left the building, so nothing is stamped
+    session.flush()
+
+    inc = session.get(IncidentRow, notice.incident_id)
+    if inc is None:  # defensive: incident_id is a FK, so unreachable while the row exists
+        return notice
+
+    if transmitted:
+        body = (
+            f"Regulatory notification {notice.kind} transmitted to the {NOTICE_AUDIENCE} at "
+            f"{fmt_eat(now, '%Y-%m-%d %H:%M')} EAT (outbox {row.id})."
+        )
+        if late:
+            body += (
+                f" TRANSMITTED AFTER the {fmt_eat(notice.due_at, '%Y-%m-%d %H:%M')} EAT deadline."
+                + ("" if data[DISPATCH_KEY]["reason_for_delay_recorded"] else
+                   " No reason_for_delay was recorded at release, because the release was on time —"
+                   " DPA 2019 s.43 / §9.2 requires one for a late notification and a human must supply it.")
+            )
+    else:
+        body = (
+            f"Regulatory notification {notice.kind} was NOT transmitted: outbox {row.id} ended "
+            f"{final_status} ({error or 'no error recorded'}). The obligation is NOT discharged."
+        )
+    session.add(
+        WorkNoteRow(incident_id=inc.id, author=REGULATORY_RAISER, author_role="AGENT", body=body, source="regulatory")
+    )
+    _audit(
+        session,
+        inc,
+        actor="outbox.dispatcher",
+        action="regulatory.sent" if transmitted else "regulatory.send_failed",
+        entity_id=notice.id,
+        rationale=body,
+        payload={
+            "outbox_id": row.id,
+            "outbox_status": final_status,
+            "status": notice.status,
+            "sent_at": notice.sent_at.isoformat() if notice.sent_at else None,
+            "late": late,
+            "error": error,
+        },
+    )
+    return notice
 
 
 # --------------------------------------------------------------------------------- the sweep

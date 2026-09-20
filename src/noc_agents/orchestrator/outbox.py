@@ -939,12 +939,55 @@ def _record_outcome(
 
 def _finalize(session: Session, job: OutboxRow, result: DispatchResult, final: str, now: datetime) -> list[RealtimeEvent]:
     """Kind-specific bookkeeping on a terminal outcome (drafts, notes, events)."""
+    events: list[RealtimeEvent] = []
     if job.kind == EMAIL:
         delivery = result.delivery or {"mode": "error", "to": [], "detail": result.last_error or final}
-        return notify.record_email_outcome(session, job, final_status=final, delivery=delivery, now=now)
-    if job.kind == SMS:
-        return notify.record_sms_outcome(session, job, final_status=final, now=now)
-    return []
+        events = notify.record_email_outcome(session, job, final_status=final, delivery=delivery, now=now)
+    elif job.kind == SMS:
+        events = notify.record_sms_outcome(session, job, final_status=final, now=now)
+    _producer_outcome(session, job, result, final, now)
+    return events
+
+
+def _regulatory_outcome(
+    session: Session, job: OutboxRow, row_id: str, result: DispatchResult, final: str, now: datetime
+) -> None:
+    """``regulatory_notifications`` (§7.6.1): the notice learns whether it was transmitted."""
+    from noc_agents.services import regulatory  # lazy: services.regulatory imports this module
+
+    regulatory.record_dispatch_outcome(
+        session, job, notification_id=row_id, final_status=final, now=now,
+        error=result.last_error, provider=result.provider,
+    )
+
+
+#: Payload field that names a producer's own row → what to tell that row. A table rather than
+#: a chain of ``if job.kind ==``: the outcome belongs to the producer, not to the channel, and
+#: two producers on one kind would otherwise start competing inside ``_finalize``.
+_PRODUCER_OUTCOMES: dict[str, Callable[[Session, OutboxRow, str, DispatchResult, str, datetime], None]] = {
+    "regulatory_notification_id": _regulatory_outcome,
+}
+
+
+def _producer_outcome(session: Session, job: OutboxRow, result: DispatchResult, final: str, now: datetime) -> None:
+    """Tell the producer's own row what actually happened to its message.
+
+    WHY THIS EXISTS. A producer that stamps "sent" when it *enqueues* is stamping an
+    intention, and the gap between the enqueue and the transmit is where DEAD lives. For
+    ``regulatory_notifications`` that gap was a false assurance of a statutory obligation:
+    the row read SENT with a ``sent_at`` while ``resolve_recipients`` had refused the whole
+    dispatch for want of a CA address. So the outcome flows back, once, when it is terminal —
+    ``_record_outcome`` returns early on a retry, so this never sees a row still in flight.
+
+    Deliberately a no-op for every row that names no such producer, which is all of them
+    unless a lane is switched on: nothing on the golden path changes and no service module is
+    imported that a flag-off process would not otherwise import.
+    """
+    payload = _payload(job)
+    for key, handler in _PRODUCER_OUTCOMES.items():
+        row_id = payload.get(key)
+        if row_id:
+            handler(session, job, str(row_id), result, final, now)
 
 
 def _backoff(attempts: int) -> timedelta:

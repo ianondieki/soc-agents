@@ -84,6 +84,17 @@ DRAFT = "DRAFT"
 PENDING_APPROVAL = "PENDING_APPROVAL"
 SENT = "SENT"
 NOT_REQUIRED = "NOT_REQUIRED"
+#: The four §7.6.1 names ONLY. This is no longer the whole vocabulary: the service adds
+#: ``QUEUED`` (approved and on the outbox, nothing transmitted) and ``SEND_FAILED`` (the
+#: outbox row reached a terminal non-SENT outcome), because the four above cannot tell
+#: "we queued it" apart from "it arrived" -- and the row is the evidence for the CA's
+#: 24-hour obligation, so that gap read as a discharged obligation that was not discharged.
+#:
+#: ``services.regulatory.SERVICE_STATUSES`` is the authoritative list and the service is
+#: where the vocabulary is enforced (this module declares no CHECK constraint; the column is
+#: plain TEXT, which is why the addition cost no migration). Kept here as the record of what
+#: the spec enumerates, and deliberately NOT widened: a reader comparing the two should see
+#: the deviation, not have it hidden from them.
 NOTIFICATION_STATUSES: tuple[str, ...] = (DRAFT, PENDING_APPROVAL, SENT, NOT_REQUIRED)
 
 

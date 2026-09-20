@@ -53,6 +53,7 @@ from noc_agents.services.regulatory import (
     REGULATORY_RAISER,
     REGULATORY_TASK_TYPE,
     ClockStartUnknown,
+    QUEUED,
     NoticeNotApproved,
     NoticeStateError,
     approval_of,
@@ -267,7 +268,12 @@ def test_a_regulatory_draft_cannot_reach_the_outbox_dispatcher_without_a_named_h
     assert row.requires_hitl == 1
     assert row.approved_by == APPROVER
     assert row.approved_at is not None
-    assert notice.status == SENT and notice.approved_by == APPROVER
+    # QUEUED, not SENT: the row exists, nothing has been transmitted, and sent_at is NULL
+    # until the dispatcher reports a real transmission (record_dispatch_outcome). The old
+    # assertion here read ``notice.status == SENT`` at this point, which was the bug: it
+    # pinned an enqueue as a send.
+    assert notice.status == QUEUED and notice.approved_by == APPROVER
+    assert notice.sent_at is None
 
     # 10. And the outbox's own gate is independent: strip the approval off the row and the
     #     dispatcher refuses it outright rather than transmitting.
@@ -299,7 +305,9 @@ def test_a_second_send_of_the_same_notice_is_refused_rather_than_queued_twice(tm
     _approve(session, task)
     release_notice(session, notice, inc, actor="Duty Manager", now=ON_TIME)
 
-    with pytest.raises(NoticeStateError, match="already been sent"):
+    # The guard is unchanged in force, only in wording: it now refuses the QUEUED notice
+    # (nothing transmitted yet) rather than a notice that had prematurely been called SENT.
+    with pytest.raises(NoticeStateError, match="already been released to the outbox"):
         release_notice(session, notice, inc, actor="Duty Manager", now=ON_TIME)
     assert session.query(OutboxRow).count() == 1
 
@@ -619,7 +627,10 @@ def test_a_first_sweep_that_finds_one_hour_left_announces_two_hours_not_twelve(t
     assert sorted(notice.significance["countdown_fired"]) == sorted(COUNTDOWN_THRESHOLDS_H)
 
 
-def test_a_sent_notice_stops_counting_down(tmp_db, on):
+def test_a_released_notice_stops_counting_down(tmp_db, on):
+    """Renamed from ``..._a_sent_notice_...``: after release the notice is QUEUED, not SENT.
+    The behaviour it pins is unchanged — a notice that has left the approval queue is off the
+    countdown, because the countdown exists to chase the human, and the human has acted."""
     _settings, session = tmp_db
     inc, notice, task = _notice_with_open_card(session)
     _approve(session, task)
@@ -677,8 +688,13 @@ def test_a_late_send_with_a_reason_records_it_where_the_spec_says(tmp_db, on):
         now=late,
     )
 
-    assert notice.status == SENT
-    assert notice.sent_at == late and notice.sent_at > notice.due_at
+    # The reason is recorded at release, which is where the refusal that demands it lives.
+    # ``sent_at`` is NOT stamped here any more — this release transmitted nothing — so the
+    # assertion that used to read ``notice.sent_at == late`` now states the new rule: the
+    # lateness of the ENQUEUE is on the release record, and sent_at stays NULL until a
+    # transmission happens. ``test_regulatory_dispatch_outcome`` carries it the rest of the way.
+    assert notice.status == QUEUED
+    assert notice.sent_at is None
     assert "curfew" in notice.significance["reason_for_delay"]
     assert notice.significance["release"]["late"] is True
 
@@ -869,7 +885,10 @@ def test_the_full_route_path_drafts_approves_and_only_then_sends(client):
     sent = client.post(f"/api/v1/regulatory/{notice_id}/send", json={"sent_by": "Grace Duty Manager"})
 
     assert sent.status_code == 200, sent.text
-    assert sent.json()["notification"]["status"] == SENT
+    # QUEUED, and the response says so: the route put a row on the outbox and transmitted
+    # nothing, so neither the status nor sent_at may claim the Authority has been notified.
+    assert sent.json()["notification"]["status"] == QUEUED
+    assert sent.json()["notification"]["sent_at"] is None
     assert sent.json()["notification"]["approved_by"] == "Grace Duty Manager"
     assert sent.json()["outbox_status"] == "PENDING"  # queued, not transmitted inside the request
 
@@ -889,9 +908,10 @@ def test_the_supervisor_who_raised_the_notice_cannot_approve_it(client):
     assert r.status_code == 403, r.text
 
 
-def test_a_sent_notice_cannot_be_redrafted(client):
-    """A SENT notice keeps the wording that was actually released; rewriting it would destroy
-    the only record of what the regulator was told."""
+def test_a_released_notice_cannot_be_redrafted(client):
+    """A released notice keeps the wording that went to the outbox; rewriting it would destroy
+    the only record of what the regulator was (or was about to be) told. ``is_open`` treats
+    QUEUED exactly as it treated SENT, so this 409 is unchanged by the status split."""
     inc_id = _open_incident(client)
     notice_id = client.post(
         f"/api/v1/incidents/{inc_id}/regulatory", json={"requested_by": "Alice Supervisor"}
