@@ -80,6 +80,13 @@ class HitlTaskType(str, Enum):
     # computes the evidence; it never adjudicates a dispute and never sends the notice itself.
     DISPUTE_SCORECARD_LINE = "DISPUTE_SCORECARD_LINE"
     APPROVE_VENDOR_NOTICE = "APPROVE_VENDOR_NOTICE"
+    # Appendix C members that were in use, or named by the spec, without being members.
+    # APPROVE_HANDOVER was live as a bare string literal in services/handover.py, which
+    # matters: the registry's import-time assert only validates gate names that ARE enum
+    # members, so a typo in that literal was a runtime bug rather than a startup failure.
+    APPROVE_HANDOVER = "APPROVE_HANDOVER"
+    CONFIRM_POWER_NOTICE = "CONFIRM_POWER_NOTICE"  # §7.3.2: a parsed KPLC notice is confirmed by a human
+    APPROVE_PERFORMANCE_ACTION = "APPROVE_PERFORMANCE_ACTION"  # §7.6.3, Phase 6; declared, deliberately unused (D12)
     GENERIC = "GENERIC"
     # v2 (§7.1.2): gates for write-capable MCP cards; exercised only when such a card is actually connected.
     APPROVE_TICKET_SYNC = "APPROVE_TICKET_SYNC"

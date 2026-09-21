@@ -18,6 +18,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from noc_agents.api.routers import (
+    admin,
     capacity,
     clocks,
     complaints,
@@ -25,9 +26,12 @@ from noc_agents.api.routers import (
     dashboards,
     maintenance,
     memory,
+    outbox_admin,
     pir,
     regulatory,
     scorecards,
+    signals,
+    templates,
     vendors,
 )
 
@@ -44,6 +48,11 @@ ROUTERS: tuple[APIRouter, ...] = (
     capacity.router,
     contracts.router,
     complaints.router,
+    # Conformance batch (docs/CONFORMANCE.md C-09, C-10, C-11, C-15)
+    templates.router,
+    outbox_admin.router,
+    signals.router,
+    admin.router,
 )
 
 __all__ = ["ROUTERS"]
