@@ -3,6 +3,8 @@ import { useParams } from "react-router-dom";
 import { api } from "../api";
 import EarlierAtThisSite from "../components/EarlierAtThisSite";
 import ContractsDrawer from "../components/ContractsDrawer";
+import RegulatoryCountdown from "../components/RegulatoryCountdown";
+import StopClockPanel from "../components/StopClockPanel";
 import { fmtDateTime } from "../lib/time";
 import { useIncidentRevision } from "../realtime/RealtimeContext";
 
@@ -78,6 +80,10 @@ export default function IncidentWorkspace({ session }: { session: any }) {
         {inc.county ? ` / ${inc.county}` : ""} · est. users {inc.users_affected?.toLocaleString()} · owner{" "}
         {inc.assignee_name} · RNIO {inc.rnio_name || "—"}
       </p>
+      {/* Regulatory countdown (§5.3.20, §7.10) — at the top, because a SEND_FAILED regulator
+          notice must be impossible to miss. Self-contained; renders nothing while
+          REGULATORY_ENABLED is off or on any failure, so it cannot affect the page. */}
+      <RegulatoryCountdown incidentId={inc.id} />
 
       <div className="panel" style={{ marginBottom: "1rem" }}>
         <h3>NOC ticket fields (agent-filled · times in EAT)</h3>
@@ -303,6 +309,9 @@ export default function IncidentWorkspace({ session }: { session: any }) {
           asker's role. It cannot widen that scope -- the route ignores any allow-set in
           the request body. Self-contained and advisory, like the panel above it. */}
       <ContractsDrawer incidentId={inc.id} />
+      {/* Stop clock / SCC (§7.6.3, §7.10): reason mandatory before open. Renders nothing while
+          SCORECARDS_ENABLED is off; owns its fetch and swallows its own failures. */}
+      <StopClockPanel incidentId={inc.id} />
 
       <div className="panel" style={{ marginTop: "1rem" }}>
         <h3>Unified timeline (EAT)</h3>

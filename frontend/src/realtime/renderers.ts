@@ -1,3 +1,5 @@
+import { fmtDateTime } from "../lib/time";
+
 /**
  * WS renderer table — verified defect #26.
  *
@@ -29,7 +31,9 @@ export type Slice =
   | "audit"
   | "problems"
   | "ledger"
-  | "signals";
+  | "signals"
+  | "scheduler"
+  | "pir";
 
 export const ALL_SLICES: readonly Slice[] = [
   "incidents",
@@ -40,6 +44,8 @@ export const ALL_SLICES: readonly Slice[] = [
   "problems",
   "ledger",
   "signals",
+  "scheduler",
+  "pir",
 ];
 
 export type Revisions = Record<Slice, number>;
@@ -54,6 +60,8 @@ export function zeroRevisions(): Revisions {
     problems: 0,
     ledger: 0,
     signals: 0,
+    scheduler: 0,
+    pir: 0,
   };
 }
 
@@ -245,6 +253,47 @@ export const RENDERERS: Readonly<Record<string, RendererSpec>> = {
     critical: false,
     why: "(not emitted today) a KPLC interruption notice was parsed; it reaches an operator as a CONFIRM_POWER_NOTICE HITL task, which hitl.created already covers",
   },
+  "complaint.surge": {
+    slices: ["signals"],
+    incidentScoped: false,
+    ticker: true,
+    critical: false,
+    why: "(not emitted today — Phase 6; dashboards.py reports complaint_surge=null) §7.10 lists it as a Regions refetch trigger, and Regions already refetches on the signals slice; advisory, so it never outranks a P1",
+  },
+
+  // ---- post-incident reviews (§7.7) -----------------------------------------
+  "pir.opened": {
+    slices: ["pir"],
+    incidentScoped: true,
+    ticker: true,
+    critical: false,
+    why: "services/pir.open_pir buffers {incident_number, opened_reason, pir_id, status} after the insert; the PIRs list and awaiting-review count change, and that incident's workspace reloads",
+  },
+
+  // ---- regulatory clock (§5.3.20): a statutory deadline is never quiet -----
+  "regulatory.deadline": {
+    slices: [],
+    incidentScoped: true,
+    ticker: true,
+    critical: true,
+    why: "services/regulatory.sweep_deadlines crossed a 12 h / 2 h threshold ({notification_id, kind, status, incident_number, threshold_hours, due_at, due_at_eat, minutes_remaining, overdue, hitl_task_id}); only that incident's countdown panel refetches, but quiet mode must never hide it",
+  },
+
+  // ---- platform health: the AGENTS OFFLINE and breach signals (§10.4, §9.6) --
+  "scheduler.job_failed": {
+    slices: ["scheduler", "runs"],
+    incidentScoped: false,
+    ticker: true,
+    critical: true,
+    why: "scheduler/loop.py publishes it only when a job's circuit opens ({job, run_id, error, consecutive_failures, circuit_open: true}); the Wallboard AgentsStatusTile re-reads /scheduler/status and the FAILED run joins the runs list",
+  },
+  "security.redaction_miss": {
+    slices: ["audit"],
+    incidentScoped: false,
+    ticker: true,
+    critical: true,
+    why: "housekeeping.post_send_redaction_scan found contact-detail patterns in a SENT payload ({outbox_id, kind, incident_number, sent_at, email_matches, phone_matches, paths, note} — counts and paths, never the value); an audit row was written and the Wallboard shows a red chip",
+  },
 
   // ---- housekeeping --------------------------------------------------------
   "monitor.chase": {
@@ -349,4 +398,72 @@ export function isCriticalEvent(ev: NocEvent, spec?: RendererSpec): boolean {
   if (s.critical === false) return false;
   const p = ev.payload?.priority;
   return typeof p === "string" && HIGH_PRIORITY.has(p.toUpperCase());
+}
+
+/* ------------------------------------------------------------ ticker text --
+ * The generic ticker line reads `incident_number`, `node`, `agent`, `status`
+ * and one of `rationale`/`output`/`detail`. None of the five payloads below
+ * carries the fields that make them worth reading (the failed job's name, the
+ * deadline, the pattern counts), so each gets a describer built from what the
+ * backend actually sends — grep the `type="…"` string in src/noc_agents/ for
+ * the publisher. The result is appended to the generic line, never replaces
+ * it, and a describer that throws or gets an odd payload yields "".
+ *
+ * `security.redaction_miss` is described from counts and JSON paths only: the
+ * payload never carries the matched value (§9.5) and this text must not grow a
+ * way to show one.
+ */
+function num(v: unknown): string {
+  return typeof v === "number" && Number.isFinite(v) ? String(v) : "?";
+}
+
+function span(minutes: unknown): string {
+  if (typeof minutes !== "number" || !Number.isFinite(minutes)) return "?";
+  const m = Math.abs(Math.trunc(minutes));
+  const h = Math.floor(m / 60);
+  return h ? `${h} h ${m % 60} min` : `${m} min`;
+}
+
+const DESCRIBERS: Readonly<Record<string, (p: Record<string, any>) => string>> = {
+  // services/pir.open_pir: {incident_number, opened_reason, pir_id, status}
+  "pir.opened": (p) => `review opened · trigger ${p.opened_reason ?? "?"}`,
+  // services/regulatory._deadline_event: {notification_id, kind, status, incident_number,
+  // threshold_hours, due_at, due_at_eat, minutes_remaining, overdue, hitl_task_id}
+  "regulatory.deadline": (p) =>
+    `${p.kind ?? "notice"} · ${p.overdue ? `OVERDUE by ${span(p.minutes_remaining)}` : `${span(p.minutes_remaining)} left`}` +
+    ` · due ${fmtDateTime(p.due_at)} EAT · ${num(p.threshold_hours)} h threshold`,
+  // scheduler/loop.py: {job, run_id, error, consecutive_failures, circuit_open}
+  "scheduler.job_failed": (p) =>
+    `job ${p.job ?? "?"} · ${p.circuit_open ? "CIRCUIT OPEN" : "failed"} after ${num(p.consecutive_failures)} failures` +
+    (p.error ? ` · ${String(p.error).slice(0, 90)}` : ""),
+  // services/housekeeping.RedactionHit.as_payload: {outbox_id, kind, incident_number, sent_at,
+  // email_matches, phone_matches, paths, note}
+  "security.redaction_miss": (p) =>
+    `REDACTION MISS · SENT ${p.kind ?? "message"} · ${num(p.email_matches)} e-mail / ${num(p.phone_matches)} MSISDN pattern(s)` +
+    (Array.isArray(p.paths) && p.paths.length ? ` at ${p.paths.slice(0, 3).join(", ")}` : ""),
+  // NO PUBLISHER YET (Phase 6): the one describer built from the spec, not from code — §7.4.2's
+  // {region_code, product_hint, zscore, count, bucket_start}. Every field is optional here, so a
+  // producer that ships a different shape degrades to "complaint surge", never to a throw.
+  "complaint.surge": (p) =>
+    [
+      "complaint surge",
+      p.region_code,
+      p.product_hint,
+      p.count != null ? `${num(p.count)} complaints` : null,
+      typeof p.zscore === "number" ? `z ${p.zscore.toFixed(1)}` : null,
+      p.bucket_start ? `from ${fmtDateTime(p.bucket_start)} EAT` : null,
+    ]
+      .filter(Boolean)
+      .join(" · "),
+};
+
+/** Extra ticker text for one event, or "" — never throws. */
+export function describeEvent(ev: NocEvent): string {
+  try {
+    if (!Object.prototype.hasOwnProperty.call(DESCRIBERS, ev.type)) return "";
+    const text = DESCRIBERS[ev.type](ev.payload || {});
+    return text ? `— ${text}` : "";
+  } catch {
+    return "";
+  }
 }

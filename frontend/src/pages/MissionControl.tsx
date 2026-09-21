@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api, runLiveRainStorm } from "../api";
 import { fmtTime } from "../lib/time";
-import type { NocEvent } from "../realtime/renderers";
+import { describeEvent, type NocEvent } from "../realtime/renderers";
 
 const AUTO_KEY = "noc_auto_storm_v1";
 
@@ -274,6 +274,7 @@ export default function MissionControl({
                       : e.payload?.detail
                         ? `— ${String(e.payload.detail).slice(0, 90)}`
                         : ""}
+                  {describeEvent(e)}
                 </span>
               </div>
             ))}

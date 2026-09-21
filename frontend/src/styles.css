@@ -1084,3 +1084,278 @@ textarea { width: 100%; min-height: 90px; }
   .wb-risk-region { font-size: 1.1rem; }
   .wb-risk-word { font-size: 1.05rem; }
 }
+
+/* ------------------------------------------------------------------ *
+ * PIRs, stop clock, regulatory countdown, Wallboard platform alarms   *
+ * (spec §7.7, §7.6.3, §5.3.20, §9.6, §10.4 — CONFORMANCE C-18/C-19).  *
+ *                                                                     *
+ * Purely additive: nothing above this line is edited.                 *
+ *                                                                     *
+ * THE 3 a.m. RULES THIS BLOCK ENFORCES (§7.10):                        *
+ *  - nothing here animates. The red states are built on the           *
+ *    .chip.danger palette, never on .chip.bad, which pulses;           *
+ *  - no state is carried by colour alone: every red/amber/grey box     *
+ *    in these components has a word in it (OFFLINE, NOT SENT,          *
+ *    OVERDUE, REDACTION MISS, REJECTED) and most carry an x glyph;     *
+ *  - Wallboard alarm text is sized in px against the 1080p rule:       *
+ *    headline >= 32 px, body >= 20 px (the root font is 15 px, so rem  *
+ *    would under-deliver).                                             *
+ * ------------------------------------------------------------------ */
+
+/* ---- PIR editor --------------------------------------------------- */
+.pir-editor .panel-head { flex-wrap: wrap; }
+.pir-h4 {
+  margin: 1.1rem 0 0.5rem;
+  font-size: 0.95rem;
+  color: var(--text-bright);
+}
+.pir-mono { font-family: var(--mono); font-size: 0.84rem; }
+.pir-row-selected td { background: rgba(62, 203, 255, 0.07); }
+
+.pir-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 0.6rem;
+  margin: 0.2rem 0 0.9rem;
+}
+.pir-metric {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.55rem 0.7rem;
+  background: rgba(8, 16, 30, 0.6);
+}
+.pir-metric-label {
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.pir-metric-value {
+  font-family: var(--mono);
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--text-bright);
+}
+.pir-metric-value.small { font-size: 0.95rem; }
+
+.pir-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 0.7rem;
+  margin: 0.8rem 0;
+}
+.pir-field { display: flex; flex-direction: column; gap: 0.3rem; }
+.pir-field textarea { min-height: 0; }
+.pir-field input { width: 100%; }
+.pir-field-label { font-size: 0.84rem; font-weight: 600; color: var(--text); }
+
+.pir-action-form {
+  display: grid;
+  grid-template-columns: 8.5rem 5rem minmax(12rem, 2fr) minmax(12rem, 1.2fr) 10rem auto;
+  gap: 0.5rem;
+  margin-top: 0.6rem;
+}
+@media (max-width: 1100px) {
+  .pir-action-form { grid-template-columns: 1fr 1fr; }
+}
+
+.pir-overdue { color: #ffb4c0; font-weight: 700; font-size: 0.8rem; letter-spacing: 0.04em; }
+
+.pir-error {
+  display: flex;
+  gap: 0.6rem;
+  align-items: flex-start;
+  margin: 0.5rem 0;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid rgba(255, 193, 77, 0.45);
+  background: rgba(255, 193, 77, 0.07);
+  border-radius: 10px;
+}
+
+.pir-blockers {
+  margin-top: 0.4rem;
+  padding: 0.75rem 0.85rem;
+  border: 1px solid rgba(255, 193, 77, 0.45);
+  background: rgba(255, 193, 77, 0.06);
+  border-radius: 10px;
+}
+.pir-blockers-head { display: flex; gap: 0.6rem; align-items: center; flex-wrap: wrap; }
+.pir-blockers ul { margin: 0.6rem 0; padding-left: 1.2rem; }
+.pir-blockers li { margin-bottom: 0.45rem; }
+.pir-blockers .pre { font-size: 0.78rem; }
+
+/* ---- BlamelessHint: always visible; louder, not different, when tripped */
+.pir-hint {
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--accent);
+  border-radius: 10px;
+  padding: 0.65rem 0.8rem;
+  background: rgba(62, 203, 255, 0.05);
+}
+.pir-hint[data-tripped="yes"] {
+  border-color: rgba(255, 193, 77, 0.55);
+  border-left-color: var(--warn);
+  background: rgba(255, 193, 77, 0.08);
+}
+.pir-hint-head { display: flex; gap: 0.6rem; align-items: center; flex-wrap: wrap; }
+.pir-hint-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.6rem;
+  margin-top: 0.55rem;
+}
+@media (max-width: 800px) { .pir-hint-pair { grid-template-columns: 1fr; } }
+.pir-hint-label {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 0.2rem;
+}
+.pir-hint-eg {
+  font-size: 0.84rem;
+  padding: 0.45rem 0.6rem;
+  border-radius: 8px;
+  border: 1px dashed var(--border-bright);
+}
+.pir-hint-eg.bad { text-decoration: line-through; text-decoration-color: rgba(255, 59, 92, 0.6); color: var(--muted); }
+.pir-hint-eg.ok { border-style: solid; border-color: rgba(46, 229, 157, 0.4); }
+
+/* ---- Stop clock --------------------------------------------------- */
+.scc-summary {
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  gap: 1.2rem;
+  margin: 0.2rem 0 0.8rem;
+}
+@media (max-width: 800px) { .scc-summary { grid-template-columns: 1fr; } }
+.scc-window { font-family: var(--mono); font-size: 0.95rem; color: var(--text-bright); margin-top: 0.15rem; }
+.scc-reverse { display: flex; gap: 0.35rem; flex-wrap: wrap; margin-top: 0.35rem; }
+.scc-reverse input { min-width: 16rem; }
+.scc-open {
+  display: grid;
+  grid-template-columns: 16rem 1fr auto;
+  gap: 0.5rem;
+  margin-top: 0.8rem;
+}
+@media (max-width: 800px) { .scc-open { grid-template-columns: 1fr; } }
+
+/* ---- Regulatory countdown ---------------------------------------- */
+.reg-strip {
+  display: flex;
+  gap: 0.6rem;
+  align-items: center;
+  flex-wrap: wrap;
+  margin: 0 0 1rem;
+}
+.reg-panel { margin-bottom: 1rem; }
+.reg-list { display: flex; flex-direction: column; gap: 0.6rem; }
+.reg-row {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.65rem 0.8rem;
+  background: rgba(8, 16, 30, 0.6);
+}
+.reg-row.failed { border: 2px solid var(--p1); }
+.reg-row-head { display: flex; gap: 0.6rem; align-items: center; flex-wrap: wrap; margin-bottom: 0.35rem; }
+.reg-countdown { display: flex; gap: 1rem; align-items: baseline; flex-wrap: wrap; }
+.reg-left {
+  font-family: var(--mono);
+  font-size: 1.6rem;
+  font-weight: 800;
+  color: var(--text-bright);
+  letter-spacing: 0.01em;
+}
+.reg-left.overdue { color: #ffb4c0; }
+.reg-due { font-size: 0.95rem; }
+
+/* SEND_FAILED: a regulator notice that was approved and did NOT go out. The loudest static
+   thing on the page (thick red border, red tint, the words in capitals) and still no motion. */
+.reg-failed {
+  border: 3px solid var(--p1);
+  background: rgba(255, 59, 92, 0.14);
+  border-radius: 12px;
+  padding: 0.85rem 1rem;
+  margin-bottom: 0.9rem;
+}
+.reg-failed-head {
+  display: flex;
+  gap: 0.55rem;
+  align-items: center;
+  font-size: 1.35rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  color: #ffd0d8;
+}
+.reg-failed-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.6rem;
+  height: 1.6rem;
+  border-radius: 999px;
+  background: var(--p1);
+  color: #fff;
+  font-size: 1rem;
+}
+.reg-failed-body { margin-top: 0.45rem; color: var(--text-bright); }
+.reg-failed-facts { display: flex; flex-direction: column; gap: 0.2rem; margin-top: 0.45rem; font-size: 0.9rem; }
+.reg-failed-do { margin-top: 0.5rem; font-size: 0.84rem; color: var(--muted); }
+
+/* ---- Wallboard platform alarms (AGENTS OFFLINE, redaction miss) --- */
+.wb-alarms {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  align-items: stretch;
+  margin: 0 0 1rem;
+}
+.wb-alarm-chip {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  padding: 0.4rem 0.9rem;
+  border-radius: 12px;
+  border: 1px solid var(--border-bright);
+  background: var(--panel-elevated);
+  color: var(--text);
+}
+.wb-alarm-chip.ok {
+  color: var(--ok);
+  border-color: rgba(46, 229, 157, 0.45);
+  background: rgba(46, 229, 157, 0.08);
+}
+.wb-alarm-chip.grey {
+  color: var(--muted);
+  border-style: dashed;
+  border-color: var(--muted-dim);
+  background: rgba(8, 16, 30, 0.72);
+}
+.wb-alarm-chip.red {
+  color: #ffd0d8;
+  border: 2px solid var(--p1);
+  background: rgba(255, 59, 92, 0.16);
+}
+.wb-offline,
+.wb-breach {
+  flex: 1 1 100%;
+  border: 3px solid var(--p1);
+  background: rgba(255, 59, 92, 0.16);
+  border-radius: 16px;
+  padding: 0.9rem 1.2rem;
+  color: var(--text-bright);
+}
+.wb-offline-word,
+.wb-breach-word {
+  font-size: 36px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  color: #ffd0d8;
+  line-height: 1.15;
+}
+.wb-breach-count { font-size: 22px; letter-spacing: 0.02em; color: var(--text-bright); font-weight: 600; }
+.wb-offline-detail,
+.wb-breach-detail { font-size: 20px; margin-top: 0.35rem; }
+.wb-offline-do { font-size: 20px; margin-top: 0.4rem; color: var(--muted); }
+.wb-breach-list { font-size: 20px; margin: 0.45rem 0 0; padding-left: 1.3rem; font-family: var(--mono); }

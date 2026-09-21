@@ -122,6 +122,37 @@ export const api = {
     req<any>(`/api/v1/maintenance/windows/${id}/cancel`, { method: "POST", body: JSON.stringify({ reason }) }),
   maintenanceStopClockProposal: (incidentId: string) =>
     req<any>(`/api/v1/maintenance/incidents/${incidentId}/stop-clock-proposal`),
+  /**
+   * Post-incident reviews (spec §7.7.2, `api/routers/pir.py`). Every route 404s while
+   * `PIR_ENABLED` is off — `pages/Pirs.tsx` reads that as "off", not as an error. PATCH and
+   * publish answer 422 with the server's exact words (the blameless sentence; every publish
+   * blocker joined by "; "), which `lib/apiError.detailOf` unwraps intact.
+   */
+  pirs: (status = "") => req<any[]>(`/api/v1/pir${status ? `?status=${encodeURIComponent(status)}` : ""}`),
+  pir: (id: string) => req<any>(`/api/v1/pir/${id}`),
+  pirPatch: (id: string, body: any) => req<any>(`/api/v1/pir/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
+  pirAddAction: (id: string, body: any) =>
+    req<any>(`/api/v1/pir/${id}/actions`, { method: "POST", body: JSON.stringify(body) }),
+  pirPatchAction: (id: string, actionId: string, body: any) =>
+    req<any>(`/api/v1/pir/${id}/actions/${actionId}`, { method: "PATCH", body: JSON.stringify(body) }),
+  pirPublish: (id: string, body: { reviewer?: string; rationale?: string }) =>
+    req<any>(`/api/v1/pir/${id}/publish`, { method: "POST", body: JSON.stringify(body) }),
+  pirDraftLlm: (id: string) => req<any>(`/api/v1/pir/${id}/draft/llm`, { method: "POST", body: "{}" }),
+  pirAwaitingReview: () => req<any>("/api/v1/pir/awaiting-review"),
+  openPirForIncident: (incidentId: string) =>
+    req<any>(`/api/v1/incidents/${incidentId}/pir`, { method: "POST", body: "{}" }),
+  /** Stop clocks (spec §7.6.3, `api/routers/clocks.py`). 404 while `SCORECARDS_ENABLED` is off. */
+  incidentClock: (incidentId: string) => req<any>(`/api/v1/incidents/${incidentId}/clock`),
+  clockOpen: (incidentId: string, body: { scc_code: string; reason: string; started_at?: string }) =>
+    req<any>(`/api/v1/incidents/${incidentId}/clock`, { method: "POST", body: JSON.stringify(body) }),
+  clockClose: (incidentId: string, eventId: string, body: { ended_at?: string; reason?: string }) =>
+    req<any>(`/api/v1/incidents/${incidentId}/clock/${eventId}/close`, { method: "POST", body: JSON.stringify(body) }),
+  clockReverse: (incidentId: string, eventId: string, body: { reason: string }) =>
+    req<any>(`/api/v1/incidents/${incidentId}/clock/${eventId}/reverse`, { method: "POST", body: JSON.stringify(body) }),
+  /** Regulatory clocks (spec §5.3.20). 200 with `enabled:false` while `REGULATORY_ENABLED` is off. */
+  incidentRegulatory: (incidentId: string) => req<any>(`/api/v1/incidents/${incidentId}/regulatory`),
+  /** Scheduler liveness (spec §7.0.3) — the poll-side truth behind the Wallboard "AGENTS OFFLINE" badge. */
+  schedulerStatus: () => req<any>("/api/v1/scheduler/status"),
 };
 
 /**

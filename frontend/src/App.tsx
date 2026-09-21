@@ -17,6 +17,7 @@ import Audit from "./pages/Audit";
 import Settings from "./pages/Settings";
 import WorkflowMap from "./pages/WorkflowMap";
 import Contracts from "./pages/Contracts";
+import Pirs from "./pages/Pirs";
 
 export default function App() {
   const [profile, setProfile] = useState<any>(null);
@@ -111,6 +112,7 @@ export default function App() {
           <NavLink to="/maintenance">Maintenance</NavLink>
           <NavLink to="/audit">Audit</NavLink>
           <NavLink to="/contracts">Contracts</NavLink>
+          <NavLink to="/pirs">PIRs</NavLink>
           <NavLink to="/wallboard">Wallboard</NavLink>
           <NavLink to="/settings">Settings / Inject</NavLink>
         </nav>
@@ -208,6 +210,8 @@ export default function App() {
               <Route path="/maintenance" element={<Maintenance tick={revisions.incidents + manualTick} />} />
               <Route path="/audit" element={<Audit tick={revisions.audit + manualTick} />} />
               <Route path="/contracts" element={<Contracts />} />
+              {/* Post-incident reviews (§7.7). Refetches on the `pir` slice (pir.opened). */}
+              <Route path="/pirs" element={<Pirs tick={revisions.pir + manualTick} />} />
               <Route
                 path="/settings"
                 element={

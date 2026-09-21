@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { api } from "../api";
 import CardBoundary from "../components/CardBoundary";
 import RiskStrip from "../components/RiskStrip";
+import AgentsStatusTile from "../components/AgentsStatusTile";
+import RedactionMissChip from "../components/RedactionMissChip";
 
 export default function Wallboard({
   metrics,
@@ -44,6 +46,15 @@ export default function Wallboard({
           <span className="chip">P2 {metrics?.by_priority?.P2 ?? 0}</span>
         </div>
       </div>
+      {/* Platform alarms (§4.6, §9.6, §10.4): "AGENTS OFFLINE" / circuit-open and the red
+          redaction-miss chip. Above everything else on the glass; each boundary's fallback is
+          null, so a broken alarm component can never blank the P1/P2 grid. */}
+      <CardBoundary fallback={null}>
+        <AgentsStatusTile />
+      </CardBoundary>
+      <CardBoundary fallback={null}>
+        <RedactionMissChip />
+      </CardBoundary>
       {/*
         Weather context sits above the incident grid so it stays on screen during
         a storm — the one time it is worth anything — but it is deliberately the
