@@ -1,0 +1,276 @@
+{
+  "envelope_keys": [
+    ["incident_id", "operator_id", "payload", "run_id", "ts", "type"]
+  ],
+  "event_payloads": [
+    {
+      "payload": {"error": null, "incident_number": "INC000001", "run_id": "<uuid>", "seq": 12, "status": "SUCCEEDED"},
+      "type": "agent.run.finished"
+    },
+    {
+      "payload": {"incident_number": "INC000001", "priority": "P4", "region_code": "MTK", "requires_hitl": false, "site_id": "SFC-MTK-BTS-MCH04"},
+      "type": "incident.created"
+    }
+  ],
+  "events": [
+    ["agent.step.started", 1, "INGEST", "IngestCorrelationAgent", null, null, false],
+    ["agent.step.completed", 1, "INGEST", "IngestCorrelationAgent", "SUCCEEDED", null, false],
+    ["agent.step.started", 2, "CORRELATE", "IngestCorrelationAgent", null, null, false],
+    ["agent.step.completed", 2, "CORRELATE", "IngestCorrelationAgent", "SUCCEEDED", null, false],
+    ["agent.step.started", 3, "ENRICH", "EnrichmentAgent", null, null, false],
+    ["agent.step.completed", 3, "ENRICH", "EnrichmentAgent", "SUCCEEDED", null, false],
+    ["agent.step.started", 4, "SEVERITY", "SeverityImpactAgent", null, null, false],
+    ["agent.step.completed", 4, "SEVERITY", "SeverityImpactAgent", "SUCCEEDED", null, false],
+    ["agent.step.started", 5, "TICKET", "TicketingAgent", null, null, false],
+    ["agent.step.completed", 5, "TICKET", "TicketingAgent", "SUCCEEDED", "INC000001", true],
+    ["agent.step.started", 6, "ASSIGN", "DispatchAssignmentAgent", null, "INC000001", true],
+    ["agent.step.completed", 6, "ASSIGN", "DispatchAssignmentAgent", "SUCCEEDED", "INC000001", true],
+    ["agent.step.started", 7, "HITL", "SupervisorAgent", null, "INC000001", true],
+    ["agent.step.completed", 7, "HITL", "SupervisorAgent", "SUCCEEDED", "INC000001", true],
+    ["agent.step.started", 8, "BROADCAST", "BroadcastCommsAgent", null, "INC000001", true],
+    ["agent.step.completed", 8, "BROADCAST", "BroadcastCommsAgent", "SUCCEEDED", "INC000001", true],
+    ["agent.step.started", 9, "EXEC_BRIEF", "ExecutiveBriefingAgent", null, "INC000001", true],
+    ["agent.step.completed", 9, "EXEC_BRIEF", "ExecutiveBriefingAgent", "SUCCEEDED", "INC000001", true],
+    ["agent.step.started", 10, "LEDGER", "ShiftLedgerAgent", null, "INC000001", true],
+    ["agent.step.completed", 10, "LEDGER", "ShiftLedgerAgent", "SUCCEEDED", "INC000001", true],
+    ["agent.step.started", 11, "RECURRENCE", "RecurrenceProblemAgent", null, "INC000001", true],
+    ["agent.step.completed", 11, "RECURRENCE", "RecurrenceProblemAgent", "SUCCEEDED", "INC000001", true],
+    ["agent.step.started", 12, "MONITOR", "WorklogMonitorAgent", null, "INC000001", true],
+    ["agent.step.completed", 12, "MONITOR", "WorklogMonitorAgent", "SUCCEEDED", "INC000001", true],
+    ["agent.run.finished", 12, null, null, "SUCCEEDED", "INC000001", true],
+    ["incident.created", null, null, null, null, "INC000001", true]
+  ],
+  "format": 1,
+  "global_events": [
+    {
+      "incident_id_set": true,
+      "payload": {
+        "detail": "No DEMO_EMAIL_TO / GMAIL_ADDRESS — email body stored only (mock)",
+        "incident_number": "INC000001",
+        "mode": "mock",
+        "status": "SENT",
+        "to": []
+      },
+      "type": "email.sent"
+    }
+  ],
+  "global_history": [
+    ["agent.step.started", true],
+    ["agent.step.completed", true],
+    ["agent.step.started", true],
+    ["agent.step.completed", true],
+    ["agent.step.started", true],
+    ["agent.step.completed", true],
+    ["agent.step.started", true],
+    ["agent.step.completed", true],
+    ["agent.step.started", true],
+    ["agent.step.completed", true],
+    ["agent.step.started", true],
+    ["agent.step.completed", true],
+    ["agent.step.started", true],
+    ["agent.step.completed", true],
+    ["agent.step.started", true],
+    ["agent.step.completed", true],
+    ["agent.step.started", true],
+    ["agent.step.completed", true],
+    ["agent.step.started", true],
+    ["agent.step.completed", true],
+    ["agent.step.started", true],
+    ["agent.step.completed", true],
+    ["agent.step.started", true],
+    ["agent.step.completed", true],
+    ["agent.run.finished", true],
+    ["incident.created", true],
+    ["email.sent", false]
+  ],
+  "incident": {"child_sites_down": 0, "incident_number": "INC000001", "incidents_in_db": 1, "same_as_setup_incident": null},
+  "input_events": [
+    {"alarm_code": "SITE_DOWN", "failure_domain": "POWER", "region_code": "MTK", "site_id": "SFC-MTK-BTS-MCH04", "site_name": "Machakos Town BTS", "site_type": "BTS", "users_affected": 3200}
+  ],
+  "masks": ["ledger file name -> ledger_<date>_<shift>.xlsx", "uuid -> <uuid>", "timestamp -> <timestamp>", "date -> <date>", "EAT clock time -> <HH:MM> EAT"],
+  "payload_keys": {
+    "agent.run.finished": [
+      ["error", "incident_number", "run_id", "seq", "status"]
+    ],
+    "agent.step.completed": [
+      ["agent", "duration_ms", "incident_number", "node", "output", "rationale", "run_id", "seq", "status"]
+    ],
+    "agent.step.started": [
+      ["agent", "incident_number", "input", "node", "run_id", "seq"]
+    ],
+    "email.sent": [
+      ["detail", "incident_number", "mode", "status", "to"]
+    ],
+    "incident.created": [
+      ["incident_number", "priority", "region_code", "requires_hitl", "site_id"]
+    ]
+  },
+  "run": {"bound_to_returned_incident": true, "current_node": null, "error_summary": null, "graph_name": "incident_lifecycle", "status": "SUCCEEDED"},
+  "runs_created": 1,
+  "scenario": "full_lifecycle_auto_broadcast",
+  "steps": [
+    {
+      "agent": "IngestCorrelationAgent",
+      "confidence": 0.9,
+      "input_summary": "site=SFC-MTK-BTS-MCH04",
+      "node": "INGEST",
+      "output_summary": "normalized event fingerprint=SFC-MTK-BTS-MCH04|SITE_DOWN|POWER",
+      "rationale": "Normalized alarm payload; ready for correlation window check",
+      "seq": 1,
+      "status": "SUCCEEDED",
+      "tools_called": [
+        {"latency_ms": 1, "name": "normalize_event", "ok": true}
+      ]
+    },
+    {
+      "agent": "IngestCorrelationAgent",
+      "confidence": 0.9,
+      "input_summary": "fp=SFC-MTK-BTS-MCH04|SITE_DOWN|POWER",
+      "node": "CORRELATE",
+      "output_summary": "no open duplicate — new incident candidate",
+      "rationale": "Fingerprint unique in correlation window; no parent HUB merge",
+      "seq": 2,
+      "status": "SUCCEEDED",
+      "tools_called": [
+        {"latency_ms": 2, "name": "find_open_by_fingerprint", "ok": true}
+      ]
+    },
+    {
+      "agent": "EnrichmentAgent",
+      "confidence": 0.85,
+      "input_summary": "SFC-MTK-BTS-MCH04",
+      "node": "ENRICH",
+      "output_summary": "users_est=3200, region=MTK, hub=False, class=STANDARD",
+      "rationale": "CMDB/mock enrich: Mt Kenya; FE on-call=FE-MTK-01; alarm=SITE_DOWN domain=POWER → TT category POWER_GRID (Commercial power failure); site_class=STANDARD; coverage=Thika / Murang'a, Nyeri / Karatina, Meru / Nanyuki",
+      "seq": 3,
+      "status": "SUCCEEDED",
+      "tools_called": [
+        {"latency_ms": 3, "name": "lookup_site", "ok": true},
+        {"latency_ms": 1, "name": "estimate_users_affected", "ok": true},
+        {"latency_ms": 1, "name": "classify_tt", "ok": true}
+      ]
+    },
+    {
+      "agent": "SeverityImpactAgent",
+      "confidence": 0.95,
+      "input_summary": "users=3200",
+      "node": "SEVERITY",
+      "output_summary": "priority=P4 mpesa_risk=False",
+      "rationale": "operator=safaricom; users=3200→P4; site_type=BTS floor=P4; final=P4",
+      "seq": 4,
+      "status": "SUCCEEDED",
+      "tools_called": [
+        {"latency_ms": 1, "name": "priority_engine", "ok": true}
+      ]
+    },
+    {
+      "agent": "TicketingAgent",
+      "confidence": 0.9,
+      "input_summary": "P4",
+      "node": "TICKET",
+      "output_summary": "created INC000001 category=POWER_GRID",
+      "rationale": "Unique incident number; TT fields filled as NOC UI would: category=POWER_GRID, class=STANDARD, tech=4G; HUB auto-ticket=n/a",
+      "seq": 5,
+      "status": "SUCCEEDED",
+      "tools_called": [
+        {"latency_ms": 5, "name": "create_incident", "ok": true}
+      ]
+    },
+    {
+      "agent": "DispatchAssignmentAgent",
+      "confidence": 0.9,
+      "input_summary": "POWER",
+      "node": "ASSIGN",
+      "output_summary": "MSP:EGYPRO",
+      "rationale": "region=MTK (Mt Kenya); lane=power; pool=['EGYPRO', 'EGYPRO_REMOTE']; primary=EGYPRO; radio_oem=MIXED; FE support=FE-MTK-01; RNIO=RNIO-MTK",
+      "seq": 6,
+      "status": "SUCCEEDED",
+      "tools_called": [
+        {"latency_ms": 2, "name": "assign_incident", "ok": true}
+      ]
+    },
+    {
+      "agent": "SupervisorAgent",
+      "confidence": 0.9,
+      "input_summary": "L2_GUARDED",
+      "node": "HITL",
+      "output_summary": "auto-approved under autonomy policy",
+      "rationale": "P4 allowed auto-broadcast at L2_GUARDED",
+      "seq": 7,
+      "status": "SUCCEEDED",
+      "tools_called": []
+    },
+    {
+      "agent": "BroadcastCommsAgent",
+      "confidence": 0.9,
+      "input_summary": "channels=SMS,EMAIL",
+      "node": "BROADCAST",
+      "output_summary": "queued 3 outbox rows for ['RNIO', 'FIELD_ENGINEER']; email=PENDING",
+      "rationale": "P4 auto-send under L2_GUARDED (approved_by=policy:L2_GUARDED); dispatcher transmits after commit",
+      "seq": 8,
+      "status": "SUCCEEDED",
+      "tools_called": [
+        {"latency_ms": 1, "name": "render_sms", "ok": true},
+        {"latency_ms": 1, "name": "render_email", "ok": true},
+        {"error": null, "latency_ms": 2, "name": "outbox.enqueue", "ok": true}
+      ]
+    },
+    {
+      "agent": "ExecutiveBriefingAgent",
+      "confidence": 0.9,
+      "input_summary": "P4",
+      "node": "EXEC_BRIEF",
+      "output_summary": "exec brief published",
+      "rationale": "Proactive brief to reduce management call volume into NOC",
+      "seq": 9,
+      "status": "SUCCEEDED",
+      "tools_called": [
+        {"latency_ms": 2, "name": "upsert_status_brief", "ok": true}
+      ]
+    },
+    {
+      "agent": "ShiftLedgerAgent",
+      "confidence": 0.9,
+      "input_summary": "excel",
+      "node": "LEDGER",
+      "output_summary": "ledger_<date>_<shift>.xlsx",
+      "rationale": "Shift failure ledger row appended for supervisor scan",
+      "seq": 10,
+      "status": "SUCCEEDED",
+      "tools_called": [
+        {"error": null, "latency_ms": 2, "name": "outbox.enqueue", "ok": true}
+      ]
+    },
+    {
+      "agent": "RecurrenceProblemAgent",
+      "confidence": 0.9,
+      "input_summary": "SFC-MTK-BTS-MCH04|SITE_DOWN|POWER",
+      "node": "RECURRENCE",
+      "output_summary": "count=1 threshold=3",
+      "rationale": "Below recurrence threshold — no problem record",
+      "seq": 11,
+      "status": "SUCCEEDED",
+      "tools_called": [
+        {"latency_ms": 2, "name": "count_recurrence", "ok": true}
+      ]
+    },
+    {
+      "agent": "WorklogMonitorAgent",
+      "confidence": 0.9,
+      "input_summary": "sla_watch",
+      "node": "MONITOR",
+      "output_summary": "sla timers armed",
+      "rationale": "Note-interval chase scheduled per priority/region multiplier",
+      "seq": 12,
+      "status": "SUCCEEDED",
+      "tools_called": [
+        {"latency_ms": 1, "name": "flag_sla_watch", "ok": true}
+      ]
+    }
+  ],
+  "test": "tests/integration/test_golden_sequence.py::test_golden_full_lifecycle_auto_broadcast",
+  "work_notes": [
+    ["WorklogMonitorAgent", "AGENT", "agent", "Monitoring started. SLA ack due <timestamp>, restore due <timestamp>. Awaiting first note from EGYPRO."],
+    ["BroadcastCommsAgent", "AGENT", "email", "[BroadcastCommsAgent] EMAIL → RNIO,FIELD_ENGINEER | mode=mock | to=['(none)'] | No DEMO_EMAIL_TO / GMAIL_ADDRESS — email body stored only (mock)"]
+  ]
+}

@@ -1,0 +1,88 @@
+{
+  "envelope_keys": [
+    ["incident_id", "operator_id", "payload", "run_id", "ts", "type"]
+  ],
+  "event_payloads": [
+    {
+      "payload": {"error": null, "incident_number": null, "run_id": "<uuid>", "seq": 2, "status": "SUCCEEDED"},
+      "type": "agent.run.finished"
+    },
+    {
+      "payload": {"incident_number": "INC000001"},
+      "type": "incident.merged"
+    }
+  ],
+  "events": [
+    ["agent.step.started", 1, "INGEST", "IngestCorrelationAgent", null, null, false],
+    ["agent.step.completed", 1, "INGEST", "IngestCorrelationAgent", "SUCCEEDED", null, false],
+    ["agent.step.started", 2, "CORRELATE", "IngestCorrelationAgent", null, null, false],
+    ["agent.step.completed", 2, "CORRELATE", "IngestCorrelationAgent", "SUCCEEDED", null, false],
+    ["agent.run.finished", 2, null, null, "SUCCEEDED", null, true],
+    ["incident.merged", null, null, null, null, "INC000001", true]
+  ],
+  "format": 1,
+  "global_events": [],
+  "global_history": [
+    ["agent.step.started", true],
+    ["agent.step.completed", true],
+    ["agent.step.started", true],
+    ["agent.step.completed", true],
+    ["agent.run.finished", true],
+    ["incident.merged", true]
+  ],
+  "incident": {"child_sites_down": 0, "incident_number": "INC000001", "incidents_in_db": 1, "same_as_setup_incident": true},
+  "input_events": [
+    {"access_notes": "Genset not started", "alarm_code": "POWER_GRID_FAIL", "failure_domain": "POWER", "region_code": "NBI_E", "site_id": "SFC-NBIE-HUB-EMB", "site_name": "Embakasi East Aggregation HUB", "site_type": "HUB", "users_affected": 450000},
+    {"access_notes": "Genset not started", "alarm_code": "POWER_GRID_FAIL", "failure_domain": "POWER", "region_code": "NBI_E", "site_id": "SFC-NBIE-HUB-EMB", "site_name": "Embakasi East Aggregation HUB", "site_type": "HUB", "users_affected": 450000}
+  ],
+  "masks": ["ledger file name -> ledger_<date>_<shift>.xlsx", "uuid -> <uuid>", "timestamp -> <timestamp>", "date -> <date>", "EAT clock time -> <HH:MM> EAT"],
+  "payload_keys": {
+    "agent.run.finished": [
+      ["error", "incident_number", "run_id", "seq", "status"]
+    ],
+    "agent.step.completed": [
+      ["agent", "duration_ms", "incident_number", "node", "output", "rationale", "run_id", "seq", "status"]
+    ],
+    "agent.step.started": [
+      ["agent", "incident_number", "input", "node", "run_id", "seq"]
+    ],
+    "incident.merged": [
+      ["incident_number"]
+    ]
+  },
+  "run": {"bound_to_returned_incident": true, "current_node": null, "error_summary": null, "graph_name": "incident_lifecycle", "status": "SUCCEEDED"},
+  "runs_created": 1,
+  "scenario": "merge_short_circuit",
+  "steps": [
+    {
+      "agent": "IngestCorrelationAgent",
+      "confidence": 0.9,
+      "input_summary": "site=SFC-NBIE-HUB-EMB",
+      "node": "INGEST",
+      "output_summary": "normalized event fingerprint=SFC-NBIE-HUB-EMB|POWER_GRID_FAIL|POWER",
+      "rationale": "Normalized alarm payload; ready for correlation window check",
+      "seq": 1,
+      "status": "SUCCEEDED",
+      "tools_called": [
+        {"latency_ms": 1, "name": "normalize_event", "ok": true}
+      ]
+    },
+    {
+      "agent": "IngestCorrelationAgent",
+      "confidence": 0.9,
+      "input_summary": "fp=SFC-NBIE-HUB-EMB|POWER_GRID_FAIL|POWER",
+      "node": "CORRELATE",
+      "output_summary": "merged into INC000001",
+      "rationale": "Duplicate within 15m window — idempotent merge",
+      "seq": 2,
+      "status": "SUCCEEDED",
+      "tools_called": [
+        {"latency_ms": 2, "name": "find_open_by_fingerprint", "ok": true}
+      ]
+    }
+  ],
+  "test": "tests/integration/test_golden_sequence.py::test_golden_merge_short_circuit",
+  "work_notes": [
+    ["IngestCorrelationAgent", "AGENT", "agent", "Correlated duplicate alarm POWER_GRID_FAIL into open ticket."]
+  ]
+}

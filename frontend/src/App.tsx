@@ -18,6 +18,7 @@ import Settings from "./pages/Settings";
 import WorkflowMap from "./pages/WorkflowMap";
 import Contracts from "./pages/Contracts";
 import Pirs from "./pages/Pirs";
+import Scorecards from "./pages/Scorecards";
 
 export default function App() {
   const [profile, setProfile] = useState<any>(null);
@@ -113,6 +114,7 @@ export default function App() {
           <NavLink to="/audit">Audit</NavLink>
           <NavLink to="/contracts">Contracts</NavLink>
           <NavLink to="/pirs">PIRs</NavLink>
+          <NavLink to="/scorecards">Vendor Scorecards</NavLink>
           <NavLink to="/wallboard">Wallboard</NavLink>
           <NavLink to="/settings">Settings / Inject</NavLink>
         </nav>
@@ -212,6 +214,8 @@ export default function App() {
               <Route path="/contracts" element={<Contracts />} />
               {/* Post-incident reviews (§7.7). Refetches on the `pir` slice (pir.opened). */}
               <Route path="/pirs" element={<Pirs tick={revisions.pir + manualTick} />} />
+              {/* Vendor scorecards (§7.6). No WS event exists for them, so no tick: the page refetches itself. */}
+              <Route path="/scorecards" element={<Scorecards session={session} />} />
               <Route
                 path="/settings"
                 element={

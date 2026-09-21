@@ -55,3 +55,7 @@ where = ["src"]
 asyncio_mode = "auto"
 testpaths = ["tests"]
 pythonpath = ["src"]
+markers = [
+    "eval: nightly LLM draft evals in tests/eval (need LLM_ENABLED=true; see tests/eval/draft_eval.py)",
+    "flagged: feature-flag-ON fixtures (spec 10.5 step 2: pytest -q -m flagged)",
+]

@@ -1,0 +1,88 @@
+{
+  "envelope_keys": [
+    ["incident_id", "operator_id", "payload", "run_id", "ts", "type"]
+  ],
+  "event_payloads": [
+    {
+      "payload": {"error": null, "incident_number": null, "run_id": "<uuid>", "seq": 2, "status": "SUCCEEDED"},
+      "type": "agent.run.finished"
+    },
+    {
+      "payload": {"child_site": "SFC-NBIW-ENB-CBD07", "child_sites_down": 1, "parent": "INC000001"},
+      "type": "incident.cascade_child"
+    }
+  ],
+  "events": [
+    ["agent.step.started", 1, "INGEST", "IngestCorrelationAgent", null, null, false],
+    ["agent.step.completed", 1, "INGEST", "IngestCorrelationAgent", "SUCCEEDED", null, false],
+    ["agent.step.started", 2, "CORRELATE", "IngestCorrelationAgent", null, null, false],
+    ["agent.step.completed", 2, "CORRELATE", "IngestCorrelationAgent", "SUCCEEDED", null, false],
+    ["agent.run.finished", 2, null, null, "SUCCEEDED", null, true],
+    ["incident.cascade_child", null, null, null, null, null, true]
+  ],
+  "format": 1,
+  "global_events": [],
+  "global_history": [
+    ["agent.step.started", true],
+    ["agent.step.completed", true],
+    ["agent.step.started", true],
+    ["agent.step.completed", true],
+    ["agent.run.finished", true],
+    ["incident.cascade_child", true]
+  ],
+  "incident": {"child_sites_down": 1, "incident_number": "INC000001", "incidents_in_db": 1, "same_as_setup_incident": true},
+  "input_events": [
+    {"alarm_code": "POWER_GRID_FAIL", "failure_domain": "POWER", "region_code": "NBI_W", "site_id": "SFC-NBIW-HUB-WLG", "site_name": "Westlands Aggregation HUB", "site_type": "HUB", "users_affected": 400000},
+    {"alarm_code": "SITE_DOWN", "failure_domain": "POWER", "parent_hub_id": "SFC-NBIW-HUB-WLG", "region_code": "NBI_W", "site_id": "SFC-NBIW-ENB-CBD07", "site_type": "ENODEB", "users_affected": 9000}
+  ],
+  "masks": ["ledger file name -> ledger_<date>_<shift>.xlsx", "uuid -> <uuid>", "timestamp -> <timestamp>", "date -> <date>", "EAT clock time -> <HH:MM> EAT"],
+  "payload_keys": {
+    "agent.run.finished": [
+      ["error", "incident_number", "run_id", "seq", "status"]
+    ],
+    "agent.step.completed": [
+      ["agent", "duration_ms", "incident_number", "node", "output", "rationale", "run_id", "seq", "status"]
+    ],
+    "agent.step.started": [
+      ["agent", "incident_number", "input", "node", "run_id", "seq"]
+    ],
+    "incident.cascade_child": [
+      ["child_site", "child_sites_down", "parent"]
+    ]
+  },
+  "run": {"bound_to_returned_incident": true, "current_node": null, "error_summary": null, "graph_name": "incident_lifecycle", "status": "SUCCEEDED"},
+  "runs_created": 1,
+  "scenario": "cascade_child_short_circuit",
+  "steps": [
+    {
+      "agent": "IngestCorrelationAgent",
+      "confidence": 0.9,
+      "input_summary": "site=SFC-NBIW-ENB-CBD07",
+      "node": "INGEST",
+      "output_summary": "normalized event fingerprint=SFC-NBIW-ENB-CBD07|SITE_DOWN|POWER",
+      "rationale": "Normalized alarm payload; ready for correlation window check",
+      "seq": 1,
+      "status": "SUCCEEDED",
+      "tools_called": [
+        {"latency_ms": 1, "name": "normalize_event", "ok": true}
+      ]
+    },
+    {
+      "agent": "IngestCorrelationAgent",
+      "confidence": 0.9,
+      "input_summary": "fp=SFC-NBIW-ENB-CBD07|SITE_DOWN|POWER",
+      "node": "CORRELATE",
+      "output_summary": "cascade child under INC000001",
+      "rationale": "Site feeds parent HUB SFC-NBIW-HUB-WLG; linked as child note instead of new major (cascade control)",
+      "seq": 2,
+      "status": "SUCCEEDED",
+      "tools_called": [
+        {"latency_ms": 2, "name": "link_parent_hub", "ok": true}
+      ]
+    }
+  ],
+  "test": "tests/integration/test_golden_sequence.py::test_golden_cascade_child_short_circuit",
+  "work_notes": [
+    ["IngestCorrelationAgent", "AGENT", "cascade", "Cascade child alarm: SFC-NBIW-ENB-CBD07 (SITE_DOWN/POWER) linked under HUB major INC000001. Child count now 1."]
+  ]
+}

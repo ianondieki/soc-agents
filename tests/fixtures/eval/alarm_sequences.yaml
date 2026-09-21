@@ -1,0 +1,927 @@
+# =============================================================================
+# Graded alarm sequences for the draft evals (spec §10.1 "Eval" row, §10.2 "Draft evals";
+# CONFORMANCE C-21). Read by tests/eval/draft_eval.py; nothing else reads this file.
+#
+# WHAT A SEQUENCE IS. One eval task: a list of alarms replayed in order through
+# graph.pipeline.process_event on a brand-new database, then the end state is graded, then
+# every incident's executive brief is drafted through llm.assist.draft_exec_brief (the
+# template with LLM_ENABLED unset, the model with it on) and the draft is graded.
+#
+# WHERE THE SHAPES COME FROM. Every alarm is copied from, or built in the exact shape of, an
+# alarm this repository already sends: tests/integration/test_golden_sequence.py, the demo
+# storm (src/noc_agents/scripts/demo_safaricom.py), the rain storm
+# (src/noc_agents/services/scenarios.py RAIN_STORM_EVENTS), and the Safaricom profile's own
+# site hints and regions (config/operators/safaricom.yaml). `source` names which. Keys are
+# EventIngest fields (src/noc_agents/domain/schemas.py); the loader rejects any other key, so
+# a typo cannot silently fall back to a default.
+#
+# WHERE THE EXPECTATIONS COME FROM. Every expected value is derived by hand from the rules
+# below, and `why` shows the derivation. Nothing was copied from a run's output. If the
+# pipeline disagrees with a `why`, one of the two is wrong: find out which before editing.
+#
+#   Priority (services/priority.evaluate_severity, config/operators/safaricom.yaml):
+#     users -> P4 when <= 49,999; P3 when <= 99,999; P2 when <= 499,999; else P1
+#     site-type floor, the more severe of the two wins: CORE P1; HUB, BSC, RNC P2;
+#       TX, POWER P3; ENODEB, GNODEB, BTS, NODEB, OTHER P4
+#     forced P1 (p1_force_rules): multi_region; site_type CORE; child_sites_down >= 20;
+#       users_affected >= 500,000
+#   Users when the alarm carries none (services/user_estimate.estimate_users):
+#     CORE 2,500,000; HUB in NBI_E/NBI_W 450,000, other HUB 180,000; ENODEB in
+#     NBI_E/NBI_W/CST 22,000, other ENODEB 8,000; GNODEB 15,000; BTS/NODEB 3,500; TX 50,000
+#   HITL gate at L2_GUARDED (services/composition.needs_hitl): P1 and P2 wait for a human,
+#     P3 and P4 auto-send. No Safaricom broadcast audience is external, so the envelope
+#     adds nothing to that (services/alerts.build_alert governance).
+#   Correlation (agents/correlate.py, correlation.window_minutes 15):
+#     same site_id|alarm_code|failure_domain inside 15 minutes -> merged into the open
+#       incident, no new ticket; child_sites_down becomes the larger of the two counts
+#     parent_hub_id naming a HUB/CORE site with an open incident, on a site that is NOT
+#       itself HUB/CORE -> linked as a cascade child: the parent's child_sites_down + 1,
+#       no new ticket. The parent's priority is not re-evaluated (CONFORMANCE B-02).
+#     otherwise -> a new incident
+#   Numbering (services/numbering.py, numbering_style inc9): INC + 6 digits from one
+#     counter, so a fresh database numbers INC000001, INC000002, ... in creation order.
+#   Region label: regions.<code>.label -- NBI_E Nairobi East, NBI_W Nairobi West,
+#     MTK Mt Kenya, CST Coast, RFT Rift Valley, WNY Western-Nyanza.
+#   Next update (agents/ticket.py): next_update_at = ticket creation + 15 minutes
+#     (`next_update_minutes` below).
+#
+# EXPECTED INCIDENTS are listed in incident-number order, which is creation order.
+#
+# SCOPE. Safaricom only. The Airtel profile numbers incidents ATL-YYYYMMDD-NNNNN, which
+# cannot form the §6.1 envelope (IncidentRef pins ^INC\d{6}$; services/hitl.compose_alert
+# says the same), so an Airtel draft cannot be judged by services/validators.validate_content.
+#
+# ADDING A SEQUENCE. Give it a unique id, name the source, write `why` for every expected
+# incident from the rules above, then run
+#     C:\Python313\python.exe -m pytest -q tests/eval
+# The always-on test replays every sequence on the template path and must stay green.
+# =============================================================================
+schema_version: 1
+operator: safaricom
+autonomy_level: L2_GUARDED
+next_update_minutes: 15
+
+sequences:
+
+  # --- the four golden alarms (tests/integration/test_golden_sequence.py) ------------------
+
+  - id: golden-hub-power-nbi-e
+    title: Embakasi East aggregation HUB loses grid power; genset has not started
+    source: tests/integration/test_golden_sequence.py HUB_EVENT
+    events:
+      - site_id: SFC-NBIE-HUB-EMB
+        site_name: Embakasi East Aggregation HUB
+        site_type: HUB
+        region_code: NBI_E
+        alarm_code: POWER_GRID_FAIL
+        failure_domain: POWER
+        users_affected: 450000
+        access_notes: Genset not started
+    expect:
+      - incident_number: INC000001
+        site_id: SFC-NBIE-HUB-EMB
+        priority: P2
+        region_code: NBI_E
+        region_label: Nairobi East
+        requires_hitl: true
+        child_sites_down: 0
+        why: users 450,000 <= 499,999 -> P2; HUB floor P2; no force rule -> P2; P2 waits for HITL
+
+  - id: golden-bts-power-mtk
+    title: Machakos town BTS down on power, small subscriber footprint
+    source: tests/integration/test_golden_sequence.py BTS_EVENT
+    events:
+      - site_id: SFC-MTK-BTS-MCH04
+        site_name: Machakos Town BTS
+        site_type: BTS
+        region_code: MTK
+        alarm_code: SITE_DOWN
+        failure_domain: POWER
+        users_affected: 3200
+    expect:
+      - incident_number: INC000001
+        site_id: SFC-MTK-BTS-MCH04
+        priority: P4
+        region_code: MTK
+        region_label: Mt Kenya
+        requires_hitl: false
+        child_sites_down: 0
+        why: users 3,200 <= 49,999 -> P4; BTS floor P4 -> P4; P4 auto-sends at L2_GUARDED
+
+  - id: golden-hub-duplicate-merged
+    title: The same HUB power alarm arrives twice inside the correlation window
+    source: tests/integration/test_golden_sequence.py HUB_EVENT, sent twice (test_golden_merge_short_circuit)
+    events:
+      - site_id: SFC-NBIE-HUB-EMB
+        site_name: Embakasi East Aggregation HUB
+        site_type: HUB
+        region_code: NBI_E
+        alarm_code: POWER_GRID_FAIL
+        failure_domain: POWER
+        users_affected: 450000
+        access_notes: Genset not started
+      - site_id: SFC-NBIE-HUB-EMB
+        site_name: Embakasi East Aggregation HUB
+        site_type: HUB
+        region_code: NBI_E
+        alarm_code: POWER_GRID_FAIL
+        failure_domain: POWER
+        users_affected: 450000
+        access_notes: Genset not started
+    expect:
+      - incident_number: INC000001
+        site_id: SFC-NBIE-HUB-EMB
+        priority: P2
+        region_code: NBI_E
+        region_label: Nairobi East
+        requires_hitl: true
+        child_sites_down: 0
+        why: first alarm -> P2 as golden-hub-power-nbi-e; second has the same fingerprint inside 15 min -> merged, no second ticket
+
+  - id: golden-cascade-child-under-hub
+    title: Westlands HUB power failure, then an eNodeB it feeds drops
+    source: tests/integration/test_golden_sequence.py PARENT_HUB_EVENT then CHILD_EVENT
+    events:
+      - site_id: SFC-NBIW-HUB-WLG
+        site_name: Westlands Aggregation HUB
+        site_type: HUB
+        region_code: NBI_W
+        alarm_code: POWER_GRID_FAIL
+        failure_domain: POWER
+        users_affected: 400000
+      - site_id: SFC-NBIW-ENB-CBD07
+        site_type: ENODEB
+        region_code: NBI_W
+        alarm_code: SITE_DOWN
+        failure_domain: POWER
+        users_affected: 9000
+        parent_hub_id: SFC-NBIW-HUB-WLG
+    expect:
+      - incident_number: INC000001
+        site_id: SFC-NBIW-HUB-WLG
+        priority: P2
+        region_code: NBI_W
+        region_label: Nairobi West
+        requires_hitl: true
+        child_sites_down: 1
+        why: users 400,000 -> P2; HUB floor P2 -> P2; the ENODEB names the open HUB as parent -> cascade child, 0 + 1 = 1
+
+  # --- the demo storm, one alarm each (src/noc_agents/scripts/demo_safaricom.py) ------------
+
+  - id: demo-nbi-w-hub-radio
+    title: Westlands HUB radio cells down on the Huawei-only Nairobi West footprint
+    source: src/noc_agents/scripts/demo_safaricom.py event 2 of 7
+    events:
+      - site_id: SFC-NBIW-HUB-WLD
+        site_name: Westlands Aggregation HUB
+        site_type: HUB
+        region_code: NBI_W
+        county: Nairobi
+        alarm_code: RADIO_CELL_DOWN
+        failure_domain: RADIO
+        users_affected: 120000
+        description: Nairobi West Huawei radio — expect Huawei Radio
+    expect:
+      - incident_number: INC000001
+        site_id: SFC-NBIW-HUB-WLD
+        priority: P2
+        region_code: NBI_W
+        region_label: Nairobi West
+        requires_hitl: true
+        child_sites_down: 0
+        why: users 120,000 in (99,999, 499,999] -> P2; HUB floor P2 -> P2
+
+  - id: demo-mtk-hub-fibre-cut
+    title: Thika HUB loses its fibre transmission
+    source: src/noc_agents/scripts/demo_safaricom.py event 3 of 7
+    events:
+      - site_id: SFC-MTK-HUB-THK
+        site_name: Thika Mt Kenya HUB
+        site_type: HUB
+        region_code: MTK
+        county: Kiambu
+        alarm_code: TX_FIBRE_CUT
+        failure_domain: TRANSMISSION
+        users_affected: 160000
+        description: Mt Kenya TX — expect Soliton/Egypro Fibre
+    expect:
+      - incident_number: INC000001
+        site_id: SFC-MTK-HUB-THK
+        priority: P2
+        region_code: MTK
+        region_label: Mt Kenya
+        requires_hitl: true
+        child_sites_down: 0
+        why: users 160,000 -> P2; HUB floor P2 -> P2
+
+  - id: demo-cst-hub-power
+    title: Mombasa Island HUB on grid failure
+    source: src/noc_agents/scripts/demo_safaricom.py event 4 of 7
+    events:
+      - site_id: SFC-CST-HUB-MSA
+        site_name: Mombasa Island HUB
+        site_type: HUB
+        region_code: CST
+        county: Mombasa
+        alarm_code: POWER_GRID_FAIL
+        failure_domain: POWER
+        users_affected: 220000
+        description: Coast power — ATC/Camusat passive pool
+    expect:
+      - incident_number: INC000001
+        site_id: SFC-CST-HUB-MSA
+        priority: P2
+        region_code: CST
+        region_label: Coast
+        requires_hitl: true
+        child_sites_down: 0
+        why: users 220,000 -> P2; HUB floor P2 -> P2
+
+  - id: demo-rft-hub-genset
+    title: Nakuru HUB genset fails to take the load
+    source: src/noc_agents/scripts/demo_safaricom.py event 5 of 7
+    events:
+      - site_id: SFC-RFT-HUB-NKR
+        site_name: Nakuru Rift HUB
+        site_type: HUB
+        region_code: RFT
+        county: Nakuru
+        alarm_code: GENSET_FAIL
+        failure_domain: POWER
+        users_affected: 180000
+        description: Rift power — Tetranet
+    expect:
+      - incident_number: INC000001
+        site_id: SFC-RFT-HUB-NKR
+        priority: P2
+        region_code: RFT
+        region_label: Rift Valley
+        requires_hitl: true
+        child_sites_down: 0
+        why: users 180,000 -> P2; HUB floor P2 -> P2
+
+  - id: demo-wny-hub-power
+    title: Kisumu HUB on grid failure
+    source: src/noc_agents/scripts/demo_safaricom.py event 6 of 7
+    events:
+      - site_id: SFC-WNY-HUB-KSM
+        site_name: Kisumu Western-Nyanza HUB
+        site_type: HUB
+        region_code: WNY
+        county: Kisumu
+        alarm_code: POWER_GRID_FAIL
+        failure_domain: POWER
+        users_affected: 190000
+        description: Western-Nyanza power — Tetranet
+    expect:
+      - incident_number: INC000001
+        site_id: SFC-WNY-HUB-KSM
+        priority: P2
+        region_code: WNY
+        region_label: Western-Nyanza
+        requires_hitl: true
+        child_sites_down: 0
+        why: users 190,000 -> P2; HUB floor P2 -> P2
+
+  - id: demo-mtk-bts-rural
+    title: Rural Meru BTS down on power
+    source: src/noc_agents/scripts/demo_safaricom.py event 7 of 7
+    events:
+      - site_id: SFC-MTK-BTS-MRI08
+        site_name: Meru Rural BTS 08
+        site_type: BTS
+        region_code: MTK
+        county: Meru
+        alarm_code: SITE_DOWN
+        failure_domain: POWER
+        users_affected: 3200
+        description: Small site — P4 class users
+    expect:
+      - incident_number: INC000001
+        site_id: SFC-MTK-BTS-MRI08
+        priority: P4
+        region_code: MTK
+        region_label: Mt Kenya
+        requires_hitl: false
+        child_sites_down: 0
+        why: users 3,200 -> P4; BTS floor P4 -> P4; auto-sends
+
+  # --- the rain storm (src/noc_agents/services/scenarios.py RAIN_STORM_EVENTS) --------------
+
+  - id: storm-rift-nakuru-mw-cascade
+    title: Heavy rain takes the Nakuru MW hop down; two eNodeBs behind it follow
+    source: src/noc_agents/services/scenarios.py RAIN_STORM_EVENTS[0:3]
+    events:
+      - site_id: SFC-RFT-HUB-NKR
+        site_name: Nakuru Rift HUB
+        site_type: HUB
+        region_code: RFT
+        county: Nakuru
+        alarm_code: MW_HOP_DOWN
+        failure_domain: TRANSMISSION
+        users_affected: 280000
+        child_sites_down: 12
+        description: Heavy rains — primary MW hop to Nakuru aggregation down; cascade risk
+        access_notes: Roads slippery; FE ETA delayed
+        technology: [MW, 4G]
+      - site_id: SFC-RFT-ENB-NKR-A1
+        site_name: Nakuru Sector A1 eNodeB
+        site_type: ENODEB
+        region_code: RFT
+        alarm_code: SITE_DOWN
+        failure_domain: TRANSMISSION
+        users_affected: 18000
+        parent_hub_id: SFC-RFT-HUB-NKR
+        description: Child site offline — backhaul via failed MW hop
+        technology: [4G]
+      - site_id: SFC-RFT-ENB-NKR-B3
+        site_name: Nakuru Sector B3 eNodeB
+        site_type: ENODEB
+        region_code: RFT
+        alarm_code: SITE_DOWN
+        failure_domain: TRANSMISSION
+        users_affected: 15000
+        parent_hub_id: SFC-RFT-HUB-NKR
+        description: Child site offline — MW cascade
+        technology: [4G]
+    expect:
+      - incident_number: INC000001
+        site_id: SFC-RFT-HUB-NKR
+        priority: P2
+        region_code: RFT
+        region_label: Rift Valley
+        requires_hitl: true
+        child_sites_down: 14
+        why: users 280,000 -> P2; HUB floor P2; 12 children < 20 so no forced P1; two ENODEB cascade children -> 12 + 2 = 14
+
+  - id: storm-nbi-e-mw-ring-node
+    title: Rain fade on the Nairobi East MW ring node
+    source: src/noc_agents/services/scenarios.py RAIN_STORM_EVENTS[10]
+    events:
+      - site_id: SFC-NBIE-TX-MW-EAST1
+        site_name: Nairobi East MW Ring Node
+        site_type: TX
+        region_code: NBI_E
+        alarm_code: MW_HOP_DOWN
+        failure_domain: TRANSMISSION
+        users_affected: 80000
+        description: MW ring node — rain fade / path obstruction
+        technology: [MW]
+    expect:
+      - incident_number: INC000001
+        site_id: SFC-NBIE-TX-MW-EAST1
+        priority: P3
+        region_code: NBI_E
+        region_label: Nairobi East
+        requires_hitl: false
+        child_sites_down: 0
+        why: users 80,000 in (49,999, 99,999] -> P3; TX floor P3 -> P3; P3 auto-sends
+
+  - id: storm-full-rain-storm
+    title: The whole demo rain storm - four HUBs, one TX node, six cascade children
+    source: src/noc_agents/services/scenarios.py RAIN_STORM_EVENTS (all 11, in order)
+    events:
+      - site_id: SFC-RFT-HUB-NKR
+        site_name: Nakuru Rift HUB
+        site_type: HUB
+        region_code: RFT
+        county: Nakuru
+        alarm_code: MW_HOP_DOWN
+        failure_domain: TRANSMISSION
+        users_affected: 280000
+        child_sites_down: 12
+        description: Heavy rains — primary MW hop to Nakuru aggregation down; cascade risk
+        access_notes: Roads slippery; FE ETA delayed
+        technology: [MW, 4G]
+      - site_id: SFC-RFT-ENB-NKR-A1
+        site_name: Nakuru Sector A1 eNodeB
+        site_type: ENODEB
+        region_code: RFT
+        alarm_code: SITE_DOWN
+        failure_domain: TRANSMISSION
+        users_affected: 18000
+        parent_hub_id: SFC-RFT-HUB-NKR
+        description: Child site offline — backhaul via failed MW hop
+        technology: [4G]
+      - site_id: SFC-RFT-ENB-NKR-B3
+        site_name: Nakuru Sector B3 eNodeB
+        site_type: ENODEB
+        region_code: RFT
+        alarm_code: SITE_DOWN
+        failure_domain: TRANSMISSION
+        users_affected: 15000
+        parent_hub_id: SFC-RFT-HUB-NKR
+        description: Child site offline — MW cascade
+        technology: [4G]
+      - site_id: SFC-RFT-HUB-ELD
+        site_name: Eldoret Rift HUB
+        site_type: HUB
+        region_code: RFT
+        county: Uasin Gishu
+        alarm_code: POWER_GRID_FAIL
+        failure_domain: POWER
+        users_affected: 210000
+        description: Storm grid trip — genset start delay at Eldoret HUB
+        battery_countdown_min: 40
+        technology: [4G, 2G]
+      - site_id: SFC-MTK-HUB-THK
+        site_name: Thika Mt Kenya HUB
+        site_type: HUB
+        region_code: MTK
+        county: Kiambu
+        alarm_code: MW_HIGH_BER
+        failure_domain: TRANSMISSION
+        users_affected: 195000
+        child_sites_down: 8
+        description: Heavy rains Mt Kenya — MW high BER / fade on highland hop
+        technology: [MW, 4G]
+      - site_id: SFC-MTK-ENB-MRI-01
+        site_name: Meru Spur eNodeB 01
+        site_type: ENODEB
+        region_code: MTK
+        alarm_code: SITE_DOWN
+        failure_domain: TRANSMISSION
+        users_affected: 9000
+        parent_hub_id: SFC-MTK-HUB-THK
+        description: Spur site down after Thika MW degradation
+        technology: [4G]
+      - site_id: SFC-MTK-BTS-MRI08
+        site_name: Meru Rural BTS 08
+        site_type: BTS
+        region_code: MTK
+        alarm_code: SITE_DOWN
+        failure_domain: TRANSMISSION
+        users_affected: 3200
+        parent_hub_id: SFC-MTK-HUB-THK
+        description: Rural BTS lost MW backhaul
+        technology: [2G, 3G]
+      - site_id: SFC-NBIE-HUB-EMB
+        site_name: Embakasi East Aggregation HUB
+        site_type: HUB
+        region_code: NBI_E
+        county: Nairobi
+        alarm_code: MW_HOP_DOWN
+        failure_domain: TRANSMISSION
+        users_affected: 420000
+        child_sites_down: 15
+        description: Nairobi East — metro MW link fail under storm cells; multi-site risk
+        technology: [MW, 4G, 5G]
+      - site_id: SFC-NBIE-ENB-KAY12
+        site_name: Kayole eNodeB 12
+        site_type: ENODEB
+        region_code: NBI_E
+        alarm_code: SITE_DOWN
+        failure_domain: TRANSMISSION
+        users_affected: 24000
+        parent_hub_id: SFC-NBIE-HUB-EMB
+        description: Eastlands site down — parent HUB MW cascade
+        technology: [4G]
+      - site_id: SFC-NBIE-ENB-UMB04
+        site_name: Umoja eNodeB 04
+        site_type: ENODEB
+        region_code: NBI_E
+        alarm_code: SITE_DOWN
+        failure_domain: TRANSMISSION
+        users_affected: 19000
+        parent_hub_id: SFC-NBIE-HUB-EMB
+        description: Umoja offline — MW cascade from Embakasi HUB
+        technology: [4G]
+      - site_id: SFC-NBIE-TX-MW-EAST1
+        site_name: Nairobi East MW Ring Node
+        site_type: TX
+        region_code: NBI_E
+        alarm_code: MW_HOP_DOWN
+        failure_domain: TRANSMISSION
+        users_affected: 80000
+        description: MW ring node — rain fade / path obstruction
+        technology: [MW]
+    expect:
+      - incident_number: INC000001
+        site_id: SFC-RFT-HUB-NKR
+        priority: P2
+        region_code: RFT
+        region_label: Rift Valley
+        requires_hitl: true
+        child_sites_down: 14
+        why: as storm-rift-nakuru-mw-cascade; 12 + 2 cascade children = 14
+      - incident_number: INC000002
+        site_id: SFC-RFT-HUB-ELD
+        priority: P2
+        region_code: RFT
+        region_label: Rift Valley
+        requires_hitl: true
+        child_sites_down: 0
+        why: users 210,000 -> P2; HUB floor P2 -> P2; no child alarm names it
+      - incident_number: INC000003
+        site_id: SFC-MTK-HUB-THK
+        priority: P2
+        region_code: MTK
+        region_label: Mt Kenya
+        requires_hitl: true
+        child_sites_down: 10
+        why: users 195,000 -> P2; HUB floor P2; 8 children < 20; ENODEB and BTS children cascade -> 8 + 2 = 10
+      - incident_number: INC000004
+        site_id: SFC-NBIE-HUB-EMB
+        priority: P2
+        region_code: NBI_E
+        region_label: Nairobi East
+        requires_hitl: true
+        child_sites_down: 17
+        why: users 420,000 -> P2; HUB floor P2; 15 children < 20; two ENODEB children cascade -> 15 + 2 = 17
+      - incident_number: INC000005
+        site_id: SFC-NBIE-TX-MW-EAST1
+        priority: P3
+        region_code: NBI_E
+        region_label: Nairobi East
+        requires_hitl: false
+        child_sites_down: 0
+        why: users 80,000 -> P3; TX floor P3 -> P3; no parent_hub_id so a new incident
+
+  # --- priority rules at their edges (config/operators/safaricom.yaml) ---------------------
+
+  - id: rule-boundary-p4-p3
+    title: Two Coast eNodeBs either side of the P4/P3 line
+    source: config/operators/safaricom.yaml priority_thresholds.P4_max_users; CST sites in the golden ENODEB shape
+    events:
+      - site_id: SFC-CST-ENB-NYL03
+        site_name: Nyali eNodeB 03
+        site_type: ENODEB
+        region_code: CST
+        alarm_code: SITE_DOWN
+        failure_domain: POWER
+        users_affected: 49999
+      - site_id: SFC-CST-ENB-BMB02
+        site_name: Bamburi eNodeB 02
+        site_type: ENODEB
+        region_code: CST
+        alarm_code: SITE_DOWN
+        failure_domain: POWER
+        users_affected: 50000
+    expect:
+      - incident_number: INC000001
+        site_id: SFC-CST-ENB-NYL03
+        priority: P4
+        region_code: CST
+        region_label: Coast
+        requires_hitl: false
+        child_sites_down: 0
+        why: users 49,999 = P4_max_users -> P4; ENODEB floor P4 -> P4
+      - incident_number: INC000002
+        site_id: SFC-CST-ENB-BMB02
+        priority: P3
+        region_code: CST
+        region_label: Coast
+        requires_hitl: false
+        child_sites_down: 0
+        why: users 50,000 > 49,999 -> P3; ENODEB floor P4, P3 is more severe -> P3; auto-sends
+
+  - id: rule-boundary-p3-p2
+    title: Two Western-Nyanza eNodeBs either side of the P3/P2 line
+    source: config/operators/safaricom.yaml priority_thresholds.P3_max_users; WNY sites in the golden ENODEB shape
+    events:
+      - site_id: SFC-WNY-ENB-KSM11
+        site_name: Kisumu Lakeside eNodeB 11
+        site_type: ENODEB
+        region_code: WNY
+        alarm_code: RADIO_CELL_DOWN
+        failure_domain: RADIO
+        users_affected: 99999
+      - site_id: SFC-WNY-ENB-KKG04
+        site_name: Kakamega eNodeB 04
+        site_type: ENODEB
+        region_code: WNY
+        alarm_code: RADIO_CELL_DOWN
+        failure_domain: RADIO
+        users_affected: 100000
+    expect:
+      - incident_number: INC000001
+        site_id: SFC-WNY-ENB-KSM11
+        priority: P3
+        region_code: WNY
+        region_label: Western-Nyanza
+        requires_hitl: false
+        child_sites_down: 0
+        why: users 99,999 = P3_max_users -> P3; ENODEB floor P4 -> P3; auto-sends
+      - incident_number: INC000002
+        site_id: SFC-WNY-ENB-KKG04
+        priority: P2
+        region_code: WNY
+        region_label: Western-Nyanza
+        requires_hitl: true
+        child_sites_down: 0
+        why: users 100,000 > 99,999 -> P2; ENODEB floor P4 -> P2; P2 waits for HITL
+
+  - id: rule-boundary-p2-p1
+    title: Karen and Nairobi East HUBs either side of the P2/P1 line
+    source: config/operators/safaricom.yaml priority_thresholds.P2_max_users, p1_force_rules.users_affected_gte, regions.*.hub_sites_hint
+    events:
+      - site_id: SFC-NBIW-HUB-KRN
+        site_name: Karen Aggregation HUB
+        site_type: HUB
+        region_code: NBI_W
+        alarm_code: POWER_GRID_FAIL
+        failure_domain: POWER
+        users_affected: 499999
+      - site_id: SFC-NBIE-HUB-EST
+        site_name: Nairobi East Aggregation HUB EST
+        site_type: HUB
+        region_code: NBI_E
+        alarm_code: POWER_GRID_FAIL
+        failure_domain: POWER
+        users_affected: 500000
+    expect:
+      - incident_number: INC000001
+        site_id: SFC-NBIW-HUB-KRN
+        priority: P2
+        region_code: NBI_W
+        region_label: Nairobi West
+        requires_hitl: true
+        child_sites_down: 0
+        why: users 499,999 = P2_max_users -> P2; HUB floor P2; 499,999 < 500,000 so no forced P1 -> P2
+      - incident_number: INC000002
+        site_id: SFC-NBIE-HUB-EST
+        priority: P1
+        region_code: NBI_E
+        region_label: Nairobi East
+        requires_hitl: true
+        child_sites_down: 0
+        why: users 500,000 > 499,999 -> P1, and users_affected_gte 500,000 forces P1 as well -> P1
+
+  - id: rule-p1-core-site
+    title: Core node degradation in Nairobi West, no subscriber count on the alarm
+    source: config/operators/safaricom.yaml site_type_priority_floor.CORE, p1_force_rules.site_types, user_estimate_defaults.CORE
+    events:
+      - site_id: SFC-NBIW-CORE-UPH
+        site_name: Upper Hill Core Node
+        site_type: CORE
+        region_code: NBI_W
+        alarm_code: CORE_NODE_DEGRADED
+        failure_domain: CORE
+    expect:
+      - incident_number: INC000001
+        site_id: SFC-NBIW-CORE-UPH
+        priority: P1
+        region_code: NBI_W
+        region_label: Nairobi West
+        requires_hitl: true
+        child_sites_down: 0
+        why: no users on the alarm -> CORE estimate 2,500,000 -> P1; CORE floor P1; site_type CORE forces P1 -> P1
+
+  - id: rule-p1-twenty-children
+    title: Nyeri HUB MW hop down with twenty sites already dark behind it
+    source: config/operators/safaricom.yaml p1_force_rules.child_sites_down_gte, regions.MTK.hub_sites_hint
+    events:
+      - site_id: SFC-MTK-HUB-NYR
+        site_name: Nyeri Mt Kenya HUB
+        site_type: HUB
+        region_code: MTK
+        county: Nyeri
+        alarm_code: MW_HOP_DOWN
+        failure_domain: TRANSMISSION
+        users_affected: 150000
+        child_sites_down: 20
+    expect:
+      - incident_number: INC000001
+        site_id: SFC-MTK-HUB-NYR
+        priority: P1
+        region_code: MTK
+        region_label: Mt Kenya
+        requires_hitl: true
+        child_sites_down: 20
+        why: users 150,000 -> P2; HUB floor P2; child_sites_down 20 >= 20 forces P1 -> P1
+
+  - id: rule-p1-multi-region
+    title: Nakuru-Eldoret long-haul fibre cut flagged as spanning regions
+    source: config/operators/safaricom.yaml p1_force_rules.multi_region; RFT long-haul corridor in regions.RFT.description
+    events:
+      - site_id: SFC-RFT-TX-FO-NKR-ELD
+        site_name: Nakuru-Eldoret Long-haul Fibre Route
+        site_type: TX
+        region_code: RFT
+        alarm_code: TX_FIBRE_CUT
+        failure_domain: TRANSMISSION
+        users_affected: 60000
+        multi_region: true
+    expect:
+      - incident_number: INC000001
+        site_id: SFC-RFT-TX-FO-NKR-ELD
+        priority: P1
+        region_code: RFT
+        region_label: Rift Valley
+        requires_hitl: true
+        child_sites_down: 0
+        why: users 60,000 -> P3; TX floor P3; multi_region forces P1 -> P1
+
+  - id: rule-bsc-floor-over-users
+    title: High temperature at the Mombasa BSC, few subscribers on the alarm
+    source: config/operators/safaricom.yaml site_type_priority_floor.BSC, tt_categories.ENV_TEMP
+    events:
+      - site_id: SFC-CST-BSC-MSA
+        site_name: Mombasa BSC
+        site_type: BSC
+        region_code: CST
+        county: Mombasa
+        alarm_code: HIGH_TEMP
+        failure_domain: ENVIRONMENT
+        users_affected: 30000
+        description: Shelter AC failed; temperature climbing
+    expect:
+      - incident_number: INC000001
+        site_id: SFC-CST-BSC-MSA
+        priority: P2
+        region_code: CST
+        region_label: Coast
+        requires_hitl: true
+        child_sites_down: 0
+        why: users 30,000 -> P4; BSC floor P2 is more severe -> P2
+
+  - id: rule-power-site-floor
+    title: Rectifier alarm at a Kisumu power site
+    source: config/operators/safaricom.yaml site_type_priority_floor.POWER, tt_categories.POWER_RECTIFIER
+    events:
+      - site_id: SFC-WNY-PWR-KSM02
+        site_name: Kisumu Power Plant Site 02
+        site_type: POWER
+        region_code: WNY
+        alarm_code: RECTIFIER_LOW_VOLTAGE
+        failure_domain: POWER
+        users_affected: 10000
+    expect:
+      - incident_number: INC000001
+        site_id: SFC-WNY-PWR-KSM02
+        priority: P3
+        region_code: WNY
+        region_label: Western-Nyanza
+        requires_hitl: false
+        child_sites_down: 0
+        why: users 10,000 -> P4; POWER floor P3 is more severe -> P3; auto-sends
+
+  - id: rule-estimated-users-enodeb-nbi
+    title: Kayole eNodeB radio fault with no subscriber count on the alarm
+    source: config/operators/safaricom.yaml user_estimate_defaults.ENODEB_URBAN; site from RAIN_STORM_EVENTS[8]
+    events:
+      - site_id: SFC-NBIE-ENB-KAY12
+        site_name: Kayole eNodeB 12
+        site_type: ENODEB
+        region_code: NBI_E
+        alarm_code: RADIO_CELL_DOWN
+        failure_domain: RADIO
+    expect:
+      - incident_number: INC000001
+        site_id: SFC-NBIE-ENB-KAY12
+        priority: P4
+        region_code: NBI_E
+        region_label: Nairobi East
+        requires_hitl: false
+        child_sites_down: 0
+        why: no users -> ENODEB in NBI_E estimate 22,000 -> P4; ENODEB floor P4 -> P4
+
+  - id: rule-estimated-users-hub-rift
+    title: Eldoret HUB grid failure with no subscriber count on the alarm
+    source: config/operators/safaricom.yaml user_estimate_defaults.HUB_OTHER; site from RAIN_STORM_EVENTS[3]
+    events:
+      - site_id: SFC-RFT-HUB-ELD
+        site_name: Eldoret Rift HUB
+        site_type: HUB
+        region_code: RFT
+        county: Uasin Gishu
+        alarm_code: POWER_GRID_FAIL
+        failure_domain: POWER
+    expect:
+      - incident_number: INC000001
+        site_id: SFC-RFT-HUB-ELD
+        priority: P2
+        region_code: RFT
+        region_label: Rift Valley
+        requires_hitl: true
+        child_sites_down: 0
+        why: no users -> HUB outside Nairobi estimate 180,000 -> P2; HUB floor P2 -> P2
+
+  # --- correlation at its edges (agents/correlate.py) ---------------------------------------
+
+  - id: rule-cascade-parent-not-open
+    title: An eNodeB names its parent HUB, but that HUB has no open incident
+    source: agents/correlate.py parent lookup; CST site shapes as rule-boundary-p4-p3
+    events:
+      - site_id: SFC-CST-ENB-NYL05
+        site_name: Nyali eNodeB 05
+        site_type: ENODEB
+        region_code: CST
+        alarm_code: SITE_DOWN
+        failure_domain: TRANSMISSION
+        users_affected: 22000
+        parent_hub_id: SFC-CST-HUB-NYL
+    expect:
+      - incident_number: INC000001
+        site_id: SFC-CST-ENB-NYL05
+        priority: P4
+        region_code: CST
+        region_label: Coast
+        requires_hitl: false
+        child_sites_down: 0
+        why: no open incident at SFC-CST-HUB-NYL -> not a cascade child, a new incident; users 22,000 -> P4; ENODEB floor P4
+
+  - id: rule-merge-keeps-larger-child-count
+    title: Kakamega HUB MW alarm repeats with a larger count of dark sites
+    source: agents/correlate.py merge branch; regions.WNY.hub_sites_hint
+    events:
+      - site_id: SFC-WNY-HUB-KKG
+        site_name: Kakamega Western-Nyanza HUB
+        site_type: HUB
+        region_code: WNY
+        alarm_code: MW_HOP_DOWN
+        failure_domain: TRANSMISSION
+        users_affected: 150000
+        child_sites_down: 5
+      - site_id: SFC-WNY-HUB-KKG
+        site_name: Kakamega Western-Nyanza HUB
+        site_type: HUB
+        region_code: WNY
+        alarm_code: MW_HOP_DOWN
+        failure_domain: TRANSMISSION
+        users_affected: 150000
+        child_sites_down: 9
+    expect:
+      - incident_number: INC000001
+        site_id: SFC-WNY-HUB-KKG
+        priority: P2
+        region_code: WNY
+        region_label: Western-Nyanza
+        requires_hitl: true
+        child_sites_down: 9
+        why: users 150,000 -> P2; HUB floor P2; 5 < 20; the repeat merges and keeps max(5, 9) = 9 (priority not re-evaluated)
+
+  - id: rule-hub-under-hub-is-its-own-major
+    title: A second Nairobi East HUB names the first as its parent
+    source: agents/correlate.py (a HUB/CORE is never a cascade child); regions.NBI_E.hub_sites_hint
+    events:
+      - site_id: SFC-NBIE-HUB-EMB
+        site_name: Embakasi East Aggregation HUB
+        site_type: HUB
+        region_code: NBI_E
+        alarm_code: POWER_GRID_FAIL
+        failure_domain: POWER
+        users_affected: 450000
+      - site_id: SFC-NBIE-HUB-EST
+        site_name: Nairobi East Aggregation HUB EST
+        site_type: HUB
+        region_code: NBI_E
+        alarm_code: MW_HOP_DOWN
+        failure_domain: TRANSMISSION
+        users_affected: 300000
+        parent_hub_id: SFC-NBIE-HUB-EMB
+    expect:
+      - incident_number: INC000001
+        site_id: SFC-NBIE-HUB-EMB
+        priority: P2
+        region_code: NBI_E
+        region_label: Nairobi East
+        requires_hitl: true
+        child_sites_down: 0
+        why: users 450,000 -> P2; HUB floor P2 -> P2; the second HUB is not a child, so this count stays 0
+      - incident_number: INC000002
+        site_id: SFC-NBIE-HUB-EST
+        priority: P2
+        region_code: NBI_E
+        region_label: Nairobi East
+        requires_hitl: true
+        child_sites_down: 0
+        why: site_type HUB is never linked as a cascade child -> new incident; users 300,000 -> P2; HUB floor P2
+
+  - id: rule-same-site-different-fault
+    title: Nakuru HUB genset fails, then its MW hop drops - two faults, two tickets
+    source: agents/correlate.py fingerprint site|alarm|domain; demo event 5 and RAIN_STORM_EVENTS[0] at one site
+    events:
+      - site_id: SFC-RFT-HUB-NKR
+        site_name: Nakuru Rift HUB
+        site_type: HUB
+        region_code: RFT
+        county: Nakuru
+        alarm_code: GENSET_FAIL
+        failure_domain: POWER
+        users_affected: 180000
+      - site_id: SFC-RFT-HUB-NKR
+        site_name: Nakuru Rift HUB
+        site_type: HUB
+        region_code: RFT
+        county: Nakuru
+        alarm_code: MW_HOP_DOWN
+        failure_domain: TRANSMISSION
+        users_affected: 180000
+    expect:
+      - incident_number: INC000001
+        site_id: SFC-RFT-HUB-NKR
+        priority: P2
+        region_code: RFT
+        region_label: Rift Valley
+        requires_hitl: true
+        child_sites_down: 0
+        why: users 180,000 -> P2; HUB floor P2 -> P2
+      - incident_number: INC000002
+        site_id: SFC-RFT-HUB-NKR
+        priority: P2
+        region_code: RFT
+        region_label: Rift Valley
+        requires_hitl: true
+        child_sites_down: 0
+        why: different alarm and domain -> different fingerprint, so no merge; same derivation -> P2
