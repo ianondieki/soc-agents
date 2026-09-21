@@ -75,6 +75,11 @@ class HitlTaskType(str, Enum):
     # rain guard and the customer notice actually bite.
     APPROVE_SCHEDULE = "APPROVE_SCHEDULE"
     APPROVE_MAINTENANCE_WINDOW = "APPROVE_MAINTENANCE_WINDOW"
+    # Phase 4 Lane 4A (§7.6). A vendor may dispute a scorecard line, and a notice to a vendor
+    # about their numbers is commercial correspondence: both are human decisions. Software
+    # computes the evidence; it never adjudicates a dispute and never sends the notice itself.
+    DISPUTE_SCORECARD_LINE = "DISPUTE_SCORECARD_LINE"
+    APPROVE_VENDOR_NOTICE = "APPROVE_VENDOR_NOTICE"
     GENERIC = "GENERIC"
     # v2 (§7.1.2): gates for write-capable MCP cards; exercised only when such a card is actually connected.
     APPROVE_TICKET_SYNC = "APPROVE_TICKET_SYNC"
