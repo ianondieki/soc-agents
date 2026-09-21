@@ -186,6 +186,18 @@ tables:
     timestamp_column: updated_at
     statuses: [SENT, DEAD]
 
+  # §7.6 Lane 4A. Listed explicitly rather than left to the unlisted default, because the
+  # answer is the same (keep) but the REASON is a licence condition, not an absence of personal
+  # columns: a scorecard is the operator's record of what a vendor was measured and credited,
+  # and network_facts above names scorecards as in this class. shadow_reviewed_by and
+  # adjudicated_by carry staff names in the same way hitl_tasks.decided_by does; like that
+  # table, no `personal:` block is added until Legal asks for one (§12 D14).
+  vendor_scorecards:
+    class: network_facts
+    timestamp_column: computed_at
+  vendor_scorecard_lines:
+    class: network_facts
+
   llm_calls:
     class: llm_call_records
     timestamp_column: created_at

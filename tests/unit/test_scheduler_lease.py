@@ -447,6 +447,26 @@ def test_with_scheduler_disabled_nothing_starts(make_client, monkeypatch):
                 "circuit_open": False,
             },
             {
+                # Phase 3 early warning (§5.3.13): KMD CAP warnings. WEATHER_ENABLED, OFF.
+                "name": "kmd_cap",
+                "interval_s": 1800,
+                "enabled": False,
+                "last_started_at": None,
+                "last_status": None,
+                "consecutive_failures": 0,
+                "circuit_open": False,
+            },
+            {
+                # Phase 3 early warning (§5.3.13): GloFAS river discharge. WEATHER_ENABLED, OFF.
+                "name": "flood_daily",
+                "interval_s": 86400,
+                "enabled": False,
+                "last_started_at": None,
+                "last_status": None,
+                "consecutive_failures": 0,
+                "circuit_open": False,
+            },
+            {
                 # Phase 4 PIR lane (§7.7.3). Same default_enabled=False reasoning.
                 "name": "pir_autoopen",
                 "interval_s": 300,
@@ -460,6 +480,26 @@ def test_with_scheduler_disabled_nothing_starts(make_client, monkeypatch):
                 # Phase 4 regulatory clock (§7.6). Sweeps deadlines and announces
                 # countdowns; it can never send a notice on its own.
                 "name": "regulatory_sweep",
+                "interval_s": 300,
+                "enabled": False,
+                "last_started_at": None,
+                "last_status": None,
+                "consecutive_failures": 0,
+                "circuit_open": False,
+            },
+            {
+                # Phase 4 vendor scorecards (§7.6.4). Computes; never publishes.
+                "name": "scorecard_close",
+                "interval_s": 3600,
+                "enabled": False,
+                "last_started_at": None,
+                "last_status": None,
+                "consecutive_failures": 0,
+                "circuit_open": False,
+            },
+            {
+                # Phase 4 Lane 4C memory (§7.11.5). Advisory only.
+                "name": "memory_consolidate",
                 "interval_s": 300,
                 "enabled": False,
                 "last_started_at": None,
@@ -523,8 +563,8 @@ def test_with_scheduler_disabled_nothing_starts(make_client, monkeypatch):
         ],
     }
     assert [c.name for c in SCHEDULED_JOBS] == [
-        "outbox_dispatch", "monitor_tick", "weather_regions",
-        "pir_autoopen", "regulatory_sweep",
+        "outbox_dispatch", "monitor_tick", "weather_regions", "kmd_cap", "flood_daily",
+        "pir_autoopen", "regulatory_sweep", "scorecard_close", "memory_consolidate",
         "complaints_followup", "maintenance_plan_due", "maintenance_window_sweep",
         "capacity_scan", "housekeeping",
     ]

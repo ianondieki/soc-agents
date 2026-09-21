@@ -14,6 +14,8 @@ Lifecycle of a row::
     drain_once()     PENDING -> CLAIMED compare-and-set with a 120 s lease
     dispatch()       -> SENT | FAILED (transient) | DEAD (permanent) | REJECTED_UNAPPROVED
     record outcome   FAILED with attempts left -> PENDING again (backoff + jitter);
+                     DEFERRED (EMAIL over EMAIL_DAILY_CAP) -> PENDING until the window
+                     rolls, no attempt spent — see ``_email_cap_gate``;
                      one commit per row, then that row's realtime events are published
 
 Rules the rest of the code base relies on:
@@ -87,7 +89,7 @@ import re
 import smtplib
 import socket
 import threading
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from typing import Any, Callable
 from urllib.parse import urlparse
@@ -129,6 +131,9 @@ CHANNEL_KINDS = frozenset({EMAIL, SMS, WHATSAPP, ICS_INVITE})  # the kinds an ap
 # statuses
 PENDING, HELD, CLAIMED, SENT, DELIVERED = "PENDING", "HELD", "CLAIMED", "SENT", "DELIVERED"
 FAILED, SUPPRESSED, REJECTED_UNAPPROVED, DEAD = "FAILED", "SUPPRESSED", "REJECTED_UNAPPROVED", "DEAD"
+# A dispatch OUTCOME, never a stored status: EMAIL_DAILY_CAP held the row back (§7.9.1).
+# ``_record_outcome`` turns it into PENDING + next_attempt_at, so ``outbox.status`` never reads it.
+DEFERRED = "DEFERRED"
 
 # transfer register (§7.0.10)
 TRANSFER_ACTOR = "outbox.dispatcher"
@@ -151,11 +156,14 @@ class DispatchResult:
     to retry); ``DEAD`` is final. ``delivery`` carries the channel adapter's own
     ``mode`` / ``to`` / ``detail`` for the audit note and the realtime event."""
 
-    status: str  # SENT | FAILED | DEAD | REJECTED_UNAPPROVED
+    status: str  # SENT | FAILED | DEAD | REJECTED_UNAPPROVED | DEFERRED
     last_error: str | None = None
     provider: str | None = None
     provider_message_id: str | None = None
     delivery: dict[str, Any] = field(default_factory=dict)
+    retry_at: datetime | None = None  # DEFERRED only: the instant the daily-cap window frees a slot
+    cap_note: str | None = None  # EMAIL_DAILY_CAP WorkNote, written by _record_outcome with this outcome
+    smtp_messages: int = 0  # EMAIL: messages the relay accepted on this attempt (counted by the cap)
 
 
 @dataclass
@@ -169,6 +177,7 @@ class DrainReport:
     reclaimed: int = 0  # stale CLAIMED rows handed back to PENDING before this pass claimed
     lost_lease: int = 0  # dispatched, but another drainer had reclaimed the row meanwhile
     errors: int = 0  # outcome recording raised; the row stays CLAIMED for lease reclaim
+    deferred: int = 0  # held by EMAIL_DAILY_CAP: back to PENDING until the window rolls, no attempt spent
     outcomes: dict[str, DispatchResult] = field(default_factory=dict)  # outbox id -> result
 
     def __str__(self) -> str:
@@ -276,7 +285,7 @@ def drain_once(session: Session, *, now: datetime | None = None, limit: int = 50
     session.commit()  # claims durable; the session holds no transaction from here until the outcome
     report.claimed = len(jobs)
     for job in jobs:
-        result = _register_then_dispatch(session, job)
+        result = _cap_then_dispatch(session, job, now)
         try:
             events = _record_outcome(session, job, result, now, me, report)
             session.commit()
@@ -311,12 +320,15 @@ def _transmit_email(row: OutboxRow) -> DispatchResult:
     payload = _payload(row)
     result = notify.transmit_email(payload)
     delivery = {"mode": result.mode, "to": list(result.to), "detail": result.detail}
+    # What the relay accepted — several messages for a batched audience, some for a partial
+    # failure, 0 for a mock — so EMAIL_DAILY_CAP counts what really left (review E01).
+    accepted = notify.smtp_messages_accepted(result)
     if result.ok:
-        return DispatchResult(SENT, provider=result.mode, delivery=delivery)
+        return DispatchResult(SENT, provider=result.mode, delivery=delivery, smtp_messages=accepted)
     # The adapter swallows its own exceptions into EmailResult(mode="error", detail=...), so the
     # transient/permanent call is made from the SMTP reply code it quotes (none quoted: I/O).
     status = FAILED if _email_error_is_transient(result.detail) else DEAD
-    return DispatchResult(status, last_error=result.detail, provider=result.mode, delivery=delivery)
+    return DispatchResult(status, last_error=result.detail, provider=result.mode, delivery=delivery, smtp_messages=accepted)
 
 
 def _transmit_sms(row: OutboxRow) -> DispatchResult:
@@ -754,6 +766,78 @@ def transfer_plan(job: OutboxRow) -> TransferPlan | None:
     return planner(job) if planner is not None else None
 
 
+def _cap_then_dispatch(session: Session, job: OutboxRow, now: datetime) -> DispatchResult:
+    """``EMAIL_DAILY_CAP`` around the unchanged record-then-transmit path.
+
+    A held row returns before the transfer register, so it writes no reg 41(2) record for a send
+    that did not happen. A note owed on success (80 %, P1 override, unchecked P1) rides on the
+    result only if the send really was SENT; ``_record_outcome`` writes it in the outcome's own
+    commit, so no note ever describes a send that then failed (review E07).
+    """
+    held, note_on_sent = _email_cap_gate(session, job, now)
+    if held is not None:
+        return held
+    result = _register_then_dispatch(session, job)
+    if note_on_sent and result.status == SENT:
+        result = replace(result, cap_note=note_on_sent)
+    return result
+
+
+def _email_cap_gate(session: Session, job: OutboxRow, now: datetime) -> tuple[DispatchResult | None, str | None]:
+    """``EMAIL_DAILY_CAP`` (§7.9.1, §10.3 ✱) at the one place mail actually leaves.
+
+    Returns ``(held, note_on_sent)``: ``held`` is the outcome when the row must not go now,
+    ``note_on_sent`` the WorkNote owed if it goes and succeeds. The policy — the 80 % note, P1
+    goes anyway, everything else waits for the rolling window — is
+    ``services/notify.email_cap_decision``, argued there; this only acts on it. It READS only:
+    every note is written later, with the outcome, so a failing note can never change what the
+    decision said (review E05).
+
+    INERT UNLESS MAIL WOULD REALLY LEAVE. With ``EMAIL_ENABLED`` off or no credentials — the
+    demo default and the whole test suite — the adapter only mocks, a mock costs no quota, and
+    this returns before touching the database: rows, events and notes are what they were.
+    A row the approval gate is about to refuse is left to ``dispatch`` to refuse, so a cap
+    decision can never turn REJECTED_UNAPPROVED into a quiet PENDING.
+    """
+    if job.kind != EMAIL or not email_smtp.email_configured():
+        return None, None
+    if int(job.requires_hitl or 0) and job.approved_at is None:
+        return None, None
+    try:
+        decision = notify.email_cap_decision(session, job, now=now)
+    except Exception as exc:  # noqa: BLE001 — the count could not be read; see _cap_unchecked
+        session.rollback()
+        return _cap_unchecked(session, job, exc)
+    session.rollback()  # reads only, nothing to keep: no transaction stays open while the adapter runs
+    if decision.action == notify.CAP_DEFER:
+        return DispatchResult(DEFERRED, last_error=decision.reason, retry_at=decision.retry_at, cap_note=decision.note), None
+    if decision.action == notify.CAP_REFUSE:
+        return DispatchResult(DEAD, last_error=decision.reason), None
+    return None, decision.note  # SEND / P1 OVERRIDE: the note only if the send succeeds
+
+
+def _cap_unchecked(session: Session, job: OutboxRow, exc: BaseException) -> tuple[DispatchResult | None, str | None]:
+    """The count could not be read. Fail OPEN for a P1 only, and never silently (review E05).
+
+    A P1 goes — the same reasoning as the P1 override: the cap exists to protect the next P1 —
+    and leaves a WorkNote saying it went uncounted, plus an ERROR log. Anything else is NOT sent:
+    it is FAILED with the reason, which is the transfer register's precedent for "cannot record
+    it, so do not transmit it": retried with backoff up to ``max_attempts``, then terminal with
+    ``outbox.failed`` on the wallboard and a ``mode=error`` note. A persistent fault therefore
+    cannot quietly switch the cap off for every row, as the previous fail-open could.
+    """
+    try:
+        priority = notify.incident_priority(session, job.incident_id)
+    except Exception:  # noqa: BLE001 — unknown priority is not a P1
+        priority = None
+    session.rollback()
+    if priority in notify.EMAIL_CAP_OVERRIDE_PRIORITIES:
+        log.error("outbox: EMAIL_DAILY_CAP unreadable for P1 row %s — sending uncounted", job.id, exc_info=exc)
+        return None, notify.cap_unchecked_note(priority, exc)
+    log.error("outbox: EMAIL_DAILY_CAP unreadable for row %s — not transmitted, will retry", job.id, exc_info=exc)
+    return DispatchResult(FAILED, last_error=notify.cap_unchecked_reason(exc)), None
+
+
 def _register_then_dispatch(session: Session, job: OutboxRow) -> DispatchResult:
     """Write the reg 41(2) record, commit it, and only then let the bytes leave.
 
@@ -901,8 +985,27 @@ def _record_outcome(
             values.update(status=PENDING, claimed_at=None, claimed_by=None, next_attempt_at=now + _backoff(job.attempts))
             report.retried += 1
             final = None
+    elif result.status == DEFERRED:
+        # EMAIL_DAILY_CAP held it (notify.email_cap_decision). Nothing was transmitted, so the
+        # claim's attempts+1 is handed back: three deferrals through a long storm must not turn
+        # into FAILED, which would be the refusal the cap policy chose NOT to make. No backoff
+        # either — a backoff cannot make a rate limit expire; retry_at is when the window frees.
+        values.update(
+            status=PENDING,
+            claimed_at=None,
+            claimed_by=None,
+            attempts=max(int(job.attempts or 0) - 1, 0),
+            next_attempt_at=result.retry_at or now + notify.EMAIL_CAP_WINDOW,
+        )
+        report.deferred += 1
+        final = None
     else:
         raise ValueError(f"dispatch returned unknown status {result.status!r} for row {job.id}")
+    if result.smtp_messages > 0:
+        # Whatever the outcome — SENT, a retried partial failure, DEAD — these messages LEFT, so
+        # EMAIL_DAILY_CAP must count them (notify.email_budget sums this). Only ever written for
+        # a real SMTP acceptance, so a mock send's payload is byte-for-byte what it was.
+        values["payload_json"] = notify.record_smtp_accepted(job.payload_json, at=now, messages=result.smtp_messages)
     # Conditional on still holding the claim: if the lease expired mid-dispatch and another
     # drainer reclaimed the row, its outcome is the one that stands.
     held = session.execute(
@@ -915,6 +1018,8 @@ def _record_outcome(
         log.warning("outbox: row %s was reclaimed by another drainer before its outcome was recorded", job.id)
         return []
     report.outcomes[job.id] = result
+    if result.cap_note:  # EMAIL_DAILY_CAP note, in the same commit as the outcome it describes
+        notify.record_email_cap_note(session, job, result.cap_note, now=now)
     if final is None:
         return []
     events = _finalize(session, job, result, final, now)

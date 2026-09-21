@@ -23,16 +23,31 @@ gates, addressed by ``outbox.hitl_task_id`` alone. It deliberately does not use
 ``outbox.release_held``, whose blast radius is the incident: that would SUPPRESS a
 broadcast draft still waiting for its own approval on the anchor incident.
 
-**The anchor incident.** ``hitl_tasks.incident_id`` is NOT NULL and operator ownership of a
-task is derived by joining it to ``incidents`` (``main._OWNED_VIA_INCIDENT``), so a task
-that belongs to no incident cannot be stored or fetched today. The handover task is
-therefore anchored to the top watchlist incident and says what it is really about in
-``entity_type="handover"`` / ``entity_id=<shift id>``. That is a workaround for a schema
-the spec's ``handovers`` table would replace; see the wave report. Two consequences are
-deliberate and documented here rather than hidden: with **no** open incident there is no
-anchor, so no task can be raised and the handover is refused rather than sent unapproved
-(fail closed); and the task is not fed to ``sync_incident_hitl_scalars`` because the
-anchor incident does not require HITL — the handover does.
+**The anchor incident.** When this gate was written ``hitl_tasks.incident_id`` was NOT NULL
+and operator ownership of a task was derived by joining it to ``incidents``
+(``api.deps._OWNED_VIA_INCIDENT``), so a task that belonged to no incident could be neither
+stored nor fetched. The handover task was therefore anchored to the top watchlist incident and
+says what it is really about in ``entity_type="handover"`` / ``entity_id=<shift id>``. Two
+consequences were deliberate and documented here rather than hidden: with **no** open incident
+there is no anchor, so no task can be raised and the handover is refused rather than sent
+unapproved (fail closed); and the task is not fed to ``sync_incident_hitl_scalars`` because
+the anchor incident does not require HITL — the handover does.
+
+Since schema_version 8 the schema no longer forces any of that: ``incident_id`` is nullable
+and a task is owned through its own ``hitl_tasks.operator_id`` (``db/migrate.py``, "THE ONE
+EXCEPTION"; the maintenance lane dropped its copy of this workaround at the same time). The
+anchor is KEPT here on purpose, and not out of inertia:
+
+* ``main.py``'s approve route releases the HELD handover mail only inside ``if inc:`` — it
+  reaches ``release_handover`` through the task's incident. A handover task with no incident
+  would be approved and the mail would sit HELD for ever;
+* :func:`handover_alert` builds the ACK envelope from the anchor incident;
+* ``tests/integration/test_handover_hitl.py`` pins the fail-closed answer with nothing open.
+
+So un-anchoring the handover is a change to ``main.py`` and to those tests, not to this module
+alone, and it is left for its own reviewed commit. Nothing here had to change for v8: the task
+is still written with ``incident_id`` only, and ``db.models._own_hitl_task`` derives its
+``operator_id`` from that incident at insert (``tests/unit/test_hitl_ownership.py``).
 """
 
 from __future__ import annotations
@@ -48,6 +63,7 @@ from sqlalchemy.orm import Session
 from noc_agents.config import OperatorConfig
 from noc_agents.db.models import HitlTaskRow, IncidentRow, OutboxRow, new_id, utcnow
 from noc_agents.domain.alerts import AudienceSpec, Content, NocAlert
+from noc_agents.domain.enums import HitlTaskType
 from noc_agents.orchestrator import outbox
 from noc_agents.services.alerts import build_alert
 from noc_agents.services.hitl import envelope_payload
@@ -59,7 +75,10 @@ from noc_agents.services.shifts import current_shift
 HANDOVER_HITL_FLAG = "HANDOVER_REQUIRES_HITL"
 _FALSE = {"0", "false", "no", "off"}
 
-HANDOVER_TASK_TYPE = "APPROVE_HANDOVER"
+#: The enum member's value, not a bare literal: the §5.2 import-time check validates members,
+#: so a typo here is now an AttributeError at import rather than a card nobody can route
+#: (CONFORMANCE A-06). ``.value`` keeps the stored string byte-identical.
+HANDOVER_TASK_TYPE = HitlTaskType.APPROVE_HANDOVER.value
 #: ``hitl_tasks.entity_type`` for these rows: what the task is really about (§7.5).
 HANDOVER_ENTITY_TYPE = "handover"
 #: The raiser. A principal-shaped string that can never equal a human's name, so the
@@ -249,8 +268,9 @@ def queue_handover(
          "status": "HELD", "blocked_reason": None}
 
     ``status="NOT_QUEUED"`` with a ``blocked_reason`` is the fail-closed answer when there
-    is no open incident to anchor the task on: no task can be raised, so no approval is
-    possible, so nothing is queued — rather than queueing a row nobody could ever release.
+    is no open incident to anchor the task on: no task is raised (the module docstring says
+    why this gate still anchors), so no approval is possible, so nothing is queued — rather
+    than queueing a row nobody could ever release.
     """
     anchor = anchor_incident(session, cfg)
     if anchor is None:
@@ -260,9 +280,13 @@ def queue_handover(
             "alert_id": None,
             "outbox_id": None,
             "status": "NOT_QUEUED",
+            # The true reason, not the schema's: since schema_version 8 a task may have no
+            # incident, but the approve route releases handover mail only through the task's
+            # incident, so a task raised without one could be approved and never sent.
             "blocked_reason": (
-                "no open incident to anchor an APPROVE_HANDOVER task on "
-                "(hitl_tasks.incident_id is NOT NULL); nothing queued and nothing sent"
+                "no open incident to anchor an APPROVE_HANDOVER task on: approval releases the "
+                "handover mail only through the task's incident, so a task without one could be "
+                "approved but never sent; nothing queued and nothing sent"
             ),
         }
 

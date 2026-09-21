@@ -2,7 +2,8 @@
 
 Spec §6.1 "Who fills what": everything except ``content{}`` is set deterministically here
 from the incident row and the YAML; ``content`` is the deterministic template unless the
-caller hands in model-drafted ``ai_content`` (already checked by the validators wave).
+caller hands in model-drafted ``ai_content``, which is checked HERE by
+``services/validators.validate_content`` (see ``VALIDATE_AI_CONTENT`` for its switch).
 
 **This module is inert today.** ``ALERT_ENVELOPE_V2`` defaults to false and nothing on
 the hot path calls ``build_alert`` yet; the HITL/BROADCAST nodes still call
@@ -25,9 +26,11 @@ for byte**. That is why:
 from __future__ import annotations
 
 import json
+import logging
 import os
 import uuid
 from datetime import datetime, timedelta
+from typing import Callable
 
 from noc_agents.config import OperatorConfig
 from noc_agents.db.models import IncidentRow
@@ -57,6 +60,9 @@ from noc_agents.domain.alerts import (
 from noc_agents.domain.enums import Priority
 from noc_agents.services.clock import utcnow
 from noc_agents.services.composition import needs_hitl, region_label
+from noc_agents.services.validators import content_fallback_reason, content_names, validate_content
+
+log = logging.getLogger(__name__)
 
 __all__ = [
     "AUDIENCE_BY_CONFIG_NAME",
@@ -67,11 +73,13 @@ __all__ = [
     "V1_SMS_MAX_SEGMENTS",
     "V1_TEMPLATE_KEY",
     "V1_TEMPLATE_VERSION",
+    "VALIDATE_AI_CONTENT",
     "alert_envelope_v2_enabled",
     "assignee_role_token",
     "build_alert",
     "channels_leave_kenya",
     "contains_personal_data",
+    "content_validation_context",
     "default_audiences",
     "default_content",
     "default_sender",
@@ -98,6 +106,21 @@ def alert_envelope_v2_enabled() -> bool:
     so the switch has one home and one spelling.
     """
     return (os.getenv(FLAG_NAME) or "").strip().lower() in _TRUE
+
+
+# ------------------------------------------------------- the ai_content seam (§6.1, C-07)
+
+#: Whether ``build_alert`` runs ``validators.validate_content`` over model-drafted
+#: ``ai_content`` before it can reach a renderer. On a violation the envelope carries the
+#: deterministic template instead, ``governance.ai_assisted`` is false, and the reason goes to
+#: the caller's ``on_content_fallback`` for ``llm_calls.fallback_reason``.
+#:
+#: ON, and it must stay on: this is what stops a model sentence such as "due to a fibre cut" on
+#: a POWER incident from reaching a renderer. It exists as a name so a test can drive the
+#: pass-through path explicitly, not so a caller can switch the rule off. The template path
+#: (``ai_content=None``, every caller today) never reaches the validator, so the switch cannot
+#: change a single byte of what the running system sends now.
+VALIDATE_AI_CONTENT = True
 
 
 # ------------------------------------------------------------------ v1 template facts
@@ -282,13 +305,20 @@ def build_alert(
     alert_id: str | None = None,
     hitl_task_id: str | None = None,
     sender: str | None = None,
+    on_content_fallback: Callable[[str], None] | None = None,
+    validate_ai_content: bool | None = None,
 ) -> NocAlert:
     """Compose the envelope for one incident (spec §6.1). Pure: reads the row, writes nothing.
 
     ``lifecycle`` and ``audiences`` default to the deterministic derivations
     (``lifecycle_for`` / ``default_audiences``); ``ai_content`` replaces the template
-    content and flips ``governance.ai_assisted``. ``sent`` / ``alert_id`` are injectable
-    for reproducible tests and default to now / a fresh uuid4.
+    content and flips ``governance.ai_assisted`` — IF it passes ``validate_content``. When it
+    does not, the envelope keeps the deterministic template, ``ai_assisted`` stays false, and
+    ``on_content_fallback(reason)`` is called with the ``llm_calls.fallback_reason`` text
+    (``"content_invalid: <codes>"``); this function writes no row, so recording it is the
+    caller's. ``validate_ai_content`` overrides ``VALIDATE_AI_CONTENT`` for one call.
+    ``sent`` / ``alert_id`` are injectable for reproducible tests and default to now / a
+    fresh uuid4.
     """
     now = sent if sent is not None else utcnow()
     audience_specs = list(audiences) if audiences is not None else default_audiences(inc, cfg)
@@ -360,7 +390,7 @@ def build_alert(
         ai_assisted=bool(ai_content),
         template_version=V1_TEMPLATE_VERSION,
     )
-    return NocAlert(
+    alert = NocAlert(
         alert_id=alert_id or str(uuid.uuid4()),
         sender=sender or default_sender(cfg),
         sent=now,
@@ -379,6 +409,67 @@ def build_alert(
         rendering=rendering,
         governance=governance,
         idempotency_seed=f"{inc.id}|{msg_type}|{sequence}",
+    )
+    if not ai_content:
+        return alert  # the template path — every caller today — is exactly what it was
+    enforce = VALIDATE_AI_CONTENT if validate_ai_content is None else validate_ai_content
+    return _vet_ai_content(alert, inc, enforce=enforce, on_content_fallback=on_content_fallback)
+
+
+def content_validation_context(inc: IncidentRow) -> dict:
+    """What ``validate_content`` needs from the ROW that the envelope does not carry.
+
+    * the names a draft must not contain: ``fe_name`` and ``rnio_name`` (with
+      ``assignee_name``, the fields ``redaction.PSEUDONYMISED`` turns into ``<PERSON_n>`` before
+      a model sees them) and ``restored_by``. The assignee counts as a person only for a
+      person assignment; an MSP or NOC queue name is matched whole (``validators.content_names``);
+    * ``quoted``: the severity engine's rationale. ``ticket.py`` writes the same string into
+      ``severity_rationale`` and the template narrative, and it names intermediate priorities by
+      construction (``users=3200→P4; site_type=HUB floor=P2; final=P2``), so a draft that
+      repeats it verbatim is not stating a second priority. It also keeps a stale ``final=P2``
+      harmless after a HITL priority override, since the narrative is never rewritten.
+    """
+    people, whole_names = content_names(
+        assignee_name=inc.assignee_name,
+        assignee_is_person=(inc.assignee_type or "").upper() not in ("MSP", "NOC"),
+        msp_code=_msp_code(inc),
+        people=(inc.fe_name, inc.rnio_name, inc.restored_by),
+    )
+    rationale = (inc.severity_rationale or "").strip()
+    return {"people": people, "whole_names": whole_names, "quoted": (rationale,) if rationale else ()}
+
+
+def _vet_ai_content(
+    alert: NocAlert, inc: IncidentRow, *, enforce: bool, on_content_fallback: Callable[[str], None] | None
+) -> NocAlert:
+    """§6.1: model-drafted content is judged on the COMPLETE envelope, before any renderer.
+
+    It has to be the complete envelope, not the content alone, because the rules are about
+    agreement with the deterministic fields: the incident number, priority, region label and
+    next-update time the content must repeat, and the ``facts.failure_domain`` any stated cause
+    must name. A draft that says "due to a fibre cut" on a POWER incident is a model inventing a
+    root cause in a sentence addressed to customers and the regulator; it is replaced by the
+    template here, where the envelope is built, so no later path can render it.
+
+    The fallback is ``alert`` with ``content`` and ``governance.ai_assisted`` swapped back to
+    exactly what ``build_alert(..., ai_content=None)`` produces — every other field was derived
+    from the row, not from the draft, and is kept.
+    """
+    if not enforce:
+        return alert
+    problems = validate_content(alert, **content_validation_context(inc))
+    if not problems:
+        return alert
+    reason = content_fallback_reason(problems)
+    if on_content_fallback is not None:
+        on_content_fallback(reason)
+    else:  # nobody to record it in llm_calls: at least the log says the draft was refused
+        log.warning("build_alert: ai_content for %s refused, template used (%s)", inc.incident_number, reason)
+    return alert.model_copy(
+        update={
+            "content": {"en": default_content(inc)},
+            "governance": alert.governance.model_copy(update={"ai_assisted": False}),
+        }
     )
 
 

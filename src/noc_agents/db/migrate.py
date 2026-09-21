@@ -1,12 +1,97 @@
-"""Generic additive schema migration for the SQLite database (spec §7.0.1).
+"""Generic additive schema migration for the SQLite database (spec §7.0.1) -- and ONE
+named exception to "additive", the schema_version 8 rebuild of ``hitl_tasks``.
 
 The ORM classes in ``db/models.py`` are the single source of truth for the schema.
 This module brings a database file up to that shape using only three statements:
 ``CREATE TABLE IF NOT EXISTS``, ``CREATE INDEX IF NOT EXISTS`` and
-``ALTER TABLE ... ADD COLUMN``. It never drops, renames or retypes anything, which
-is what makes the rollback story cheap: an older code version keeps running against
-a newer file (extra tables and columns are ignored), so rolling back a release is a
-code checkout, and the pre-migration backup is only for the day the *data* is damaged.
+``ALTER TABLE ... ADD COLUMN``. With the one exception described below it never drops,
+renames or retypes anything, which is what makes the rollback story cheap: an older code
+version keeps running against a newer file (extra tables and columns are ignored), so
+rolling back a release is a code checkout, and the pre-migration backup is only for the
+day the *data* is damaged.
+
+THE ONE EXCEPTION: ``_rebuild_hitl_tasks`` (schema_version 8)
+------------------------------------------------------------
+This docstring used to say "never". It cannot any more, and the reason is worth keeping.
+
+``hitl_tasks.incident_id`` was NOT NULL, and a task's owning operator was derived by joining
+``incidents``. Phase 5 introduced approval cards that are not about an incident at all (a
+maintenance programme, a night's planned outage), and the lane had to file each one against
+an unrelated "anchor" incident to satisfy the constraint -- and could raise no card at all on
+a database with no incidents (``docs/PHASE5.md``, "The one that should be fixed first"). The
+fix is a nullable ``incident_id`` plus the table's own ``operator_id``. The column is
+additive. The constraint is not: **SQLite cannot drop NOT NULL in place**, so the table has
+to be created again, copied, and swapped.
+
+It is built as an exception, not as a facility. There is no rebuild framework here and the
+next table that "needs" one should be argued for from scratch. What keeps this one safe:
+
+* **Same backup, same transaction.** The pre-migration copy is taken before the first
+  statement, exactly as for an additive release. The rebuild runs inside the same
+  ``BEGIN IMMEDIATE`` as everything else, AFTER the additive pass (so old and new table have
+  the same columns and the copy is column-for-column). SQLite DDL is transactional --
+  CREATE, DROP and RENAME included -- so a failure at any point, even after the old table
+  has been dropped, rolls the file back to exactly what it was and the next start retries.
+* **Verify before drop.** Row count AND every column of every row (value and storage class,
+  by ``rowid``) are compared between old and new before the old table is dropped; any
+  difference raises and the transaction rolls back. This table is the approval trail for
+  customer broadcasts and regulator notices: a silently truncated copy is the worst outcome
+  available, so it is the one the code spends statements on.
+* **Detected from the live catalogue**, not from the version number: the rebuild runs only
+  when ``PRAGMA table_info(hitl_tasks)`` still reports ``incident_id`` as NOT NULL. A fresh
+  database is created with the new shape and never rebuilt; a rebuilt file is never rebuilt
+  again; and it is only ever *looked for* on a start that is migrating anyway -- the
+  every-start fast path is untouched.
+* **Backfill during the copy.** ``operator_id`` comes from the row's incident. A task whose
+  incident row is missing (foreign keys are not enforced in this codebase, so it is possible)
+  is copied as it is with ``operator_id`` NULL and logged by id. Under the old join that row
+  was already invisible to every operator; it stays invisible and nothing is lost. Guessing
+  an owner would be a cross-tenant leak, and refusing to start a NOC over an orphan would be
+  disproportionate.
+* **What hangs off the table.** Indexes and triggers are dropped with a table, so their SQL
+  is read from ``sqlite_master`` first and replayed afterwards. Nothing declares a foreign
+  key to ``hitl_tasks`` (``outbox.hitl_task_id`` and its siblings are plain text ids, and
+  every id is preserved); and because the OLD table is dropped and the NEW one renamed onto
+  its name -- never the old one renamed away -- a reference to ``hitl_tasks`` elsewhere in the
+  schema is never rewritten. ``PRAGMA foreign_keys`` is off everywhere in this codebase; if a
+  connection ever has it on, it is switched off for the migration and restored afterwards, as
+  SQLite's own rebuild procedure requires.
+* **Refuse up front, before the backup.** Two things make the rebuild fail on EVERY start --
+  rolled back each time, so no data is lost, but the NOC never comes up: a view, or a trigger
+  on some OTHER table, whose SQL mentions ``hitl_tasks`` (SQLite cannot RENAME underneath it:
+  "error in trigger ...: no such table"); and a NULL in a column the model declares NOT NULL
+  (``entity_type``, ``edited``), which a file that grew from v1 by ADD COLUMN permits on disk
+  and which only raw SQL could have written. Both are checked by ``_hitl_rebuild_preflight``
+  before the backup is taken, so a refused start does not pile up backups, and the message
+  names each object or column and the one statement that fixes it. A NULL is refused rather
+  than rewritten during the copy: a migration that quietly changes a value on the approval
+  trail is the very thing the verification step exists to prevent.
+
+**What the exception costs the rollback story** -- worked out against the v7 code, not assumed:
+
+* An older release still *starts* on a rebuilt file (it logs "newer than this code ...
+  carrying on") and still reads and decides every incident task. The rebuilt table has every
+  column it had, under the same names, types, ids and rowids; an older ORM ignores the extra
+  column and never notices the relaxed constraint.
+* It still *writes* incident tasks, because ``operator_id`` is deliberately nullable in the
+  DDL -- NOT NULL would have turned every HITL task an older release raises into an
+  IntegrityError on the golden path. But it writes them with ``operator_id`` NULL. While the
+  older code runs nobody notices (it derives ownership through the join). After rolling
+  FORWARD again those rows are unowned, and v8 hides an unowned row from every inbox. So
+  going forward after a rollback needs this first (idempotent; orphans stay NULL)::
+
+      UPDATE hitl_tasks
+         SET operator_id = (SELECT operator_id FROM incidents WHERE incidents.id = hitl_tasks.incident_id)
+       WHERE operator_id IS NULL AND incident_id IS NOT NULL;
+
+  The migration will not do it for you: the file is already at version 8, and the fast path
+  deliberately does nothing.
+* Tasks with NO incident -- the cards v8 exists to allow -- are invisible to an older
+  release, whose ownership join is an INNER JOIN on ``incident_id``. That fails closed (the
+  card cannot be seen or approved, so the window it gates stays PROPOSED), but it is lost
+  function, and it is the part of a rollback that is no longer "just a code checkout".
+* Restoring the *file* is unchanged: the backup is the file exactly as the previous release
+  left it, old table included.
 
 Bump ``SCHEMA_VERSION`` once per release that adds tables or columns. The version on
 disk lives in the ``schema_version`` table (one row per applied version); a file
@@ -38,7 +123,7 @@ from sqlalchemy import Column, Table
 from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.schema import CreateIndex, CreateTable
 
-from noc_agents.db.models import Base, SchemaVersionRow, utcnow
+from noc_agents.db.models import Base, HitlTaskRow, IncidentRow, SchemaVersionRow, utcnow
 
 # 1 = pre-Phase-1 (no schema_version table); 2 = Phase 1 platform tables (outbox, scheduler,
 # llm_calls, incident restore provenance); 3 = Phase 2 message tables (message_templates,
@@ -51,7 +136,11 @@ from noc_agents.db.models import Base, SchemaVersionRow, utcnow
 #     contracts + contract_clauses + contract_faq + contract_queries (§7.8),
 #     relationship_complaints + subject_persons (§7.8).
 # 7 = Phase 5 capacity lane: capacity_observations, capacity_advisories (§7.5.1).
-SCHEMA_VERSION = 7  # bump per release that adds tables/columns
+# 8 = HITL tasks own themselves: hitl_tasks.operator_id (additive) and a NULLABLE
+#     hitl_tasks.incident_id -- the one NON-additive step, see _rebuild_hitl_tasks and the
+#     module docstring. The additive tables landing in the same release (memory M1, vendor
+#     scorecards) ride on the same bump.
+SCHEMA_VERSION = 8  # bump per release that adds tables/columns
 
 # Why the bump is not optional when a release adds COLUMNS, even though new TABLES seem to
 # appear without one: init_db() calls Base.metadata.create_all() after migrate_additive(),
@@ -209,6 +298,275 @@ def _enable_wal(engine: Engine) -> str:
     return mode
 
 
+# ------------------------------------------------ the ONE non-additive step (schema_version 8)
+#
+# Everything between this line and "entry point" exists for one table and one release. Read
+# the module docstring first. It is deliberately NOT parameterised by table: a second caller
+# would need its own argument about verification, backfill and rollback, and a generic
+# ``rebuild(table)`` would make that argument look already won.
+
+_HITL = HitlTaskRow.__tablename__
+_HITL_REBUILD = f"{_HITL}__v8_rebuild"  # lives only inside the transaction; never survives a commit
+_INCIDENTS = IncidentRow.__tablename__
+
+
+class HitlRebuildError(RuntimeError):
+    """The hitl_tasks rebuild refused to go on. Raised inside the migration transaction, so the
+    caller rolls back and the file is exactly what it was."""
+
+
+def _table_columns(conn: Connection, table: str) -> list[tuple[str, int]]:
+    """``(name, notnull)`` per column, in table order, from the live catalogue."""
+    return [(r[1], int(r[3])) for r in conn.exec_driver_sql(f"PRAGMA table_info({table})").fetchall()]
+
+
+def _count(conn: Connection, table: str) -> int:
+    return int(conn.exec_driver_sql(f"SELECT COUNT(*) FROM {table}").scalar() or 0)
+
+
+def _q(column: str) -> str:
+    """A column name as a quoted SQL identifier (``status`` and friends are harmless today;
+    the next column added to the model might not be)."""
+    return '"' + column.replace('"', '""') + '"'
+
+
+def _hitl_tasks_needs_rebuild(conn: Connection) -> bool:
+    """True while the file's ``hitl_tasks.incident_id`` is still NOT NULL.
+
+    The live catalogue decides, not the version number. That is what makes the step idempotent
+    (a rebuilt table reports 0 and is left alone), what keeps it off a fresh database (created
+    nullable by CREATE TABLE a moment earlier) and what keeps it honest about files whose
+    version stamp and shape disagree -- tests/unit/test_phase2_schema.py builds exactly such a
+    file on purpose (v8 shape, stamped 2) and requires that no DROP or RENAME runs against it.
+    """
+    return any(name == "incident_id" and notnull for name, notnull in _table_columns(conn, _HITL))
+
+
+def _attached_sql(conn: Connection) -> list[str]:
+    """The CREATE statements of every index and trigger on the old table, to replay afterwards.
+
+    DROP TABLE takes them with it. Read from ``sqlite_master`` rather than from the ORM so an
+    index somebody added by hand survives too. Rows with NULL sql are SQLite's own
+    auto-indexes (the primary key's), which the new table's DDL recreates by itself.
+    """
+    rows = conn.exec_driver_sql(
+        "SELECT sql FROM sqlite_master WHERE tbl_name = ? AND type IN ('index', 'trigger') "
+        "AND sql IS NOT NULL ORDER BY type, name",
+        (_HITL,),
+    ).fetchall()
+    return [r[0] for r in rows]
+
+
+def _refuse_schema_references(conn: Connection) -> None:
+    """A view, or a trigger on ANOTHER table, whose SQL mentions ``hitl_tasks`` makes
+    ``ALTER TABLE ... RENAME`` fail once the old table is gone ("error in trigger ...: no such
+    table: main.hitl_tasks"). That failure is safe -- it rolls back -- but it recurs on every
+    start with a message that does not say what to do, and each attempt writes another backup.
+    Refuse first, and say what to do. (Triggers ON hitl_tasks itself are fine: they are dropped
+    with the old table and replayed by ``_attached_sql``.) No view or trigger exists in this
+    codebase; this is for the file somebody has been reporting from or patching by hand."""
+    rows = conn.exec_driver_sql(
+        "SELECT type, name FROM sqlite_master WHERE type IN ('view', 'trigger') AND tbl_name != ? "
+        "AND sql LIKE ? ORDER BY type, name",
+        (_HITL, f"%{_HITL}%"),
+    ).fetchall()
+    if rows:
+        named = ", ".join(f"{kind} {name}" for kind, name in rows)
+        raise HitlRebuildError(
+            f"{named}: reference(s) to {_HITL} from elsewhere in the schema; SQLite cannot rename the rebuilt "
+            f"table underneath them. Drop each one (DROP VIEW / DROP TRIGGER <name>), start again, then recreate "
+            "it against the rebuilt table. Nothing was changed and no backup was written."
+        )
+
+
+def _refuse_nulls_the_model_forbids(conn: Connection, engine: Engine) -> None:
+    """A file that grew from v1 has ``entity_type`` and ``edited`` NULLABLE on disk: ADD COLUMN
+    is rendered without NOT NULL (module docstring). The rebuilt table takes the model's DDL,
+    where both are NOT NULL, so a NULL in either -- impossible through the ORM, which always
+    supplies a value, but one raw UPDATE away -- would fail the copy on every start. Refuse
+    before anything is done, naming the column, the count and the statement that fixes it.
+    The alternative, COALESCE-ing the value in during the copy, would have the migration
+    rewrite a cell of the approval trail on its own authority; a human runs that UPDATE."""
+    on_disk = dict(_table_columns(conn, _HITL))  # name -> notnull; a column not yet on disk arrives with its DEFAULT
+    compiler = engine.dialect.ddl_compiler(engine.dialect, None)
+    offenders: list[str] = []
+    for col in HitlTaskRow.__table__.columns:
+        if col.nullable or on_disk.get(col.name, 1):
+            continue
+        nulls = int(conn.exec_driver_sql(f"SELECT COUNT(*) FROM {_HITL} WHERE {_q(col.name)} IS NULL").scalar() or 0)
+        if nulls:
+            default = compiler.get_column_default_string(col)
+            value = default if default is not None else "<a value you choose>"
+            offenders.append(
+                f"{col.name}: {nulls} NULL row(s); fix: UPDATE {_HITL} SET {_q(col.name)} = {value} WHERE {_q(col.name)} IS NULL"
+            )
+    if offenders:
+        raise HitlRebuildError(
+            f"{_HITL} holds NULL in column(s) the model declares NOT NULL, so the rebuilt table would refuse the "
+            "copy. Run the statement(s) below (each is one deliberate change to the approval trail), then start "
+            "again. Nothing was changed and no backup was written. " + " | ".join(offenders)
+        )
+
+
+def _hitl_rebuild_preflight(conn: Connection, engine: Engine) -> None:
+    """Everything that would make the rebuild fail on EVERY start, checked read-only BEFORE the
+    backup is taken (so a refused start does not pile up backups) and again inside the
+    transaction (so a change made between the two is still caught). No-op unless the file's
+    ``hitl_tasks`` still needs the rebuild."""
+    if not _hitl_tasks_needs_rebuild(conn):
+        return
+    unknown = sorted(set(name for name, _ in _table_columns(conn, _HITL)) - {c.name for c in HitlTaskRow.__table__.columns})
+    if unknown:
+        # The rebuild copies the columns the model knows. One it does not know would be dropped
+        # from the approval trail without a word. A human decides what it was.
+        raise HitlRebuildError(
+            f"{_HITL} has column(s) the model does not know: {unknown}; a rebuild would drop them. Refusing; "
+            "nothing was changed and no backup was written."
+        )
+    _refuse_schema_references(conn)
+    _refuse_nulls_the_model_forbids(conn, engine)
+
+
+def _create_rebuild_table(conn: Connection, engine: Engine) -> str:
+    """CREATE the new table from the ORM's own DDL -- the statement a fresh database gets, with
+    only the table name changed -- so a migrated file and a new file cannot drift apart."""
+    ddl = _one_line(str(CreateTable(HitlTaskRow.__table__).compile(dialect=engine.dialect)))
+    head = f"CREATE TABLE {_HITL} ("
+    if not ddl.startswith(head) or ddl.count(head) != 1:
+        raise HitlRebuildError(f"unexpected DDL for {_HITL}; refusing to rewrite it: {ddl[:80]!r}")
+    sql = f"CREATE TABLE {_HITL_REBUILD} (" + ddl[len(head):]
+    conn.exec_driver_sql(sql)
+    return sql
+
+
+def _copy_hitl_rows(conn: Connection, columns: list[str]) -> str:
+    """Copy every row, ``rowid`` included, filling ``operator_id`` from the row's incident.
+
+    ``rowid`` is copied so that an unordered SELECT returns the rows in the order it always
+    did. ``incidents.id`` is a primary key, so the LEFT JOIN matches at most one incident and
+    can never duplicate a task; a task with no matching incident keeps ``operator_id`` NULL
+    (see the module docstring for why that is the right answer). COALESCE keeps an owner the
+    row already carries: on a v7 file the column was added, all NULL, a few statements ago,
+    but a file where ``operator_id`` landed first must not have its values re-derived.
+    """
+    targets = ", ".join(_q(c) for c in columns)
+    sources = ", ".join(
+        'COALESCE(t."operator_id", i."operator_id")' if c == "operator_id" else f"t.{_q(c)}" for c in columns
+    )
+    sql = (
+        f"INSERT INTO {_HITL_REBUILD} (rowid, {targets}) SELECT t.rowid, {sources} "
+        f"FROM {_HITL} AS t LEFT JOIN {_INCIDENTS} AS i ON i.id = t.incident_id ORDER BY t.rowid"
+    )
+    conn.exec_driver_sql(sql)
+    return sql
+
+
+def _verify_hitl_copy(conn: Connection, columns: list[str]) -> tuple[int, list[str]]:
+    """Prove the copy before the original is dropped. Returns ``(rows, unowned_ids)``.
+
+    Three checks, all inside the transaction, any failure raising so it rolls back:
+
+    1. the row counts are equal;
+    2. every column except ``operator_id`` is identical in both tables, row by row: no row of
+       the original is missing from, or different in, the copy. Rows are matched on ``rowid``
+       and compared on value AND ``typeof`` -- a bare EXCEPT treats integer 1 and real 1.0 as
+       equal, and "byte for byte" should mean it. (EXCEPT treats NULLs as equal to each other,
+       which is what is wanted here.) One direction is the whole proof: ``rowid`` is unique in
+       each table, so equal counts plus "every original row is in the copy" leaves no room for
+       an extra or invented row in the copy;
+    3. ``operator_id`` is what the rule says: unchanged where the old row had one, otherwise
+       the incident's operator, otherwise (no such incident) NULL.
+    """
+    before, after = _count(conn, _HITL), _count(conn, _HITL_REBUILD)
+    if before != after:
+        raise HitlRebuildError(f"{_HITL} rebuild copied {after} row(s) of {before}; rolled back, nothing dropped")
+
+    compared = ", ".join(f"{_q(c)}, typeof({_q(c)})" for c in columns if c != "operator_id")
+    differing = conn.exec_driver_sql(
+        f"SELECT COUNT(*) FROM (SELECT rowid, {compared} FROM {_HITL} "
+        f"EXCEPT SELECT rowid, {compared} FROM {_HITL_REBUILD})"
+    ).scalar()
+    if differing:
+        raise HitlRebuildError(
+            f"{_HITL} rebuild: {differing} row(s) missing from or altered in the copy; rolled back, nothing dropped"
+        )
+
+    wrong_owner = conn.exec_driver_sql(
+        f"SELECT COUNT(*) FROM {_HITL} AS t JOIN {_HITL_REBUILD} AS n ON n.rowid = t.rowid "
+        f"LEFT JOIN {_INCIDENTS} AS i ON i.id = t.incident_id "
+        'WHERE n."operator_id" IS NOT COALESCE(t."operator_id", i."operator_id")'
+    ).scalar()
+    if wrong_owner:
+        raise HitlRebuildError(
+            f"{_HITL} rebuild: {wrong_owner} row(s) were given the wrong operator_id; rolled back, nothing dropped"
+        )
+
+    unowned = [
+        r[0]
+        for r in conn.exec_driver_sql(
+            f"SELECT id FROM {_HITL_REBUILD} WHERE operator_id IS NULL ORDER BY rowid"
+        ).fetchall()
+    ]
+    return before, unowned
+
+
+def _swap_hitl_tables(conn: Connection, attached: list[str]) -> list[str]:
+    """Drop the old table, rename the new one onto its name, put the indexes/triggers back.
+
+    The order matters. Renaming the OLD table out of the way first would make SQLite rewrite
+    every reference to it elsewhere in the schema to follow it to its new name; dropping it
+    and renaming the new table INTO the name leaves every such reference alone.
+    """
+    statements = [f"DROP TABLE {_HITL}", f"ALTER TABLE {_HITL_REBUILD} RENAME TO {_HITL}", *attached]
+    for sql in statements:
+        conn.exec_driver_sql(sql)
+    return statements
+
+
+def _rebuild_hitl_tasks(conn: Connection, engine: Engine) -> list[str]:
+    """Make ``hitl_tasks.incident_id`` nullable. The one non-additive step; see the module docstring.
+
+    Must run inside the migration transaction and AFTER the additive pass, which has by then
+    added every missing column (``operator_id`` among them) to the old table -- so the two
+    tables have the same columns and the copy and its verification are column-for-column.
+    Returns the statements executed, for the report; ``[]`` when the table needs nothing.
+    """
+    if not _hitl_tasks_needs_rebuild(conn):
+        return []
+
+    _hitl_rebuild_preflight(conn, engine)  # already ran before the backup; cheap, and now under the write lock
+    old_columns = [name for name, _ in _table_columns(conn, _HITL)]
+    new_columns = [c.name for c in HitlTaskRow.__table__.columns]
+    if set(old_columns) != set(new_columns):
+        # The preflight refused old-only columns; new-only ones mean the additive pass did not
+        # run first. Not survivable by guessing either way.
+        raise HitlRebuildError(
+            f"{_HITL} columns differ from the model (file only: {sorted(set(old_columns) - set(new_columns))}, "
+            f"model only: {sorted(set(new_columns) - set(old_columns))}); refusing to rebuild"
+        )
+    attached = _attached_sql(conn)
+
+    applied = [_create_rebuild_table(conn, engine), _copy_hitl_rows(conn, new_columns)]
+    rows, unowned = _verify_hitl_copy(conn, new_columns)
+    applied.extend(_swap_hitl_tables(conn, attached))
+
+    # Post-conditions, still inside the transaction: the table that now answers to the name is
+    # the new one, it has every row, and nothing that hung off the old one went missing.
+    if _hitl_tasks_needs_rebuild(conn) or _count(conn, _HITL) != rows:
+        raise HitlRebuildError(f"{_HITL} is not in the expected state after the swap; rolled back")
+    if sorted(_attached_sql(conn)) != sorted(attached):
+        raise HitlRebuildError(f"{_HITL} lost an index or trigger in the swap; rolled back")
+
+    log.info("%s rebuilt: %d row(s) copied and verified, incident_id is now nullable", _HITL, rows)
+    if unowned:
+        log.warning(
+            "%s: %d task(s) name an incident that does not exist, so no operator_id could be derived. "
+            "They were copied unchanged and stay invisible to every operator, as they already were: %s",
+            _HITL, len(unowned), ", ".join(unowned[:50]) + (" ..." if len(unowned) > 50 else ""),
+        )
+    return applied
+
+
 # ------------------------------------------------------------------------ entry point
 
 
@@ -218,7 +576,10 @@ def migrate_additive(engine: Engine, *, backup_dir: Path) -> MigrationReport:
           BEFORE any change (sqlite3 backup API, works while WAL is active).
        3. In ONE transaction: for every table in Base.metadata.sorted_tables, CREATE TABLE IF NOT EXISTS;
           for each mapped column missing from PRAGMA table_info(<table>), ALTER TABLE ADD COLUMN with the
-          column's DDL default (NULL or a literal). Never drops, renames or changes types.
+          column's DDL default (NULL or a literal). Never drops, renames or changes types -- with the ONE
+          exception of step 3b.
+       3b. Same transaction: _rebuild_hitl_tasks(), a no-op unless the file's hitl_tasks.incident_id is
+          still NOT NULL (module docstring, "THE ONE EXCEPTION").
        4. Write schema_version = SCHEMA_VERSION in the same transaction; commit; PRAGMA journal_mode=WAL.
        5. On any exception: rollback, leave schema_version unchanged, log the backup path, re-raise.
        Returns the list of applied statements for the startup log."""
@@ -233,6 +594,11 @@ def migrate_additive(engine: Engine, *, backup_dir: Path) -> MigrationReport:
     db_file = sqlite_file(engine)
     with engine.connect() as conn:
         stored = _read_version(conn, _user_tables(conn))
+        if stored < SCHEMA_VERSION:
+            # Read-only, and BEFORE the backup: anything that would make the hitl_tasks rebuild
+            # fail on every start is refused here, so a refused start does not write a backup
+            # per attempt. The fast path below never reaches this line.
+            _hitl_rebuild_preflight(conn, engine)
 
     if stored >= SCHEMA_VERSION:
         # The common case -- every start after the first. No backup, no transaction.
@@ -254,11 +620,22 @@ def migrate_additive(engine: Engine, *, backup_dir: Path) -> MigrationReport:
 
     applied: list[str] = []
     with engine.connect() as conn:
-        # pysqlite would not open a transaction before DDL; take the write lock now so
-        # the plan, the DDL and the version stamp are one atomic unit (and a second
-        # process starting at the same moment waits here, then finds nothing to do).
-        conn.exec_driver_sql("BEGIN IMMEDIATE")
+        # Foreign-key enforcement is OFF on every connection this codebase opens (nothing sets
+        # the pragma), and the table rebuild below needs it off: with it on, DROP TABLE runs an
+        # implicit DELETE and the copy re-checks every incident_id. SQLite ignores this pragma
+        # inside a transaction, so it is read -- and, only if some future connection hook turned
+        # it on, switched off -- BEFORE the BEGIN, and put back in the ``finally``. The
+        # connection goes back to the pool, so leaving it changed would leak into the app;
+        # that is why the BEGIN itself is inside the ``try``: a "database is locked" there
+        # must still reach the ``finally``.
+        enforcing_fks = bool(conn.exec_driver_sql("PRAGMA foreign_keys").scalar())
+        if enforcing_fks:
+            conn.exec_driver_sql("PRAGMA foreign_keys=OFF")
         try:
+            # pysqlite would not open a transaction before DDL; take the write lock now so
+            # the plan, the DDL and the version stamp are one atomic unit (and a second
+            # process starting at the same moment waits here, then finds nothing to do).
+            conn.exec_driver_sql("BEGIN IMMEDIATE")
             if _read_version(conn, _user_tables(conn)) >= SCHEMA_VERSION:
                 conn.rollback()
                 LAST_REPORT = MigrationReport(stored, SCHEMA_VERSION, backup_path, note="migrated by another process")
@@ -266,6 +643,10 @@ def migrate_additive(engine: Engine, *, backup_dir: Path) -> MigrationReport:
             for sql in _plan(conn, engine):
                 conn.exec_driver_sql(sql)
                 applied.append(sql)
+            # The one non-additive step. After the additive pass on purpose (the old table has
+            # every column by now), inside the same transaction on purpose (a failure in it, or
+            # after it, undoes it). Returns [] on every file that does not need it.
+            applied.extend(_rebuild_hitl_tasks(conn, engine))
             _stamp_version(conn, SCHEMA_VERSION)
             conn.commit()
         except BaseException:
@@ -276,6 +657,9 @@ def migrate_additive(engine: Engine, *, backup_dir: Path) -> MigrationReport:
                 stored, SCHEMA_VERSION, stored, backup_path,
             )
             raise
+        finally:
+            if enforcing_fks:
+                conn.exec_driver_sql("PRAGMA foreign_keys=ON")
 
     _enable_wal(engine)
     level = logging.INFO if stored >= 1 else logging.DEBUG  # a brand-new file is routine

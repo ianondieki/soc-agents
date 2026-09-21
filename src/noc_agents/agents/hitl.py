@@ -23,6 +23,7 @@ from __future__ import annotations
 
 from noc_agents.db.models import BroadcastRow, HitlTaskRow, new_id
 from noc_agents.orchestrator.contract import WAITING_HITL, IncidentState, RunContext, StepResult
+from noc_agents.services import memory as memory_service  # §7.11: advisory only, read-only
 from noc_agents.services.alerts import v1_audience_name
 from noc_agents.services.composition import needs_hitl
 from noc_agents.services.hitl import (
@@ -101,6 +102,24 @@ def run(state: IncidentState, ctx: RunContext) -> StepResult:
         payload["envelope"] = envelope_payload(alert)
         if rendering.v2:
             payload["channels"] = rendering.card()  # §6.5: every rendering side by side, verdicts included
+    # --- §7.11 advisory memory (spec line 419) ------------------------------------------
+    # SupervisorAgent is the ONLY hot-path reader of memory, and this is that read: "what
+    # happened at this site before, and what fixed it" frozen onto the card the approver is
+    # about to decide on. It CANNOT change a decision. ``requires`` was computed above from
+    # needs_hitl() and the envelope's governance and is not re-read; the helper only adds an
+    # additive key and touches no existing one; it writes nothing; and with MEMORY_ENABLED
+    # unset (the default) it returns None, so the payload, the step row and all 26 golden
+    # event literals are byte-identical to before this lane existed. With the flag ON they
+    # are still identical — only ``advisory`` appears — which is what
+    # tests/unit/test_memory_advisory_is_inert.py proves against a seeded store.
+    # Guarded a second time here even though the helper never raises: a memory failure must
+    # never be the reason a P1 approval card does not exist (MEM4).
+    try:
+        advisory = memory_service.advisory_for_incident(session, inc, cfg)
+        if advisory is not None:
+            payload["advisory"] = advisory
+    except Exception:  # noqa: BLE001 — advisory memory never blocks an approval card
+        pass
     task.proposed_payload = payload
     audiences = payload["audiences"]
     session.add(task)

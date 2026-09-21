@@ -82,6 +82,7 @@ from noc_agents.services.handover import (
     release_handover,
 )
 from noc_agents.services.ledger import ledger_root
+from noc_agents.services.memory import advisory_for_incident
 from noc_agents.services.hitl import (
     GATING_TASK_TYPE,
     approve_reason_required,
@@ -156,14 +157,67 @@ app.add_middleware(
 # api/deps.py when Phase 4 split the API into router modules -- a router cannot import
 # main (main includes the routers). They are imported above; the routes below are
 # unchanged, and api/deps.py is still the one place the operator clause is built.
+#
+# The allow-lists below are ones §9.3 needs that api/deps.py does not carry yet.
+# They are declared HERE, beside the routes that use them (the same way
+# LEDGER_DOWNLOAD_ROLES is declared beside the ledger download), and belong next to
+# SUPERVISORS/OPERATIONS/READERS in api/deps.py once that file is free to edit.
+
+#: §9.3 row 1's READ column ("ingest, notes, timeline, workflow, signals read"): READERS
+#: plus ``legal``, which the row gives R and api/deps.READERS omits. Every incident-surface
+#: read in this file uses it, the list forms included -- a legal reader who could open an
+#: incident but not find it in the list would be reading by guessed id. (Whether READERS
+#: itself should gain legal is api/deps.py's decision: the lane routers use it too.)
+INCIDENT_READERS: tuple[str, ...] = READERS + ("legal",)
+
+#: §9.3 row 1, "ingest, notes, timeline, workflow, signals read". A work note is the ONE
+#: thing an ``msp_coordinator`` or a ``field_engineer`` may WRITE ("notes only" in both
+#: their cells) -- the vendor's progress update and the field engineer's "generator
+#: refuelled" are the two notes this system exists to collect. ``management``,
+#: ``planning`` and ``legal`` hold R on that row, not R/W, so they are absent: a note is
+#: evidence, and it can also declare the service restored
+#: (``services.lifecycle.note_declares_restored``), which sets the restore time MTTR and
+#: the restore SLA are measured to.
+NOTE_AUTHORS: tuple[str, ...] = OPERATIONS + ("msp_coordinator", "field_engineer")
+
+#: Who a note is FROM once the caller is authenticated -- derived from the principal, never
+#: read from the body (see add_note). ``author_role`` is not a display label: "MSP"/"FE"
+#: stamp ``first_vendor_note_at`` (services/lifecycle.py), the start of the vendor MTTA clock
+#: (§7.6.2), and make the note count as the vendor's in the scorecard and the silence chase.
+#: The keys must be exactly NOTE_AUTHORS, so no role can pass the gate without a mapping.
+NOTE_AUTHOR_ROLE: dict[str, str] = {
+    "noc_analyst": "NOC",
+    "shift_supervisor": "NOC",
+    "duty_manager": "NOC",
+    "admin": "NOC",
+    "msp_coordinator": "MSP",
+    "field_engineer": "FE",
+}
+if set(NOTE_AUTHOR_ROLE) != set(NOTE_AUTHORS):  # at import, not as a KeyError mid-incident
+    raise RuntimeError("NOTE_AUTHOR_ROLE must map exactly the NOTE_AUTHORS roles")
+
+#: §9.3 row "Templates status, outbox retry, scheduler run, MCP status, agents": read for
+#: the four internal roles, all of it for admin. Narrower than READERS on purpose -- these
+#: surfaces describe the PLATFORM (which jobs ticked, which agents are registered, which
+#: model is configured, which mailbox sends), not the incident an MSP coordinator or a
+#: field engineer is working. The ACTIONS in that row stay admin-only (scheduler run; the
+#: outbox retry when its lane lands).
+PLATFORM_READERS: tuple[str, ...] = ("noc_analyst", "shift_supervisor", "duty_manager", "management", "admin")
 
 
+# Deliberately open: the load balancer / container liveness probe. It has no session and
+# must answer before anyone has logged in; it returns the operator profile name and
+# nothing else. Pinned open by test_auth_skeleton.
 @app.get("/health")
 def health() -> dict[str, str]:
     s = _settings()
     return {"status": "ok", "operator": s.operator_profile}
 
 
+# Deliberately open: the login screen has to name the operator, its regions and the shift
+# BEFORE anyone has a role -- gating it would lock the door from the inside. It is safe to
+# leave open only because the "email" block was removed from the body (see below); nothing
+# incident-specific is served here. Pinned open by test_auth_skeleton.
 @app.get("/api/v1/profile")
 def profile() -> dict[str, Any]:
     op = _settings().operator
@@ -193,17 +247,23 @@ def profile() -> dict[str, Any]:
     }
 
 
-@app.get("/api/v1/email/status")
+# §9.3 platform-status row. Gated, and NOT with READERS: the body carries the configured
+# mailbox and the demo recipient list -- the very block Phase 1 removed from the
+# unauthenticated /api/v1/profile. Serving it from a second route to anyone who asks would
+# undo that fix.
+@app.get("/api/v1/email/status", dependencies=[Depends(require_role(*PLATFORM_READERS))])
 def get_email_status() -> dict[str, Any]:
     return email_status()
 
 
-@app.post("/api/v1/email/test")
+# admin only: this one actually SENDS mail to the configured recipients (§9.3 puts the
+# actions in the platform row -- outbox retry, scheduler run -- with admin, not read).
+@app.post("/api/v1/email/test", dependencies=[Depends(require_role("admin"))])
 def send_test_email() -> dict[str, Any]:
     """Send a one-off test message to DEMO_EMAIL_TO / GMAIL_ADDRESS."""
-    from noc_agents.adapters.email_smtp import send_email
+    from noc_agents.adapters.email_smtp import send_demo_email
 
-    result = send_email(
+    result = send_demo_email(
         subject="[NOC DEMO] Kenya NOC Mission Control — test mail",
         body=(
             "This is a test from Kenya NOC Mission Control.\n\n"
@@ -219,7 +279,11 @@ def send_test_email() -> dict[str, Any]:
     }
 
 
-@app.get("/api/v1/demo/scenarios")
+# The scenario catalogue is canned text, but it is the operations floor's screen, so it is
+# gated like the rest of the read surface rather than left open on the "it is only demo
+# data" argument -- the route is what an operator reaches, and INCIDENT_READERS (§9.3 row
+# 1's read column) is who may reach it.
+@app.get("/api/v1/demo/scenarios", dependencies=[Depends(require_role(*INCIDENT_READERS))])
 def list_scenarios() -> dict[str, Any]:
     return {
         "scenarios": [
@@ -238,18 +302,24 @@ def list_scenarios() -> dict[str, Any]:
     }
 
 
-@app.get("/api/v1/demo/rain-storm/events")
+@app.get("/api/v1/demo/rain-storm/events", dependencies=[Depends(require_role(*INCIDENT_READERS))])
 def rain_storm_events() -> dict[str, Any]:
     """Event templates only — frontend injects one-by-one for a live agent feed."""
     return {"scenario": "rain_storm_mw", "events": scenario_payload()}
 
 
-@app.post("/api/v1/demo/rain-storm")
+@app.post("/api/v1/demo/rain-storm", dependencies=[Depends(require_role(*INGEST))])
 def run_rain_storm(stagger_ms: int = 0) -> dict[str, Any]:
     """Inject heavy-rain MW cascade. stagger_ms>0 spaces events so UI feels live.
 
     Prefer frontend staggered inject for best live effect; this endpoint supports
     both bulk (0) and mild server-side stagger.
+
+    Gated with INGEST, exactly like POST /events (§9.3): "demo" is the name of the
+    payload, not of the code path — every event here goes through ``process_event`` and
+    writes real incidents, agent runs, step rows, audit rows and outbox rows. An
+    unauthenticated caller who could reach this could manufacture a storm in a
+    production NOC one POST at a time.
     """
     clear_settings_cache()
     s = _settings()
@@ -289,12 +359,18 @@ def run_rain_storm(stagger_ms: int = 0) -> dict[str, Any]:
         session.close()
 
 
+# Deliberately open, both of them: this IS the role switcher, so it is the one surface a
+# caller must reach before they have a role. It grants nothing — with AUTH_DISABLED=false
+# require_role() reads the signed cookie and never looks at this store, so setting a role
+# here cannot widen what anyone may do (test_auth_skeleton pins that the switcher is a UI
+# affordance, not an identity store).
 @app.post("/api/v1/session")
 def set_session(body: SessionIn, request: Request, response: Response) -> dict:
     """Set THIS client's demo role switcher (mints a noc_client cookie if needed)."""
     return auth.set_client_session(request, body.model_dump(), response)
 
 
+# Deliberately open: the other half of the role switcher, read on every page load.
 @app.get("/api/v1/session")
 def get_session_api(request: Request) -> dict:
     return auth.get_client_session(request)
@@ -313,7 +389,9 @@ def ingest_event(body: EventIngest) -> dict:
         session.close()
 
 
-@app.post("/api/v1/events/batch")
+# Same gate as POST /events, for the same reason (§9.3): this runs the identical 12-node
+# lifecycle, once per element of the list.
+@app.post("/api/v1/events/batch", dependencies=[Depends(require_role(*INGEST))])
 def ingest_batch(events: list[EventIngest]) -> dict:
     session = get_session()
     try:
@@ -328,7 +406,9 @@ def ingest_batch(events: list[EventIngest]) -> dict:
         session.close()
 
 
-@app.get("/api/v1/incidents", dependencies=[Depends(require_role(*READERS))])
+# §9.3 row 1 read. INCIDENT_READERS (READERS + legal) since the A-04 review: legal holds R on
+# this row, and the list must agree with its detail forms below.
+@app.get("/api/v1/incidents", dependencies=[Depends(require_role(*INCIDENT_READERS))])
 def list_incidents(
     priority: str | None = None,
     region: str | None = None,
@@ -362,35 +442,81 @@ def list_incidents(
         session.close()
 
 
-@app.get("/api/v1/incidents/{incident_id}")
+# The detail form of GET /api/v1/incidents, and gated with the same tuple: gating the list
+# while the record it lists answers anonymously is not a control.
+@app.get("/api/v1/incidents/{incident_id}", dependencies=[Depends(require_role(*INCIDENT_READERS))])
 def get_incident(incident_id: str) -> dict:
     session = get_session()
     try:
         row = _get_owned(session, IncidentRow, incident_id, what="incident")
-        return incident_out(row).model_dump()
+        payload = incident_out(row).model_dump()
+        # §7.11.5: advisory memory, computed at request time, additive, and on this
+        # single-incident route ONLY -- the list route is polled by the wallboard, so an
+        # advisory there would be one recall per ticket per refresh (§7.11.4). None when
+        # MEMORY_ENABLED is off, which makes the key null rather than absent (§7.11.11
+        # test 25). The helper never raises; a broken memory store cannot 500 this route.
+        payload["advisory"] = advisory_for_incident(session, row)
+        return payload
     finally:
         session.close()
 
 
+# §9.3 row 1: NOTE_AUTHORS, which is the only allow-list in this file that is WIDER than
+# OPERATIONS. A note is the one write an msp_coordinator or a field_engineer is given, and
+# it is not a comment box: apply_work_note_side_effects can stamp the vendor's first
+# response (``first_vendor_note_at``, which the silent-vendor count keys on) and — via
+# note_declares_restored — record the service as restored. So it is gated in both
+# directions: the two vendor roles are let in because this is their route, and
+# management/planning/legal are kept out because §9.3 gives them R, not R/W, on this row.
 @app.post("/api/v1/incidents/{incident_id}/notes")
-def add_note(incident_id: str, body: NoteIn) -> dict:
+def add_note(
+    incident_id: str,
+    body: NoteIn,
+    principal: auth.Principal = Depends(require_role(*NOTE_AUTHORS)),
+) -> dict:
+    # WHO wrote a note -- the name, the capacity, the channel -- comes from the principal once
+    # there is one; the body supplies only WHAT it says. Opening this route to the two vendor
+    # roles made three body fields forgeable, and each one moves a number someone is measured
+    # by:
+    #   * author_role: "MSP"/"FE" stamps first_vendor_note_at, the start of the vendor MTTA
+    #     clock (§7.6.2), and makes the note count as the vendor's in the scorecard and the
+    #     silence chase. An analyst could make a vendor look faster; a vendor could post as
+    #     "NOC" and never be counted as having answered.
+    #   * author: becomes restored_by on a restoring note (§7.0.8) -- the name on the moment
+    #     MTTR and the restore SLA are measured to.
+    #   * source: "msp"/"fe"/"vendor" ALSO count as the vendor's (services/scorecard.py,
+    #     services/worklog_monitor.py), and "monitor" is the silence chase's own dedupe
+    #     marker, so a posted "monitor" note would suppress the next chase note. An authenticated
+    #     human's note arrived through this route, so its channel is "ui" -- what the SPA
+    #     already sends.
+    # The role is DERIVED, not checked-and-refused with a 422: the SPA computes author_role
+    # from the demo switcher ("msp" in the role name, else "NOC"), which is wrong for a field
+    # engineer, so refusing would break the real UI the day auth is turned on -- and there is
+    # nothing a client can add to what the signed cookie already says. The name follows
+    # _actor, as on every other route. With AUTH_DISABLED=true there is no identity to forge
+    # (the switcher is a UI affordance), so the demo keeps the body's role and channel.
+    author = _actor(principal, body.author)
+    if principal.authenticated:
+        author_role, source = NOTE_AUTHOR_ROLE[principal.role], "ui"
+    else:
+        author_role, source = body.author_role, body.source
     session = get_session()
     try:
         row = _get_owned(session, IncidentRow, incident_id, what="incident")
         note = WorkNoteRow(
             incident_id=incident_id,
-            author=body.author,
-            author_role=body.author_role,
+            author=author,
+            author_role=author_role,
             body=body.body,
-            source=body.source,
+            source=source,
         )
         session.add(note)
         apply_work_note_side_effects(
             session,
             row,
-            author_role=body.author_role,
+            author_role=author_role,
             body=body.body,
-            author=body.author,  # becomes restored_by when this note restores (§7.0.8)
+            author=author,  # becomes restored_by when this note restores (§7.0.8)
             mark_restored=body.mark_restored,
             vendor_tt_ref=body.vendor_tt_ref,
             msp_eta_at=body.msp_eta_at,
@@ -406,7 +532,7 @@ def add_note(incident_id: str, body: NoteIn) -> dict:
                 incident_id=row.id,
                 payload={
                     "incident_number": row.incident_number,
-                    "author": body.author,
+                    "author": author,
                     "status": row.status,
                 },
             )
@@ -531,9 +657,16 @@ def reassign_inc(incident_id: str, body: ReassignIn) -> dict:
         session.close()
 
 
-@app.post("/api/v1/monitor/tick")
+@app.post("/api/v1/monitor/tick", dependencies=[Depends(require_role(*OPERATIONS))])
 def monitor_tick() -> dict:
-    """Run WorklogMonitorAgent silence/SLA chase across open tickets."""
+    """Run WorklogMonitorAgent silence/SLA chase across open tickets.
+
+    A write, not a read: the chase writes work notes, re-arms ``next_update_at`` and can
+    raise HITL tasks across every open ticket, so it is gated like the other floor actions
+    (§9.3 row 1, R/W). It is deliberately NOT admin-only the way
+    ``POST /scheduler/run/{job}`` is — the analyst on shift presses this one; admin owns the
+    scheduler itself.
+    """
     session = get_session()
     try:
         clear_settings_cache()
@@ -565,7 +698,8 @@ def _weather_card():
     return job_card(WEATHER_JOB_NAME)
 
 
-@app.get("/api/v1/signals/weather/regions", dependencies=[Depends(require_role(*READERS))])
+# §9.3 row 1 names "signals read" explicitly, with R for legal: INCIDENT_READERS.
+@app.get("/api/v1/signals/weather/regions", dependencies=[Depends(require_role(*INCIDENT_READERS))])
 def weather_regions() -> dict:
     """The Wallboard risk strip's feed (spec §7.3.2).
 
@@ -606,7 +740,8 @@ def weather_regions() -> dict:
         session.close()
 
 
-@app.get("/api/v1/scheduler/status")
+# §9.3 platform row, read side (the run side below is admin).
+@app.get("/api/v1/scheduler/status", dependencies=[Depends(require_role(*PLATFORM_READERS))])
 def scheduler_status() -> dict:
     """Lease holder, age of the last tick and every job's last outcome — read from the DB, so
     any process answers for the one that ticks (the "AGENTS OFFLINE" runbook check)."""
@@ -641,7 +776,9 @@ def _lifecycle_run(session, incident_id: str) -> AgentRunRow | None:
     return session.scalar(latest.where(AgentRunRow.graph_name == LIFECYCLE_GRAPH)) or session.scalar(latest)
 
 
-@app.get("/api/v1/incidents/{incident_id}/timeline")
+# §9.3 row 1 names "timeline" and "workflow" as reads of the incident surface, so both take
+# the same tuple as the incident they belong to.
+@app.get("/api/v1/incidents/{incident_id}/timeline", dependencies=[Depends(require_role(*INCIDENT_READERS))])
 def timeline(incident_id: str) -> list[dict]:
     session = get_session()
     try:
@@ -689,7 +826,7 @@ def timeline(incident_id: str) -> list[dict]:
         session.close()
 
 
-@app.get("/api/v1/incidents/{incident_id}/workflow")
+@app.get("/api/v1/incidents/{incident_id}/workflow", dependencies=[Depends(require_role(*INCIDENT_READERS))])
 def workflow(incident_id: str) -> WorkflowOut:
     session = get_session()
     try:
@@ -719,7 +856,8 @@ def workflow(incident_id: str) -> WorkflowOut:
         session.close()
 
 
-@app.get("/api/v1/runs", dependencies=[Depends(require_role(*READERS))])
+# §9.3 row 1 read; the same tuple as the incidents the runs belong to.
+@app.get("/api/v1/runs", dependencies=[Depends(require_role(*INCIDENT_READERS))])
 def list_runs(incident_id: str | None = None, graph_name: str | None = None) -> list[dict]:
     """Recent runs, newest first. ``graph_name`` (e.g. ``incident_lifecycle``) keeps on-demand
     assist runs out of a panel that only wants lifecycle runs."""
@@ -736,7 +874,8 @@ def list_runs(incident_id: str | None = None, graph_name: str | None = None) -> 
         session.close()
 
 
-@app.get("/api/v1/runs/{run_id}")
+# The detail form of GET /api/v1/runs; same tuple, same reason as the incident detail.
+@app.get("/api/v1/runs/{run_id}", dependencies=[Depends(require_role(*INCIDENT_READERS))])
 def get_run(run_id: str) -> dict:
     session = get_session()
     try:
@@ -746,12 +885,15 @@ def get_run(run_id: str) -> dict:
         session.close()
 
 
-@app.get("/api/v1/agents")
+# §9.3 platform row names "agents" explicitly: the registry describes the system's own
+# shape (every agent, its mission, its tools and its autonomy), which is an internal
+# document, not something a vendor's coordinator needs.
+@app.get("/api/v1/agents", dependencies=[Depends(require_role(*PLATFORM_READERS))])
 def list_agents() -> list[dict]:
     return agent_catalog()
 
 
-@app.get("/api/v1/agents/{name}")
+@app.get("/api/v1/agents/{name}", dependencies=[Depends(require_role(*PLATFORM_READERS))])
 def get_agent(name: str) -> dict:
     """One ``agent_catalog()`` entry by ``AgentProfile.name`` (§7.1.3), or 404."""
     for entry in agent_catalog():
@@ -771,7 +913,11 @@ def hitl_pending() -> list[dict]:
         ).all()
         out = []
         for t in tasks:
-            inc = session.get(IncidentRow, t.incident_id)
+            # Since schema v8 a maintenance card (APPROVE_SCHEDULE / APPROVE_MAINTENANCE_WINDOW)
+            # has incident_id NULL. session.get(IncidentRow, None) returns None today but emits
+            # an SAWarning that a future SQLAlchemy may raise, and pyproject pins only a floor --
+            # so every lookup of a task's incident below is guarded the same way.
+            inc = session.get(IncidentRow, t.incident_id) if t.incident_id else None
             out.append(
                 {
                     "id": t.id,
@@ -861,6 +1007,10 @@ def _cancel_pending_broadcasts(session, incident_id: str) -> int:
 
 # Claim is "I am looking at this" — any operations role may. The DECISION
 # (approve/reject) is a supervisor act: a noc_analyst gets 403 there (§7.0.5).
+# Kept as it stands against §9.3, whose HITL row gives noc_analyst "—": the recorded
+# reading is that the row governs the decision, and that an analyst who may not approve
+# must still be able to put their name on a card they are working — the alternative is a
+# queue where nobody can say who is on what until a supervisor logs in.
 @app.post("/api/v1/hitl/{task_id}/claim")
 def hitl_claim(
     task_id: str,
@@ -872,7 +1022,7 @@ def hitl_claim(
     try:
         t = _open_task_or_409(session, task_id)
         _transition_or_409(session, t, "CLAIMED", claimed_by=actor, claimed_at=utcnow())
-        inc = session.get(IncidentRow, t.incident_id)
+        inc = session.get(IncidentRow, t.incident_id) if t.incident_id else None  # v8: see hitl_pending
         if inc:
             sync_incident_hitl_scalars(session, inc)  # every task writer derives the scalars (C3)
         session.commit()
@@ -910,7 +1060,7 @@ def hitl_approve(
             raise HTTPException(400, "reason required on approve")
         decided_at = utcnow()
         _transition_or_409(session, t, "APPROVED", resolved_by=actor, resolved_at=decided_at, reason=body.reason)
-        inc = session.get(IncidentRow, t.incident_id)
+        inc = session.get(IncidentRow, t.incident_id) if t.incident_id else None  # v8: see hitl_pending
         incident_number = inc.incident_number if inc else None
         if inc:
             if gating:  # only the broadcast gate releases the held drafts and finishes the run
@@ -985,7 +1135,7 @@ def hitl_reject(
         _transition_or_409(
             session, t, "REJECTED", resolved_by=actor, resolved_at=utcnow(), reason=body.reason
         )
-        inc = session.get(IncidentRow, t.incident_id)
+        inc = session.get(IncidentRow, t.incident_id) if t.incident_id else None  # v8: see hitl_pending
         incident_number = inc.incident_number if inc else None
         finished: dict | None = None  # agent.run.finished payload, published after the commit
         if inc:
@@ -1042,7 +1192,8 @@ def hitl_reject(
         session.close()
 
 
-@app.get("/api/v1/briefs/{incident_id}")
+# An incident read (the published brief for one incident), so the incident tuple.
+@app.get("/api/v1/briefs/{incident_id}", dependencies=[Depends(require_role(*INCIDENT_READERS))])
 def get_brief(incident_id: str) -> dict:
     session = get_session()
     try:
@@ -1061,13 +1212,20 @@ def get_brief(incident_id: str) -> dict:
 # --- optional Claude assist layer (Stage D): on-demand only, never on POST /events ---
 
 
-@app.get("/api/v1/llm/status")
+# §9.3 platform row ("MCP status" and its neighbours): which provider and model this
+# deployment is wired to is configuration, not incident data. No secret material is in the
+# body — the gate is about the configuration, not about a leak.
+@app.get("/api/v1/llm/status", dependencies=[Depends(require_role(*PLATFORM_READERS))])
 def get_llm_status() -> dict:
     """Feature-flag view for the UI. Contains no secret material."""
     return llm_status()
 
 
-@app.post("/api/v1/incidents/{incident_id}/analysis")
+# Both assist routes are gated with OPERATIONS although neither writes to the ticket: they
+# SPEND — each one can call the hosted model when LLM_ENABLED is on, and an anonymous
+# caller with a loop could run down the budget (§7.0.9 spend cap) without ever touching a
+# row. OPERATIONS is the floor that reads the output.
+@app.post("/api/v1/incidents/{incident_id}/analysis", dependencies=[Depends(require_role(*OPERATIONS))])
 def incident_analysis(incident_id: str) -> dict:
     """Root-cause hypotheses for analysts (fable → opus, else template). Changes nothing on the ticket."""
     session = get_session()
@@ -1078,7 +1236,7 @@ def incident_analysis(incident_id: str) -> dict:
         session.close()
 
 
-@app.post("/api/v1/incidents/{incident_id}/brief/draft")
+@app.post("/api/v1/incidents/{incident_id}/brief/draft", dependencies=[Depends(require_role(*OPERATIONS))])
 def incident_brief_draft(incident_id: str) -> dict:
     """Executive brief draft (opus, else template). Text only: no IncidentBriefRow is written."""
     session = get_session()
@@ -1089,7 +1247,8 @@ def incident_brief_draft(incident_id: str) -> dict:
         session.close()
 
 
-@app.get("/api/v1/problems")
+# Problem records are recurring-fault history over the same incidents INCIDENT_READERS read.
+@app.get("/api/v1/problems", dependencies=[Depends(require_role(*INCIDENT_READERS))])
 def list_problems() -> list[dict]:
     session = get_session()
     try:
@@ -1133,6 +1292,10 @@ def list_audit(limit: int = 100) -> list[dict]:
         session.close()
 
 
+# Deliberately open: it returns the shift window, the shift id and the timezone — the exact
+# three values the deliberately-open /api/v1/profile already serves. Gating the smaller
+# route while the larger one answers anonymously would be theatre, not a control. If
+# /profile is ever closed, close this with it.
 @app.get("/api/v1/shifts/current")
 def shift_current() -> dict:
     op = _settings().operator
@@ -1235,9 +1398,11 @@ def _ledger_workbook(rows: list[ShiftLedgerRow], handover: dict, url_shift_id: s
 # AUTH_DISABLED=true with NOC_ENV=production means an unauthenticated API in
 # front of real data, so the routes that DOWNLOAD the shift ledger are not
 # registered at all — a 404 beats serving every shift's incident/owner rows to
-# anyone who finds the URL. Joining this list as they land: complaints, contracts
-# and individual metrics (spec §7.0.5). Everything else stays registered and is
-# gated by require_role() instead.
+# anyone who finds the URL. The other §7.0.5 families guard themselves in their own
+# router, with the same helper and the same one log line: complaints
+# (api/routers/complaints.py) and contracts (api/routers/contracts.py); individual
+# metrics joins when it lands. Everything else stays registered and is gated by
+# require_role() instead.
 PRODUCTION_GUARDED_ROUTES: tuple[str, ...] = (
     "GET /api/v1/shifts/ledger",
     "GET /api/v1/shifts/ledger/{shift_id}.xlsx",
@@ -1366,6 +1531,12 @@ def shift_handover() -> dict:
         session.close()
 
 
+# Deliberately open, and this one is a recorded decision rather than an oversight:
+# test_auth_skeleton::test_deliberately_open_routes_stay_open_when_auth_is_enforced pins it
+# open on the grounds that it is aggregate counts with no incident detail — no id, no site,
+# no name, no text. The conformance audit (A-04) listed it among the ungated reads; the
+# existing decision is kept, because closing it would move a test that was written
+# deliberately. Everything it counts is gated at the routes that serve the rows.
 @app.get("/api/v1/metrics/summary")
 def metrics() -> MetricsSummary:
     session = get_session()
@@ -1418,7 +1589,10 @@ def metrics() -> MetricsSummary:
         session.close()
 
 
-@app.get("/api/v1/sites")
+# The site catalogue is network infrastructure inventory (ids, names, coordinates, parent
+# hubs) — §9.4 class "network facts", not public data. INCIDENT_READERS: the field engineer
+# and the MSP coordinator working a site need to look it up, and legal holds R on row 1.
+@app.get("/api/v1/sites", dependencies=[Depends(require_role(*INCIDENT_READERS))])
 def list_sites() -> list[dict]:
     path = ROOT / "data" / "seed" / "safaricom_sites.json"
     if not path.exists():
@@ -1426,7 +1600,11 @@ def list_sites() -> list[dict]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-@app.get("/api/v1/stream/events")
+# The SSE stream carries the same envelopes as the incident routes (incident number, site,
+# priority), so it takes the same tuple. It is an ordinary GET, so the ordinary dependency
+# works; EventSource sends cookies on a same-origin connection, which is how the signed
+# session reaches it.
+@app.get("/api/v1/stream/events", dependencies=[Depends(require_role(*INCIDENT_READERS))])
 async def sse_events():
     q = hub.subscribe()
 
@@ -1445,6 +1623,22 @@ async def sse_events():
     return StreamingResponse(gen(), media_type="text/event-stream")
 
 
+# Left OPEN, and not because nobody decided. require_role() cannot gate a socket: it is an
+# HTTP dependency whose ``request: Request`` parameter FastAPI never binds on a WebSocket
+# connection, so declaring it in ``dependencies=`` here kills the handshake with a
+# TypeError whether auth is on or off (verified, both directions) — it would break the demo
+# rather than protect it. And a 401/403 is not the right answer on a socket anyway; the
+# protocol's answer is a close frame (1008) before the accept.
+#
+# api/auth.py has no socket seam today, so the mechanism is a change THERE, not a
+# workaround here: ``current_principal`` already works unchanged on a WebSocket (Starlette's
+# WebSocket is an HTTPConnection with ``.cookies``/``.headers``/``.scope``; checked with
+# auth on and off) — what is missing is a ``require_socket_role(*allowed)`` that closes
+# with 1008 instead of raising. Until that lands this feed is readable by anyone who can
+# reach the port with auth enforced. That is pinned, not forgotten: tests/system/test_auth.py
+# states the requirement as a strict xfail, which starts failing the day the seam lands and
+# someone forgets to remove the marker. The SSE twin above IS gated, so this socket is the
+# only unauthenticated path to the envelopes.
 @app.websocket("/ws/ops")
 async def ws_ops(ws: WebSocket, since: int | None = None):
     """Ops feed. ``?since=N`` replays only the records newer than seq N (spec §7.0.4), each as
@@ -1494,6 +1688,10 @@ if FRONTEND_DIST.exists():
     if assets.exists():
         app.mount("/assets", StaticFiles(directory=str(assets)), name="assets")
 
+    # Deliberately open, both: this is the built SPA shell. The login screen is served from
+    # here, so a gate would make it impossible to ever acquire the cookie that passes the
+    # gate. The bundle is static assets and carries no operator data — every byte of that
+    # arrives through the API routes above, which are gated.
     @app.get("/")
     def spa_index():
         index = FRONTEND_DIST / "index.html"

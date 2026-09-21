@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- _provenance: captured_live=false.
+     NOT a live capture. Constructed by hand from the RSS 2.0 specification
+     (https://www.rssboard.org/rss-specification) in the shape the spec records for the
+     Kenya Meteorological Department CAP feed (https://meteo.go.ke/api/cap/rss.xml, SUPER_PROMPT
+     section 7.3). This machine's Python cannot complete TLS to external hosts without
+     truststore (docs/RUNBOOK.md section 3) and the suite is zero-network by rule, so nothing
+     here was fetched. Titles, links and dates are invented for the tests; the newest item is
+     dated 2026-05-07 because section 5.3.13's acceptance criterion names exactly that date
+     ("the 2026-05-07 fixture is stale on 2026-09-16"). See README.md beside this file. -->
+<rss version="2.0">
+  <channel>
+    <title>Kenya Meteorological Department - CAP Alerts (TEST FIXTURE)</title>
+    <link>https://meteo.go.ke/</link>
+    <description>Constructed test fixture; not KMD's feed.</description>
+    <language>en</language>
+    <item>
+      <title>Heavy Rainfall: Migori, Nyamira, Bungoma, Busia</title>
+      <link>https://meteo.go.ke/api/cap/fixture-2026-05-07-wny-heavy-rain.xml</link>
+      <guid isPermaLink="false">fixture-2026-05-07-wny-heavy-rain</guid>
+      <pubDate>Thu, 07 May 2026 03:00:00 GMT</pubDate>
+      <description>Severe heavy rainfall expected over parts of Western and Nyanza.</description>
+    </item>
+    <item>
+      <title>Strong Winds: Nairobi, Kiambu and Turkana</title>
+      <link>https://meteo.go.ke/api/cap/fixture-2026-05-06-nbi-strong-winds.xml</link>
+      <guid isPermaLink="false">fixture-2026-05-06-nbi-strong-winds</guid>
+      <pubDate>Wed, 06 May 2026 12:00:00 GMT</pubDate>
+      <description>Moderate strong-wind advisory.</description>
+    </item>
+  </channel>
+</rss>

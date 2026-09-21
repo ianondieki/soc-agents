@@ -26,12 +26,14 @@ Names are the subject of ``test_memory_privacy.py``; the API shape is ``test_mem
 from __future__ import annotations
 
 import ast
+import json
 import re
 from datetime import timedelta
 from pathlib import Path
 
 import pytest
 from sqlalchemy import select
+from sqlalchemy import text as sql
 
 from noc_agents.config import clear_settings_cache, get_settings
 from noc_agents.db.models import (
@@ -51,11 +53,17 @@ from noc_agents.services.lifecycle import (
     RESTORE_SOURCE_NOTE,
     RESTORE_SOURCE_SUPERVISOR,
 )
+from noc_agents.memory.consolidate import consolidate_incident
+from noc_agents.memory.schema import FTS_TABLE
 from noc_agents.services.memory import (
+    MATCH_FTS_PREFIX,
     MATCH_SAME_SITE,
     MATCH_SAME_SITE_AND_FAULT_CLASS,
     SUMMARY_MAX_CHARS,
+    advisory_block,
     fault_class,
+    memory_settings,
+    recall_for_incident,
     recall_similar_episodes,
     recall_site_history,
 )
@@ -418,6 +426,582 @@ def test_the_resolution_summary_is_capped(tmp_db):
     _settings, session = tmp_db
     _seed_episode(session, number="H-0", days_ago=1, resolution_summary="x" * 4000)
     assert len(recall_site_history(session, site_id=SHARED_SITE)[0].resolution_summary) == SUMMARY_MAX_CHARS
+
+
+# =================================================================================
+# Section 3b — the lexical (FTS5) tier and the tier ordering (M1, §7.11.4)
+# =================================================================================
+#
+# The second tier of the cascade. It exists to find the ticket whose *words* match when the
+# structure does not — "generator fuel" at a different site — and it is the tier that
+# introduces the failure mode §7.11.7 names: the confidently-wrong neighbour. So the two
+# things tested hardest here are that it finds things, and that it can never outrank a
+# structural hit while doing so.
+#
+# One property deserves stating on its own: ``memory_note_fts`` carries NO ``operator_id``
+# (§7.11.3's DDL has five UNINDEXED columns and none of them is the operator). An FTS hit is
+# therefore a *suggestion*, never a proof of ownership, and every candidate is re-fetched
+# through ``api.deps._owned`` before it is returned. The isolation test below is the one that
+# would catch a future "optimisation" that returned FTS rows directly.
+
+
+def _consolidate_all(session, settings) -> None:
+    """Build the derived index for every seeded incident — the lexical tier's input."""
+    for inc in session.scalars(select(IncidentRow)).all():
+        consolidate_incident(session, settings=settings, incident_id=inc.id)
+    session.commit()
+
+
+def test_the_lexical_tier_finds_an_episode_by_a_word_in_its_note(tmp_db):
+    """§7.11.11 test 17, first half. The note body is what is indexed, and it is indexed
+    scrubbed — the same text a human would have read on the ticket."""
+    settings, session = tmp_db
+    _seed_episode(
+        session,
+        number="FUEL",
+        site_id="SFC-MTK-BTS-MCH04",
+        days_ago=5,
+        resolution_summary="",
+        notes=(("Vendor Desk", "Generator fuel delivered, SERVICE RESTORED"),),
+    )
+    _consolidate_all(session, settings)
+
+    found = recall_similar_episodes(
+        session,
+        site_id="SFC-MTK-BTS-MCH04",
+        failure_domain="POWER",
+        alarm_code="SOMETHING_ELSE",  # no exact hit: the alarm token does not match
+        cfg=_cfg(),
+        query_text="fuel",
+    )
+    assert _numbers(found) == ["FUEL"]
+    assert found[0].match_reason == "fts: fuel"
+
+
+def test_an_exact_hit_always_outranks_a_lexical_one_however_good_the_words_are(tmp_db):
+    """§7.11.11 test 17, second half, and the §7.11.7 mitigation in one assertion.
+
+    The lexical candidate is deliberately the *better* row on every term of the score: it is
+    more recent and a P1 half-million-user outage, against an exact hit that is old and
+    trivial. It must still come second, because the tier is a hard ordering key rather than a
+    weight — an engineer sent to another site's fault class is the expensive failure here, not
+    a slightly mis-ranked panel.
+    """
+    settings, session = tmp_db
+    _seed_episode(
+        session,
+        number="EXACT-OLD-SMALL",
+        days_ago=300,
+        priority="P4",
+        users_affected=20,
+        resolution_summary="",
+        notes=(("Vendor Desk", "Generator fuel delivered, SERVICE RESTORED"),),
+    )
+    _seed_episode(
+        session,
+        number="LEXICAL-NEW-BIG",
+        site_id="SFC-MTK-BTS-MCH04",
+        days_ago=1,
+        priority="P1",
+        users_affected=500_000,
+        resolution_summary="",
+        notes=(("Vendor Desk", "Generator fuel delivered, SERVICE RESTORED"),),
+    )
+    _consolidate_all(session, settings)
+
+    found = recall_similar_episodes(
+        session,
+        site_id=SHARED_SITE,
+        failure_domain="POWER",
+        alarm_code="POWER_GRID_FAIL",
+        cfg=_cfg(),
+        query_text="generator fuel",
+    )
+    assert _numbers(found) == ["EXACT-OLD-SMALL", "LEXICAL-NEW-BIG"], _numbers(found)
+    assert found[0].match_reason == MATCH_SAME_SITE_AND_FAULT_CLASS
+    assert found[1].match_reason.startswith(MATCH_FTS_PREFIX)
+    assert found[1].score > found[0].score, (
+        "the fixture is meant to make the lexical row score higher; if it does not, this test "
+        "is no longer proving that the tier beats the score"
+    )
+
+
+def test_an_incident_that_matches_both_tiers_appears_once_with_the_stronger_reason(tmp_db):
+    """The union is deduplicated by ``incident_id``, and the stronger tier wins the row.
+
+    A hit shown twice is noise; a hit shown once but *demoted* to "fts:" would understate the
+    evidence, which on an approval card is the more damaging of the two.
+    """
+    settings, session = tmp_db
+    _seed_episode(
+        session,
+        number="BOTH",
+        days_ago=3,
+        resolution_summary="",
+        notes=(("Vendor Desk", "Generator fuel delivered, SERVICE RESTORED"),),
+    )
+    _consolidate_all(session, settings)
+
+    found = recall_similar_episodes(
+        session,
+        site_id=SHARED_SITE,
+        failure_domain="POWER",
+        alarm_code="POWER_GRID_FAIL",
+        cfg=_cfg(),
+        query_text="fuel",
+    )
+    assert _numbers(found) == ["BOTH"]
+    assert found[0].match_reason == MATCH_SAME_SITE_AND_FAULT_CLASS
+
+
+def test_the_lexical_tier_never_returns_the_other_operators_episodes(tmp_db, monkeypatch):
+    """MEM10 on the one table that cannot enforce it itself.
+
+    ``memory_note_fts`` has no ``operator_id`` column, so if FTS rows were returned directly
+    this would hand a Safaricom shift an Airtel ticket — at the same colocated mast, with
+    matching wording, looking entirely plausible. The re-fetch through ``_owned`` is the only
+    thing standing between those two facts, which is why it is asserted here rather than
+    assumed from the service-level isolation tests.
+    """
+    settings, session = tmp_db
+    _seed_episode(
+        session,
+        number="ATL-FUEL",
+        operator_id="airtel",
+        days_ago=2,
+        resolution_summary="",
+        notes=(("Vendor Desk", "Generator fuel delivered, SERVICE RESTORED"),),
+    )
+    airtel = session.scalars(select(IncidentRow)).one()
+
+    # Written into the shared index under airtel's own profile, exactly as its consolidator
+    # would write it — the index really does contain another operator's text.
+    monkeypatch.setenv("OPERATOR_PROFILE", "airtel")
+    clear_settings_cache()
+    try:
+        consolidate_incident(session, settings=get_settings(), incident_id=airtel.id)
+        session.commit()
+    finally:
+        monkeypatch.setenv("OPERATOR_PROFILE", "safaricom")
+        clear_settings_cache()
+
+    assert session.execute(sql(f"SELECT count(*) FROM {FTS_TABLE}")).scalar_one() > 0, (
+        "the airtel rows must really be in the shared index, or this test proves nothing"
+    )
+
+    found = recall_similar_episodes(
+        session,
+        site_id=SHARED_SITE,
+        failure_domain="POWER",
+        alarm_code="ANYTHING",
+        cfg=_cfg(),
+        query_text="generator fuel",
+    )
+    assert found == (), f"an airtel episode reached a safaricom recall: {_numbers(found)}"
+
+
+def test_without_a_query_text_the_lexical_tier_does_not_run(tmp_db):
+    """The M0 path is untouched: no ``query_text``, no second tier, no extra query.
+
+    Every M0 test exercises exactly this path, and the hot-path advisory deliberately uses it
+    too (see ``services/memory.advisory_for_incident``).
+    """
+    settings, session = tmp_db
+    _seed_episode(
+        session,
+        number="FUEL",
+        site_id="SFC-MTK-BTS-MCH04",
+        days_ago=5,
+        notes=(("Vendor Desk", "Generator fuel delivered, SERVICE RESTORED"),),
+    )
+    _consolidate_all(session, settings)
+    assert (
+        recall_similar_episodes(
+            session,
+            site_id=SHARED_SITE,
+            failure_domain="POWER",
+            alarm_code="POWER_GRID_FAIL",
+            cfg=_cfg(),
+        )
+        == ()
+    )
+
+
+@pytest.mark.parametrize(
+    "query_text",
+    ['"', "NOT AND OR", "heading:*", "site*", "   ", "the and of", "a"],
+)
+def test_fts_syntax_typed_by_a_human_is_neutralised_rather_than_raising(tmp_db, query_text):
+    """Every term is quoted before it reaches FTS5 (MEM9: vendor free text is data, never syntax).
+
+    ``"``, ``*``, ``:`` and the bare boolean keywords are FTS5 *operators*: unquoted, they
+    raise a syntax error straight out of an advisory read. Quoted, they are words that match
+    nothing. An empty result is the right answer; a 500 on an incident workspace is not.
+    """
+    settings, session = tmp_db
+    _seed_episode(session, number="FUEL", days_ago=2, notes=(("Vendor Desk", "fuel delivered"),))
+    _consolidate_all(session, settings)
+    found = recall_similar_episodes(
+        session,
+        site_id="SFC-MTK-BTS-MCH04",
+        failure_domain="POWER",
+        alarm_code="NOPE",
+        cfg=_cfg(),
+        query_text=query_text,
+    )
+    assert found == ()
+
+
+def test_the_lexical_tier_degrades_to_nothing_before_the_index_exists(tmp_db):
+    """A file that has never been consolidated has no index. The exact tier is unaffected —
+    it reads ``incidents`` — so recall is weaker, never wrong, and never an error."""
+    settings, session = tmp_db
+    _seed_episode(session, number="H-0", days_ago=1, notes=(("Vendor Desk", "fuel delivered"),))
+    found = recall_similar_episodes(
+        session,
+        site_id=SHARED_SITE,
+        failure_domain="POWER",
+        alarm_code="POWER_GRID_FAIL",
+        cfg=_cfg(),
+        query_text="fuel",
+    )
+    assert _numbers(found) == ["H-0"]
+    assert found[0].match_reason == MATCH_SAME_SITE_AND_FAULT_CLASS
+
+
+# =================================================================================
+# Section 3c — recall_for_incident and the advisory block (M1, §7.11.4)
+# =================================================================================
+
+
+def test_recall_for_incident_with_the_flag_off_returns_a_degraded_bundle(tmp_db, monkeypatch):
+    """§7.11.11 test 18. The flag is checked HERE, at the entry point where memory reaches a
+    human — and "off" costs not one query, which is what MEM11's hot-path budget needs."""
+    settings, session = tmp_db
+    _seed_episode(session, number="H-0", days_ago=1)
+    monkeypatch.delenv("MEMORY_ENABLED", raising=False)
+
+    bundle = recall_for_incident(
+        session, site_id=SHARED_SITE, failure_domain="POWER", alarm_code="POWER_GRID_FAIL"
+    )
+    assert bundle.degraded is True
+    assert bundle.similar == () and bundle.fault_class == ()
+    assert bundle.token_estimate == 0
+
+
+def test_recall_for_incident_on_an_empty_store_is_degraded_but_does_not_raise(tmp_db, monkeypatch):
+    settings, session = tmp_db
+    monkeypatch.setenv("MEMORY_ENABLED", "true")
+    bundle = recall_for_incident(
+        session, site_id="NO-SUCH-SITE", failure_domain="POWER", alarm_code="X"
+    )
+    assert bundle.degraded is True and bundle.similar == ()
+
+
+def test_recall_for_incident_is_budgeted_and_reports_what_it_costs(tmp_db, monkeypatch):
+    """§7.11.5 capability 7: ≤ 8 facts and ≤ 5 episodes, not a 15-25k-token history dump.
+
+    ``token_estimate`` is the number a caller that is about to prompt needs, and it exists so
+    the bundle is truncated rather than silently oversized (§7.11.11 test 20).
+    """
+    settings, session = tmp_db
+    monkeypatch.setenv("MEMORY_ENABLED", "true")
+    for i in range(12):
+        _seed_episode(session, number=f"H-{i}", days_ago=1 + i)
+
+    bundle = recall_for_incident(
+        session, site_id=SHARED_SITE, failure_domain="POWER", alarm_code="POWER_GRID_FAIL"
+    )
+    limits = memory_settings(_cfg())
+    assert len(bundle.similar) == limits["similar_limit"] == 5
+    assert len(bundle.fault_class) <= limits["recall_limit"]
+    assert bundle.degraded is False
+    assert 0 < bundle.token_estimate < 2_000, "a bundle this size should be hundreds of tokens"
+
+
+def test_recall_for_incident_never_returns_the_other_operators_history(tmp_db, monkeypatch):
+    """MEM10 through the single entry point every reader uses — the one that matters most,
+    because it is the call on the hot path."""
+    settings, session = tmp_db
+    monkeypatch.setenv("MEMORY_ENABLED", "true")
+    for i in range(3):
+        _seed_episode(session, number=f"ATL-{i}", operator_id="airtel", days_ago=1 + i)
+
+    bundle = recall_for_incident(
+        session, site_id=SHARED_SITE, failure_domain="POWER", alarm_code="POWER_GRID_FAIL"
+    )
+    assert bundle.similar == ()
+
+
+#: What no hot-path statement may use (review M03). The operator indexes select "every row
+#: this operator owns" — on a single-operator deployment, the whole table — and a full SCAN of
+#: any of these tables is the same thing without an index. Every statement must instead be
+#: bounded by the site, the fault class or a primary/unique key.
+_FORBIDDEN_PLAN_FRAGMENTS = (
+    "ix_incidents_operator_id",
+    "ix_memory_episodes_operator_id",
+    "SCAN incidents",
+    "SCAN memory_episodes",
+    "SCAN work_notes",
+    "SCAN agent_runs",
+    "SCAN agent_run_steps",
+)
+
+
+def _bulk_history(session, *, site_ids, start: int, fault_alarm: str = "POWER_GRID_FAIL") -> None:
+    """Finished incidents plus their consolidated episodes, inserted in bulk.
+
+    Bulk because the point of the tests below is the READ; building 20,000 episodes through
+    the consolidator would test the consolidator's speed instead.
+    """
+    from sqlalchemy import insert
+
+    from noc_agents.db.models import new_id
+    from noc_agents.db.models_memory import MemoryEpisodeRow
+
+    now = utcnow()
+    incidents, episodes = [], []
+    for n, site in enumerate(site_ids):
+        i = start + n
+        incident_id = new_id()
+        ended = now - timedelta(days=1 + i % 700, minutes=i % 1440)
+        started = ended - timedelta(minutes=30 + i % 200)
+        incidents.append(
+            dict(
+                id=incident_id, operator_id="safaricom", incident_number=f"SHAPE-{i}", status="CLOSED",
+                priority="P3", users_affected=1_000, site_id=site, site_name=site, site_type="BTS",
+                region_code="NBI_E", failure_domain="POWER", alarm_code=fault_alarm,
+                correlation_fingerprint="shape", created_at=started, updated_at=ended,
+                outage_start_at=started, restored_at=ended, restored_source="MARK_RESTORED",
+                closed_at=ended, resolution_code="FIELD_RESTORED", resolution_summary="Generator refuelled",
+                assignee_type="MSP", msp_name="EGYPRO",
+            )
+        )
+        episodes.append(
+            dict(
+                id=new_id(), operator_id="safaricom", incident_id=incident_id,
+                incident_number=f"SHAPE-{i}", site_id=site, site_type="BTS", region_code="NBI_E",
+                failure_domain="POWER", alarm_code=fault_alarm,
+                fault_class=f"POWER|{fault_alarm}|BTS", restore_minutes=30 + i % 200,
+                closed_at=ended, built_at=now,
+            )
+        )
+    session.execute(insert(IncidentRow), incidents)
+    session.execute(insert(MemoryEpisodeRow), episodes)
+    session.commit()
+
+
+def _current_incident() -> IncidentRow:
+    """The alarm in front of the approver — not persisted, exactly as the HITL node holds it."""
+    return IncidentRow(
+        id="00000000-0000-0000-0000-00000000cafe", operator_id="safaricom", incident_number="INC000001",
+        status="ASSIGNED", site_id=SHARED_SITE, site_type="BTS", region_code="NBI_E",
+        failure_domain="POWER", alarm_code="POWER_GRID_FAIL", correlation_fingerprint="now",
+        assignee_type="MSP", msp_name="EGYPRO", responsible_msp="EGYPRO",
+    )
+
+
+def _profile_advisory(session, inc) -> tuple[int, list[tuple[str, tuple]], dict]:
+    """``(sqlite_vm_steps, statements, block)`` for one advisory_for_incident call.
+
+    VM steps are counted with ``sqlite3.Connection.set_progress_handler(…, 1)``: SQLite calls it
+    once per virtual-machine instruction, so the count is the work the database did — and it is
+    the same on an idle laptop and on a CI box running three other suites, which is exactly
+    what a wall-clock bound under load could not give (review M07).
+    """
+    from sqlalchemy import event
+
+    from noc_agents.services.memory import advisory_for_incident
+
+    raw = session.connection().connection.driver_connection
+    engine = session.get_bind()
+    steps = [0]
+    statements: list[tuple[str, tuple]] = []
+
+    def count() -> int:
+        steps[0] += 1
+        return 0
+
+    def capture(_conn, _cursor, statement, parameters, _context, _many):
+        statements.append((statement, tuple(parameters or ())))
+
+    event.listen(engine, "before_cursor_execute", capture)
+    raw.set_progress_handler(count, 1)
+    try:
+        block = advisory_for_incident(session, inc, _cfg())
+    finally:
+        raw.set_progress_handler(None, 1)
+        event.remove(engine, "before_cursor_execute", capture)
+    return steps[0], statements, block
+
+
+def _plans(session, statements) -> list[tuple[str, str]]:
+    """``EXPLAIN QUERY PLAN`` for every SELECT the advisory issued, with its real parameters."""
+    raw = session.connection().connection.driver_connection
+    out = []
+    for statement, params in statements:
+        if not statement.lstrip().upper().startswith("SELECT"):
+            continue
+        detail = " | ".join(row[3] for row in raw.execute("EXPLAIN QUERY PLAN " + statement, params).fetchall())
+        out.append((statement.split("FROM", 1)[-1][:80].strip(), detail))
+    return out
+
+
+def test_every_hot_path_statement_is_bounded_by_site_fault_class_or_key_never_by_operator(tmp_db, monkeypatch):
+    """Review M03: the advisory runs inside the lifecycle's write transaction on every HITL card.
+
+    Every SELECT it issues is captured and its plan checked — before and after ``ANALYZE``, so
+    the verdict does not rest on the planner's no-statistics heuristics. The first version's
+    ``_load_in_order`` was ``operator_id = ? AND id IN (…5 ids…)``; with no statistics SQLite
+    chose ``ix_incidents_operator_id`` and walked every incident the operator owned.
+    """
+    settings, session = tmp_db
+    monkeypatch.setenv("MEMORY_ENABLED", "true")
+    _bulk_history(session, site_ids=[SHARED_SITE] * 100, start=0)
+    _bulk_history(session, site_ids=[f"SFC-OTHER-{i % 500:03d}" for i in range(2_000)], start=100)
+
+    for label in ("no statistics", "after ANALYZE"):
+        _steps, statements, block = _profile_advisory(session, _current_incident())
+        assert block is not None and len(block["similar"]) == 5 and block["fault_class"], (
+            "the profiled call must do the real work"
+        )
+        plans = _plans(session, statements)
+        assert plans, "no statement was captured"
+        offending = [(frm, plan) for frm, plan in plans if any(f in plan for f in _FORBIDDEN_PLAN_FRAGMENTS)]
+        assert offending == [], f"{label}: hot-path statement(s) not bounded by site/fault/key: {offending}"
+        session.execute(sql("ANALYZE"))
+        session.commit()
+
+
+def test_the_advisory_costs_the_same_with_twenty_thousand_incidents_at_other_sites(tmp_db, monkeypatch):
+    """Review M03/M07, measured as query shape rather than wall-clock.
+
+    The advisory's cost must depend on the SITE's history and the fault class's recent sample —
+    never on how big the operator's whole table is. So: profile the call, add 20,000 finished
+    incidents (with episodes, same fault class) at OTHER sites, and profile it again. A plan
+    bounded by site and key grows by a B-tree level at most; the operator-index scan the first
+    version ran grew by every one of the 20,000 rows. Counted in SQLite VM steps, which a busy
+    machine cannot inflate.
+    """
+    settings, session = tmp_db
+    monkeypatch.setenv("MEMORY_ENABLED", "true")
+    _bulk_history(session, site_ids=[SHARED_SITE] * 100, start=0)
+    _bulk_history(session, site_ids=[f"SFC-OTHER-{i % 500:03d}" for i in range(1_000)], start=100)
+    before, _, block_before = _profile_advisory(session, _current_incident())
+
+    _bulk_history(session, site_ids=[f"SFC-FAR-{i % 4_000:04d}" for i in range(20_000)], start=10_000)
+    after, _, block_after = _profile_advisory(session, _current_incident())
+
+    assert [e["incident_number"] for e in block_after["similar"]] == [
+        e["incident_number"] for e in block_before["similar"]
+    ], "the same site history must produce the same card"
+    assert after <= before * 1.25, (
+        f"advisory VM steps grew from {before} to {after} (x{after / before:.2f}) when 20,000 incidents "
+        "were added at OTHER sites — a hot-path statement is scanning the operator, not the site"
+    )
+
+
+def test_the_lexical_tier_ranks_this_operator_without_the_others_rows_moving_it(tmp_db, monkeypatch):
+    """Review M05, the reviewer's reproduction. Two Safaricom episodes compete for one lexical
+    slot: SAF-A (strong match, old, P4) and SAF-B (weak match, recent, P3, 225k users).
+
+    The first version normalised bm25 over the top 200 rows of the SHARED index before dropping
+    Airtel's, so a single Airtel ticket with 'fuel' in a long body flipped Safaricom's top hit
+    from SAF-A to SAF-B and changed the scores on the wire. Ranking and normalisation now run
+    over this operator's rows only; the other tenant's text cannot move them.
+    """
+    settings, session = tmp_db
+
+    def seed(op, number, site, body, days, users, prio):
+        ended = utcnow() - timedelta(days=days)
+        started = ended - timedelta(minutes=60)
+        inc = IncidentRow(
+            operator_id=op, incident_number=number, status="CLOSED", priority=prio, users_affected=users,
+            site_id=site, site_name=site, site_type="HUB", region_code="NBI_E", failure_domain="POWER",
+            alarm_code="X", correlation_fingerprint=f"{site}|x", created_at=started, outage_start_at=started,
+            failure_time=started, restored_at=ended, restored_source="MARK_RESTORED", closed_at=ended,
+            resolution_code="FIELD_RESTORED", resolution_summary=body, assignee_type="MSP", msp_name="EGYPRO",
+        )
+        session.add(inc)
+        session.commit()
+        return inc
+
+    mine = [
+        seed("safaricom", "SAF-A", "S1", "genset fuel starvation genset fuel", 60, 1000, "P4"),
+        seed("safaricom", "SAF-B", "S2", "fuel pump replaced breaker unrelated words here and more padding text", 1, 225000, "P3"),
+    ] + [seed("safaricom", f"SAF-F{i}", "S3", "fibre cut splice repaired by vendor team", 5, 1, "P4") for i in range(8)]
+    for inc in mine:
+        consolidate_incident(session, settings=settings, incident_id=inc.id)
+    session.commit()
+    query = dict(site_id="NOWHERE", failure_domain="POWER", alarm_code="X", site_type="HUB",
+                 query_text="genset fuel starvation")
+
+    def ranked(limit):
+        return [(e.incident_number, round(e.score, 6)) for e in recall_similar_episodes(session, limit=limit, **query)]
+
+    alone_top1, alone_all = ranked(1), ranked(5)
+    assert alone_top1[0][0] == "SAF-A"
+
+    theirs = seed("airtel", "ATL-X", "S9", "fuel " + "lorem ipsum dolor sit amet consectetur " * 30, 1, 1, "P4")
+    monkeypatch.setenv("OPERATOR_PROFILE", "airtel")
+    clear_settings_cache()
+    try:
+        consolidate_incident(session, settings=get_settings(), incident_id=theirs.id)
+        session.commit()
+    finally:
+        monkeypatch.setenv("OPERATOR_PROFILE", "safaricom")
+        clear_settings_cache()
+
+    assert ranked(1) == alone_top1, "another operator's note changed this operator's top hit"
+    assert ranked(5) == alone_all, "another operator's note changed this operator's scores or order"
+
+
+def test_the_advisory_is_withheld_when_the_incident_is_not_the_process_operators(tmp_db, monkeypatch):
+    """Review M13, the reviewer's reproduction. Recall takes its operator from the PROCESS
+    profile; a Safaricom incident handed to an Airtel-profile process used to get Airtel's
+    site history and fault-class median frozen onto its card. It now gets no advisory at all —
+    the only safe answer to "whose memory is this?" when the two disagree."""
+    from noc_agents.services.memory import advisory_for_incident
+
+    _settings, session = tmp_db
+    monkeypatch.setenv("MEMORY_ENABLED", "true")
+    for i in range(5):
+        _seed_episode(session, number=f"ATL-{i}", operator_id="airtel", days_ago=1 + i)
+    safaricom_cfg = _cfg()
+    safaricom_incident = IncidentRow(
+        operator_id="safaricom", incident_number="INC-S", site_id=SHARED_SITE, site_type="BTS",
+        region_code="NBI_E", failure_domain="POWER", alarm_code="POWER_GRID_FAIL", correlation_fingerprint="x",
+    )
+
+    monkeypatch.setenv("OPERATOR_PROFILE", "airtel")
+    clear_settings_cache()
+    try:
+        assert advisory_for_incident(session, safaricom_incident, safaricom_cfg) is None
+    finally:
+        monkeypatch.setenv("OPERATOR_PROFILE", "safaricom")
+        clear_settings_cache()
+    block = advisory_for_incident(session, safaricom_incident, safaricom_cfg)
+    assert block is not None and block["similar"] == [], "Safaricom has no history here; Airtel's must not appear"
+
+
+def test_the_advisory_block_is_plain_json_with_z_stamped_timestamps(tmp_db, monkeypatch):
+    """The block travels on two wires this lane does not own.
+
+    One of them is ``hitl_tasks.proposed_payload_json``, whose setter is a bare
+    ``json.dumps`` with no encoder — a ``datetime`` anywhere in this dict would raise inside
+    the HITL node and take a P1 approval card down with it. So every timestamp is an ISO
+    string ending in ``Z`` (§7.0.6, defect #41) and the whole block is JSON by construction.
+    """
+    settings, session = tmp_db
+    monkeypatch.setenv("MEMORY_ENABLED", "true")
+    _seed_episode(session, number="H-0", days_ago=1)
+
+    bundle = recall_for_incident(
+        session, site_id=SHARED_SITE, failure_domain="POWER", alarm_code="POWER_GRID_FAIL"
+    )
+    block = advisory_block(bundle)
+    json.dumps(block)  # raises TypeError if anything in here is not JSON
+    assert block["similar"][0]["closed_at"].endswith("Z")
 
 
 # =================================================================================

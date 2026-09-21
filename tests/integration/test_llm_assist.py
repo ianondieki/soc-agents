@@ -37,6 +37,13 @@ def client(tmp_path, monkeypatch):
     db = tmp_path / "assist.db"
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{db.as_posix()}")
     monkeypatch.setenv("OPERATOR_PROFILE", "safaricom")
+    # These tests are about LLM behaviour (redaction, fallback, retries, locks, audit), not
+    # the transfer paperwork gate. Since CONFORMANCE A-09 the assist routes go through
+    # record_transfer(enforce_gate=True); an unset NOC_ENV reads as production there, and
+    # the shipped transfers.yaml has no DPIA/TIA refs, so every hosted call would be refused
+    # and these paths would silently test the template. Demo records DEMO-UNFILED and lets
+    # the call through. The refusal itself is pinned in tests/unit/test_assist_transfer_gate.py.
+    monkeypatch.setenv("NOC_ENV", "demo")
     import noc_agents.config as cfg
     import noc_agents.db.models as models
     import noc_agents.main as main

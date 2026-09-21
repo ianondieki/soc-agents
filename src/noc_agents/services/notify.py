@@ -13,25 +13,44 @@ back to the demo mailbox) and sends through the SMTP adapter; ``record_email_out
 and ``record_sms_outcome`` flip the ``BroadcastRow`` drafts, write the
 ``("BroadcastCommsAgent", "email")`` WorkNote and return the ``email.sent`` /
 ``email.failed`` event for the dispatcher to publish once the outcome has committed.
+
+Email volume (§7.9.1, §10.3 ✱). Two limits the SMTP relay imposes, both enforced here on the
+dispatcher side because that is where recipients become real:
+
+* **≤ 100 recipients per message.** ``transmit_email`` splits a resolved audience into
+  ``RECIPIENTS_PER_MESSAGE`` batches, one SMTP message each (Bcc). An audience of 100 or fewer
+  is one message, exactly as before;
+* **``EMAIL_DAILY_CAP`` messages per rolling 24 h** (default 400 = 80 % of a free Gmail
+  account's 500, whose breach is a 24-hour send suspension). ``email_cap_decision`` answers
+  "may this row go now?" from the SMTP messages the ``outbox`` rows record as accepted
+  (``email_budget``); the dispatcher (``orchestrator/outbox._email_cap_gate``) acts on the
+  answer. See ``email_cap_decision`` for the 80 % note, and for why a P1 goes anyway while
+  everything else waits for the window.
 """
 
 from __future__ import annotations
 
 import json
+import logging
+import os
 import re
-from datetime import datetime
+from dataclasses import dataclass
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
-from noc_agents.adapters.email_smtp import EmailResult, parse_subject_body, send_email
+from noc_agents.adapters.email_smtp import RECIPIENTS_PER_MESSAGE, EmailResult, parse_subject_body, send_email
 from noc_agents.config import AppSettings, get_settings
 from noc_agents.db.models import BroadcastRow, IncidentRow, OutboxRow, WorkNoteRow, new_id
 from noc_agents.realtime.hub import RealtimeEvent
+from noc_agents.services.clock import fmt_eat
 
 if TYPE_CHECKING:  # typing only: orchestrator.outbox imports this module at runtime
     from noc_agents.orchestrator.outbox import DrainReport
+
+log = logging.getLogger(__name__)
 
 EMAIL_NOTE_AUTHOR = "BroadcastCommsAgent"
 QUEUED = "QUEUED"  # BroadcastRow status between enqueue and dispatch (6 chars: fits String(16))
@@ -302,13 +321,449 @@ def transmit_email(payload: dict) -> EmailResult:
       release email goes this way, and none of them change behaviour;
     * anything else → resolved from the operator profile, or the dispatch is refused (see
       ``resolve_recipients``). There is no third branch on purpose: a ref this process cannot
-      resolve must not silently become the demo mailbox.
+      resolve must not silently become the demo mailbox. A resolved audience goes out in
+      ``RECIPIENTS_PER_MESSAGE`` (100) Bcc batches, one ``send_email`` call each, with the
+      payload's header hints (``email_headers``); 100 or fewer is the one call it always was.
     """
     ref = (payload.get("recipients_ref") or "").strip()
     if not ref or ref == DEMO_RECIPIENTS_REF:
+        # The demo mailbox, reached through the adapter's NAMED default: omitting ``to`` means
+        # ``to=DEMO_MAILBOX`` (adapters/email_smtp), never "no recipients, guess one". The call
+        # stays argument-for-argument what it was because tests/unit/test_recipients_ref.py
+        # pins it as the no-regression check on the Phase 4 mis-delivery fix. One message, so
+        # there is nothing to batch; the demo path carries no header hints.
         return send_email(subject=payload["subject"], body=payload["body"])
     recipients = resolve_recipients(ref, operator_id=payload.get("operator_id"))
-    return send_email(subject=payload["subject"], body=payload["body"], to=recipients)
+    headers = email_headers(payload)
+    results: list[EmailResult] = []
+    for batch in batch_recipients(recipients):
+        kwargs: dict = {"subject": payload["subject"], "body": payload["body"], "to": batch}
+        # ``headers`` only when there is one to send, so an audience with no hints makes the
+        # same call as before this parameter existed (the spy in test_recipients_ref.py checks
+        # that call; a present-but-empty dict would also read as header intent that isn't there).
+        if headers:
+            kwargs["headers"] = headers
+        # Every batch is attempted even after one fails: a 550 on one mailbox in batch 2 must not
+        # leave batch 3 unsent. The combined result is a failure if ANY batch failed, so the
+        # outbox retries (4xx) or kills (5xx) the row as a whole — and a retry re-sends the
+        # batches that DID go. That is the chosen side of the trade: the row is the unit of
+        # idempotency, and a duplicated outage notice is recoverable where a silent gap is not.
+        results.append(send_email(**kwargs))
+    return results[0] if len(results) == 1 else _combine_batches(results)
+
+
+# --- email volume: batching, header hints, EMAIL_DAILY_CAP (§7.9.1, §10.3 ✱) ----------------
+
+#: ``EMAIL_DAILY_CAP`` — SMTP messages per rolling 24 h. 400 = 80 % of a free @gmail.com
+#: account's 500/day; a Workspace sender is 2,000/day, so 1,600 there. ``0`` switches the cap off
+#: (a production relay on the operator's own domain has no per-day quota). A value that does not
+#: parse is NOT "off": it falls back to the default, because a typo must never remove the guard.
+EMAIL_DAILY_CAP_ENV = "EMAIL_DAILY_CAP"
+EMAIL_DAILY_CAP_DEFAULT = 400
+EMAIL_CAP_WARN_FRACTION = 0.8  # the §7.9.1 fail-soft WorkNote
+EMAIL_CAP_WINDOW = timedelta(hours=24)
+
+#: Outbox kinds that spend the same SMTP quota. ICS invites go through the same relay account
+#: (§7.5.5: "Gmail SMTP caps apply to invites"), so they are COUNTED; only EMAIL rows are gated
+#: here. Literals rather than ``orchestrator.outbox`` constants: that module imports this one.
+EMAIL_QUOTA_KINDS = ("EMAIL", "ICS_INVITE")
+#: ``outbox.provider`` of a row the relay actually accepted. The dispatcher stores the adapter's
+#: ``mode`` there, so a mock send (``EMAIL_ENABLED=false``, no recipient) is ``"mock"`` and
+#: correctly costs nothing: it never reached Google.
+SMTP_PROVIDER = "smtp"
+
+#: Priorities the cap does not hold back. See ``email_cap_decision``.
+EMAIL_CAP_OVERRIDE_PRIORITIES = frozenset({"P1"})
+
+CAP_SEND, CAP_OVERRIDE, CAP_DEFER, CAP_REFUSE = "SEND", "OVERRIDE", "DEFER", "REFUSE"
+#: ``outbox.last_error`` prefix on a deferred row. It is how a re-claimed row knows it has been
+#: deferred before, so the incident gets ONE "held" note per row, not one per drain tick.
+EMAIL_CAP_DEFER_PREFIX = "deferred: EMAIL_DAILY_CAP"
+#: The 80 % WorkNote's opening words — also its dedupe key: at most one per rolling window.
+EMAIL_CAP_WARNING_PREFIX = f"[{EMAIL_NOTE_AUTHOR}] EMAIL volume warning"
+
+#: Payload field on an EMAIL outbox row: ``[{"at": <naive-UTC ISO>, "messages": n}, ...]``, one
+#: entry per attempt in which the relay accepted at least one message. Written by
+#: ``orchestrator/outbox._record_outcome`` in the outcome's own commit (``record_smtp_accepted``)
+#: and SUMMED by ``email_budget``. A payload field, not a column: no schema change on the golden
+#: path, and a mock send never writes it, so every non-SMTP row is byte-for-byte what it was.
+SMTP_ACCEPTED_KEY = "smtp_accepted"
+
+#: The renderer's ``provider_params["list_unsubscribe"]`` is a boolean hint (§6.2: the header
+#: only for external audiences). What it points at is deployment config: a ``mailto:`` or
+#: ``https:`` URI. Unset means no header — an invented unsubscribe target on a regulator notice
+#: is a dead link, the same reasoning as ``resolve_recipients`` refusing to guess an address.
+LIST_UNSUBSCRIBE_ENV = "EMAIL_LIST_UNSUBSCRIBE"
+
+
+def batch_recipients(recipients: list[str], size: int = RECIPIENTS_PER_MESSAGE) -> list[list[str]]:
+    """Consecutive batches of at most ``size`` (Gmail SMTP: 100), order kept. One batch for ≤ size."""
+    if size < 1:
+        raise ValueError(f"batch size must be positive, got {size}")
+    return [recipients[i : i + size] for i in range(0, len(recipients), size)] or [[]]
+
+
+def email_headers(payload: dict) -> dict[str, str]:
+    """Extra header fields for an EMAIL payload: ``payload["headers"]`` plus renderer hints.
+
+    Carries ``ChannelPayload.provider_params`` through under the same key: a payload that holds
+    ``{"provider_params": {"list_unsubscribe": True}}`` gets ``List-Unsubscribe: <uri>`` when
+    ``EMAIL_LIST_UNSUBSCRIBE`` is set. An explicit ``payload["headers"]`` entry wins over a hint.
+    """
+    headers = {str(k): str(v) for k, v in (payload.get("headers") or {}).items() if str(v).strip()}
+    hints = payload.get("provider_params") or {}
+    if hints.get("list_unsubscribe") and not any(k.lower() == "list-unsubscribe" for k in headers):
+        target = (os.getenv(LIST_UNSUBSCRIBE_ENV) or "").strip()
+        if target:
+            headers["List-Unsubscribe"] = target if target.startswith("<") else f"<{target}>"
+    return headers
+
+
+def _combine_batches(results: list[EmailResult]) -> EmailResult:
+    """One ``EmailResult`` for a batched send: ok only if every batch was, failures quoted.
+
+    The failing batches' own details are kept verbatim because the dispatcher reads the SMTP
+    reply code out of ``detail`` to decide retry (4xx) or DEAD (5xx). ``accepted`` is the number
+    of batches the relay DID take — including on a partial failure, where the row is retried or
+    killed but those messages have already left and must be counted against the cap.
+    """
+    total = sum(len(r.to) for r in results)
+    failed = [(i, r) for i, r in enumerate(results, start=1) if not r.ok]
+    modes = {r.mode for r in results}
+    head = f"{total} recipients in {len(results)} messages of ≤{RECIPIENTS_PER_MESSAGE}"
+    if failed:
+        detail = f"{head}: {len(failed)} failed — " + "; ".join(f"batch {i}: {r.detail}" for i, r in failed)
+        mode = "error"
+    else:
+        detail = f"{head}: all accepted ({results[0].detail})" if len(modes) == 1 else f"{head}: all accepted"
+        mode = modes.pop() if len(modes) == 1 else results[0].mode
+    return EmailResult(
+        ok=not failed,
+        mode=mode,
+        detail=detail,
+        to=[a for r in results for a in r.to],
+        accepted=sum(smtp_messages_accepted(r) for r in results),
+    )
+
+
+def smtp_messages_accepted(result: EmailResult) -> int:
+    """Messages the relay accepted for one ``EmailResult``: what the adapter reported, else 1 for
+    an ``ok`` SMTP result, else 0 — a mock reached no relay.
+
+    Read with ``getattr``: the transmitter treats its result by shape (``ok``/``mode``/``detail``/
+    ``to``), and a result object that predates ``accepted`` — tests/unit/
+    test_regulatory_dispatch_outcome.py patches ``transmit_email`` with exactly such a double —
+    must not turn a successful send into DEAD by an AttributeError.
+    """
+    accepted = getattr(result, "accepted", None)
+    if accepted is not None:
+        return max(int(accepted), 0)
+    return 1 if result.ok and result.mode == SMTP_PROVIDER else 0
+
+
+def email_daily_cap() -> int:
+    """``EMAIL_DAILY_CAP`` from the environment; ``0`` = off, unparseable or negative = the default."""
+    raw = (os.getenv(EMAIL_DAILY_CAP_ENV) or "").strip()
+    if not raw:
+        return EMAIL_DAILY_CAP_DEFAULT
+    try:
+        cap = int(raw)
+    except ValueError:
+        log.warning("%s=%r is not an integer; enforcing the default %d", EMAIL_DAILY_CAP_ENV, raw, EMAIL_DAILY_CAP_DEFAULT)
+        return EMAIL_DAILY_CAP_DEFAULT
+    return cap if cap >= 0 else EMAIL_DAILY_CAP_DEFAULT
+
+
+def email_message_count(payload: dict) -> int:
+    """How many SMTP messages this EMAIL payload becomes: 1 for the demo mailbox, one per
+    ≤ 100-recipient batch for a resolved ref, and 0 for a ref that will not resolve — that row is
+    refused by ``transmit_email`` without a send, so it must not wait for quota it will not use."""
+    ref = (payload.get("recipients_ref") or "").strip()
+    if not ref or ref == DEMO_RECIPIENTS_REF:
+        return 1
+    try:
+        recipients = resolve_recipients(ref, operator_id=payload.get("operator_id"))
+    except UnresolvedRecipients:
+        return 0
+    return len(batch_recipients(recipients))
+
+
+@dataclass(frozen=True)
+class EmailBudget:
+    """The rolling-24 h SMTP count at the moment one row asks to send ``requested`` messages."""
+
+    cap: int
+    sent: int  # SMTP MESSAGES the relay accepted in (now - 24 h, now] — not rows
+    requested: int
+    oldest_sent_at: datetime | None  # naive UTC; when it leaves the window a slot frees
+    now: datetime
+
+    @property
+    def enabled(self) -> bool:
+        return self.cap > 0
+
+    @property
+    def warn_at(self) -> int:
+        return int(self.cap * EMAIL_CAP_WARN_FRACTION)
+
+    @property
+    def after(self) -> int:
+        return self.sent + self.requested
+
+    @property
+    def exhausted(self) -> bool:
+        """True when sending would take the window past the cap (the cap-th message itself is allowed)."""
+        return self.enabled and self.after > self.cap
+
+    @property
+    def reaches_warning(self) -> bool:
+        """True when this send leaves the window at or above 80 %. Level, not edge: whether the
+        note is still owed is decided by looking for one (``_warning_written``), so a retried
+        send, a second drainer or an ICS invite that moved the count cannot skip or repeat it."""
+        return self.enabled and self.requested > 0 and self.after >= self.warn_at
+
+    @property
+    def frees_at(self) -> datetime:
+        """When the oldest counted send leaves the rolling window — the earliest a slot opens."""
+        return (self.oldest_sent_at or self.now) + EMAIL_CAP_WINDOW
+
+
+def record_smtp_accepted(payload_json: str | None, *, at: datetime, messages: int) -> str:
+    """``payload_json`` with one more ``smtp_accepted`` entry. Every other field, and their order,
+    is kept exactly (same ``json.dumps`` as ``outbox.enqueue``)."""
+    payload = json.loads(payload_json or "{}")
+    entries = list(payload.get(SMTP_ACCEPTED_KEY) or [])
+    entries.append({"at": at.replace(tzinfo=None).isoformat(), "messages": int(messages)})
+    payload[SMTP_ACCEPTED_KEY] = entries
+    return json.dumps(payload, default=str)
+
+
+def _accepted_entries(payload_json: str | None) -> list[tuple[datetime, int]] | None:
+    """The row's recorded ``(at, messages)`` pairs; ``None`` when it never recorded any."""
+    try:
+        raw = json.loads(payload_json or "{}").get(SMTP_ACCEPTED_KEY)
+    except (ValueError, AttributeError):
+        return None
+    if raw is None:
+        return None
+    entries = []
+    for item in raw if isinstance(raw, list) else []:
+        try:
+            entries.append((datetime.fromisoformat(str(item["at"])).replace(tzinfo=None), int(item["messages"])))
+        except (KeyError, TypeError, ValueError):
+            continue  # a malformed entry is skipped, never allowed to break the count
+    return entries
+
+
+def email_budget(session: Session, *, now: datetime, requested: int = 1) -> EmailBudget:
+    """Count the SMTP MESSAGES the relay accepted in the rolling 24 h, from ``outbox``.
+
+    WHY ``outbox`` AND NOT ``delivery_receipts`` OR THE AUDIT LOG. ``outbox`` is the only table
+    that records every send at the moment it left, in the same commit as the outcome, and it
+    survives a restart — an in-process counter would reset to 0 on every deploy mid-storm.
+    ``delivery_receipts`` has no writer (CONFORMANCE B-11) and SMTP gives no receipt anyway; no
+    ``outbox.*`` audit rows exist; the ``external.call`` transfer row is written BEFORE the send
+    and so counts attempts, not messages. The count is global, not per operator: the quota
+    belongs to the one sender account in ``SMTP_USER`` / ``GMAIL_ADDRESS``.
+
+    MESSAGES, NOT ROWS (review E01). An EMAIL row records what the relay accepted, per attempt,
+    in ``payload[SMTP_ACCEPTED_KEY]``, and this SUMS the entries inside the window: a row
+    batched to 250 recipients is 3 messages, a row whose batch 2 of 3 failed still counts the
+    two that left, and a retry that re-sends them counts them again — because they were sent
+    again. A row with no entries (an ICS invite, whose transmitter reports no count, or a row
+    sent before entries existed) counts 1 for an SMTP ``sent_at`` in the window, as before.
+
+    CONCURRENT DRAINERS (review E06) — documented, not reserved. Two drainers that each claimed
+    a DIFFERENT row read the same count, and both may send the last slot: the window can end at
+    most ``(concurrent drainers − 1) × requested`` over the cap — in this deployment the
+    scheduler tick, a request's synchronous drain and ``drain_after_commit``, so ≤ 2 messages for
+    a one-message row, well inside the 100-message headroom the cap keeps below the provider's
+    limit. Counting other drainers' live CLAIMED rows as reserved was considered and rejected:
+    ``drain_once`` claims up to 50 rows at once, most of which will themselves be deferred, so
+    reserving them would hold back real notices near the cap to prevent an overshoot of one or two.
+    """
+    window_start = now - EMAIL_CAP_WINDOW
+    rows = session.execute(
+        select(OutboxRow.payload_json, OutboxRow.provider, OutboxRow.sent_at).where(
+            OutboxRow.kind.in_(EMAIL_QUOTA_KINDS),
+            # A superset: ``_record_outcome`` stamps updated_at with the same ``now`` it records
+            # an entry at, so a row with an entry in the window was updated in the window.
+            or_(OutboxRow.sent_at > window_start, OutboxRow.updated_at > window_start),
+        )
+    ).all()
+    sent, oldest = 0, None
+    for payload_json, provider, sent_at in rows:
+        entries = _accepted_entries(payload_json)
+        if entries is None:
+            entries = [(sent_at, 1)] if provider == SMTP_PROVIDER and sent_at is not None else []
+        for at, messages in entries:
+            if at > window_start and messages > 0:
+                sent += messages
+                oldest = at if oldest is None or at < oldest else oldest
+    return EmailBudget(cap=email_daily_cap(), sent=sent, requested=requested, oldest_sent_at=oldest, now=now)
+
+
+def _warning_written(session: Session, now: datetime) -> bool:
+    """Whether an 80 % note already exists in the current window, on any incident (the quota is global)."""
+    return (
+        session.scalar(
+            select(WorkNoteRow.id)
+            .where(
+                WorkNoteRow.author == EMAIL_NOTE_AUTHOR,
+                WorkNoteRow.source == "email",
+                WorkNoteRow.created_at > now - EMAIL_CAP_WINDOW,
+                WorkNoteRow.body.startswith(EMAIL_CAP_WARNING_PREFIX, autoescape=True),
+            )
+            .limit(1)
+        )
+        is not None
+    )
+
+
+@dataclass(frozen=True)
+class EmailCapDecision:
+    """What the dispatcher should do with one EMAIL row. Pure data; ``outbox`` acts on it."""
+
+    action: str  # SEND | OVERRIDE | DEFER | REFUSE
+    budget: EmailBudget
+    priority: str | None = None
+    # WorkNote body for the row's incident, or None. Written by the dispatcher in the OUTCOME's
+    # commit and only when the outcome matches: the 80 % and P1-override notes on SENT, the held
+    # note on DEFERRED — never ahead of a send that then fails (review E07).
+    note: str | None = None
+    reason: str | None = None  # outbox.last_error for DEFER / REFUSE
+    retry_at: datetime | None = None  # DEFER only
+
+
+def email_cap_decision(session: Session, row: OutboxRow, *, now: datetime) -> EmailCapDecision:
+    """Apply ``EMAIL_DAILY_CAP`` to one EMAIL row that is about to go over SMTP.
+
+    * **below 80 %** → SEND, nothing written;
+    * **at or above 80 %, and no 80 % note yet in this window** → SEND plus the §7.9.1 fail-soft
+      WorkNote, written once the send has succeeded. Looking for an existing note (rather than
+      firing on the one send that crosses the line) is what makes it exactly one per window:
+      a crossing send that fails and retries does not write a second, and a crossing that
+      happened on an ICS invite or a handover mail (no incident to annotate) is still noted by
+      the next incident mail. Two drainers racing on the same crossing can each write one — the
+      same bound as the count itself, see ``email_budget``;
+    * **past the cap, P1** → OVERRIDE: sent anyway, with a WorkNote saying so;
+    * **past the cap, anything else** → DEFER: back to PENDING until the rolling window frees a
+      slot, with one WorkNote the first time;
+    * **an audience that needs more messages than the whole cap** → REFUSE (DEAD): it can never
+      fit, so waiting would hold it forever.
+
+    WHY A P1 IS NEVER HELD. The cap is a guard rail set BELOW the provider's cliff (400 of
+    Gmail's 500) to protect the account from a 24-hour suspension, and the reason that
+    suspension matters is that it would stop the next P1 notice. Holding a P1 to protect the
+    thing that exists to carry P1s inverts the priority. P1 volume is small (a handful of
+    incidents a shift, not hundreds), and the 100-message headroom between the cap and the
+    cliff is there to be spent on exactly this; every override is written on the incident so
+    the spending is visible. If P1 traffic alone approaches the provider limit, the answer is
+    a relay on the operator's domain (§7.9.1), not a held outage notice.
+
+    WHY DEFER AND NOT DEAD FOR THE REST. DEAD is for a condition a retry cannot change — the
+    unresolvable ``recipients_ref``, which is why that case refuses. A daily cap is the
+    opposite: it clears on a clock, and ``frees_at`` says exactly when. A refused P3/P4 notice
+    is a notification nobody will ever re-send; a deferred one arrives late, and "site still
+    down, FE assigned" is still true hours later. Refusing would also put one ``outbox.failed``
+    per message on the wallboard — in a storm, hundreds of red rows burying the 80 % note that
+    is the actual signal. The deferral is not silent: the row stays PENDING with the reason in
+    ``last_error`` and the time in ``next_attempt_at``, the incident gets a note, and it does
+    not burn an attempt (``orchestrator/outbox._record_outcome``), so a long storm cannot turn
+    deferral into a quiet FAILED.
+
+    Reads only. The caller ends the transaction; the dispatcher writes ``note`` with the outcome.
+    """
+    payload = json.loads(row.payload_json or "{}")
+    budget = email_budget(session, now=now, requested=email_message_count(payload))
+    if not budget.enabled or budget.requested == 0:
+        return EmailCapDecision(CAP_SEND, budget)
+    if not budget.exhausted:
+        note = None
+        if budget.reaches_warning and not _warning_written(session, now):
+            note = (
+                f"{EMAIL_CAP_WARNING_PREFIX}: {budget.after} of {EMAIL_DAILY_CAP_ENV}="
+                f"{budget.cap} SMTP messages in the last 24 h ({budget.after * 100 // budget.cap} %). "
+                f"Past {budget.cap}, notices below P1 wait for the rolling window; P1 still sends. "
+                f"A free Gmail sender is suspended for 24 h at 500."
+            )
+        return EmailCapDecision(CAP_SEND, budget, note=note)
+
+    priority = incident_priority(session, row.incident_id)
+    state = f"{EMAIL_DAILY_CAP_ENV}={budget.cap} reached ({budget.sent} SMTP messages in the last 24 h)"
+    if budget.requested > budget.cap:
+        reason = (
+            f"refused: this notice needs {budget.requested} messages, more than {EMAIL_DAILY_CAP_ENV}="
+            f"{budget.cap} allows in a whole day; it can never fit through this relay"
+        )
+        # No cap note: DEAD goes through ``record_email_outcome``, which already writes the
+        # ``mode=error`` note quoting this reason, and publishes ``outbox.failed``.
+        return EmailCapDecision(CAP_REFUSE, budget, priority=priority, reason=reason)
+    if priority in EMAIL_CAP_OVERRIDE_PRIORITIES:
+        note = (
+            f"[{EMAIL_NOTE_AUTHOR}] {state}; this {priority} notice was SENT anyway "
+            f"({budget.requested} message(s)): the volume cap never holds a {priority}."
+        )
+        return EmailCapDecision(CAP_OVERRIDE, budget, priority=priority, note=note)
+
+    retry_at = budget.frees_at
+    reason = f"{EMAIL_CAP_DEFER_PREFIX}={budget.cap} reached ({budget.sent} in 24 h); retry at {retry_at:%Y-%m-%dT%H:%M:%S}Z"
+    first = not (row.last_error or "").startswith(EMAIL_CAP_DEFER_PREFIX)
+    note = (
+        f"[{EMAIL_NOTE_AUTHOR}] {state}; this {priority or 'non-incident'} notice is HELD, not dropped: "
+        f"it stays queued and goes at {fmt_eat(retry_at, '%Y-%m-%d %H:%M')}, when the rolling window frees a slot."
+        if first
+        else None
+    )
+    return EmailCapDecision(CAP_DEFER, budget, priority=priority, note=note, reason=reason, retry_at=retry_at)
+
+
+def record_email_cap_note(session: Session, row: OutboxRow, note: str | None, *, now: datetime) -> bool:
+    """Add a cap WorkNote to the row's incident, stamped at the drain's ``now`` (the window the
+    80 % dedupe looks in). The caller commits — the dispatcher does, with the outcome.
+
+    A row with no incident (the handover mail) has nowhere to put a note, so the finding goes to
+    the log instead. Returns whether a note was added.
+    """
+    if not note:
+        return False
+    if row.incident_id is None:
+        log.warning("outbox: %s (row %s, no incident to annotate)", note, row.id)
+        return False
+    session.add(
+        WorkNoteRow(
+            incident_id=row.incident_id,
+            author=EMAIL_NOTE_AUTHOR,
+            author_role="AGENT",
+            body=note,
+            source="email",
+            created_at=now,
+        )
+    )
+    return True
+
+
+def cap_unchecked_note(priority: str | None, error: BaseException) -> str:
+    """The trace a fail-open P1 send leaves on its incident (review E05)."""
+    return (
+        f"[{EMAIL_NOTE_AUTHOR}] {EMAIL_DAILY_CAP_ENV} could not be checked ({type(error).__name__}); "
+        f"this {priority or 'P1'} notice was SENT without counting it against the cap."
+    )
+
+
+def cap_unchecked_reason(error: BaseException) -> str:
+    """``last_error`` for a non-P1 row held because the count could not be read (review E05)."""
+    return f"{EMAIL_DAILY_CAP_ENV} could not be checked ({type(error).__name__}); nothing was transmitted"
+
+
+def incident_priority(session: Session, incident_id: str | None) -> str | None:
+    """The incident's CURRENT priority (SEVERITY's, never a payload field or a subject line)."""
+    if not incident_id:
+        return None
+    inc = session.get(IncidentRow, incident_id)
+    if inc is None:
+        return None
+    return (inc.priority or "").upper() or None
 
 
 def record_email_outcome(

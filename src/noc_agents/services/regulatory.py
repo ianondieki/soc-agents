@@ -1286,7 +1286,9 @@ def regulatory_sweep_job(session: Session, settings: "AppSettings") -> JobResult
     report = sweep_deadlines(session, settings.operator)
     session.commit()
     return JobResult(
-        summary=str(report),
+        # Off must say off: zero counts read as "swept and found nothing", which is a
+        # different (and falsely reassuring) statement from "did not look" (CONFORMANCE A-10).
+        summary=str(report) if report.enabled else f"regulatory_sweep skipped: {REGULATORY_ENABLED_ENV} is off",
         rationale="Regulatory deadlines counted down from failure_time; drafts only, nothing sent (M10)",
         tools=(
             {

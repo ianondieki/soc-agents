@@ -486,10 +486,19 @@ def test_default_content_is_the_deterministic_template(cfg):
 
 
 def test_ai_content_replaces_the_template_and_flags_ai_assisted(cfg):
-    drafted = NocAlertContent(en=Content(headline="P2 Embakasi HUB down - mains failure", body="Body.", instruction=None))
+    # §6.1-compliant drafts (validate_content runs at this seam): incident number, priority, region
+    # label and the envelope's next-update time in every block.
+    drafted = NocAlertContent(
+        en=Content(
+            headline="P2 INC000123 Embakasi HUB down - mains failure",
+            body="Body. Region: Nairobi East.",
+            instruction="Next update 14:17 EAT.",
+        )
+    )
     alert = build_alert(_row(), cfg, sent=SENT, ai_content={"en": drafted.en})
     assert alert.content["en"] == drafted.en and alert.governance.ai_assisted is True
-    both = build_alert(_row(), cfg, sent=SENT, ai_content={"en": drafted.en, "sw": Content(headline="Kituo", body="Mwili.")})
+    kituo = Content(headline="Kituo INC000123 P2 Nairobi East", body="Mwili. Taarifa ijayo 14:17 EAT.")
+    both = build_alert(_row(), cfg, sent=SENT, ai_content={"en": drafted.en, "sw": kituo})
     assert set(both.content) == {"en", "sw"}
 
 

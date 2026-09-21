@@ -118,8 +118,12 @@ def scrub_text(text: str | None, names: NameMap) -> str | None:
         return None
     out = scrub_contacts(text)
     for name, token in names.names_longest_first():
-        # Whole words only: a short name such as "ATC" or "Ann" must not eat "dispatched" / "Announcement".
-        out = re.sub(rf"(?<!\w){re.escape(name)}(?!\w)", token, out, flags=re.IGNORECASE)
+        # Whole words only: a short name such as "ATC" or "Ann" must not eat "dispatched" /
+        # "Announcement". The boundary is a LETTER, not ``\w``: ``\w`` also counts "_" and
+        # digits as word characters, so "peter_kamau", "Kamau_ok" and "Wanjiku2" — handles,
+        # usernames, spelled-out e-mails — kept a known name verbatim (memory review M04).
+        # ``[^\W\d_]`` is "a letter" in any script, so only an adjacent letter blocks a match.
+        out = re.sub(rf"(?<![^\W\d_]){re.escape(name)}(?![^\W\d_])", token, out, flags=re.IGNORECASE)
     return out
 
 

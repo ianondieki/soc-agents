@@ -19,9 +19,9 @@ about to make a five-hour job a fifteen-hour one, and no other crew is already b
 same site. A programme approved in a Tuesday planning meeting is not permission to switch a
 hub off on Friday, and :func:`schedule_window` enforces that structurally: it calls
 :func:`window_approval_of`, which requires an ``APPROVE_MAINTENANCE_WINDOW`` card pointing at
-*this* window. An APPROVED ``APPROVE_SCHEDULE`` card — even one on the same anchor incident,
-even for a task inside this very window — fails the ``task_type`` check and the window stays
-PROPOSED. ``tests/unit/test_maintenance.py`` enumerates the bypasses.
+*this* window. An APPROVED ``APPROVE_SCHEDULE`` card — even one for a task inside this very
+window — fails the ``task_type`` check and the window stays PROPOSED.
+``tests/unit/test_maintenance.py`` enumerates the bypasses.
 
 **2. The rain guard fails SAFE and fails HONEST.**
 
@@ -143,7 +143,6 @@ __all__ = [
     "ScheduleNotApproved",
     "WindowNotApproved",
     "WindowOverlapError",
-    "anchor_incident",
     "bump_sequence",
     "cancel_window",
     "complete_task",
@@ -269,10 +268,23 @@ class WindowOverlapError(ValueError):
 
 
 class NoAnchorIncident(RuntimeError):
-    """``hitl_tasks.incident_id`` is NOT NULL and there is no incident to anchor on.
+    """RETIRED at schema_version 8 — nothing raises this any more. Do not start raising it.
 
-    Fail closed: no card can be raised, so no approval is possible, so nothing is scheduled —
-    rather than a window that becomes executable without a gate. See :func:`anchor_incident`.
+    Until v8 ``hitl_tasks.incident_id`` was NOT NULL and a card's owner was derived through its
+    incident, so every maintenance card had to borrow a *scoping anchor*: the window's own
+    incident if it had one, else the operator's most recent incident of any status, else this
+    exception (route: 503) and no card at all. That filed Tuesday's generator service against an
+    unrelated outage, and on a database with no incidents the lane could not raise a card.
+    Since v8 a card is owned directly through ``hitl_tasks.operator_id`` (see
+    :func:`_card_incident`), so there is nothing to anchor and nothing to fail on.
+
+    The class itself is kept for exactly one reason: ``api/routers/maintenance.py`` names
+    ``svc.NoAnchorIncident`` in two ``except`` clauses. Python evaluates an ``except``
+    expression only when an exception reaches it, so deleting the class would not fail at
+    import — it would turn the *next unrelated error* passing through those routes into an
+    ``AttributeError``. Remove the class in the same change that removes those two clauses.
+    ``tests/unit/test_maintenance.py`` pins both halves: the name still resolves, and no
+    ``raise`` of it remains in this module.
     """
 
 
@@ -744,41 +756,41 @@ def rain_guard(
     return RainVerdict(RAIN_CLEAR, 0, False, f"fresh forecast for {', '.join(regions)}, no storm flag", evidence)
 
 
-# ------------------------------------------------------------------------- the anchor incident
+# ------------------------------------------------------------------- the card's incident, if any
 
 
-def anchor_incident(session: Session, cfg: OperatorConfig, *, incident_id: str | None = None) -> IncidentRow | None:
-    """The incident a maintenance HITL card hangs off, or ``None``.
+def _card_incident(session: Session, operator_id: str, incident_id: str | None) -> str | None:
+    """The incident a maintenance card is genuinely ABOUT — or ``None``, which is the usual answer.
 
-    ``hitl_tasks.incident_id`` is NOT NULL, and operator ownership of a task is derived by
-    joining it to ``incidents`` (``api.deps._OWNED_VIA_INCIDENT``), so a card that belongs to
-    no incident can neither be stored nor fetched — it would be invisible in
-    ``GET /api/v1/hitl/pending`` and ``POST /api/v1/hitl/{id}/approve`` would answer 404. A
-    maintenance window is not an incident, so this lane has the same problem
-    ``services/handover.py`` documented and solves it the same way: a **scoping** anchor, with
-    what the card is really about carried in ``entity_type``/``entity_id``.
+    This replaces ``anchor_incident``, and the history is worth a paragraph. Until
+    schema_version 8 ``hitl_tasks.incident_id`` was NOT NULL and a task's owner was derived by
+    joining ``incidents``, so a card that belonged to no incident could be neither stored nor
+    fetched. A maintenance window is not an incident, so this lane borrowed one: the window's
+    own incident if it had one, else *the operator's most recent incident of any status*, else
+    no card at all (:class:`NoAnchorIncident`). The middle rung was the workaround, and it was
+    worse than untidy: the card for Tuesday's generator service was filed against an unrelated
+    outage; deciding it on the ordinary HITL route wrote a work note on that outage and
+    re-derived that outage's ``hitl_state`` from a card that was never about it; and an
+    operator with no incidents could not get maintenance approved at all.
 
-    Order of preference:
+    Since v8 a card is owned **directly**: the callers pass ``operator_id=`` and the card needs
+    no incident to be visible in ``GET /api/v1/hitl/pending`` or decidable on
+    ``POST /api/v1/hitl/{id}/approve``. What survives is only the first rung, because it was
+    never a workaround: when ``maintenance_windows.incident_id`` says the window exists
+    *because* of an incident (emergency work arising from a PRB), the card carries that
+    ``incident_id``, and the note the approval leaves on that incident is true.
 
-    1. ``maintenance_windows.incident_id`` when the window exists *because* of an incident
-       (emergency work arising from a PRB) — then the anchor is not a workaround at all, it is
-       the truth;
-    2. otherwise the operator's most recent incident, **of any status**. Handover anchors to an
-       *open* incident because the handover is about open incidents; maintenance is not, so
-       narrowing to open ones would refuse to schedule work on a quiet network, which is the
-       night you actually want to do it.
-    3. ``None`` — a database with no incident at all. The caller fails closed
-       (:class:`NoAnchorIncident`): no card, therefore no approval, therefore nothing scheduled.
-
-    This is a schema workaround and it should not survive. Making ``hitl_tasks.incident_id``
-    nullable and adding ``hitl_tasks.operator_id`` (so ownership stops being derived through
-    the join) removes it; both are additive changes to files this lane does not own.
+    The id comes from a request body (``create_window`` stores what it is given), so it is
+    used only if it names an incident of the SAME operator. Anything else — unknown, or
+    another operator's — is ignored rather than trusted: the card is then simply not about an
+    incident. (``db.models._own_hitl_task`` would refuse a cross-operator pair anyway; checking
+    here turns a would-be 500 into the right card.)
     """
-    if incident_id:
-        row = session.scalar(_owned(IncidentRow).where(IncidentRow.id == incident_id))
-        if row is not None:
-            return row
-    return session.scalar(_owned(IncidentRow).order_by(IncidentRow.created_at.desc()).limit(1))
+    if not incident_id:
+        return None
+    return session.scalar(
+        select(IncidentRow.id).where(IncidentRow.id == incident_id, IncidentRow.operator_id == operator_id)
+    )
 
 
 # ------------------------------------------------------------------------------ audit helper
@@ -1270,8 +1282,8 @@ def _approval_of(
     * a card id at all — work nobody ever raised a card for cannot go ahead;
     * the card is reachable under the **active operator's** scope (``_owned``);
     * ``task_type`` matches exactly. This is the line that keeps the two gates apart: an
-      APPROVED ``APPROVE_SCHEDULE`` — even one raised for a task inside this very window, even
-      on the same anchor incident — is not an approval of the window, and vice versa;
+      APPROVED ``APPROVE_SCHEDULE`` — even one raised for a task inside this very window — is
+      not an approval of the window, and vice versa;
     * ``entity_type``/``entity_id`` point at *this* subject, so one approved card cannot
       authorise a second, different window;
     * status is exactly ``APPROVED``;
@@ -1352,9 +1364,13 @@ def request_schedule_approval(
 
     **Queues nothing**, for the reason ``services/regulatory.request_approval`` spells out: a
     HELD outbox row is one generic ``release_held`` away from PENDING, and ``release_held``
-    releases by *incident* — so an unrelated broadcast approval on the anchor incident would
-    promote a calendar invite to an engineer for work nobody approved. The right number of
-    rows before approval is zero, and ``mark_invited`` is the only thing that creates one.
+    releases by *incident* — so when the window hangs off a real incident, that incident's own
+    broadcast approval would promote a calendar invite to an engineer for work nobody
+    approved. The right number of rows before approval is zero, and ``mark_invited`` is the
+    only thing that creates one.
+
+    The card is owned directly by the plan's operator (``hitl_tasks.operator_id``, schema v8)
+    and needs no incident; see :func:`_card_incident` for the one case where it has one.
     """
     if task.status != TASK_PROPOSED:
         raise MaintenanceStateError(f"task is {task.status}; only a PROPOSED task needs a schedule approval")
@@ -1362,16 +1378,11 @@ def request_schedule_approval(
     if existing is not None:
         return existing
 
-    anchor = anchor_incident(session, cfg, incident_id=_window_incident(session, task))
-    if anchor is None:
-        raise NoAnchorIncident(
-            "no incident to anchor an APPROVE_SCHEDULE card on (hitl_tasks.incident_id is NOT NULL); "
-            "no card raised and nothing scheduled"
-        )
-
+    incident_id = _card_incident(session, plan.operator_id, _window_incident(session, task))
     card = HitlTaskRow(
         id=new_id(),
-        incident_id=anchor.id,
+        operator_id=plan.operator_id,
+        incident_id=incident_id,
         task_type=SCHEDULE_TASK_TYPE,
         status="PENDING",
         entity_type=SCHEDULE_ENTITY_TYPE,
@@ -1387,7 +1398,6 @@ def request_schedule_approval(
         "assignee_token": task.proposed_assignee_token,
         "ics_preview": window_ics_fields(session, window, cfg) if window is not None else None,
         "standard_ref": plan.standard_ref,
-        "anchor_incident_number": anchor.incident_number,
         # Said out loud, because the approver should not have to infer the scope of what they
         # are signing: this card is the programme, not the night.
         "warning": (
@@ -1404,7 +1414,7 @@ def request_schedule_approval(
         entity_type=SCHEDULE_ENTITY_TYPE,
         entity_id=task.id,
         rationale=f"{plan.task_type} at {task.site_id} due {task.due_at.isoformat()}",
-        payload={"card_id": card.id, "assignee_token": task.proposed_assignee_token, "anchor_incident_id": anchor.id},
+        payload={"card_id": card.id, "assignee_token": task.proposed_assignee_token, "incident_id": incident_id},
     )
     return card
 
@@ -1439,13 +1449,6 @@ def request_window_approval(
     if existing is not None:
         return existing
 
-    anchor = anchor_incident(session, cfg, incident_id=window.incident_id)
-    if anchor is None:
-        raise NoAnchorIncident(
-            "no incident to anchor an APPROVE_MAINTENANCE_WINDOW card on (hitl_tasks.incident_id is "
-            "NOT NULL); no card raised, so the window cannot be scheduled"
-        )
-
     verdict = rain_guard(session, window, cfg, now=now)
     window.rain_season_flag = verdict.flag
     clashes = overlapping_windows(
@@ -1458,9 +1461,12 @@ def request_window_approval(
         statuses=(WINDOW_PROPOSED, WINDOW_SCHEDULED),
         exclude_id=window.id,
     )
+    # Owned directly by the window's operator (schema v8). ``incident_id`` is set only when the
+    # window exists because of an incident of the same operator — see :func:`_card_incident`.
     card = HitlTaskRow(
         id=new_id(),
-        incident_id=anchor.id,
+        operator_id=window.operator_id,
+        incident_id=_card_incident(session, window.operator_id, window.incident_id),
         task_type=WINDOW_TASK_TYPE,
         status="PENDING",
         entity_type=WINDOW_ENTITY_TYPE,
@@ -1484,7 +1490,6 @@ def request_window_approval(
             {"id": w.id, "status": w.status, "scope": w.scope, "scope_ref": w.scope_ref, "starts_at": z_utc(w.starts_at)}
             for w in clashes
         ],
-        "anchor_incident_number": anchor.incident_number,
         "warning": (
             "Approving this authorises taking live customers off air between "
             f"{fmt_eat(window.starts_at, '%Y-%m-%d %H:%M')} and {fmt_eat(window.ends_at, '%H:%M')} EAT."
@@ -2098,7 +2103,6 @@ def plan_due(session: Session, settings: "AppSettings", *, now: datetime | None 
     cards = 0
     skipped_consumption = 0
     not_yet = 0
-    no_anchor = 0
     for plan in plans:
         for site_id in plan_sites(plan, cfg):
             if len(proposed) >= PLAN_DUE_TASK_LIMIT:
@@ -2115,19 +2119,14 @@ def plan_due(session: Session, settings: "AppSettings", *, now: datetime | None 
                 continue
             proposed.append(f"{plan.task_type}@{site_id}")
             if cards < PLAN_DUE_CARD_LIMIT:
-                try:
-                    request_schedule_approval(session, task, plan, cfg, now=now)
-                    cards += 1
-                except NoAnchorIncident:
-                    # Fail closed and stay visible: the task exists and is PROPOSED, which is
-                    # inert, and the count below says why no card was raised.
-                    no_anchor += 1
+                # Until schema v8 this could refuse (NoAnchorIncident) on a database with no
+                # incident to file the card against, and the job counted the refusals. A card
+                # is owned directly now, so a quiet network no longer blocks its own upkeep.
+                request_schedule_approval(session, task, plan, cfg, now=now)
+                cards += 1
     return JobResult(
         summary=f"proposed={len(proposed)} cards={cards} not_due_yet={not_yet} consumption_driven={skipped_consumption}",
-        rationale=(
-            "; ".join(proposed[:20]) if proposed else "no plan came due inside the notice horizon"
-        )
-        + (f" (no anchor incident for {no_anchor} card(s))" if no_anchor else ""),
+        rationale="; ".join(proposed[:20]) if proposed else "no plan came due inside the notice horizon",
         tools=({"name": "maintenance_plan_due", "ok": True, "latency_ms": 0},),
     )
 

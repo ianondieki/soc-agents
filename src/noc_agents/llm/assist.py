@@ -10,6 +10,18 @@ tens of seconds and must never hold the write lock):
 3. One write transaction: the tracked ``llm_assist`` run, its step, and an audit row per
    LLM attempt (DPA reg 41(2): date/time, recipient, justification, data description).
 
+Between 1 and 2 sits the one exception to "no DB work in the middle": when the call is
+really going to a hosted provider, the reg 41(2) transfer record (spec §2 G8, §9.2,
+``services/external_calls.record_transfer``) is written and COMMITTED before the bytes
+leave, exactly as ``contracts``, the complaint classifier and the outbox LLM_CALL
+transmitter do. That is a short write, committed before the model call, so the write lock
+is still never held across the network. A refusal from the paperwork gate (no DPIA/TIA ref
+on file outside ``NOC_ENV=demo``) means the model is not called at all: the route answers
+with its deterministic template, which is the same answer it gives with the LLM off. The
+spend gate (``llm.client.spend_gate``: the provider's spend circuit and our own
+``LLM_MONTHLY_BUDGET_USD`` ceiling) is asked before that record, and an answer from it
+likewise means no record and no call.
+
 Every route here is read-only for incident/brief tables; the only rows written are the
 run, its step and the audit row. The LLM never changes priority, assignment or status.
 """
@@ -17,6 +29,7 @@ run, its step and the audit row. The LLM never changes priority, assignment or s
 from __future__ import annotations
 
 import json
+import logging
 import threading
 from dataclasses import dataclass
 from typing import Any, Callable
@@ -26,12 +39,15 @@ from sqlalchemy.orm import Session
 from noc_agents.config import AppSettings
 from noc_agents.db.models import AgentRunRow, AuditRow, IncidentRow, new_id, utcnow
 from noc_agents.graph.instrumentation import RunTracker
-from noc_agents.llm.client import MODEL_DRAFTING, MODEL_REASONING, get_llm, reasoning_timeout_s
+from noc_agents.llm.client import MODEL_DRAFTING, MODEL_REASONING, get_llm, reasoning_timeout_s, spend_gate
 from noc_agents.llm.outputs import ExecBriefDraft, Hypothesis, RootCauseAnalysis
 from noc_agents.llm.redaction import redact_incident, restore_names
 from noc_agents.llm.structured import LlmCallRecord, parse_structured
 from noc_agents.orchestrator.contract import FAILED, SUCCEEDED, StepResult
 from noc_agents.services.composition import compose_brief
+from noc_agents.services.external_calls import TransferPaperworkMissing, record_transfer
+
+log = logging.getLogger("noc_agents.llm.assist")
 
 GRAPH_NAME = "llm_assist"
 TRIGGER = "ON_DEMAND"
@@ -63,6 +79,15 @@ _ASSIST_SLOTS = threading.BoundedSemaphore(MAX_CONCURRENT_ASSIST)
 
 RECIPIENT = "Anthropic API"
 DATA_DESCRIPTION = "redacted incident fields + scrubbed notes"
+
+# The actor role on the reg 41(2) transfer row. The assist step is an agent acting on an
+# operator's request, and the outbox transmitter records its hosted calls the same way.
+TRANSFER_ACTOR_ROLE = "AGENT"
+TRANSFER_DATA_DESCRIPTION = (
+    "Pseudonymised incident record and work notes: network and operational fields only, "
+    "person names replaced by <PERSON_n> tokens, e-mail addresses and MSISDNs removed "
+    "before the call (llm/redaction.py)."
+)
 
 GUARDRAILS = (
     "You assist a Kenyan telecom NOC. Use only the facts in the JSON you are given; do not "
@@ -173,13 +198,77 @@ def _mark_unusable(rec: LlmCallRecord, reason: str) -> str:
     return rec.error
 
 
-def _audit_row(settings: AppSettings, agent_name: str, incident_id: str, rec: LlmCallRecord, justification: str) -> AuditRow:
+def _record_hosted_transfer(
+    session: Session, settings: AppSettings, *, agent_name: str, incident_id: str, justification: str
+) -> tuple[str | None, str | None]:
+    """Write and commit the reg 41(2) transfer record BEFORE the hosted model call.
+
+    Returns ``(transfer_record_id, None)`` when the call may go ahead, or ``(None, reason)``
+    when the §7.0.10 paperwork gate refused it: the caller then must not call the model.
+
+    The recipient identity comes from ``orchestrator/outbox.llm_recipient_identity`` rather
+    than a second rule here, so the register names the same recipient (and the same
+    ``transfers.yaml`` key) whichever path made the call. Imported lazily: ``llm`` sits below
+    ``orchestrator``, and this is only reached when a hosted call is about to happen, so the
+    LLM-off path never loads the dispatcher. ``get_llm`` answers only for
+    ``LLM_PROVIDER=anthropic``, so today this always resolves to the hosted Anthropic API;
+    a local openai-compatible endpoint never reaches this function (no raw client, no call).
+
+    The gate stays ON (``enforce_gate=True``): a hosted model provider is exactly the case
+    §7.0.10 makes the TIA a gating artefact for. ``NOC_ENV=demo`` records ``DEMO-UNFILED``
+    and lets the call through, as everywhere else.
+    """
+    from noc_agents.orchestrator.outbox import llm_recipient_identity  # lazy: see docstring
+
+    recipient, country, residency = llm_recipient_identity()
+    try:
+        row = record_transfer(
+            session,
+            recipient=recipient,
+            recipient_country=country,
+            justification=f"{justification} (on-demand assist, {agent_name}); lawful basis and "
+            "safeguards: the DPIA/TIA on file for this recipient",
+            data_description=TRANSFER_DATA_DESCRIPTION,
+            actor=agent_name,
+            actor_role=TRANSFER_ACTOR_ROLE,
+            incident_id=incident_id,
+            residency=residency,
+            settings=settings,
+            enforce_gate=True,
+        )
+        transfer_id = row.id
+        # Durable BEFORE the call, as in the outbox transmitter: a crash in the gap loses a
+        # draft, never a record of data that left. Committing also ends the transaction, so
+        # no write lock is held while the model thinks.
+        session.commit()
+        return transfer_id, None
+    except TransferPaperworkMissing as exc:
+        session.rollback()
+        log.warning("assist: %s call refused by the transfer paperwork gate: %s", agent_name, exc)
+        # Recipient key and missing ref names only: no incident data in the step rationale.
+        return None, (
+            f"transfer paperwork gate refused the hosted call "
+            f"({', '.join(exc.missing)} not filed for '{exc.recipient_key}')"
+        )
+
+
+def _audit_row(
+    settings: AppSettings,
+    agent_name: str,
+    incident_id: str,
+    rec: LlmCallRecord,
+    justification: str,
+    transfer_record_id: str | None = None,
+) -> AuditRow:
     payload = {
         "ts": utcnow().isoformat(),
         "recipient": RECIPIENT,
         "justification": justification,
         "data_description": DATA_DESCRIPTION,
         **rec.as_dict(),
+        # Points at the external.call row written before the call, so the engineering record
+        # and the legal one can be joined (the pairing contracts makes via llm_calls.audit_id).
+        "transfer_record_id": transfer_record_id,
     }
     return AuditRow(
         operator_id=settings.operator.operator_id,
@@ -215,16 +304,40 @@ def run_assist(
     t_start = utcnow()
     job: AssistJob | None = None
     rec: LlmCallRecord | None = None
+    transfer_id: str | None = None
     slot = False
     try:
-        job = prepare(session)  # phase 1: reads only
+        job = prepare(session)  # phase 1: reads only; redaction happens here, before any call
         session.rollback()  # release any implicit transaction before the (slow) model call
         llm = get_llm(settings)
         if llm is not None:
             slot = _ASSIST_SLOTS.acquire(blocking=False)
-        response, result, rec = call(job, llm if slot else None)  # phase 2: network only
+        refusal: str | None = None
+        if slot:
+            # The DB spend gate first, as the outbox LLM_CALL transmitter and contracts do:
+            # ``get_llm`` checks only the in-process spend circuit, not the monthly
+            # LLM_MONTHLY_BUDGET_USD ceiling summed from ``llm_calls``. An answer here means
+            # no call, so it must also mean no transfer record: nothing leaves the machine.
+            gate = spend_gate(session, operator_id=settings.operator.operator_id)
+            if gate:  # spend_cap | budget_exhausted: a ceiling is a decision, not an error
+                session.rollback()  # end the read transaction; phase 3 opens its own
+                refusal = f"spend gate open ({gate})"
+            else:
+                # Only a call that will really leave the machine needs the record, so this
+                # sits after the busy check and the spend gate: a caller that gets the
+                # template for want of a slot or of budget sent nothing and must not appear
+                # in the register. A DB error in here propagates to the except below, which
+                # also answers with the template: no record, no call.
+                transfer_id, refusal = _record_hosted_transfer(
+                    session, settings, agent_name=agent_name, incident_id=incident_id, justification=justification
+                )
+        send = llm if slot and refusal is None else None
+        response, result, rec = call(job, send)  # phase 2: network only
         if llm is not None and not slot:
             result.rationale = f"assist busy ({MAX_CONCURRENT_ASSIST} calls in flight): deterministic template"
+        elif refusal is not None:
+            # call(job, None) says "LLM assist off"; that is not why, so say the real reason.
+            result.rationale = f"{refusal}: deterministic template"
     except Exception as exc:  # noqa: BLE001 — belt and braces: call() already degrades to templates
         session.rollback()
         response = job.template_response() if job else {"incident_id": incident_id, "source": "template", "model": None, **empty_answer}
@@ -259,7 +372,7 @@ def run_assist(
             confidence=result.confidence,
         )
         if rec is not None:
-            session.add(_audit_row(settings, agent_name, incident_id, rec, justification))
+            session.add(_audit_row(settings, agent_name, incident_id, rec, justification, transfer_id))
         failed = result.status == FAILED
         tracker.finish_run(FAILED if failed else SUCCEEDED, error=result.rationale if failed else None)
         session.commit()

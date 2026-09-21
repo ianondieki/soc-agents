@@ -15,7 +15,7 @@ from sqlalchemy import select
 
 from noc_agents.api import auth
 from noc_agents.config import get_settings
-from noc_agents.db.models import HitlTaskRow, IncidentBriefRow, IncidentRow
+from noc_agents.db.models import IncidentBriefRow, IncidentRow
 
 
 def _settings():
@@ -72,20 +72,51 @@ def _actor(principal: auth.Principal, claimed: str | None) -> str:
 #
 # Two table shapes:
 #   * tables that carry ``operator_id`` (incidents, problems, agent_runs, audit_events,
-#     shift_ledger, outbox, llm_calls) filter on the column directly;
-#   * ``hitl_tasks`` and ``incident_briefs`` carry NO operator_id and are owned through
-#     ``incident_id -> incidents.operator_id``. For hitl_tasks this is deliberate: every
-#     task is written with ``incident_id=inc.id`` (agents/hitl.py, services/worklog_monitor.py)
-#     against a NOT NULL foreign key, so the owner is already recorded once, on the
-#     incident, and the join is always well-defined. A denormalised
-#     ``hitl_tasks.operator_id`` would cost a schema change plus a backfill for a value
-#     that is derivable, and add a second copy that can drift from the first. Do not
-#     "optimise" the join into a column without weighing that.
+#     shift_ledger, outbox, llm_calls -- and, since schema_version 8, hitl_tasks) filter on
+#     the column directly;
+#   * ``incident_briefs`` (and the Phase 4 tables that register below) carry NO operator_id
+#     and are owned through ``incident_id -> incidents.operator_id``.
 #
-# A Phase 4 table that hangs off an incident registers itself here rather than growing
-# its own operator_id column; ``register_owned_via_incident`` is that door.
+# ``hitl_tasks`` changed shape, and both halves of that decision are kept here on purpose.
+#
+# UNTIL v8 it was owned through the join, deliberately. The argument, as this comment made it:
+# every task is written with ``incident_id=inc.id`` (agents/hitl.py,
+# services/worklog_monitor.py) against a NOT NULL foreign key, so the owner is already
+# recorded once, on the incident, and the join is always well-defined; a denormalised
+# ``hitl_tasks.operator_id`` would cost a schema change plus a backfill for a value that is
+# derivable, and add a second copy that can drift from the first. "Do not 'optimise' the join
+# into a column without weighing that." That was right, for as long as its premise held.
+#
+# The premise was "every gated thing is an incident", and Phase 5 ended it. An
+# APPROVE_SCHEDULE card is about a maintenance programme and an APPROVE_MAINTENANCE_WINDOW
+# card is about a night's planned outage; neither has an incident, and the scorecard-dispute
+# and vendor-notice cards behind them do not either. For those tasks the owner is NOT
+# derivable -- there is nothing to join to -- so the lane borrowed an unrelated "anchor"
+# incident to be owned through: Tuesday's generator service filed against somebody's fibre
+# cut, that incident's ``hitl_state`` flipping to PENDING because of it, and no card at all on
+# a database with no incidents (docs/PHASE5.md, "The one that should be fixed first"). A
+# value that cannot be derived has to be stored.
+#
+# What the old argument weighed, and what became of each cost:
+#   * "a schema change plus a backfill" -- paid once, in db/migrate.py ``_rebuild_hitl_tasks``
+#     (the one non-additive migration; ``operator_id`` is backfilled from the incident during
+#     the copy and the copy is verified before the old table is dropped);
+#   * "a second copy that can drift" -- answered at the only moment the copy is written:
+#     ``db.models._own_hitl_task`` derives it FROM the incident on insert and refuses a row
+#     whose stated operator contradicts its incident's. Nothing reassigns either
+#     ``operator_id`` afterwards;
+#   * and one cost the join never had: a writer can now forget the column. The same listener
+#     covers it -- a task with an incident gets its owner filled in, a task with neither an
+#     incident nor an operator is refused at flush -- so the fail-closed case ("no operator
+#     can see this card") cannot be reached by forgetting.
+#
+# A row whose ``operator_id`` is NULL (written by a pre-v8 release running against a v8 file,
+# or an orphan the migration could not attribute) matches no operator: invisible, never leaked.
+#
+# A Phase 4 table that hangs off an incident still registers itself here rather than growing
+# its own operator_id column; ``register_owned_via_incident`` is that door, and the argument
+# above for using it still holds for any table whose rows ALWAYS have an incident.
 _OWNED_VIA_INCIDENT: dict[type, object] = {
-    HitlTaskRow: HitlTaskRow.incident_id,
     IncidentBriefRow: IncidentBriefRow.incident_id,
 }
 

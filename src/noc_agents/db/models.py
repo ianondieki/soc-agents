@@ -17,9 +17,11 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     create_engine,
+    event,
+    select,
     text,
 )
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, sessionmaker
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, object_session, relationship, sessionmaker
 
 
 def utcnow() -> datetime:
@@ -196,7 +198,16 @@ class HitlTaskRow(Base):
     __tablename__ = "hitl_tasks"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    incident_id: Mapped[str] = mapped_column(ForeignKey("incidents.id"), index=True)
+    # NULLABLE since schema_version 8. Until Phase 5 every gated thing WAS an incident and this
+    # was NOT NULL. An APPROVE_SCHEDULE / APPROVE_MAINTENANCE_WINDOW card is about a programme of
+    # work or a night's outage and has no incident, so the maintenance lane used to file it
+    # against an unrelated "anchor" incident purely to satisfy the constraint (docs/PHASE5.md).
+    # NULL now means exactly "this task is not about an incident": ``entity_type``/``entity_id``
+    # say what it IS about and ``operator_id`` below says who owns it. Every reader that goes
+    # incident -> tasks filters ``incident_id == inc.id`` and so never meets a NULL one.
+    # Relaxing NOT NULL is the one thing db/migrate.py cannot do additively -- see
+    # ``_rebuild_hitl_tasks`` there.
+    incident_id: Mapped[str | None] = mapped_column(ForeignKey("incidents.id"), index=True, nullable=True)
     task_type: Mapped[str] = mapped_column(String(64))
     proposed_payload_json: Mapped[str] = mapped_column(Text, default="{}")
     status: Mapped[str] = mapped_column(String(16), default="PENDING")
@@ -225,6 +236,29 @@ class HitlTaskRow(Base):
     # 0/1, the source of M15's zero-edit counter: did the approver change the draft before send?
     edited: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
 
+    # --- schema_version 8: the task's OWN owner (docs/PHASE5.md, "The one that should be fixed first") ---
+    # The operator that owns this task; ``api.deps._owned(HitlTaskRow)`` filters on it directly.
+    # Until v8 the owner was derived by joining ``incident_id -> incidents.operator_id``, which
+    # stopped being possible the day a task could exist without an incident (the long comment in
+    # api/deps.py keeps both halves of that argument).
+    #
+    # A writer does NOT have to set it: ``_own_hitl_task`` below fills it from the incident when
+    # the row is inserted, and refuses a row that has neither an incident nor an operator. That
+    # is why agents/hitl.py, services/worklog_monitor.py, services/regulatory.py and
+    # services/handover.py are unchanged -- they pass ``incident_id`` exactly as before.
+    #
+    # Nullable in the DDL, on purpose, although no row this code writes ever leaves it NULL:
+    #   * rollback -- a release older than v8 knows nothing about this column and INSERTs without
+    #     it. NOT NULL here would turn every HITL task such a release raises into an
+    #     IntegrityError: the golden path would crash on the very file a rollback has to run on;
+    #   * orphans -- the migration copies a task whose incident row is missing (possible: SQLite
+    #     foreign keys are not enforced in this codebase) with its owner left NULL, rather than
+    #     guessing an owner or refusing to start.
+    # NULL fails CLOSED: ``operator_id = :op`` is never true for NULL, so an unowned row is
+    # invisible to every operator -- which is what a task with no resolvable incident already
+    # was under the join.
+    operator_id: Mapped[str | None] = mapped_column(String(32), index=True, nullable=True)
+
     @property
     def proposed_payload(self) -> dict:
         return json.loads(self.proposed_payload_json or "{}")
@@ -232,6 +266,91 @@ class HitlTaskRow(Base):
     @proposed_payload.setter
     def proposed_payload(self, value: dict) -> None:
         self.proposed_payload_json = json.dumps(value)
+
+
+class HitlTaskOwnershipError(ValueError):
+    """A ``HitlTaskRow`` whose owning operator cannot be established, or contradicts its incident.
+
+    Raised from inside the flush, so the writer's transaction fails instead of committing a
+    task that no operator's inbox would ever show.
+    """
+
+
+@event.listens_for(HitlTaskRow, "before_insert")
+def _own_hitl_task(mapper, connection, target: HitlTaskRow) -> None:
+    """Give every inserted task a correct ``operator_id``, or refuse the row.
+
+    The rule, case by case:
+
+    * ``incident_id`` given, ``operator_id`` not -- every writer that existed before v8. The
+      owner is the incident's operator, read here. An ``incident_id`` that resolves to no
+      incident is refused: nothing could own that row.
+    * both given -- they must agree. This is the answer to the old objection that a second copy
+      of the owner "can drift from the first": the copy is checked against the original at the
+      only moment it is written, and nothing in this codebase reassigns
+      ``incidents.operator_id`` or ``hitl_tasks.operator_id`` afterwards.
+    * ``operator_id`` only -- a task that is not about an incident (a maintenance window; the
+      scorecard-dispute and vendor-notice cards after it). Owned directly.
+    * neither -- refused. Such a row would be invisible to ``_owned`` for every operator: a
+      pending approval nobody can see, let alone decide.
+
+    Why a mapper event rather than an edit to each writer: there are six writers today, one of
+    them (agents/hitl.py) on the golden path, and the next card type adds a seventh. A rule
+    every writer has to remember is a rule one of them forgets, and this failure is silent --
+    the card simply never appears in an inbox, fail-closed, so no test of the *writer* notices.
+    Hung on the mapped class, the rule travels with the class: any Session, any sessionmaker,
+    any caller that ``session.add()``s a HitlTaskRow passes through it.
+
+    Why ``before_insert`` and not a Session-wide ``before_flush``: it is scoped to this one
+    class instead of running on every flush in the process, and it is handed the flush's own
+    ``connection``, so the lookup sees exactly what the INSERT will see -- including an incident
+    written earlier in the same, still uncommitted, transaction.
+
+    What it does NOT cover, because no mapper event can: Core ``insert(HitlTaskRow)``
+    statements, ``bulk_insert_mappings`` and raw SQL. None exists in this codebase. A row
+    written that way without ``operator_id`` is stored (the column is nullable, see above) and
+    stays invisible to every operator until somebody sets it -- closed, not leaked.
+    """
+    stated = (target.operator_id or "").strip() or None
+    derived = _incident_operator(connection, target) if target.incident_id else None
+    if stated is None and derived is None:
+        if not target.incident_id:
+            raise HitlTaskOwnershipError(
+                f"hitl task {target.id} ({target.task_type}) has neither incident_id nor operator_id, so no "
+                "operator could ever see it; pass operator_id= for a task that is not about an incident"
+            )
+        raise HitlTaskOwnershipError(
+            f"hitl task {target.id} ({target.task_type}) names incident {target.incident_id}, which does "
+            "not exist, and carries no operator_id: its owner cannot be derived"
+        )
+    if stated is not None and derived is not None and stated != derived:
+        raise HitlTaskOwnershipError(
+            f"hitl task {target.id} ({target.task_type}) says operator {stated!r}, but its incident "
+            f"{target.incident_id} belongs to {derived!r}"
+        )
+    # The incident's operator when there is one; otherwise the owner the writer stated outright
+    # (a dangling incident_id beside a stated owner is no worse than it was before v8).
+    target.operator_id = derived or stated
+
+
+def _incident_operator(connection, task: HitlTaskRow) -> str | None:
+    """``incidents.operator_id`` for ``task.incident_id``; None when there is no such incident.
+
+    The Session's pending objects are searched first. The unit of work orders INSERTs by
+    ``relationship()``, not by ForeignKey, and there is no relationship between these two
+    classes -- so an incident added in the same flush as its task (tests/unit/
+    test_phase2_schema.py does exactly that) has usually NOT been inserted yet when this runs.
+    It is still in ``session.new`` until the flush ends.
+    """
+    session = object_session(task)
+    if session is not None:
+        for pending in session.new:
+            if isinstance(pending, IncidentRow) and pending.id == task.incident_id:
+                return pending.operator_id
+    incidents = IncidentRow.__table__
+    return connection.execute(
+        select(incidents.c.operator_id).where(incidents.c.id == task.incident_id)
+    ).scalar()
 
 
 class ProblemRow(Base):

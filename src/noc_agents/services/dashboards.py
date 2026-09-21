@@ -69,6 +69,8 @@ from sqlalchemy.orm import Session
 
 from noc_agents.api.deps import _operator_scoped, _owned, _settings
 from noc_agents.db.models import ExternalSignalRow, IncidentRow, ProblemRow, utcnow
+from noc_agents.services.backtest import signal_precision_30d
+from noc_agents.services.signals import cap_feed_health, cap_severe_in_force, flood_region_state
 from noc_agents.pollers.weather import (
     is_stale,
     latest_error,
@@ -113,12 +115,12 @@ _TERMINAL = ("CLOSED", "CANCELLED")
 _PRIORITIES: tuple[str, ...] = ("P1", "P2", "P3", "P4")
 
 # Which ``external_signals.source`` values belong to which card block. Weather has
-# two providers because the poller falls back between them (§7.3.3); the other
-# three have exactly one source each and no poller yet, which is why their blocks
-# come back ``available: false`` rather than being omitted.
+# two providers because the poller falls back between them (§7.3.3). The flood and
+# CAP blocks are read through ``services.signals`` (``flood_region_state``,
+# ``cap_feed_health``), which own the per-site aggregation and the feed-health
+# judgement; KPLC has no poller yet, which is why its block comes back
+# ``available: false`` rather than being omitted.
 _WEATHER_SOURCES: tuple[str, ...] = ("OPEN_METEO", "MET_NORWAY")
-_FLOOD_SOURCES: tuple[str, ...] = ("GLOFAS",)
-_CAP_SOURCES: tuple[str, ...] = ("KMD_CAP",)
 _KPLC_SOURCES: tuple[str, ...] = ("KPLC",)
 
 #: KPLC planned-interruption look-ahead. Two days is the notice period a NOC can
@@ -312,11 +314,11 @@ def _weather_block(session: Session, operator_id: str, region_code: str, now: da
             "fetched_at": None,
             "age_s": None,
             "last_error": err.last_error if err is not None else None,
-            # §10.6 / M6: the measured precision of past storm warnings. It comes
-            # from the backtest script, which is a later lane; the key is on the
-            # wire now so the card can reserve the space and so that turning the
-            # backtest on is not a contract change.
-            "precision_30d": None,
+            # §10.6 / M6: the measured 30-day precision of past storm warnings,
+            # from services/backtest.py. None means "not yet measured" (below the
+            # 90-day / 10-episode floor), never zero; a float below min_precision
+            # (0.2) is shown greyed as LOW CONFIDENCE, never hidden.
+            "precision_30d": signal_precision_30d(session, operator_id, region_code, now=now),
             "reason": reason,
         }
 
@@ -335,36 +337,47 @@ def _weather_block(session: Session, operator_id: str, region_code: str, now: da
         "fetched_at": block.get("fetched_at"),
         "age_s": block.get("age_s"),
         "last_error": block.get("last_error"),
-        "precision_30d": None,
+        "precision_30d": signal_precision_30d(session, operator_id, region_code, now=now),
         "reason": reason,
     }
 
 
-def _flood_block(session: Session, region_code: str, now: datetime) -> dict[str, Any]:
-    """GloFAS river flood flag (§7.3.3). No poller yet — reads generically, so the
-    Phase 3 lane lights this up by writing rows, not by editing this file."""
-    row = _latest_signal_row(session, region_code, _FLOOD_SOURCES)
-    if row is None:
-        return {"available": False, "stale": True, "flag": None, "fetched_at": None}
+def _flood_block(session: Session, operator_id: str, region_code: str, now: datetime) -> dict[str, Any]:
+    """GloFAS river flood flag (§7.3.3), aggregated across the region's riverine sites.
+
+    The poller writes one row per site, all stamped with the run's time, so "the newest
+    GLOFAS row in the region" used to be settled by a tie-break: one calm site, or one
+    site's failure marker, could hide another site's live flood (review finding F09).
+    ``flood_region_state`` takes each site's current reading instead: ``flag`` if ANY
+    fresh one flags, fresh if ANY site has a fresh reading, ``flag`` None with no reading.
+    """
+    state = flood_region_state(session, operator_id, region_code, now)
     return {
-        "available": True,
-        "stale": is_stale(row, now),
-        "flag": bool(row.flood_flag),
-        "fetched_at": _z(row.fetched_at),
+        "available": state["available"],
+        "stale": state["stale"],
+        "flag": state["flag"],
+        "fetched_at": state["fetched_at"],
     }
 
 
-def _cap_block(session: Session, region_code: str, now: datetime) -> dict[str, Any]:
-    """KMD CAP warnings in force (§7.3.3). ``count`` counts only rows still inside
-    their validity window: an expired warning is history, not a warning."""
-    row = _latest_signal_row(session, region_code, _CAP_SOURCES)
-    if row is None:
-        return {"available": False, "stale": True, "count": 0, "fetched_at": None}
+def _cap_block(session: Session, operator_id: str, region_code: str, now: datetime) -> dict[str, Any]:
+    """KMD CAP warnings in force (§7.3.3), with freshness taken from the FEED, never an alert.
+
+    ``stale`` and ``fetched_at`` come from ``cap_feed_health``, which judges the feed-health
+    row against now: a poller that stopped running reads stale, never the "ok" it last
+    wrote (review finding F02). They used to come from whichever KMD_CAP row sorted newest,
+    so a warning ARRIVING made the block fresh and let the tile read CALM — and it stayed
+    fresh after polling stopped (review finding F03). A warning must never make a region
+    look calmer; a Severe/Extreme one lifts it to WATCH instead (``_status``).
+    ``count`` is the warnings still inside KMD's own validity window: an expired warning
+    is history, not a warning.
+    """
+    health = cap_feed_health(session, operator_id, region_code, now)
     return {
-        "available": True,
-        "stale": is_stale(row, now),
-        "count": _count_live(session, region_code, _CAP_SOURCES, now),
-        "fetched_at": _z(row.fetched_at),
+        "available": health["available"],
+        "stale": health["stale"],
+        "count": health["alerts_in_force"],
+        "fetched_at": health["fetched_at"],
     }
 
 
@@ -392,12 +405,14 @@ def _status(
     sla_breached: int,
     signals: dict[str, dict[str, Any]],
     any_signal_fresh: bool,
+    cap_severe_in_force: bool = False,
 ) -> str:
     """The tile's colour, as a four-rung ladder evaluated worst-first.
 
     * ``ALERT`` — an open P1, or a live storm/flood flag. Either is a reason to
       wake someone.
-    * ``WATCH`` — an open P2, or any open incident already past its restore SLA.
+    * ``WATCH`` — an open P2, any open incident already past its restore SLA, or a
+      KMD CAP warning of severity Severe or Extreme in force for the region.
     * ``STALE`` — none of the above fired **and** no external signal for this
       region is fresh. We are blind here. That is not the same as calm, and a
       wallboard that paints it green is worse than no wallboard: it converts a
@@ -415,6 +430,16 @@ def _status(
     if open_by_priority.get("P1", 0) > 0 or storm_live or flood_live:
         return "ALERT"
     if open_by_priority.get("P2", 0) > 0 or sla_breached > 0:
+        return "WATCH"
+    # PRODUCT DEFAULT — the product owner may change it. A KMD CAP alert IN FORCE with
+    # severity Severe or Extreme lifts the region to at least WATCH, never to ALERT.
+    # "Silence is not good news" cuts both ways: a published Met Department warning must
+    # not coexist with a CALM tile. But ALERT stays reserved for what this NOC itself
+    # knows is live — our own P1s and fresh storm/flood flags — because a county-level
+    # warning, possibly days long and for part of a region, is not a reason to wake
+    # someone on its own. "In force" is KMD's expiry, deliberately regardless of whether
+    # our feed is reachable: a warning KMD issued does not lapse because we lost the link.
+    if cap_severe_in_force:
         return "WATCH"
     if not any_signal_fresh:
         return "STALE"
@@ -523,8 +548,8 @@ def _region_row(
     """One region card. Key order here is the contract the frontend reads."""
     signals = {
         "weather": _weather_block(session, operator_id, region_code, now),
-        "flood": _flood_block(session, region_code, now),
-        "cap": _cap_block(session, region_code, now),
+        "flood": _flood_block(session, operator_id, region_code, now),
+        "cap": _cap_block(session, operator_id, region_code, now),
         "kplc": _kplc_block(session, region_code, now),
     }
     # "Fresh" means at least one outside-world source answered recently. Our own
@@ -541,7 +566,11 @@ def _region_row(
         "counties": list(getattr(region_cfg, "counties", []) or []),
         "rnio": getattr(region_cfg, "rnio", None),
         "status": _status(
-            rollup["open_by_priority"], rollup["sla_breached"], signals, any_fresh
+            rollup["open_by_priority"],
+            rollup["sla_breached"],
+            signals,
+            any_fresh,
+            cap_severe_in_force(session, operator_id, region_code, now) > 0,
         ),
         "signals_stale": not any_fresh,
         "open_total": rollup["open_total"],

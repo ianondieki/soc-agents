@@ -1,7 +1,12 @@
 import { useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { api, runLiveRainStorm } from "../api";
 import { fmtTime } from "../lib/time";
+// One run-status palette and one error line for both run lists (A-13), so the two pages
+// cannot drift apart again.
+import { RunError, runChip } from "./Agents";
 import { describeEvent, type NocEvent } from "../realtime/renderers";
+import { hitlSubject } from "../lib/hitlSubject";
 
 const AUTO_KEY = "noc_auto_storm_v1";
 
@@ -27,6 +32,7 @@ export default function MissionControl({
   onOpen: (id: string) => void;
   onRefresh?: () => void;
 }) {
+  const navigate = useNavigate();
   const [incidents, setIncidents] = useState<any[]>([]);
   const [hitl, setHitl] = useState<any[]>([]);
   const [runs, setRuns] = useState<any[]>([]);
@@ -289,11 +295,18 @@ export default function MissionControl({
           <div className="list">
             {hitl.length === 0 && <div className="empty">No pending human approvals.</div>}
             {hitl.slice(0, 12).map((t) => (
-              <div key={t.id} className="row" onClick={() => onOpen(t.incident_id)}>
+              // Since v8 a maintenance card has no incident: onOpen(null) was /incidents/null.
+              // Those rows open the HITL inbox, where the card itself can be decided.
+              <div
+                key={t.id}
+                className="row"
+                title={t.incident_id ? undefined : "Not about an incident: opens the HITL inbox"}
+                onClick={() => (t.incident_id ? onOpen(t.incident_id) : navigate("/hitl"))}
+              >
                 <span className={`pill ${t.priority || "P4"}`}>{t.priority}</span>
                 <div>
                   <div>
-                    <strong>{t.incident_number}</strong>
+                    <strong>{hitlSubject(t)}</strong>
                   </div>
                   <div className="muted">
                     {t.task_type}
@@ -344,14 +357,8 @@ export default function MissionControl({
                 style={{ cursor: r.incident_id ? "pointer" : "default" }}
                 onClick={() => r.incident_id && onOpen(r.incident_id)}
               >
-                <span
-                  className={
-                    "chip " +
-                    (r.status === "RUNNING" || r.status === "WAITING_HITL" ? "accent" : "ok")
-                  }
-                >
-                  {r.status}
-                </span>
+                {/* Same A-13 fix as the Agent Observatory: FAILED is red with its word, never green. */}
+                <span className={runChip(r.status)}>{r.status}</span>
                 <div>
                   <div className="muted">
                     {r.graph_name} · {r.trigger}
@@ -359,6 +366,7 @@ export default function MissionControl({
                   <div className="muted dim">
                     {r.current_node || (r.steps && `${r.steps.length} steps`) || "—"}
                   </div>
+                  <RunError status={r.status} summary={r.error_summary} />
                 </div>
                 <span className="muted dim">{fmtTime(r.started_at)}</span>
               </div>

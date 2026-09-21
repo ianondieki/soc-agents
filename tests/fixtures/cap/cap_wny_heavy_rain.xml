@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- _provenance: captured_live=false.
+     NOT a live capture. Constructed by hand from the OASIS CAP 1.2 standard
+     (http://docs.oasis-open.org/emergency/cap/v1.2/CAP-v1.2-os.html). Modelled on the KMD
+     document SUPER_PROMPT section 7.3 cites
+     (https://meteo.go.ke/api/cap/269c47c8-953c-4ee2-850b-aafe83d91c24.xml), of which the spec
+     records only that it carries county areas for Migori, Nyamira, Bungoma and Busia. Those four
+     county names are the only thing taken from that record. The identifier is deliberately
+     synthetic so this file can never be mistaken for KMD's real document; the times, severity,
+     urgency, certainty, headline, text and polygons are invented to exercise the parser and
+     the storm rule (severity Severe). A second, Swahili info block exercises primary-language
+     selection. See README.md beside this file. -->
+<alert xmlns="urn:oasis:names:tc:emergency:cap:1.2">
+  <identifier>fixture-2026-05-07-wny-heavy-rain</identifier>
+  <sender>forecasting@meteo.go.ke</sender>
+  <sent>2026-05-07T06:00:00+03:00</sent>
+  <status>Actual</status>
+  <msgType>Alert</msgType>
+  <scope>Public</scope>
+  <info>
+    <language>en-US</language>
+    <category>Met</category>
+    <event>Heavy Rainfall</event>
+    <urgency>Expected</urgency>
+    <severity>Severe</severity>
+    <certainty>Likely</certainty>
+    <effective>2026-05-07T06:00:00+03:00</effective>
+    <onset>2026-05-07T12:00:00+03:00</onset>
+    <expires>2026-05-09T06:00:00+03:00</expires>
+    <senderName>Kenya Meteorological Department</senderName>
+    <headline>Heavy rainfall expected over parts of Western and Nyanza</headline>
+    <description>Heavy rainfall exceeding 50 mm in 24 hours is expected over the counties listed.</description>
+    <instruction>Residents in low-lying areas should be on the lookout for flash floods.</instruction>
+    <web>https://meteo.go.ke/</web>
+    <area>
+      <areaDesc>Migori</areaDesc>
+      <polygon>-0.90,34.20 -0.90,34.70 -1.30,34.70 -1.30,34.20 -0.90,34.20</polygon>
+    </area>
+    <area>
+      <areaDesc>Nyamira</areaDesc>
+      <polygon>-0.45,34.80 -0.45,35.10 -0.75,35.10 -0.75,34.80 -0.45,34.80</polygon>
+    </area>
+    <area>
+      <areaDesc>Bungoma</areaDesc>
+      <polygon>0.45,34.30 0.45,34.90 0.95,34.90 0.95,34.30 0.45,34.30</polygon>
+    </area>
+    <area>
+      <areaDesc>Busia</areaDesc>
+      <polygon>0.05,33.90 0.05,34.40 0.70,34.40 0.70,33.90 0.05,33.90</polygon>
+    </area>
+  </info>
+  <info>
+    <language>sw-KE</language>
+    <category>Met</category>
+    <event>Mvua Kubwa</event>
+    <urgency>Expected</urgency>
+    <severity>Severe</severity>
+    <certainty>Likely</certainty>
+    <expires>2026-05-09T06:00:00+03:00</expires>
+    <headline>Mvua kubwa inatarajiwa katika sehemu za Magharibi na Nyanza</headline>
+    <area>
+      <areaDesc>Migori, Nyamira, Bungoma, Busia</areaDesc>
+    </area>
+  </info>
+</alert>

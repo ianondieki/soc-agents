@@ -1,0 +1,38 @@
+{
+  "_provenance": {
+    "captured_live": false,
+    "how": "Constructed by hand from the documented Open-Meteo Flood API response shape (https://open-meteo.com/en/docs/flood-api). NOT a live capture: this machine's Python cannot complete TLS to the API without truststore (docs/RUNBOOK.md section 3) and the test suite is zero-network by rule. Discharge values are typed to exercise the section 7.3.1 flood rule (a pulse: peak 163.8 m3/s against a weekly mean-of-means of ~62.3 m3/s, ratio ~2.63 >= 2.0); they are not a real GloFAS forecast for the Nyando or any other river.",
+    "request": "GET https://flood-api.open-meteo.com/v1/flood?latitude=-0.0900&longitude=34.7700&daily=river_discharge,river_discharge_mean&forecast_days=7",
+    "site": {
+      "site_id": "SFC-WNY-HUB-KSM",
+      "site_name": "Kisumu Western-Nyanza HUB",
+      "county": "Kisumu",
+      "region_code": "WNY",
+      "riverine": true
+    }
+  },
+  "latitude": -0.075,
+  "longitude": 34.775,
+  "generationtime_ms": 0.31,
+  "utc_offset_seconds": 0,
+  "timezone": "GMT",
+  "timezone_abbreviation": "GMT",
+  "daily_units": {
+    "time": "iso8601",
+    "river_discharge": "m³/s",
+    "river_discharge_mean": "m³/s"
+  },
+  "daily": {
+    "time": [
+      "2026-09-17",
+      "2026-09-18",
+      "2026-09-19",
+      "2026-09-20",
+      "2026-09-21",
+      "2026-09-22",
+      "2026-09-23"
+    ],
+    "river_discharge": [38.2, 41.5, 57.9, 112.4, 163.8, 121.0, 72.3],
+    "river_discharge_mean": [44.1, 46.0, 51.7, 69.8, 84.9, 79.6, 60.2]
+  }
+}

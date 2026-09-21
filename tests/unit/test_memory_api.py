@@ -297,6 +297,51 @@ def test_the_memory_route_is_registered_and_reachable_under_the_versioned_prefix
     assert set(r.json()) == {"site_id", "enabled", "lookback_days", "episodes", "facts", "degraded"}
 
 
+# =================================================================================
+# M1: the additive ``advisory`` key on the single-incident serializer (§7.11.4, §7.11.5)
+# =================================================================================
+#
+# The helper is ``services/memory.advisory_for_incident`` (pinned inert in
+# ``tests/unit/test_memory_advisory_is_inert.py``); ``get_incident()`` in ``main.py``
+# calls it and sets ``payload["advisory"]``. Nothing goes in ``api/serializers.py``:
+# ``incident_out`` is shared with the LIST route, and §7.11.4 forbids ``advisory``
+# there -- a list of thirty tickets would mean thirty recalls per refresh on the
+# wallboard's polling interval. These three tests are the acceptance check for that
+# wiring.
+
+
+def test_the_single_incident_route_carries_the_advisory_key(client, monkeypatch):
+    """§7.11.11 test 23: every field the UI reads is still there and ``advisory`` is additive."""
+    monkeypatch.setenv("MEMORY_ENABLED", "true")
+    _seed(number="INC-HIST-1", days_ago=30)
+    incident_id = _seed(number="INC-HIST-2", days_ago=1)
+
+    body = client.get(f"/api/v1/incidents/{incident_id}").json()
+    assert body["incident_number"] == "INC-HIST-2"
+    assert body["site_id"] == SITE  # the existing shape is untouched
+    assert body["advisory"]["enabled"] is True
+    assert body["advisory"]["similar"], "the prior outage at this site should be recalled"
+
+
+def test_with_the_flag_off_the_advisory_key_is_null_rather_than_absent(client, monkeypatch):
+    """§7.11.11 test 25. ``null``, not missing: a renderer written against the key keeps
+    working on every deployment that never opted in, and "off" is visible rather than
+    indistinguishable from "this ticket has no history"."""
+    monkeypatch.delenv("MEMORY_ENABLED", raising=False)
+    incident_id = _seed(number="INC-HIST-1")
+    assert client.get(f"/api/v1/incidents/{incident_id}").json()["advisory"] is None
+
+
+def test_the_list_route_never_carries_an_advisory_key(client, monkeypatch):
+    """§7.11.4 is explicit, and the reason is cost: the wallboard polls the list route, so an
+    advisory there would be one recall per ticket per refresh — and none of it would be read,
+    because the list shows one line per incident."""
+    monkeypatch.setenv("MEMORY_ENABLED", "true")
+    _seed(number="INC-HIST-1")
+    for row in client.get("/api/v1/incidents").json():
+        assert "advisory" not in row
+
+
 def test_the_route_is_readable_by_the_whole_operations_floor(client, monkeypatch):
     """§7.11.4 gates it to "any signed-in role", so ``READERS`` — a field engineer or MSP
     coordinator working the ticket needs the panel. With ``AUTH_DISABLED=true`` (the demo and

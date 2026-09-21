@@ -638,18 +638,20 @@ Put the job you want in place of `outbox_dispatch`. Names are exact. A wrong one
 
 | Job | Runs every | Its own flag | Obeys its flag when run by hand? | What it does |
 |---|---|---|---|---|
-| `outbox_dispatch` | 5 s | `OUTBOX_DISPATCH_ENABLED` (on unless set false) | **NO — drains anyway** | drains the outbox |
-| `monitor_tick` | 60 s | `SCHEDULER_MONITOR_ENABLED` (on unless set false) | **NO — chases anyway** | SLA chases |
+| `outbox_dispatch` | 5 s | `OUTBOX_DISPATCH_ENABLED` (on unless set false) | yes | drains the outbox |
+| `monitor_tick` | 60 s | `SCHEDULER_MONITOR_ENABLED` (on unless set false) | yes | SLA chases |
 | `weather_regions` | 15 min | `WEATHER_ENABLED` | yes | weather poller |
 | `pir_autoopen` | 5 min | `PIR_ENABLED` | yes | opens draft post-incident reviews |
-| `regulatory_sweep` | 5 min | `REGULATORY_ENABLED` | yes (summary shows zero counts, not "skipped") | regulatory countdowns; never sends |
+| `regulatory_sweep` | 5 min | `REGULATORY_ENABLED` | yes | regulatory countdowns; never sends |
 | `complaints_followup` | 1 h | `COMPLAINTS_ENABLED` | yes | complaint reminders |
 | `maintenance_plan_due` | 1 h | `MAINTENANCE_ENABLED` | yes | proposes maintenance tasks |
 | `maintenance_window_sweep` | 5 min | `MAINTENANCE_ENABLED` | yes | closes finished windows |
 | `capacity_scan` | 1 h | `CAPACITY_ENABLED` | yes | capacity advisories |
 | `housekeeping` | daily | `HOUSEKEEPING_ENABLED` | yes | backup, redaction scan, retention |
 
-The "obeys" column was checked on 2026-09-21 by running every job by hand with every flag off.
+The "obeys" column is pinned by `tests/unit/test_manual_job_flags.py`. It runs every job by hand
+with every flag set `false`, against a database with work waiting for each job, and checks that
+no job writes anything.
 
 As of 2026-09-21 new pollers and memory jobs are being added. `GET /api/v1/scheduler/status`
 always lists the current set.
@@ -661,17 +663,24 @@ always lists the current set.
 2. Runs the job once, now, as a normal run you can find in section 9.
 3. Works **whether or not the scheduler is enabled**. It is the manual override.
 
-For the eight lane jobs it does **not** override the lane's own flag: a job whose lane is off
-runs, does nothing, and says so. **Two jobs are different.** `outbox_dispatch` and
-`monitor_tick` do not check their flags at all when run by hand:
+It does **not** override the job's own flag. All ten jobs check their flag themselves. When the
+flag is off, the job runs, does nothing, and says so. Its summary names the flag, for example
+`outbox_dispatch skipped: OUTBOX_DISPATCH_ENABLED is off` or
+`PIR_ENABLED=false — no reviews opened`. Apart from the run record itself (section 9), nothing
+is claimed, sent, written or deleted.
 
-* **Pressing `outbox_dispatch` drains the outbox even with `OUTBOX_DISPATCH_ENABLED=false`.**
-  Never press it while the kill sequence of section 16 is in force.
-* Pressing `monitor_tick` chases silent incidents (work notes and escalation cards) even with
-  `SCHEDULER_MONITOR_ENABLED=false`.
+* `outbox_dispatch` and `monitor_tick` are **on unless set false**. With the flag unset they run
+  as normal, and only an explicit `false` makes them skip. So with the kill sequence of
+  section 16 in force, pressing `outbox_dispatch` drains nothing.
+* The eight lane jobs are **off unless set true**. Unset or `false`, they skip.
 
 The route asks for the `admin` role. With `AUTH_DISABLED=true` (this build's default) nobody is
 checked — so anyone who can reach the port can press any of these.
+
+**`POST /api/v1/monitor/tick` is a different route, and `SCHEDULER_MONITOR_ENABLED` does not
+gate it.** It is the chase button for the analyst on shift (**operations** role). It chases
+silent incidents, writing work notes and escalation cards, whatever that flag says. This is
+deliberate: the flag stops the *scheduled* chase, not a person who presses chase.
 
 ### What you should see
 
@@ -1080,15 +1089,16 @@ never delivered, even after the freeze lifts. The two drain lines keep the messa
 they can be reviewed and released later. `EMAIL_ENABLED=false` is the backstop in case a drain
 runs anyway.
 
-**Two things bypass the flags. Do not use either while frozen:**
+**One thing bypasses the flags. Do not use it while frozen:** **the demo script** (`noc-demo`,
+`make demo`, or `python -m noc_agents.scripts.demo_safaricom`). It drains the outbox directly
+after every event, whatever `OUTBOX_SYNC_DRAIN` says.
 
-1. **`POST /api/v1/scheduler/run/outbox_dispatch`.** Run by hand, that job drains the outbox
-   whatever `OUTBOX_DISPATCH_ENABLED` says. It does not check its own flag (section 11).
-2. **The demo script** (`noc-demo`, `make demo`, or `python -m noc_agents.scripts.demo_safaricom`).
-   It drains the outbox directly after every event, whatever `OUTBOX_SYNC_DRAIN` says.
+With `EMAIL_ENABLED=false` in place it would not reach the wire — but it would consume every
+queued email as a mock. Nothing you froze would ever be sent.
 
-With `EMAIL_ENABLED=false` in place, either one would not reach the wire — but it would consume
-every queued email as a mock. Nothing you froze would ever be sent.
+`POST /api/v1/scheduler/run/outbox_dispatch` is **not** a bypass. Run by hand, the job checks
+`OUTBOX_DISPATCH_ENABLED` itself. With it `false`, the job claims and sends nothing, and its
+summary reads `outbox_dispatch skipped: OUTBOX_DISPATCH_ENABLED is off` (section 11).
 
 **Check that nothing can leave** (status routes: **platform reader** role):
 

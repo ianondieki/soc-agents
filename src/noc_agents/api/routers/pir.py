@@ -53,6 +53,15 @@ def require_pir_enabled() -> None:
 
 _ENABLED = Depends(require_pir_enabled)
 
+#: §9.3's PIR row, read side: noc_analyst edits, shift_supervisor and duty_manager publish,
+#: management, planning and legal read, admin does everything -- and msp_coordinator and
+#: field_engineer have "—". Not READERS, which is the incident surface's tuple and admits
+#: both vendor roles while leaving legal out: a review's root causes, its went-poorly list and
+#: its vendor-attributed action items are exactly what an external MSP role should not read,
+#: and exactly what legal is in the row to read. (The known-error route at the bottom is an
+#: incident-workspace read of the problem record, not a review, and keeps READERS.)
+PIR_READERS: tuple[str, ...] = OPERATIONS + ("management", "planning", "legal")
+
 
 # ------------------------------------------------------------------------------- bodies
 
@@ -236,7 +245,7 @@ def _detail(session, pir: PostIncidentReviewRow) -> dict[str, Any]:
 # -------------------------------------------------------------------------------- reads
 
 
-@router.get("/pir", dependencies=[_ENABLED, Depends(require_role(*READERS))])
+@router.get("/pir", dependencies=[_ENABLED, Depends(require_role(*PIR_READERS))])
 def list_pir(status: str | None = None, limit: int = 100) -> list[dict]:
     """Reviews for this operator, newest first. ``?status=DRAFT`` feeds the awaiting-review counter."""
     session = get_session()
@@ -261,7 +270,7 @@ def list_pir(status: str | None = None, limit: int = 100) -> list[dict]:
 
 # Declared BEFORE "/pir/{pir_id}": FastAPI resolves in registration order, so the parametric
 # route would otherwise swallow this one and answer 404 for a review called "awaiting-review".
-@router.get("/pir/awaiting-review", dependencies=[_ENABLED, Depends(require_role(*READERS))])
+@router.get("/pir/awaiting-review", dependencies=[_ENABLED, Depends(require_role(*PIR_READERS))])
 def awaiting_review() -> dict:
     """The Wallboard's "PIRs awaiting review" counter (§7.7.7).
 
@@ -277,7 +286,7 @@ def awaiting_review() -> dict:
         session.close()
 
 
-@router.get("/pir/{pir_id}", dependencies=[_ENABLED, Depends(require_role(*READERS))])
+@router.get("/pir/{pir_id}", dependencies=[_ENABLED, Depends(require_role(*PIR_READERS))])
 def get_pir(pir_id: str) -> dict:
     session = get_session()
     try:
@@ -287,7 +296,7 @@ def get_pir(pir_id: str) -> dict:
         session.close()
 
 
-@router.get("/pir/{pir_id}/actions", dependencies=[_ENABLED, Depends(require_role(*READERS))])
+@router.get("/pir/{pir_id}/actions", dependencies=[_ENABLED, Depends(require_role(*PIR_READERS))])
 def list_actions(pir_id: str) -> list[dict]:
     session = get_session()
     try:

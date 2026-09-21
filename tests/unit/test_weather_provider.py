@@ -423,8 +423,11 @@ def test_external_signals_table_shape_and_schema_version(tmp_db):
     # look at the migration rather than let a schema change ride along unnoticed. It fired
     # on 4 -> 5 (Phase 4: vendors, clock events, PIR, regulatory, evidence packs, and the
     # known-error columns on problems), the migration was reviewed, and the literal moved.
+    # It fired again on 7 -> 8: the one non-additive step, the hitl_tasks rebuild that makes
+    # incident_id nullable and gives the table its own operator_id (see db/migrate.py
+    # _rebuild_hitl_tasks and tests/unit/test_migrate_rebuild.py), reviewed, literal moved.
     # Keep the canary; move it deliberately, with the reason recorded, every time.
-    assert session.execute(text("SELECT MAX(version) FROM schema_version")).scalar() == SCHEMA_VERSION == 7
+    assert session.execute(text("SELECT MAX(version) FROM schema_version")).scalar() == SCHEMA_VERSION == 8
 
     now = datetime(2026, 9, 17, 11, 0)
     common = dict(operator_id=OPERATOR, source=OPEN_METEO, source_url="mock://", region_code="NBI_W", fetched_at=now, valid_until=now, payload_json="{}", external_id="NBI_W:2026-09-17T11:00Z")

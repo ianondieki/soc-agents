@@ -35,6 +35,13 @@ is a product decision (§12), not something this module guesses.
 Pure functions over strings and mappings: no DB, no config objects, no channel enums (the
 envelope types land with §6.1 in another file), so renderers can call these with whatever
 they have in hand.
+
+**Envelope content (§6.1).** ``validate_content(alert)`` is the one check that reads a whole
+``NocAlert`` rather than a rendered channel body: it judges the ``content{}`` blocks — the
+only part a model may draft — BEFORE any renderer sees them. It is duck-typed over the
+envelope (the type is imported for annotations only) and reaches the operator clock only to
+format the next-update time exactly as the email renderer does, so the two cannot disagree.
+``services/alerts.build_alert`` calls it at the ``ai_content`` seam.
 """
 
 from __future__ import annotations
@@ -43,7 +50,10 @@ import json
 import os
 import re
 from dataclasses import dataclass, field
-from typing import Any, Iterable, Mapping, Sequence
+from typing import TYPE_CHECKING, Any, Iterable, Mapping, Sequence
+
+if TYPE_CHECKING:  # annotations only: this module stays importable without the envelope models
+    from noc_agents.domain.alerts import Facts, NocAlert
 
 from noc_agents.services.gsm7 import (
     GSM7_CONCAT_LIMIT,
@@ -53,10 +63,16 @@ from noc_agents.services.gsm7 import (
 )
 from noc_agents.services.redaction import EMAIL_RE, PHONE_RE, NameMap, scrub_text
 
+# The scrubber's own role-code rule (``RNIO-NBI-E`` / ``FE-MTK-01`` are matched whole, never by
+# part), so "is this a name" is decided ONE way here and in ``NameMap``. It is private to
+# ``llm/redaction.py`` and not re-exported by the ``services/redaction`` shim (not this lane's file).
+from noc_agents.llm.redaction import _looks_like_role_code
+
 __all__ = [
     "EMAIL_BODY_MAX_BYTES",
     "EMAIL_RECIPIENTS_PER_MESSAGE",
     "EMAIL_SUBJECT_MAX",
+    "FALLBACK_REASON_CONTENT_INVALID",
     "WHATSAPP_BODY_MAX",
     "WHATSAPP_BUTTON_MAX",
     "WHATSAPP_FOOTER_MAX",
@@ -64,7 +80,10 @@ __all__ = [
     "ValidationResult",
     "Violation",
     "contains_personal_data",
+    "content_fallback_reason",
+    "content_names",
     "personal_data_violations",
+    "validate_content",
     "validate_email",
     "validate_inapp",
     "validate_sms",
@@ -556,3 +575,246 @@ def validate_inapp(
         findings=tuple(findings),
         contains_personal_data=_personal_data_flag(findings),
     )
+
+
+# ------------------------------------------------------------- ENVELOPE CONTENT (§6.1)
+
+#: ``llm_calls.fallback_reason`` when model-drafted ``content{}`` fails ``validate_content`` and
+#: the deterministic template goes out instead. Same column, same style as ``llm/client.py``'s
+#: ``spend_cap`` / ``budget_exhausted``; ``content_fallback_reason`` appends the finding codes.
+FALLBACK_REASON_CONTENT_INVALID = "content_invalid"
+
+# "caused by" / "due to" as words, any case, any run of whitespace between them.
+_CAUSE_TRIGGER_RE = re.compile(r"\b(?:caused\s+by|due\s+to)\b", re.IGNORECASE)
+# Where a cause clause ends. Deliberately coarse ("3.5 km" also ends it): a clause cut short
+# can only make the check STRICTER, and a false positive costs the AI draft, never the message.
+_CLAUSE_END_RE = re.compile(r"[.!?;\n]")
+
+
+def _cause_clauses(text: str) -> list[str]:
+    """The words that FOLLOW each ``caused by`` / ``due to``, up to the end of the clause.
+
+    Only what follows counts, because that is where the cause is named: "POWER outage due to a
+    fibre cut" mentions POWER and still invents a fibre cut.
+    """
+    clauses = []
+    for match in _CAUSE_TRIGGER_RE.finditer(text):
+        rest = text[match.end():]
+        end = _CLAUSE_END_RE.search(rest)
+        clauses.append(rest[: end.start()] if end else rest)
+    return clauses
+
+
+# Priority and incident-number tokens, WHOLE: a word character or a hyphen on either side makes
+# it a different token — "P10" is not P1, "SFC-P20" is not P2, "INC0001234" is not INC000123.
+_PRIORITY_TOKEN_RE = re.compile(r"(?<![\w-])P[1-4](?![\w-])", re.IGNORECASE)
+_INCIDENT_TOKEN_RE = re.compile(r"(?<![\w-])INC\d+(?![\w-])", re.IGNORECASE)
+
+
+def _has_token(text: str, token: str, *, identifier: bool = False) -> bool:
+    """``token`` present as a whole token, not as part of a longer one ("14:17 EATS" is not "14:17 EAT")."""
+    edge = r"[\w-]" if identifier else r"\w"
+    return re.search(rf"(?<!{edge}){re.escape(token)}(?!{edge})", text) is not None
+
+
+def _blank_spans(text: str, spans: Iterable[str]) -> str:
+    """Each verbatim occurrence of each span replaced by spaces (offsets kept)."""
+    for span in spans:
+        if span:
+            text = text.replace(span, " " * len(span))
+    return text
+
+
+def _blank_words(text: str, words: Iterable[str]) -> str:
+    """Whole-word, any-case occurrences of each word replaced by spaces."""
+    for word in words:
+        if word:
+            text = re.sub(rf"(?<!\w){re.escape(word)}(?!\w)", lambda m: " " * len(m.group(0)), text, flags=re.IGNORECASE)
+    return text
+
+
+def _is_person_value(value: str | None) -> bool:
+    """Whether a name-ish field value can be a person's name at all.
+
+    Not a person: a role code by the redaction module's own rule (``FE-NBI-E-01``,
+    ``RNIO-NBI-E`` — the rule ``NameMap`` uses to decide what it matches whole), a single
+    all-caps token (the role and vendor vocabulary: ``MSP``, ``FIELD_ENGINEER``, ``EGYPRO``,
+    what a restore by role writes into ``restored_by``), an id with a colon (``policy:…``)
+    or an address, or an agent's author name (``…Agent``). Everything else is treated as a
+    person — the conservative side, since a false positive costs only the AI draft.
+    """
+    v = (value or "").strip()
+    if not v or _looks_like_role_code(v):
+        return False
+    if v.upper() == v and not any(ch.isspace() for ch in v):
+        return False
+    return ":" not in v and "@" not in v and not v.endswith("Agent")
+
+
+def _is_vendor_name(name: str, msp_code: str | None) -> bool:
+    """``EGYPRO`` or a desk named after the vendor (``EGYPRO Power Desk``): never a person."""
+    code = (msp_code or "").strip()
+    return bool(code) and re.match(rf"{re.escape(code)}(?!\w)", name.strip(), re.IGNORECASE) is not None
+
+
+def content_names(
+    *,
+    assignee_name: str | None,
+    assignee_is_person: bool,
+    msp_code: str | None,
+    people: Iterable[str | None] = (),
+) -> tuple[list[str], list[str]]:
+    """``(people, whole_names)`` a draft must not contain (§6.1 "NameMap tokens only").
+
+    A model drafts from redacted input — every value in ``redaction.PSEUDONYMISED``
+    (``assignee_name``, ``fe_name``, ``rnio_name``) arrives as a ``<PERSON_n>`` token — so a real
+    name in its output was un-redacted or invented. Two strengths, because the two cases differ:
+
+    * **people** (``fe_name``, ``rnio_name``, ``restored_by``, and the assignee when the
+      assignment is to a person) are matched like the scrubber matches them: the full name AND
+      each part of four letters or more, so "Kevin is on site" is caught for "Kevin Ochieng";
+    * **a non-person assignee** (an MSP or NOC queue) is matched as a WHOLE name only. Its parts
+      are words like "Power" or "Desk" that a compliant draft needs; but the whole value stays
+      forbidden because a HITL override (``main._apply_overrides``) can type a person's name into
+      ``assignee_name`` without changing ``assignee_type``. A vendor code or a desk named after
+      the vendor (``EGYPRO``, ``EGYPRO Power Desk``) is exempt entirely: ``Facts.msp_code`` is
+      "never a person".
+
+    Role codes and role vocabulary are never names (``_is_person_value``).
+    """
+    persons = [str(v).strip() for v in people if _is_person_value(v)]
+    whole: list[str] = []
+    name = (assignee_name or "").strip()
+    if name and not _is_vendor_name(name, msp_code) and _is_person_value(name):
+        (persons if assignee_is_person else whole).append(name)
+    return list(dict.fromkeys(persons)), list(dict.fromkeys(whole))
+
+
+def _names_from_facts(facts: Facts) -> tuple[list[str], list[str]]:
+    """``content_names`` from the envelope alone, for a caller that has no incident row.
+
+    The envelope carries one name field; whether the assignee is a person is read from
+    ``facts.assignee_role_token`` (``MSP-…`` and ``NOC-…`` are queues). ``build_alert`` passes
+    the incident's FE, RNIO and restorer names as well — see ``alerts.content_validation_context``.
+    """
+    token = (facts.assignee_role_token or "").upper()
+    return content_names(
+        assignee_name=facts.assignee_name,
+        assignee_is_person=not token.startswith(("MSP-", "NOC-")),
+        msp_code=facts.msp_code,
+    )
+
+
+def validate_content(
+    alert: NocAlert,
+    *,
+    next_update: str | None = None,
+    people: Iterable[str] | None = None,
+    whole_names: Iterable[str] | None = None,
+    quoted: Iterable[str] = (),
+) -> list[str]:
+    """§6.1 envelope-level check of every ``content{}`` block. Empty list = acceptable.
+
+    Each block (headline + body + instruction, per language) must:
+
+    * **carry the four facts** a reader acts on — the incident number, the priority, the region
+      label and the next-update time in EAT (``"14:02 EAT"``, formatted by
+      ``services/clock.fmt_eat`` exactly as the email renderer prints it; ``next_update``
+      overrides). Each is matched as a WHOLE token: "P10" does not carry P1, "INC0001234" does
+      not carry INC000123, "14:17 EATS" does not carry 14:17 EAT. A fact the envelope does not
+      have (no ``timing.expires``) is not required;
+    * **state no other priority and no other incident number** — a draft that says "P1" on a P2
+      incident is wrong even if it also says "P2" somewhere. The one exception is ``quoted``:
+      verbatim deterministic text the draft may repeat, whose tokens are not claims. At the
+      ``build_alert`` seam that is the severity engine's rationale, which names the intermediate
+      steps by construction (``users=3200→P4; site_type=HUB floor=P2; final=P2``) and is part of
+      the template narrative;
+    * **not invent a cause**: a clause introduced by ``caused by`` / ``due to`` must name the
+      incident's own ``facts.failure_domain``. "due to a fibre cut" on a POWER incident is a
+      model stating a root cause nobody observed, in a sentence that would reach customers
+      and the regulator. The rule is literal on purpose; it has no synonyms to argue about;
+    * **carry no personal data**: no MSISDN, no e-mail address, and none of the names from
+      ``content_names`` — ``people`` by full name and by part, ``whole_names`` whole. Default:
+      what the envelope itself carries (``_names_from_facts``). Before the name scan the tokens
+      the draft is REQUIRED or entitled to carry — incident number, priority, region label and
+      its words, next-update time, failure domain, vendor code — are blanked, so a name part can
+      never collide with them ("Power" in a desk name must not forbid the POWER the cause rule
+      demands).
+
+    ``content["en"]`` must exist (§6.1: English is mandatory). Findings are strings of the form
+    ``"<code> (<lang>): <reason>"``, and never quote the drafted text — they are stored in
+    ``llm_calls.fallback_reason``, and an audit record must not repeat what it found (§9.5).
+    """
+    findings: list[str] = []
+    content = alert.content or {}
+    if "en" not in content:
+        findings.append("content_missing_en (en): the English block is mandatory (§6.1)")
+    if next_update is None:
+        from noc_agents.services.clock import fmt_eat  # lazy: the operator clock, only when needed
+
+        next_update = fmt_eat(alert.timing.expires)
+    facts = alert.facts
+    number = alert.incident.incident_number
+    priority = alert.classification.priority
+    region = alert.area.region_label
+    domain = (facts.failure_domain or "").strip()
+    domain_re = re.compile(rf"\b{re.escape(domain)}\b", re.IGNORECASE) if domain else None
+    if people is None and whole_names is None:
+        people, whole_names = _names_from_facts(facts)
+    people, whole_names, quoted = list(people or ()), list(whole_names or ()), [q for q in quoted if q]
+    entitled = [number, priority, region, *(region or "").split(), next_update, domain, facts.msp_code or ""]
+    required = (
+        ("content_missing_incident_number", "incident number", number, True),
+        ("content_missing_priority", "priority", priority, True),
+        ("content_missing_region_label", "region label", region, False),
+        ("content_missing_next_update", "next update (EAT)", next_update, False),
+    )
+    for lang, block in content.items():
+        if block is None:
+            continue
+        text = "\n".join(part for part in (block.headline, block.body, block.instruction) if part)
+        for code, label, token, identifier in required:
+            if token and not _has_token(text, token, identifier=identifier):
+                findings.append(f"{code} ({lang}): does not carry the {label} {token!r}")
+        claims = _blank_spans(text, quoted)
+        other_priorities = sorted({m.upper() for m in _PRIORITY_TOKEN_RE.findall(claims)} - {priority.upper()})
+        if other_priorities:
+            findings.append(
+                f"content_conflicting_priority ({lang}): states {', '.join(other_priorities)} on a {priority} incident"
+            )
+        other_incidents = {m.upper() for m in _INCIDENT_TOKEN_RE.findall(claims)} - {number.upper()}
+        if other_incidents:
+            findings.append(
+                f"content_conflicting_incident_number ({lang}): names {len(other_incidents)} incident number(s) "
+                f"other than {number}"
+            )
+        for clause in _cause_clauses(text):
+            if domain_re is None or not domain_re.search(clause):
+                findings.append(
+                    f"content_invented_cause ({lang}): states a cause (caused by / due to) that does not "
+                    f"name the failure domain {domain or '(none)'!r}"
+                )
+                break  # one is enough to refuse the block; the rest would say the same thing
+        # Contacts on the text as written; names on the text with the entitled tokens blanked.
+        for violation in personal_data_violations(text, email_severity=ERROR):
+            if violation.fatal:
+                findings.append(f"content_{violation.code} ({lang}): {violation.message}")
+        names_text = _blank_words(text, entitled)
+        named = len(_name_hits(names_text, people)) + sum(
+            1 for n in whole_names if re.search(rf"(?<!\w){re.escape(n)}(?!\w)", names_text, re.IGNORECASE)
+        )
+        if named:
+            findings.append(f"content_personal_data_name ({lang}): body names {named} person(s) (§6.1: tokens only)")
+    return findings
+
+
+def content_fallback_reason(findings: Sequence[str]) -> str:
+    """``"content_invalid: <code> (<lang>), …"`` for ``llm_calls.fallback_reason``: codes only."""
+    codes: list[str] = []
+    for finding in findings:
+        code = finding.split(":", 1)[0].strip()
+        if code not in codes:
+            codes.append(code)
+    if not codes:
+        return FALLBACK_REASON_CONTENT_INVALID
+    return f"{FALLBACK_REASON_CONTENT_INVALID}: " + ", ".join(codes)

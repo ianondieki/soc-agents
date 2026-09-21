@@ -326,7 +326,18 @@ def test_email_external_audience_gets_the_list_unsubscribe_hint(cfg):
 # AI disclosure footer (§6.2)
 # --------------------------------------------------------------------------------------
 
-AI_EN = Content(headline="P2 Embakasi HUB down - mains failure", body="Model-drafted body.", instruction="Next update 14:02 EAT.")
+# §6.1-compliant drafts (validate_content runs at the build_alert seam): each carries the incident
+# number, its own priority, the region label and the envelope's next-update time for its row.
+AI_EN = Content(
+    headline="P2 INC000123 Embakasi HUB down - mains failure",
+    body="Model-drafted body. Region: Nairobi East.",
+    instruction="Next update 14:17 EAT.",
+)
+AI_EN_P4 = Content(  # the P4 row's next update is later: P4's note interval
+    headline="P4 INC000123 Embakasi HUB down - mains failure",
+    body="Model-drafted body. Region: Nairobi East.",
+    instruction="Next update 15:47 EAT.",
+)
 
 
 def test_no_footer_without_ai_assistance(cfg):
@@ -339,7 +350,7 @@ def test_ai_footer_on_email_names_the_approver_or_says_pending(cfg):
     assert pending.body.endswith(f"\nDrafted with AI assistance; reviewed by {AI_REVIEWER_PENDING}.\n")
     assert any("ai_disclosure_pending" in w for w in pending.warnings)
 
-    auto = render_email(_alert(cfg, row=dict(priority="P4"), ai_content={"en": AI_EN}))  # policy approver
+    auto = render_email(_alert(cfg, row=dict(priority="P4"), ai_content={"en": AI_EN_P4}))  # policy approver
     assert auto.body.endswith("\nDrafted with AI assistance; reviewed by policy:L2_GUARDED.\n")
     assert not any("ai_disclosure_pending" in w for w in auto.warnings)
 
@@ -510,7 +521,9 @@ def test_idempotency_key_is_the_spec_formula(cfg):
 
 def test_kiswahili_request_falls_back_to_english_and_says_so(cfg):
     sw = AudienceSpec(audience="RNIO", channels=["SMS", "EMAIL"], language="sw", recipients_ref="regions.NBI_E.rnio")
-    alert = _alert(cfg, audiences=[sw], ai_content={"en": AI_EN, "sw": Content(headline="Kituo", body="Mwili.")})
+    kituo = Content(headline="Kituo INC000123 P2 Nairobi East", body="Mwili. Taarifa ijayo 14:17 EAT.")  # §6.1-compliant
+    alert = _alert(cfg, audiences=[sw], ai_content={"en": AI_EN, "sw": kituo})
+    assert alert.content["sw"] == kituo  # the Kiswahili really is in the envelope; the renderer must withhold it
     for payload in render_for_audience(alert, sw):
         assert payload.language == "sw" and payload.language_fallback == "en" and payload.rendered_language == "en"
         assert any("language_fallback" in w for w in payload.warnings)

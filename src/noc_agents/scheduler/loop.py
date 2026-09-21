@@ -124,7 +124,26 @@ def default_owner() -> str:
 
 
 def outbox_dispatch_job(session: Session, settings: AppSettings) -> JobResult:
-    """``outbox_dispatch``: one :func:`drain_once` pass. Reported under ``graph_name="outbox"``."""
+    """``outbox_dispatch``: one :func:`drain_once` pass. Reported under ``graph_name="outbox"``.
+
+    Re-checks its own flag, like every other job, because the loop's check is not the only
+    way in: ``POST /api/v1/scheduler/run/{job}`` calls this function directly. Without the
+    re-check a manual run during a freeze (``OUTBOX_DISPATCH_ENABLED=false``) drained the
+    queue anyway -- and with ``EMAIL_ENABLED=false`` that marks queued mail SENT via the mock
+    provider, so it is never delivered (CONFORMANCE A-10). The card's ``default_enabled`` is
+    True, so an UNSET flag still drains exactly as before; only an explicit false skips.
+    The card is looked up by name at call time (``SCHEDULED_JOBS`` is built below this
+    function); a card that is not registered has no flag to honour, so it runs as before.
+    """
+    card = job_card("outbox_dispatch")
+    if card is not None and not job_enabled(card):
+        return JobResult(
+            summary=f"outbox_dispatch skipped: {card.enabled_env} is off",
+            rationale="Outbox dispatch is switched off; nothing was claimed, sent or reclaimed",
+            tools=(
+                {"name": "outbox.drain_once", "ok": True, "skipped": True, "reason": f"{card.enabled_env} is false"},
+            ),
+        )
     report = drain_once(session)
     return JobResult(
         summary=str(report),
@@ -151,6 +170,34 @@ def _weather_job() -> JobCard:
     from noc_agents.pollers.weather import WEATHER_JOB
 
     return WEATHER_JOB
+
+
+def _kmd_cap_job() -> JobCard:
+    """The Phase 3 KMD CAP poller's card, imported lazily for the same reason as the weather one."""
+    from noc_agents.pollers.kmd_cap import CAP_JOB
+
+    return CAP_JOB
+
+
+def _flood_job() -> JobCard:
+    """The Phase 3 GloFAS flood poller's card, imported lazily for the same reason as the weather one."""
+    from noc_agents.pollers.flood import FLOOD_JOB
+
+    return FLOOD_JOB
+
+
+def _scorecard_job() -> JobCard:
+    """The Phase 4 vendor scorecard card, imported lazily for the same reason as the weather one."""
+    from noc_agents.services.scorecard import SCORECARD_JOB
+
+    return SCORECARD_JOB
+
+
+def _memory_consolidate_job() -> JobCard:
+    """The Phase 4 Lane 4C memory consolidator card, imported lazily for the same reason as the weather one."""
+    from noc_agents.memory.consolidate import MEMORY_CONSOLIDATE_JOB
+
+    return MEMORY_CONSOLIDATE_JOB
 
 
 def _pir_job() -> JobCard:
@@ -210,6 +257,11 @@ SCHEDULED_JOBS: tuple[JobCard, ...] = (
     # and the poller re-checks the flag itself. Imported lazily: pollers.weather imports the
     # scheduler's JobCard, so a top-level import either way round is a cycle.
     _weather_job(),
+    # Phase 3 early warning, the WeatherRiskAgent's other two triggers (§5.3.13): KMD CAP
+    # warnings every 30 min, GloFAS river discharge daily. Same flag as the forecast poll
+    # (WEATHER_ENABLED, OFF); both cards carry default_enabled=False and both pollers re-check it.
+    _kmd_cap_job(),
+    _flood_job(),
     # Phase 4 PIR lane (§7.7.3): opens a DRAFT review for incidents that just restored or
     # closed and match a trigger rule. PIR_ENABLED defaults OFF and auto_open re-checks it.
     _pir_job(),
@@ -217,6 +269,15 @@ SCHEDULED_JOBS: tuple[JobCard, ...] = (
     # countdowns. It never sends: releasing a notice needs an APPROVED HITL card and a
     # separate supervisor act. REGULATORY_ENABLED defaults OFF.
     _regulatory_job(),
+    # Phase 4 Lane 4A vendor scorecards (§7.6.4): computes the last ENDED period's card for
+    # every vendor that has none yet, as DRAFT / SHADOW / WITHHELD, and stops. It never publishes:
+    # a named duty manager does that, and a released card's evidence is frozen by the model.
+    # These numbers decide vendor money. SCORECARDS_ENABLED defaults OFF and the job re-checks it.
+    _scorecard_job(),
+    # Phase 4 Lane 4C memory (§7.11.5): builds memory_episodes and the note index post-commit,
+    # never inside run_incident_lifecycle. Advisory only (G15): nothing it writes can change a
+    # decision. MEMORY_ENABLED defaults OFF and the job re-checks it.
+    _memory_consolidate_job(),
     # Phase 5 complaint intake (§7.8.3): reminders for complaints past follow_up_due_at
     # (counts and references only -- a reminder that quotes the complaint is a second copy
     # of it in an inbox) and the 24-month free-text reduction. COMPLAINTS_ENABLED is OFF.

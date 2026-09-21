@@ -41,8 +41,10 @@ from datetime import datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import func, select
 
 from noc_agents.api import auth
+from noc_agents.api.deps import _owned
 from noc_agents.config import get_settings
 from noc_agents.db.models import ExternalSignalRow, HitlTaskRow, IncidentRow, new_id, utcnow
 from noc_agents.db.models_maintenance import (
@@ -55,6 +57,7 @@ from noc_agents.domain.enums import HitlTaskType
 from noc_agents.realtime.hub import hub
 from noc_agents.services import maintenance as svc
 from noc_agents.services.clock_events import list_clock_events
+from noc_agents.services.hitl import sync_incident_hitl_scalars
 
 # A November night: 00:00–05:00 EAT on 2026-11-12, stored as naive UTC (21:00–02:00 the day
 # before). The three-hour offset is the point of using this instant rather than a round UTC
@@ -118,7 +121,14 @@ def _cfg():
 
 
 def _incident(session, *, number: str = "INC000901", **overrides) -> IncidentRow:
-    """The scoping anchor every maintenance HITL card needs (hitl_tasks.incident_id NOT NULL)."""
+    """An incident, for the tests that are genuinely ABOUT one: the stop-clock proposal, the
+    ENRICH tag, a window raised because of an outage, and "an unrelated outage is left alone".
+
+    Until schema_version 8 this was seeded by every test that raised a card, as the *scoping
+    anchor* the card had to borrow (``hitl_tasks.incident_id`` was NOT NULL and ownership was
+    derived through it). A card is owned directly now, so those tests no longer seed one — which
+    makes each of them run against a database with no incident in it at all.
+    """
     values = dict(
         operator_id="safaricom",
         incident_number=number,
@@ -333,7 +343,6 @@ def test_a_window_is_not_executable_on_the_strength_of_the_schedule_approval_alo
     status in which it cannot take a single customer off air.
     """
     _settings, session = tmp_db
-    inc = _incident(session)
     plan = _plan(session)
     window = _window(session)
     task, _created = svc.propose_task(session, plan, SITE, _cfg(), due_at=WINDOW_START)
@@ -346,7 +355,7 @@ def test_a_window_is_not_executable_on_the_strength_of_the_schedule_approval_alo
     assert window.status == "PROPOSED"
 
     # (2) The PROGRAMME is approved — every task in the window carries an APPROVED
-    #     APPROVE_SCHEDULE card, raised on the same anchor incident. The window is still not
+    #     APPROVE_SCHEDULE card, owned by the same operator. The window is still not
     #     approved to go ahead, and this is the line the whole lane turns on.
     schedule_card = svc.request_schedule_approval(session, task, plan, _cfg())
     _approve(session, schedule_card)
@@ -401,8 +410,110 @@ def test_a_window_is_not_executable_on_the_strength_of_the_schedule_approval_alo
     svc.schedule_window(session, window, _cfg(), actor=APPROVER)
     assert window.status == "SCHEDULED"
     assert window.approved_by == APPROVER
-    assert inc.id  # the anchor incident is only ever scoping; it is not the subject
     assert card.entity_type == "maintenance_window" and card.entity_id == window.id
+    # All seven refusals and the one success happened on a database with NO incident in it.
+    # Until schema v8 none of it could: every card above needed an incident to be filed against.
+    assert session.scalar(select(func.count()).select_from(IncidentRow)) == 0
+    for raised in (schedule_card, other_card, card):
+        assert (raised.incident_id, raised.operator_id) == (None, "safaricom")
+
+
+# ------------------------------------------------------- who owns a card (schema_version 8)
+#
+# These replace the anchor behaviour. Until v8 a card had to be filed against an incident —
+# the window's own, else *the operator's most recent incident of any status*, else no card at
+# all (NoAnchorIncident -> 503). Each test below is one rung of that ladder, as it stands now.
+
+
+def test_a_card_needs_no_incident_and_belongs_to_its_subjects_operator(tmp_db, on):
+    """Rung 3 of the old ladder — "no incident anywhere, so no card" — is gone."""
+    _settings, session = tmp_db
+    assert session.scalar(select(func.count()).select_from(IncidentRow)) == 0
+    plan = _plan(session)
+    window = _window(session)
+    task, _ = svc.propose_task(session, plan, SITE, _cfg(), due_at=WINDOW_START)
+    task.window_id = window.id
+    session.flush()
+
+    schedule_card = svc.request_schedule_approval(session, task, plan, _cfg())
+    window_card = svc.request_window_approval(session, window, _cfg())
+    session.flush()
+
+    assert (schedule_card.incident_id, schedule_card.operator_id) == (None, plan.operator_id)
+    assert (window_card.incident_id, window_card.operator_id) == (None, window.operator_id)
+    assert plan.operator_id == window.operator_id == "safaricom"
+    for raised in (schedule_card, window_card):
+        assert "anchor_incident_number" not in raised.proposed_payload
+        # Reachable under the operator's scope, which is what makes it approvable at all.
+        assert session.scalar(_owned(HitlTaskRow).where(HitlTaskRow.id == raised.id)) is raised
+
+
+def test_an_unrelated_incident_is_left_alone_by_a_maintenance_card(tmp_db, on):
+    """Rung 2 — "else the operator's most recent incident, of any status" — was the workaround,
+    and it did damage: Tuesday's generator service was filed against somebody's fibre cut, and
+    deciding the card on the ordinary HITL route re-derived THAT incident's ``hitl_state`` from
+    a card that was never about it. The most recent incident is now nobody's anchor."""
+    _settings, session = tmp_db
+    bystander = _incident(session, number="INC000911", status="IN_PROGRESS")
+    window = _window(session)
+
+    card = svc.request_window_approval(session, window, _cfg())
+    session.flush()
+
+    assert card.incident_id is None
+    assert session.scalars(select(HitlTaskRow).where(HitlTaskRow.incident_id == bystander.id)).all() == []
+    sync_incident_hitl_scalars(session, bystander)  # what main.py runs for a task's incident on claim/approve
+    assert (bystander.requires_hitl, bystander.hitl_state) == (False, "NONE")
+
+
+def test_a_window_raised_because_of_an_incident_carries_that_incident_and_only_that_one(tmp_db, on):
+    """Rung 1 was never a workaround and survives: ``maintenance_windows.incident_id`` says the
+    window exists BECAUSE of an incident, so the card is truthfully about it. The id arrives in
+    a request body, though, so it is believed only when it names an incident of the same
+    operator; anything else means "not about an incident", never "about that one anyway"."""
+    _settings, session = tmp_db
+    cause = _incident(session, number="INC000921")
+    _incident(session, number="INC000922", created_at=utcnow() + timedelta(hours=1))  # more recent; irrelevant
+    theirs = _incident(session, number="ATL-000001", operator_id="airtel")
+
+    because = _window(session, incident_id=cause.id)
+    card = svc.request_window_approval(session, because, _cfg())
+    assert (card.incident_id, card.operator_id) == (cause.id, "safaricom")
+
+    for n, claimed in enumerate(("no-such-incident", theirs.id), start=1):
+        window = _window(session, incident_id=claimed, starts_at=DRY_START + timedelta(days=n), ends_at=DRY_END + timedelta(days=n))
+        card = svc.request_window_approval(session, window, _cfg())  # no HitlTaskOwnershipError either
+        assert (card.incident_id, card.operator_id) == (None, "safaricom"), claimed
+    # The other operator's incident gained nothing from being named.
+    assert session.scalars(select(HitlTaskRow).where(HitlTaskRow.incident_id == theirs.id)).all() == []
+
+
+def test_no_anchor_incident_is_retired_but_the_name_still_resolves(on):
+    """``NoAnchorIncident`` can no longer happen, so nothing may raise it — and it must still
+    EXIST, because ``api/routers/maintenance.py`` names ``svc.NoAnchorIncident`` in two
+    ``except`` clauses. Python evaluates those only when some other exception reaches them, so
+    deleting the class would surface as an AttributeError in production, not at import."""
+    import ast
+    import inspect
+
+    assert issubclass(svc.NoAnchorIncident, RuntimeError)
+    assert "NoAnchorIncident" in svc.__all__
+    assert not hasattr(svc, "anchor_incident") and "anchor_incident" not in svc.__all__
+
+    tree = ast.parse(inspect.getsource(svc))
+    raised = [
+        ast.unparse(node.exc) for node in ast.walk(tree) if isinstance(node, ast.Raise) and node.exc is not None
+    ]
+    assert not [r for r in raised if "NoAnchorIncident" in r], "the retired exception is being raised again"
+    caught = [
+        ast.unparse(h.type) for node in ast.walk(tree) if isinstance(node, ast.Try) for h in node.handlers if h.type
+    ]
+    assert not [c for c in caught if "NoAnchorIncident" in c], "nothing in the service should still expect it"
+
+    # The router really does still name it: the day it stops, delete the class and this test.
+    from noc_agents.api.routers import maintenance as routes
+
+    assert inspect.getsource(routes).count("svc.NoAnchorIncident") == 2
 
 
 def test_the_two_card_types_are_the_enum_members_the_spec_names(tmp_db, on):
@@ -416,7 +527,6 @@ def test_a_region_or_network_window_needs_a_ca_approval_reference(tmp_db, on):
     """CA licence Condition 9.1 requires prior WRITTEN Authority approval (§7.5.6). D8 exempts
     SITE scope, so the same approved card schedules a SITE window and refuses a REGION one."""
     _settings, session = tmp_db
-    _incident(session)
     window = svc.create_window(
         session, _cfg(), {"scope": "REGION", "scope_ref": "MTK", "starts_at": DRY_START, "ends_at": DRY_END}, actor=RAISER
     )
@@ -433,7 +543,6 @@ def test_a_region_or_network_window_needs_a_ca_approval_reference(tmp_db, on):
 
 def test_a_site_window_needs_no_ca_reference(tmp_db, on):
     _settings, session = tmp_db
-    _incident(session)
     window = _window(session, starts_at=DRY_START, ends_at=DRY_END)
     _approve(session, svc.request_window_approval(session, window, _cfg()))
     svc.schedule_window(session, window, _cfg(), actor=APPROVER)
@@ -444,7 +553,6 @@ def test_an_invite_may_not_go_out_for_a_window_nobody_approved(tmp_db, on):
     """An iMIP invite tells named engineers to be at a site at 01:00. Sending it for an
     unapproved window is how the gate gets routed around socially rather than technically."""
     _settings, session = tmp_db
-    _incident(session)
     plan = _plan(session)
     window = _window(session)
     task, _ = svc.propose_task(session, plan, SITE, _cfg(), due_at=WINDOW_START)
@@ -466,7 +574,6 @@ def test_an_invite_may_not_go_out_for_a_window_nobody_approved(tmp_db, on):
 def test_moving_a_window_revokes_the_approval_to_go_ahead(tmp_db, on):
     """"Approve going ahead on Tuesday night" is not approval to go ahead on Thursday."""
     _settings, session = tmp_db
-    _incident(session)
     window = _window(session, starts_at=DRY_START, ends_at=DRY_END)
     _approve(session, svc.request_window_approval(session, window, _cfg()))
     svc.schedule_window(session, window, _cfg(), actor=APPROVER)
@@ -490,12 +597,12 @@ def test_moving_a_window_revokes_the_approval_to_go_ahead(tmp_db, on):
 def test_a_raised_card_queues_nothing(tmp_db, on):
     """Deliberate departure from the handover pattern, for the reason ``services/regulatory.py``
     gives: a HELD outbox row is one generic ``release_held`` away from PENDING, and that
-    releases by *incident* — so an unrelated approval on the anchor would promote a calendar
-    invite for work nobody approved. The right number of rows before approval is zero."""
+    releases by *incident* — so for a window that hangs off a real incident, that incident's own
+    broadcast approval would promote a calendar invite for work nobody approved. The right
+    number of rows before approval is zero."""
     from noc_agents.orchestrator.outbox import OutboxRow
 
     _settings, session = tmp_db
-    _incident(session)
     plan = _plan(session)
     window = _window(session)
     task, _ = svc.propose_task(session, plan, SITE, _cfg(), due_at=WINDOW_START)
@@ -556,7 +663,6 @@ def test_a_fresh_storm_forecast_refuses_until_a_named_human_overrides(tmp_db, on
     """Evidence exists and it says no, so the default answer is no — and the override is
     audited, not a flag some code can set."""
     _settings, session = tmp_db
-    _incident(session)
     now = DRY_START - timedelta(minutes=5)
     _forecast(session, "MTK", storm=True, now=now)
     window = _window(session, starts_at=DRY_START, ends_at=DRY_END)
@@ -686,7 +792,6 @@ def test_the_enrich_tag_is_evaluated_at_the_failure_time(tmp_db, on):
 def test_windows_may_overlap_while_proposed_but_not_once_scheduled(tmp_db, on):
     """Planning is iterative; two crews independently taking one site off air is not."""
     _settings, session = tmp_db
-    _incident(session)
     first = _window(session, starts_at=DRY_START, ends_at=DRY_END)
     second = _window(session, starts_at=DRY_START + timedelta(hours=1), ends_at=DRY_END + timedelta(hours=1))
     assert first.status == second.status == "PROPOSED", "overlapping PROPOSED windows are allowed"
@@ -703,7 +808,6 @@ def test_back_to_back_windows_are_not_an_overlap(tmp_db, on):
     """Half-open intervals: a window ending at 05:00 and one starting at 05:00 are how a night
     is actually split between two crews."""
     _settings, session = tmp_db
-    _incident(session)
     first = _window(session, starts_at=DRY_START, ends_at=DRY_END)
     second = _window(session, starts_at=DRY_END, ends_at=DRY_END + timedelta(hours=2))
     _approve(session, svc.request_window_approval(session, first, _cfg()))
@@ -731,7 +835,6 @@ def test_scope_containment_is_explicit(tmp_db, on):
 
 def test_a_region_window_blocks_a_site_window_inside_it(tmp_db, on):
     _settings, session = tmp_db
-    _incident(session)
     region = svc.create_window(
         session,
         _cfg(),
@@ -758,7 +861,6 @@ def test_planned_minutes_counts_an_overlapped_hour_once(tmp_db, on):
     covering the same hour exclude that hour once from availability, exactly as two stop clocks
     deduct it once."""
     _settings, session = tmp_db
-    _incident(session)
     a = _window(session, starts_at=DRY_START, ends_at=DRY_START + timedelta(hours=3))
     b = _window(session, starts_at=DRY_START + timedelta(hours=2), ends_at=DRY_START + timedelta(hours=4))
     for window in (a, b):
@@ -784,7 +886,6 @@ def test_cancelling_a_window_bumps_the_sequence_and_cancels_its_tasks(tmp_db, on
     """A METHOD:CANCEL whose SEQUENCE has not advanced may be ignored by the recipient's
     calendar, leaving a live entry for work that is not happening."""
     _settings, session = tmp_db
-    _incident(session)
     plan = _plan(session)
     window = _window(session)
     task, _ = svc.propose_task(session, plan, SITE, _cfg(), due_at=WINDOW_START)
@@ -802,7 +903,6 @@ def test_a_completed_window_marks_unfinished_work_missed(tmp_db, on):
     """MISSED is a real status and not an absence: "the window passed and the battery check did
     not happen" must be distinguishable from "nobody looked"."""
     _settings, session = tmp_db
-    _incident(session)
     plan = _plan(session)
     window = _window(session, starts_at=DRY_START, ends_at=DRY_END)
     task, _ = svc.propose_task(session, plan, SITE, _cfg(), due_at=DRY_START)
@@ -847,7 +947,6 @@ def test_one_live_task_per_plan_and_site(tmp_db, on):
 
 def test_the_plan_due_job_proposes_only_work_inside_the_notice_horizon(tmp_db, on):
     _settings, session = tmp_db
-    _incident(session)
     soon = _plan(session, interval_days=30)
     soon.created_at = utcnow() - timedelta(days=29)  # due tomorrow
     far = _plan(session, task_type="TOWER_STRUCTURAL", interval_days=1095)
@@ -855,6 +954,7 @@ def test_the_plan_due_job_proposes_only_work_inside_the_notice_horizon(tmp_db, o
 
     result = svc.plan_due(session, _settings)
     assert "proposed=1" in result.summary
+    assert "cards=1" in result.summary, "until schema v8 this was cards=0 on a database with no incidents"
     assert "not_due_yet=1" in result.summary
     tasks = session.scalars(svc.owned_tasks(session, "safaricom")).all()
     assert [t.plan_id for t in tasks] == [soon.id]
@@ -863,6 +963,7 @@ def test_the_plan_due_job_proposes_only_work_inside_the_notice_horizon(tmp_db, o
     card = session.get(HitlTaskRow, tasks[0].hitl_task_id)
     assert card.task_type == "APPROVE_SCHEDULE"
     assert card.entity_type == "maintenance_task" and card.entity_id == tasks[0].id
+    assert (card.incident_id, card.operator_id) == (None, "safaricom")
     assert card.created_by == svc.MAINTENANCE_RAISER, "an agent raiser can never equal the approver (§6.5)"
     assert "NOT approval to take the site off air" in card.proposed_payload["warning"]
 
@@ -871,7 +972,6 @@ def test_the_sweep_leaves_a_lapsed_unapproved_window_visible(tmp_db, on):
     """A window nobody approved in time is a planning failure. Auto-cancelling it would erase
     the evidence of it on the next tick."""
     _settings, session = tmp_db
-    _incident(session)
     window = _window(session, starts_at=utcnow() - timedelta(hours=2), ends_at=utcnow() - timedelta(hours=1))
     result = svc.window_sweep(session, _settings)
     assert "lapsed_unapproved=1" in result.summary
@@ -880,7 +980,6 @@ def test_the_sweep_leaves_a_lapsed_unapproved_window_visible(tmp_db, on):
 
 def test_the_sweep_completes_a_window_whose_night_is_over(tmp_db, on):
     _settings, session = tmp_db
-    _incident(session)
     window = _window(session, starts_at=utcnow() - timedelta(hours=6), ends_at=utcnow() - timedelta(hours=1))
     _approve(session, svc.request_window_approval(session, window, _cfg()))
     # The rain guard has no forecast and the window is not in season here only by accident of
@@ -942,19 +1041,10 @@ def test_the_ics_seam_carries_the_calendar_identity_and_no_addresses(tmp_db, on)
 def test_the_api_walks_a_window_from_proposal_to_scheduled(client):
     """End to end over HTTP, including that the window gate is a 403 until the right card is
     approved on the ordinary HITL surface."""
-    # An incident to anchor the HITL card on (hitl_tasks.incident_id is NOT NULL).
-    r = client.post(
-        "/api/v1/events",
-        json={
-            "source": "NMS",
-            "site_id": SITE,
-            "alarm_code": "POWER_FAIL",
-            "message": "battery low",
-            "severity": "MAJOR",
-            "users_affected": 1200,
-        },
-    )
-    assert r.status_code == 200, r.text
+    # Until schema v8 this test had to ingest an alarm first, purely so that there was an
+    # incident to file the card against; without one the request-approval route answered 503.
+    # A quiet network is exactly when maintenance gets planned, so the walk now starts empty.
+    assert client.get("/api/v1/incidents").json() == []
 
     r = client.post(
         "/api/v1/maintenance/plans",
@@ -982,11 +1072,14 @@ def test_the_api_walks_a_window_from_proposal_to_scheduled(client):
     assert r.status_code == 200, r.text
     card_id = r.json()["hitl_task_id"]
 
-    # The card is visible on the ordinary HITL inbox — that is the whole reason for anchoring.
+    # The card is visible on the ordinary HITL inbox with no incident behind it: it is owned
+    # through hitl_tasks.operator_id, not through an incident it was never about.
     pending = client.get("/api/v1/hitl/pending").json()
     assert card_id in [t["id"] for t in pending]
     card = next(t for t in pending if t["id"] == card_id)
     assert card["task_type"] == "APPROVE_MAINTENANCE_WINDOW"
+    assert card["incident_id"] is None and card["incident_number"] is None
+    assert "anchor_incident_number" not in card["proposed_payload"]
     assert card["proposed_payload"]["rain_season_flag"] == 1
     assert "off air" in card["proposed_payload"]["warning"]
 
@@ -998,6 +1091,7 @@ def test_the_api_walks_a_window_from_proposal_to_scheduled(client):
     # Cancelling advances the sequence for the METHOD:CANCEL.
     r = client.post(f"/api/v1/maintenance/windows/{window['id']}/cancel", json={"reason": "postponed"})
     assert r.status_code == 200 and r.json()["status"] == "CANCELLED" and r.json()["sequence"] == 1
+    assert client.get("/api/v1/incidents").json() == [], "and no incident was conjured along the way"
 
 
 def test_the_stop_clock_proposal_route_is_read_only(client):

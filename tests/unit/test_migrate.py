@@ -1,5 +1,11 @@
 """Phase 1 (spec §7.0.1): the generic additive migration, proven against a real v1 file.
 
+Since schema_version 8 the migration has ONE non-additive step, the rebuild of ``hitl_tasks``
+(``db/migrate.py``, "THE ONE EXCEPTION"). This file pins that a v1 file still gets all the way
+to the current version *through* it, and that it is the only destructive thing that runs; the
+rebuild's own proofs — populated data, injected failures, idempotency — are in
+``test_migrate_rebuild.py``.
+
 ``tests/fixtures/db/v1_baseline.db`` was generated ONCE from the pre-Phase-1
 ``models.py`` by calling the then-current ``init_db()`` against an empty file and
 inserting one incident (INC000001, Westlands Hub) with one MSP work note. It has the
@@ -43,7 +49,17 @@ NEW_TABLES = {
     "relationship_complaints", "subject_persons",                      # §7.8 Lane 5B
     # schema_version 7 (Phase 5) — capacity, §7.5.1 Lane 5A
     "capacity_observations", "capacity_advisories",
+    # schema_version 8 — the additive tables that ride on the same bump as the hitl_tasks rebuild
+    "memory_episodes",                                  # §7.11 memory M1 (db/models_memory.py)
+    "vendor_scorecards", "vendor_scorecard_lines",      # §7.6 vendor scorecards (db/models_scorecards.py)
 }
+# schema_version 8, the one exception to "additive": hitl_tasks is rebuilt so that incident_id
+# can be NULL. It appears in neither set above — it is a v1 table that is REPLACED, not added —
+# and these are, in order, the only non-additive statements a migration may ever report.
+HITL_REBUILD_DESTRUCTIVE = [
+    "DROP TABLE hitl_tasks",
+    "ALTER TABLE hitl_tasks__v8_rebuild RENAME TO hitl_tasks",
+]
 NEW_INCIDENT_COLUMNS = {
     "restored_source", "restored_by", "vendor_id", "context_json",
     "planned_maintenance", "access_risk", "child_site_ids_json", "assignment_confidence",
@@ -81,6 +97,15 @@ def _columns(path: Path, table: str) -> list[str]:
     con = sqlite3.connect(path)
     try:
         return [r[1] for r in con.execute(f"PRAGMA table_info({table})")]
+    finally:
+        con.close()
+
+
+def _notnull(path: Path, table: str, column: str) -> int | None:
+    """The column's NOT NULL flag in the live catalogue; None when there is no such column."""
+    con = sqlite3.connect(path)
+    try:
+        return next((r[3] for r in con.execute(f"PRAGMA table_info({table})") if r[1] == column), None)
     finally:
         con.close()
 
@@ -165,8 +190,24 @@ def test_v1_file_migrates_to_current_schema(tmp_path, restore_db_globals):
         "ALTER TABLE hitl_tasks ADD COLUMN entity_id TEXT",
         "ALTER TABLE hitl_tasks ADD COLUMN created_by TEXT",
         "ALTER TABLE hitl_tasks ADD COLUMN edited INTEGER DEFAULT 0",
+        # schema_version 8: the additive half of "a HITL task owns itself". Added to the OLD
+        # table on purpose, so that the rebuild below copies like for like, column for column.
+        "ALTER TABLE hitl_tasks ADD COLUMN operator_id VARCHAR(32)",
+        # ...and the non-additive half, which is an ALTER only because SQLite spells RENAME so.
+        "ALTER TABLE hitl_tasks__v8_rebuild RENAME TO hitl_tasks",
     ]
-    assert not any(s.startswith("DROP") or " RENAME " in s for s in report.applied)
+    # This line used to read "nothing destructive, ever". It now reads "exactly one thing, to
+    # exactly one table": the v8 rebuild of hitl_tasks, after the additive pass, in this order.
+    assert [s for s in report.applied if s.startswith("DROP") or " RENAME " in s] == HITL_REBUILD_DESTRUCTIVE
+    rebuild_at = report.applied.index("DROP TABLE hitl_tasks")
+    assert all(s.startswith(("CREATE INDEX ix_hitl_tasks_", "ALTER TABLE hitl_tasks__v8_rebuild RENAME"))
+               for s in report.applied[rebuild_at + 1:]), "nothing but the swap and its indexes follows the DROP"
+    assert report.applied[rebuild_at - 2].startswith("CREATE TABLE hitl_tasks__v8_rebuild (")
+    assert report.applied[rebuild_at - 1].startswith("INSERT INTO hitl_tasks__v8_rebuild (rowid, ")
+    # The v1 table said incident_id NOT NULL; the rebuilt one does not, and owns itself.
+    assert _notnull(db, "hitl_tasks", "incident_id") == 0 and _notnull(db, "hitl_tasks", "id") == 1
+    assert _notnull(db, "hitl_tasks", "operator_id") == 0  # nullable on purpose: see HitlTaskRow.operator_id
+    assert {"ix_hitl_tasks_incident_id", "ix_hitl_tasks_operator_id"} <= _indexes(db, "hitl_tasks")
 
     # Old rows still read through the ORM, and the new columns carry their DDL defaults.
     session = get_session()
@@ -255,8 +296,12 @@ def test_failure_rolls_back_everything_and_leaves_version_unchanged(tmp_path, mo
     with pytest.raises(RuntimeError, match="simulated crash"):
         init_db(_url(db), backup_dir=backups)
 
-    assert _tables(db) == V1_TABLES  # no new tables, no schema_version table
+    assert _tables(db) == V1_TABLES  # no new tables, no schema_version table -- and no half-built rebuild table
     assert len(_columns(db, "incidents")) == 68  # no new columns
+    # The stamp is the LAST thing in the transaction, so by the time it "crashed" the v8
+    # rebuild had already dropped and replaced hitl_tasks. All of that is undone too:
+    assert "operator_id" not in _columns(db, "hitl_tasks")
+    assert _notnull(db, "hitl_tasks", "incident_id") == 1
     assert _scalar(db, "SELECT incident_number FROM incidents") == "INC000001"
     assert len(list(backups.glob(f"v1_baseline.1-to-{SCHEMA_VERSION}.*.db"))) == 1  # the safety net stayed
 

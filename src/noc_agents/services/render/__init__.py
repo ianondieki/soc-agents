@@ -11,6 +11,7 @@ Modules
     inapp.py     ``render_inapp``       the dashboard card (§6.7 key set), serialised JSON in ``body``
     ledger.py    ``render_ledger_row``  the ShiftLedgerRow dict; ``render_ledger_cells`` reuses services/ledger.py
     whatsapp.py  ``render_whatsapp``    draft-only, behind ``WHATSAPP_ENABLED`` (default false); Phase 6 sends
+    statuspage.py ``render_statuspage`` ``{status, impact}`` in Statuspage's words; one dict per alert
 
 **The v1 fidelity rule (§6.2).** With ``ALERT_ENVELOPE_V2`` off (the default) the envelope carries
 ``site_down_alert@1`` — today's wording — and ``render_sms`` / ``render_email`` reproduce
@@ -61,6 +62,7 @@ __all__ = [
     "render_ledger_cells",
     "render_ledger_row",
     "render_sms",
+    "render_statuspage",
     "render_whatsapp",
     "resolve_language",
     "warning",
@@ -194,6 +196,7 @@ from noc_agents.services.render.email import render_email  # noqa: E402
 from noc_agents.services.render.inapp import render_inapp  # noqa: E402
 from noc_agents.services.render.ledger import render_ledger_cells, render_ledger_row  # noqa: E402
 from noc_agents.services.render.sms import render_sms  # noqa: E402
+from noc_agents.services.render.statuspage import render_statuspage  # noqa: E402
 from noc_agents.services.render.whatsapp import render_whatsapp  # noqa: E402
 
 _PAYLOAD_RENDERERS = {

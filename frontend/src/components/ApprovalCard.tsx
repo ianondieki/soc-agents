@@ -12,6 +12,7 @@ import {
   renderingSource,
   specFor,
 } from "../lib/hitl";
+import { hitlSubject } from "../lib/hitlSubject";
 
 /**
  * The side-by-side approval card.
@@ -104,7 +105,8 @@ export default function ApprovalCard({
     <article className={`hitl-card ${priority}`}>
       <header className="hitl-card-head">
         <span className={`pill ${priority}`}>{priority}</span>
-        <strong className="hitl-inc">{t.incident_number || t.incident_id || "unknown incident"}</strong>
+        {/* Since v8 a maintenance card has no incident; say what it IS about (lib/hitlSubject). */}
+        <strong className="hitl-inc">{hitlSubject(t)}</strong>
         <span className="chip hitl" title={typeof t.task_type === "string" ? t.task_type : "no task_type"}>
           {label}
         </span>

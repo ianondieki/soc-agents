@@ -948,14 +948,33 @@ def test_rotation_obeys_the_dry_run_posture_because_deleting_a_file_is_still_del
 # ------------------------------------------------------------------------- memory seam
 
 
-def test_the_memory_expiry_seam_is_named_but_not_wired_because_lane_4c_owns_it(tmp_db):
-    settings, session = tmp_db
-    report = hk.expire_memory(session, settings, hk.load_policy(), now=NOW)
+def test_the_memory_expiry_seam_is_wired_to_the_memory_lane_and_honours_its_two_rules(tmp_db, monkeypatch):
+    """The seam this module declared in Phase 4 is now filled, by memory M1.
 
+    This test used to be ``..._is_named_but_not_wired_because_lane_4c_owns_it`` and asserted the
+    seam was UNAVAILABLE. That was an accurate statement while Lane 4C had not been built, and the
+    wrong thing to pin permanently: as an invariant it forbade the memory lane from ever being
+    integrated, and failed the moment it was. It joins two earlier cases of the same pattern
+    (the complaints and capacity lanes each pinned their own job as absent from SCHEDULED_JOBS).
+
+    What is worth pinning is the contract the seam's docstring states: the lane's real
+    ``expire_memory`` is what gets called, it is called REGARDLESS of MEMORY_ENABLED (retention
+    must not depend on a read flag), and it is NOT called in dry run (its person-scoped branch is
+    a hard delete and it has no dry-run mode of its own).
+    """
+    from noc_agents.memory import consolidate as lane
+
+    settings, session = tmp_db
+    monkeypatch.setenv("MEMORY_ENABLED", "false")  # retention must run with reads switched off
     assert hk.MEMORY_EXPIRY_SEAM == "noc_agents.memory.consolidate:expire_memory"
-    assert report.available is False
-    assert report.called is False
-    assert "Lane 4C" in report.note
+
+    dry = hk.expire_memory(session, settings, hk.load_policy(), now=NOW, apply=False)
+    assert dry.available is True and dry.called is False
+
+    applied = hk.expire_memory(session, settings, hk.load_policy(), now=NOW, apply=True)
+    assert applied.available is True and applied.called is True
+    assert set(applied.counts) == {"episodes_pruned", "fts_rows_pruned"}
+    assert callable(lane.expire_memory)
 
 
 def test_the_memory_seam_is_not_called_in_dry_run_because_it_hard_deletes(tmp_db, monkeypatch):

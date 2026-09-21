@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- _provenance: captured_live=false.
+     NOT a live capture. Constructed by hand from the OASIS CAP 1.2 standard
+     (http://docs.oasis-open.org/emergency/cap/v1.2/CAP-v1.2-os.html). Every value is invented
+     for the tests. It exercises four things on purpose: (1) one free-text areaDesc listing
+     several counties ("Nairobi, Kiambu and Turkana"); (2) counties that sit in SEVERAL
+     Safaricom regions (Nairobi: NBI_E and NBI_W; Kiambu: NBI_E, NBI_W and MTK); (3) a real
+     county no Safaricom region covers (Turkana); (4) NO <expires> element, which CAP 1.2
+     allows, so the poller's documented hold rule applies. Severity Moderate: not a storm under
+     the section 7.3.1 rule. See README.md beside this file. -->
+<alert xmlns="urn:oasis:names:tc:emergency:cap:1.2">
+  <identifier>fixture-2026-05-06-nbi-strong-winds</identifier>
+  <sender>forecasting@meteo.go.ke</sender>
+  <sent>2026-05-06T15:00:00+03:00</sent>
+  <status>Actual</status>
+  <msgType>Alert</msgType>
+  <scope>Public</scope>
+  <info>
+    <language>en-US</language>
+    <category>Met</category>
+    <event>Strong Winds</event>
+    <urgency>Future</urgency>
+    <severity>Moderate</severity>
+    <certainty>Possible</certainty>
+    <senderName>Kenya Meteorological Department</senderName>
+    <headline>Strong south-easterly winds possible</headline>
+    <description>Winds of 25 knots or more are possible over the listed counties.</description>
+    <area>
+      <areaDesc>Nairobi, Kiambu and Turkana</areaDesc>
+    </area>
+  </info>
+</alert>

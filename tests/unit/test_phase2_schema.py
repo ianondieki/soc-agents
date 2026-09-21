@@ -147,13 +147,17 @@ def test_phase2_tables_and_columns_exist_after_init_db(tmp_path, restore_db_glob
         ]
         assert {"ix_delivery_receipts_outbox_id", "ix_delivery_receipts_provider_message_id"} <= _indexes(db, "delivery_receipts")
 
-        # Appendix A: hitl_tasks keeps every column it had and gains exactly five.
+        # Appendix A: hitl_tasks keeps every column it had and gains exactly five in Phase 2.
+        # schema_version 8 then adds a sixth, operator_id (the task's own owner, so that an
+        # approval card that is not about an incident can exist -- see db/migrate.py, "THE ONE
+        # EXCEPTION"). It is pinned here explicitly rather than by loosening the slice, so the
+        # Phase 2 five are still asserted exactly and any seventh column still fails this test.
         hitl = _columns(db, "hitl_tasks")
         assert hitl[:11] == [
             "id", "incident_id", "task_type", "proposed_payload_json", "status", "created_at",
             "resolved_by", "resolved_at", "claimed_by", "claimed_at", "reason",
         ]
-        assert tuple(hitl[11:]) == PHASE2_HITL_COLUMNS
+        assert tuple(hitl[11:]) == PHASE2_HITL_COLUMNS + ("operator_id",)
 
         # ...and nothing else moved: every mapped table, column and index is on disk.
         for table in Base.metadata.sorted_tables:

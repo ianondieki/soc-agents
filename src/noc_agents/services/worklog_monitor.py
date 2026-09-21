@@ -213,7 +213,26 @@ def chase_silent_incidents(session: Session, cfg: OperatorConfig) -> list[ChaseR
 
 
 def tick_job(session: Session, settings: AppSettings) -> JobResult:
-    """The scheduler's ``monitor_tick`` job: one chase pass, reported as a run step."""
+    """The scheduler's ``monitor_tick`` job: one chase pass, reported as a run step.
+
+    Re-checks ``SCHEDULER_MONITOR_ENABLED`` itself, like every other job, because
+    ``POST /api/v1/scheduler/run/{job}`` calls this function directly and bypasses the
+    loop's check (CONFORMANCE A-10). The card's ``default_enabled`` is True, so an UNSET
+    flag chases exactly as before; only an explicit false skips. ``POST /api/v1/monitor/tick``
+    does not come through here -- it calls :func:`chase_silent_incidents` directly and is
+    the analyst's deliberate override, so this flag does not gate it.
+    """
+    # Imported here, not at the top: the loop imports this module for ``tick_job``, so a
+    # top-level import the other way round is a cycle. By call time both are loaded.
+    from noc_agents.scheduler.loop import job_card, job_enabled
+
+    card = job_card("monitor_tick")
+    if card is not None and not job_enabled(card):
+        return JobResult(
+            summary=f"monitor_tick skipped: {card.enabled_env} is off",
+            rationale="Scheduled chase is switched off; no note written, nothing re-armed, no task raised",
+            tools=({"name": "flag_sla_watch", "ok": True, "skipped": True, "reason": f"{card.enabled_env} is false"},),
+        )
     results = chase_silent_incidents(session, settings.operator)
     notes = sum(1 for r in results if r.note_written)
     tasks = sum(1 for r in results if r.task_created)

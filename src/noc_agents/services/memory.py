@@ -1,24 +1,37 @@
-"""Agent memory, step M0 — "what happened here before", read straight off the tables we have.
+"""Agent memory, the read side — "what happened here before", and the advisory bundle.
 
-Spec §7.11 (Phase 4 Lane 4C, step M0). Nothing in the pipeline reads across incidents:
-the last outage at this site and what actually fixed it are already in ``incidents`` and
-``work_notes`` and are never recalled. M0 is the smallest honest version of that recall —
-**pure SQL over the two existing tables, no new table, no job, no LLM, no network**. The
-derived ``memory_episodes`` index, the FTS5 lexical tier, the vector tier, L2 facts, L3
-playbooks and L4 memos are M1-M4; this module is deliberately the part of §7.11.4 that can
-ship without a schema change, so the floor can say whether it is useful before anything is
-created that would have to be migrated away.
+Spec §7.11 (Phase 4 Lane 4C). Nothing in the pipeline reads across incidents: the last
+outage at this site and what actually fixed it are already in ``incidents`` and
+``work_notes`` and are never recalled. **M0** was the smallest honest version of that recall
+— pure SQL over the two existing tables, no new table, no job, no LLM, no network — so the
+floor could say whether it was useful before anything was created that would have to be
+migrated away. **M1** keeps every one of those functions and their behaviour and adds three
+things on top: the FTS5 lexical tier of the §7.11.4 cascade, the single ``recall_for_incident()``
+entry point, and ``advisory_block()``, the additive bundle the HITL card and the
+single-incident serializer render. The vector tier, L2 facts, L3 playbooks and L4 memos are
+still M2-M4 and are not here.
+
+The **write** side — ``consolidate_incident``, the ``memory_consolidate`` job and
+``expire_memory`` — lives in ``noc_agents.memory`` and is never imported by anything on the
+hot path (MEM5). That package's ``__init__`` records why the read code stayed here.
 
 WHAT THIS MODULE IS AND IS NOT
 ------------------------------
 * **Advisory and inert (MEM1/G15).** Nothing here is read by ``services/priority.py``,
   ``services/assignment.py``, ``services/composition.py``, ``services/numbering.py``,
   ``services/lifecycle.py``, ``agents/correlate.py``, ``agents/severity.py`` or
-  ``agents/assign.py``. The lifecycle does not import this module at all in M0 — the only
-  caller is ``api/routers/memory.py``, a read route. ``tests/unit/test_memory_recall.py``
-  pins that with an AST walk *and* with a byte-identical lifecycle run.
-* **Read-only.** No function here commits, flushes or adds a row. M0 touches nothing on the
-  hot path, so ``runner._fail_closed`` has nothing of ours to roll back (MEM5).
+  ``agents/assign.py``. From M1 there is exactly **one** hot-path caller — ``agents/hitl.py``,
+  which freezes :func:`advisory_for_incident` onto a task's ``proposed_payload`` at creation
+  (spec line 419: SupervisorAgent is the only hot-path reader). It reads; it decides nothing.
+  The gate is already computed before that call and is not re-read, no existing key is
+  touched, and with ``MEMORY_ENABLED`` unset the helper returns ``None`` and the payload is
+  byte-identical. ``tests/unit/test_memory_recall.py`` and
+  ``tests/unit/test_memory_advisory_is_inert.py`` pin that with an AST walk *and* with two
+  byte-identical lifecycle runs — one against a seeded store with the flag **on**.
+* **Read-only.** No function here commits, flushes, adds a row or issues DDL — the lexical
+  tier *checks* for ``memory_note_fts`` and degrades when it is absent; only the consolidator
+  creates it. So ``runner._fail_closed`` has nothing of ours to roll back (MEM5), which
+  ``test_memory_consolidation.py::test_a_fail_closed_run_writes_zero_memory_rows`` pins.
 * **Operator-scoped by construction (MEM10).** Every query starts from
   ``api.deps._owned(IncidentRow)``. Recall is the most dangerous surface in this system for
   cross-operator leakage precisely because it *deliberately* reaches across incidents:
@@ -33,18 +46,30 @@ WHAT THIS MODULE IS AND IS NOT
 
 WHERE THE FLAG IS CHECKED
 -------------------------
-``MEMORY_ENABLED`` (default **false**) is checked by the **entry points** — today that is
-``GET /api/v1/memory/sites/{site_id}``, in M1 also ``recall_for_incident()`` and the
-``advisory`` serializer key — and deliberately **not** inside the ``recall_*`` functions
-themselves. Two reasons: the spec's own signatures (§7.11.4) give ``recall_site_history``
-no config argument, and M1's consolidator calls these same functions to *build* the episode
-index, which must keep working independently of whether reads are switched on. Use
-:func:`memory_enabled` at the point where memory reaches a human, not below it.
+``MEMORY_ENABLED`` (default **false**) is checked by the **entry points** —
+``GET /api/v1/memory/sites/{site_id}``, :func:`recall_for_incident` and therefore
+:func:`advisory_for_incident` (the HITL card and the ``advisory`` serializer key) — and
+deliberately **not** inside the ``recall_*`` functions themselves. Two reasons: the spec's
+own signatures (§7.11.4) give ``recall_site_history`` no config argument, and the M1
+consolidator calls these same functions to *build* the episode index, which must keep
+working independently of whether reads are switched on. Use :func:`memory_enabled` at the
+point where memory reaches a human, not below it.
+``tests/unit/test_memory_recall.py`` pins that; adding a check inside ``recall_*`` would look
+like tightening and would quietly disable consolidation.
 
-M0 SEMANTICS WORTH KNOWING BEFORE YOU BUILD M1 ON THEM
------------------------------------------------------
-* An "episode" is an incident in ``RESTORED`` or ``CLOSED``. M1's ``memory_episodes`` is one
-  row per such incident, so the population is the same; only the storage differs.
+SEMANTICS WORTH KNOWING
+-----------------------
+* An "episode" is an incident in ``RESTORED`` or ``CLOSED``. ``memory_episodes`` is one row
+  per such incident, so the population is the same; only the storage differs.
+* **The exact tier still reads ``incidents``, not ``memory_episodes``.** §7.11.4 sketches it
+  as "an index scan on ``memory_episodes``", and it is deliberately not, for two reasons: the
+  derived index is a *cache*, so reading it would make "what happened here before" depend on
+  whether a background job has run since the ticket closed — a panel that is silently a tick
+  behind at 3 a.m. is worse than one query more — and every M0 test seeds ``incidents``
+  directly. ``memory_episodes`` is what the *aggregates* are computed over (the fault-class
+  median, the 3×IQR outlier rule), which is the job a population can do and a single row
+  cannot. The FTS tier does read its own index, because a lexical search has no live-table
+  equivalent.
 * ``restore_minutes`` is NULL unless ``restored_source`` is ``MARK_RESTORED`` or
   ``SUPERVISOR`` (§7.0.8, the M4 rule). ``VENDOR_NOTE_INFERRED`` is a regex hit on a vendor's
   free text (brief defect #4) and ``close_incident`` back-fills ``restored_at = closed_at``
@@ -52,29 +77,39 @@ M0 SEMANTICS WORTH KNOWING BEFORE YOU BUILD M1 ON THEM
   A wrong duration here becomes a wrong median in M2/M3, so it is refused at the source.
   The 3xIQR outlier rule of §7.11.7 needs a fault-class population and belongs to M1's
   consolidator, not to a per-row read.
-* Every free-text value that leaves this module passes ``llm/redaction.py`` — the *same*
-  ``NameMap`` seeding ``redact_incident`` uses (``assignee_name``/``fe_name``/``rnio_name``
-  plus the note authors), never a second name list. §7.11.8 rule 1: no person's name in any
-  memory output. The honest limit is recorded in ``redaction.py`` itself: there is no NER,
-  so a name typed into a note body that appears in none of those fields is not recognised.
+* Every free-text value that leaves this module passes ``llm/redaction.py`` — the one
+  ``NameMap``, never a second name list — seeded with every name the incident carries *and
+  has carried*: the four person columns (``restored_by`` included, review M11), the people its
+  ASSIGN step recorded, both sides of every reassign note (review M01) and the note authors.
+  §7.11.8 rule 1: no person's name in any memory output. Once housekeeping has pseudonymised
+  an incident its text is never re-derived (review M02). The honest limits: there is no NER,
+  so a name typed into a note body that appears in none of those records is not recognised,
+  and a three-letter first name used alone ("Ann") is not either (review M08) — both pinned
+  as strict xfails in ``tests/unit/test_memory_privacy.py``.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
+from functools import lru_cache
 from typing import Any, Callable, Iterable, Sequence
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import column, func, literal_column, or_, select, table
+from sqlalchemy import text as sql
 from sqlalchemy.orm import Session
 
 from noc_agents.api.deps import _owned, _settings
 from noc_agents.config import OperatorConfig
-from noc_agents.db.models import IncidentRow, WorkNoteRow, utcnow
+from noc_agents.db.models import AgentRunRow, AgentRunStepRow, IncidentRow, WorkNoteRow, utcnow
+from noc_agents.db.models_memory import MemoryEpisodeRow
 from noc_agents.domain.enums import IncidentStatus
 from noc_agents.llm.redaction import NameMap, scrub_text
+from noc_agents.memory.schema import FTS_TABLE, fts_available, fts_query, fts_terms
+from noc_agents.services.clock import z_utc
 from noc_agents.services.lifecycle import (
     RESTORE_SOURCE_MARK,
     RESTORE_SOURCE_SUPERVISOR,
@@ -84,16 +119,37 @@ from noc_agents.services.lifecycle import (
 log = logging.getLogger("noc_agents.services.memory")
 
 __all__ = [
+    "DEFAULT_MEMORY_SETTINGS",
+    "EPISODE_SUMMARY_MAX_CHARS",
     "MEMORY_ENABLED_ENV",
+    "MemoryBundle",
+    "MemoryHit",
+    "ScrubbedResolution",
     "SimilarEpisode",
     "SUMMARY_MAX_CHARS",
+    "advisory_block",
+    "advisory_for_incident",
+    "episode_closed_at",
     "episode_dict",
     "episode_dicts",
     "episode_statuses",
     "fault_class",
+    "fault_class_prior",
+    "episode_closed_at_expr",
+    "hit_dict",
+    "is_pseudonymised",
     "memory_enabled",
+    "memory_settings",
+    "name_map_for",
+    "outlier_bounds",
+    "person_name_history",
+    "quantile",
+    "recall_for_incident",
     "recall_similar_episodes",
     "recall_site_history",
+    "restore_minutes_population",
+    "scrubbed_resolution",
+    "trusted_restore_minutes",
 ]
 
 # --------------------------------------------------------------------------- flag
@@ -117,6 +173,51 @@ def memory_enabled() -> bool:
     demo flips it from ``.env`` between runs. Costs one ``os.getenv`` on the off path.
     """
     return (os.getenv(MEMORY_ENABLED_ENV) or "").strip().lower() in _TRUE
+
+
+# --------------------------------------------------------------------------- thresholds
+
+#: §7.11.3's ``memory:`` YAML block, as code defaults. The spec puts these in
+#: ``config/operators/<op>.yaml`` behind a ``memory: dict[str, Any]`` field on
+#: ``OperatorConfig`` — and ``OperatorConfig`` is a pydantic model with the default
+#: ``extra="ignore"``, so until that field exists a ``memory:`` block in the profile is
+#: **silently dropped**. The field is a one-line change to ``config.py``, which this lane does
+#: not own; :func:`memory_settings` therefore reads the block defensively and falls back to
+#: these, exactly as the ``correlation:``/``recurrence:`` blocks are read at their call sites.
+#: The day the field lands, the YAML starts winning with no change here.
+DEFAULT_MEMORY_SETTINGS: dict[str, Any] = {
+    # A prior with fewer than 3 episodes behind it is never returned. This is the primary
+    # defence against the confidently-wrong neighbour (§7.11.7): one vendor note cannot
+    # become a fact.
+    "min_support": 3,
+    "site_lookback_days": 365,
+    # Max facts injected into any advisory block or prompt. A budget, not a page size.
+    "recall_limit": 8,
+    # Max similar episodes on one card. §7.11.5 capability 7: ≤ 8 facts and ≤ 5 episodes
+    # (≈ 300-600 tokens) instead of a 15-25k-token history dump.
+    "similar_limit": 5,
+    # The prune horizon for the derived index (§7.11.3). NOT a retention rule for
+    # ``incidents``, whose retention is statutory (§9.4, licence Condition 12.2).
+    "episode_max_age_days": 730,
+}
+
+
+def memory_settings(cfg: OperatorConfig | None = None) -> dict[str, Any]:
+    """:data:`DEFAULT_MEMORY_SETTINGS` overlaid with the profile's ``memory:`` block.
+
+    Never raises and never returns a partial dict: a profile that sets one key still gets
+    every other default, so a threshold cannot become ``None`` half-way through a recall.
+    """
+    values = dict(DEFAULT_MEMORY_SETTINGS)
+    try:
+        block = getattr(cfg if cfg is not None else _settings().operator, "memory", None)
+        if isinstance(block, dict):
+            for key, value in block.items():
+                if key in values and isinstance(value, (int, float)):
+                    values[key] = value
+    except Exception:  # noqa: BLE001 — an unreadable profile must not break an advisory read
+        log.warning("memory thresholds fell back to defaults", exc_info=True)
+    return values
 
 
 # --------------------------------------------------------------------------- shape
@@ -146,10 +247,82 @@ class SimilarEpisode:
     score: float
 
 
+@dataclass(frozen=True)
+class MemoryHit:
+    """One derived fact, as §7.11.4 defines it. Frozen for the same reason as an episode.
+
+    Every hit carries ``support_count``, ``confidence``, ``as_of`` and ``evidence`` because
+    §7.11.4's rule is that memory never makes a naked assertion: a rendered fact reads "N
+    prior cases, median X, as of D", and the incident ids behind it are on the row so any
+    claim is traceable back to tickets.
+
+    M1 produces exactly one kind: the ``FAULT_CLASS`` restore-time prior computed over
+    ``memory_episodes`` (see :func:`fault_class_prior`). The ``SITE``, ``MSP``,
+    ``ALARM_CLUSTER`` and ``PARTY_TOKEN`` subjects are M3/M4a/Phase 6 and the corresponding
+    bundle tuples stay empty — present, so a renderer written today keeps working, and empty
+    rather than absent, so nobody mistakes "not built yet" for "nothing to say".
+    """
+
+    layer: str  # "L1" | "L2" | "L3" | "L4"
+    subject_type: str
+    subject_id: str
+    key: str
+    value: str
+    numeric: float | None
+    unit: str
+    support_count: int
+    confidence: float  # 0.0-1.0, deterministic
+    score: float
+    as_of: datetime  # always rendered next to the value
+    evidence: tuple[str, ...]  # incident ids, capped at EVIDENCE_MAX
+    source: str  # "deterministic" | "llm_draft" (nothing writes the second in v2 — MEM6)
+
+
+@dataclass(frozen=True)
+class MemoryBundle:
+    """Everything a caller may inject, already truncated to ``recall_limit`` (§7.11.4).
+
+    ``degraded=True`` means "memory is off, empty or errored — behave exactly as you would
+    have without it" (MEM4/G9). It is the default, so a bundle constructed with nothing in
+    it is honest by construction rather than by remembering to set a flag.
+    """
+
+    site: tuple[MemoryHit, ...] = ()
+    fault_class: tuple[MemoryHit, ...] = ()
+    party: tuple[MemoryHit, ...] = ()
+    correlation: tuple[MemoryHit, ...] = ()
+    playbook: tuple[Any, ...] = ()  # PlaybookStep — M2
+    similar: tuple[SimilarEpisode, ...] = ()
+    memos: tuple[Any, ...] = ()  # ShiftMemo — M3
+    token_estimate: int = 0
+    degraded: bool = True
+
+
+@dataclass(frozen=True)
+class ScrubbedResolution:
+    """"What fixed it", scrubbed, plus which note it came from — the consolidator's input.
+
+    A value rather than a bare string because the consolidator has to store
+    ``restoring_note_id`` beside the text, and re-deriving "which note was that?" a second
+    time is how the two end up disagreeing.
+    """
+
+    text: str
+    restoring_note_id: str | None
+
+
 #: §7.11.3 caps evidence text at 240 characters. It is a cap on how much attacker-reachable
 #: vendor free text can travel with a recall hit (MEM9), not a display preference, so the
 #: same number is applied here even though M0 renders to a human rather than to a prompt.
 SUMMARY_MAX_CHARS = 240
+
+#: What ``memory_episodes.resolution_summary`` stores (§7.11.3). Larger than the recall cap
+#: on purpose: the stored row is the derivation, the 240 is the *evidence* cap applied on the
+#: way out, and re-deriving a longer summary later must not need a backfill.
+EPISODE_SUMMARY_MAX_CHARS = 500
+
+#: Incident ids carried on a :class:`MemoryHit` (§7.11.7, "evidence lists capped at 20").
+EVIDENCE_MAX = 20
 
 #: An episode is a finished incident. ``CANCELLED`` is excluded deliberately: a cancelled
 #: ticket is a NOC bookkeeping action, not something that happened at the site, and counting
@@ -179,13 +352,35 @@ _PRIORITY_RANK: dict[str, float] = {"P1": 1.0, "P2": 0.75, "P3": 0.5, "P4": 0.25
 #: so 1.0 means "a P1-scale outage" rather than an arbitrary constant.
 _DEFAULT_USERS_FULL_SCALE = 500_000
 
-#: Relevance term for the exact tier (§7.11.4). M1 adds 0.7 for "same fault class, different
-#: site" and the bm25/cosine tiers below that; an exact hit must always outrank both.
+#: Relevance term for the exact tier (§7.11.4). 0.7 is "same fault class, different site"
+#: (M2's playbook recall); the bm25 tier sits below that, and an exact hit outranks both.
 _RELEVANCE_EXACT = 1.0
 
-#: ``match_reason`` strings. Fixed vocabulary so the UI and M1's ranking agree on them.
+#: The lexical tier's relevance ceiling. Normalised bm25 is mapped into ``(0, 0.65]`` so it
+#: can never reach the 0.7 that "same fault class, different site" will mean — a *lexical*
+#: neighbour is a weaker claim than a structural one, whatever its raw score says.
+_RELEVANCE_FTS_MAX = 0.65
+
+#: Retrieval tiers (§7.11.4). These are a **hard ordering key**, not a weight: the ranking
+#: sorts on ``(tier, score, closed_at)``, so an exact hit outranks a lexical hit regardless
+#: of raw similarity. Folding the tier into the score instead would let a very recent, very
+#: large lexical neighbour overtake an exact hit through the recency and impact terms — and
+#: the confidently-wrong neighbour (§7.11.7) is the failure mode this whole cascade is
+#: designed against: the similarly-worded incident about a different site that sends an
+#: engineer to the wrong fault class.
+TIER_EXACT = 2
+TIER_LEXICAL = 1
+TIER_VECTOR = 0  # M4c, only with MEMORY_EMBEDDINGS_ENABLED; nothing produces it today
+
+#: ``match_reason`` strings. Fixed vocabulary so the UI and the ranking agree on them.
 MATCH_SAME_SITE = "same site"
 MATCH_SAME_SITE_AND_FAULT_CLASS = "same site + same fault class"
+#: §7.11.4's example wording, e.g. ``"fts: mains, generator"`` — the terms that were searched
+#: for, so a reader can see *why* a different site's incident is on their card.
+MATCH_FTS_PREFIX = "fts: "
+#: Terms named in a lexical ``match_reason``. Three is enough to explain the hit; the whole
+#: query would push the ticket text off a card.
+_MATCH_REASON_TERMS = 3
 
 #: What a missing ``failure_domain`` / ``site_type`` canonicalises to — the same defaults the
 #: ORM columns carry (``db/models.py``), so a row written before a column existed and a row
@@ -308,21 +503,184 @@ def _restore_minutes(inc: IncidentRow) -> int | None:
     return int((inc.restored_at - start).total_seconds() // 60)
 
 
-def _name_map(inc: IncidentRow, notes: Sequence[WorkNoteRow]) -> NameMap:
-    """The redaction ``NameMap`` for one incident, seeded exactly as ``redact_incident`` does.
+def trusted_restore_minutes(inc: IncidentRow) -> int | None:
+    """Public door onto :func:`_restore_minutes` — the §7.0.8 M4 refusal rule, once.
+
+    Exists so ``memory/consolidate.py`` cannot re-implement the four refusals. A second
+    implementation of "is this duration trustworthy?" that drifts from this one would put a
+    number the recall path refuses to show into the median the recall path *does* show.
+    """
+    return _restore_minutes(inc)
+
+
+def episode_closed_at_expr():
+    """Public door onto :func:`_closed_at_expr`, for the consolidator's 24-month horizon filter
+    (review M12): the horizon must be measured by the same clock ``expire_memory`` prunes on,
+    or the backfill would rebuild what the prune just removed."""
+    return _closed_at_expr()
+
+
+def episode_closed_at(inc: IncidentRow) -> datetime:
+    """Public door onto :func:`_closed_at`: ``COALESCE(closed_at, restored_at, created_at)``.
+
+    Shared with the consolidator for the same reason as above — the stored
+    ``memory_episodes.closed_at`` must be the value the live-table recall orders by, or an
+    episode could sit inside a window by one clock and outside it by another.
+    """
+    return _closed_at(inc)
+
+
+#: The person columns of ``incidents`` (§9.4's personal class for this table, the same four
+#: ``config/retention.yaml`` pseudonymises). ``restored_by`` is one of them (review M11): the
+#: spec lists it as personal data and ``services/pir.py`` already treats it as a name, so a
+#: restore attributed to someone who wrote no note must not leave their name in memory.
+_PERSON_FIELDS: tuple[str, ...] = ("assignee_name", "fe_name", "rnio_name", "restored_by")
+
+# ``lifecycle.reassign_incident`` writes one work note per reassignment with
+# ``source="reassign"`` and the body ``f"Reassigned {old} → {new} ({type}). Reason: {reason}"``.
+# That note is the ONLY durable record of an assignee the incident no longer carries: the
+# column is overwritten, the realtime event is not persisted, and nothing else logs it. These
+# three anchors are that template's own literals; ``_reassigned_names`` reads the two
+# structured slots between them and never the free-text reason. They are a copy of a string
+# another module owns, so ``tests/unit/test_memory_privacy.py`` drives the real
+# ``reassign_incident`` and fails the day the template changes shape.
+_REASSIGN_SOURCE = "reassign"
+_REASSIGN_PREFIX = "Reassigned "
+_REASSIGN_ARROW = " → "
+_REASSIGN_TYPE_OPEN = " ("
+
+#: The ASSIGN node's step row (``agents/assign.py``) records who the pipeline first assigned:
+#: ``output_summary = f"{assignee_type}:{responsible_party}"`` and a rationale built by
+#: ``services/assignment.assign`` as ``"; "``-joined ``key=value`` bits, of which these keys
+#: carry a person (``"FE=..."`` on an FE assignment, ``"FE support=...; RNIO=..."`` on an MSP
+#: one). It is the durable record of the ORIGINAL fe_name/rnio_name, which a later reassign or
+#: a housekeeping pseudonymisation overwrites on the incident row itself.
+_ASSIGN_NODE = "ASSIGN"
+_ASSIGN_PERSON_KEYS = frozenset({"FE", "FE support", "RNIO"})
+
+
+def _reassigned_names(notes: Sequence[WorkNoteRow]) -> list[str]:
+    """Both names in every reassign note — the assignee handed away, and the one received.
+
+    Read from the note's structure (the ``source`` column and the template's fixed literals),
+    not by guessing at names in prose. Both sides are taken because in A → B → C, B is on
+    neither the current row nor the first ASSIGN record, only in the two reassign notes. The
+    literal ``"None"`` is what the f-string writes for an empty assignee and is skipped.
+    """
+    found: list[str] = []
+    for note in notes:
+        if (getattr(note, "source", None) or "") != _REASSIGN_SOURCE:
+            continue
+        body = note.body or ""
+        if not body.startswith(_REASSIGN_PREFIX):
+            continue
+        old, arrow, rest = body[len(_REASSIGN_PREFIX):].partition(_REASSIGN_ARROW)
+        if not arrow:
+            continue
+        new, _paren, _tail = rest.partition(_REASSIGN_TYPE_OPEN)
+        found.extend(v.strip() for v in (old, new) if v.strip() and v.strip() != "None")
+    return found
+
+
+def _assigned_names(output_summary: str | None, rationale: str | None) -> list[str]:
+    """The people named in one ASSIGN step record (see :data:`_ASSIGN_PERSON_KEYS`)."""
+    found: list[str] = []
+    _type, sep, party = (output_summary or "").partition(":")
+    if sep and party.strip():
+        found.append(party.strip())
+    for bit in (rationale or "").split("; "):
+        key, eq, value = bit.partition("=")
+        if eq and key.strip() in _ASSIGN_PERSON_KEYS and value.strip():
+            found.append(value.strip())
+    return found
+
+
+def person_name_history(session: Session, incident_ids: Sequence[str]) -> dict[str, list[str]]:
+    """Every person the pipeline recorded as assigned to each incident, from its ASSIGN steps.
+
+    Review M01: a NameMap seeded only from the *current* person columns forgets everyone the
+    incident used to carry, so their names — in the system's own reassign note, or typed by a
+    human before the handover — reached memory verbatim. This is the half of the history that
+    lives in ``agent_run_steps`` (mirrored in each step's audit row); the reassign notes are
+    the other half and are read from the notes the caller already holds.
+
+    One query for all ids. ``agent_run_steps`` carries no ``operator_id``; ownership is the
+    caller's: every id here came out of an ``_owned`` statement, exactly as for
+    :func:`_notes_by_incident`. Degrades to ``{}`` — a missing history makes the scrub weaker,
+    never the read fail.
+    """
+    ids = [i for i in incident_ids if i]
+    if not ids:
+        return {}
+    try:
+        rows = session.execute(
+            select(AgentRunRow.incident_id, AgentRunStepRow.output_summary, AgentRunStepRow.rationale)
+            .join(AgentRunStepRow, AgentRunStepRow.run_id == AgentRunRow.id)
+            .where(AgentRunRow.incident_id.in_(ids), AgentRunStepRow.node_name == _ASSIGN_NODE)
+        ).all()
+    except Exception:  # noqa: BLE001 — history is a strengthener, not a dependency
+        log.warning("memory: assignment history unavailable", exc_info=True)
+        return {}
+    history: dict[str, list[str]] = {}
+    for incident_id, output_summary, rationale in rows:
+        history.setdefault(incident_id, []).extend(_assigned_names(output_summary, rationale))
+    return history
+
+
+def _name_map(
+    inc: IncidentRow, notes: Sequence[WorkNoteRow], history: Sequence[str] = ()
+) -> NameMap:
+    """The redaction ``NameMap`` for one incident: every name it carries AND has carried.
 
     §7.11.8 rule 1 and §7.7.6: role tokens, never names. Reusing the one ``NameMap``
     implementation — rather than writing a second name list here — is the point: a name that
     the outbound-LLM path knows how to hide is a name this path hides too, and a fix to one
-    is a fix to both. Note authors are registered as well, because "Kevin took over" in a
-    note body is only scrubbed once "Kevin Ochieng" is a known name.
+    is a fix to both. Seeded, in this order (the order fixes the token numbers):
+
+    * the four person columns as they are now (:data:`_PERSON_FIELDS`) — ``redact_incident``'s
+      three plus ``restored_by`` (review M11). A ``restored_by`` that is only a role label
+      (``by=author or author_role`` in ``lifecycle``, so ``"MSP"`` when nobody signed the
+      note) is skipped when it equals a note's ``author_role``: registering the word "MSP" as
+      a person would tokenise every mention of the ordinary NOC word;
+    * ``history`` — the people the ASSIGN step recorded (:func:`person_name_history`);
+    * both sides of every reassign note (:func:`_reassigned_names`) — review M01;
+    * every note author, because "Kevin took over" in a note body is only scrubbed once
+      "Kevin Ochieng" is a known name.
+
+    The honest limits that remain: there is no NER, so a person named only in prose and in
+    none of these records is not recognised (the strict xfail in ``test_memory_privacy.py``);
+    ``NameMap`` registers name *parts* of four letters or more, so a three-letter first name
+    alone ("Ann", "Ian") is not scrubbed (review M08, the second strict xfail there); and an
+    ``fe_name`` changed by a reassign that did not also change the assignee is recorded
+    nowhere the pipeline keeps, so it cannot be recovered here.
     """
     names = NameMap()
-    for field in ("assignee_name", "fe_name", "rnio_name"):
-        names.token_for(getattr(inc, field, None))
+    roles = {(getattr(n, "author_role", None) or "").strip().upper() for n in notes}
+    for field in _PERSON_FIELDS:
+        value = getattr(inc, field, None)
+        if field == "restored_by" and (value or "").strip().upper() in roles:
+            continue
+        names.token_for(value)
+    for name in history:
+        names.token_for(name)
+    for name in _reassigned_names(notes):
+        names.token_for(name)
     for note in notes:
         names.token_for(getattr(note, "author", None))
     return names
+
+
+def _restoring_note(notes: Sequence[WorkNoteRow]) -> WorkNoteRow | None:
+    """The newest work note that *declares* a restore, or ``None``.
+
+    Uses ``lifecycle.note_declares_restored`` — the same predicate (negation guard included)
+    the lifecycle uses to flip the status — so the note memory calls "the fix" is always the
+    note the lifecycle called "the restore". ``notes`` arrive newest-first.
+    """
+    for note in notes:
+        if (note.body or "").strip() and note_declares_restored(note.body or ""):
+            return note
+    return None
 
 
 def _resolution_text(inc: IncidentRow, notes: Sequence[WorkNoteRow], names: NameMap) -> str:
@@ -342,12 +700,139 @@ def _resolution_text(inc: IncidentRow, notes: Sequence[WorkNoteRow], names: Name
     """
     raw = (inc.resolution_summary or "").strip()
     if not raw:
-        for note in notes:  # notes arrive newest-first
-            body = (note.body or "").strip()
-            if body and note_declares_restored(body):
-                raw = body
-                break
+        note = _restoring_note(notes)
+        raw = (note.body or "").strip() if note is not None else ""
     return (scrub_text(raw, names) or "")[:SUMMARY_MAX_CHARS]
+
+
+def name_map_for(
+    inc: IncidentRow, notes: Sequence[WorkNoteRow], *, history: Sequence[str] = ()
+) -> NameMap:
+    """Public door onto :func:`_name_map` for the consolidator (§7.11.8: one name list).
+
+    The consolidator scrubs several fields of one incident — the resolution text and every
+    note body it indexes — and they must all be scrubbed with the **same** map, or the same
+    engineer becomes ``<PERSON_1>`` in one row and ``<PERSON_2>`` in the next and a reader
+    cannot tell they are the same person. One map per incident, built here; ``history`` is
+    that incident's entry from :func:`person_name_history`.
+    """
+    return _name_map(inc, notes, history)
+
+
+# ------------------------------------------------------------ pseudonymised incidents (M02)
+#
+# Housekeeping's ``pseudonymise_personal_fields`` replaces an old incident's person columns
+# with role tokens rendered from ``config/retention.yaml`` (``fe_name`` → ``"FE-{region_code}"``)
+# and leaves ``work_notes.body`` and ``resolution_summary`` as they were — work_notes is
+# deliberately unlisted there. After that, a NameMap built from the row no longer knows the
+# names that are still sitting in the free text, so re-deriving anything from that text
+# writes the real names back (review M02). The rule this lane follows is therefore simple:
+# **once an incident is pseudonymised, its free text is never re-derived** — the consolidator
+# keeps whatever scrubbed text the episode already had, and recall shows the episode's stored
+# summary or nothing.
+#
+# There is no "pseudonymised" flag column; housekeeping's own marker is that a person column
+# equals the token its policy template renders for that row — exactly the comparison
+# ``housekeeping._pseudonymise_row`` makes to skip a row it already did. The same policy and
+# the same ``role_token`` renderer are used here, so the two can never disagree about which
+# rows are done.
+
+#: What every shipped template in ``config/retention.yaml`` ends with. Used only when the
+#: policy file cannot be read, so that an unreadable policy makes this check *more* cautious
+#: (a person column shaped like ``PREFIX-<region_code>`` counts as a token) rather than off.
+_FALLBACK_TOKEN_SUFFIX = "-{region_code}"
+
+
+@lru_cache(maxsize=8)
+def _pseudonym_templates(path: str, mtime: float) -> tuple[tuple[str, str], ...]:
+    """``(column, template)`` pairs for ``incidents`` from the retention policy, cached per file
+    version (path + mtime), so the YAML is parsed once per process, not once per card."""
+    from noc_agents.services.housekeeping import load_policy  # lazy: a heavy, write-side module
+
+    entry = load_policy(path).tables.get("incidents")
+    return tuple((str(c), str(t)) for c, t in (entry.role_tokens.items() if entry else ()))
+
+
+def is_pseudonymised(inc: Any) -> bool:
+    """True when housekeeping has already replaced any of this incident's person columns.
+
+    Never raises. If the policy cannot be read the answer errs towards True for any person
+    column shaped like a role token for the row's own region — refusing to re-derive text is
+    the direction that cannot write a name.
+    """
+    from noc_agents.services.housekeeping import default_policy_path, role_token
+
+    row = {c.name: getattr(inc, c.name, None) for c in IncidentRow.__table__.columns}
+    try:
+        path = default_policy_path()
+        templates = _pseudonym_templates(str(path), path.stat().st_mtime)
+    except Exception:  # noqa: BLE001 — unreadable policy: fall back to the shape of a token
+        region = (row.get("region_code") or "UNKNOWN").strip() or "UNKNOWN"
+        suffix = _FALLBACK_TOKEN_SUFFIX.format(region_code=region)
+        return any(
+            str(row.get(f) or "").endswith(suffix) and str(row.get(f)) != suffix for f in _PERSON_FIELDS
+        )
+    for column, template in templates:
+        current = row.get(column)
+        if current is None or not str(current).strip():
+            continue
+        try:
+            if str(current) == role_token(template, row):
+                return True
+        except Exception:  # noqa: BLE001 — a malformed template cannot prove anything either way
+            continue
+    return False
+
+
+def _stored_summaries(session: Session, incident_ids: Sequence[str]) -> dict[str, str]:
+    """The already-scrubbed ``resolution_summary`` each episode stored, keyed by incident.
+
+    What recall shows for a pseudonymised incident instead of re-deriving from source text.
+    Operator-scoped through ``_owned``; ``memory_episodes.incident_id`` is UNIQUE, so this is
+    one index probe per id.
+    """
+    found: dict[str, str] = {}
+    for incident_id in (i for i in incident_ids if i):
+        # One equality probe per id, not ``IN (...)``: with the operator clause beside an IN
+        # list and no ANALYZE statistics, SQLite prefers the operator index and walks every
+        # episode the operator owns (review M03's shape). Equality on the UNIQUE column is
+        # always a single-row lookup.
+        summary = session.execute(
+            _owned(MemoryEpisodeRow)
+            .where(MemoryEpisodeRow.incident_id == incident_id)
+            .with_only_columns(MemoryEpisodeRow.resolution_summary)
+        ).scalar()
+        if summary is not None:
+            found[incident_id] = summary
+    return found
+
+
+def scrubbed_resolution(
+    inc: IncidentRow,
+    notes: Sequence[WorkNoteRow],
+    *,
+    limit: int = SUMMARY_MAX_CHARS,
+    names: NameMap | None = None,
+) -> ScrubbedResolution:
+    """:func:`_resolution_text` plus the id of the note it fell back to — the write-side door.
+
+    The consolidator must not build a second name list (§7.11.8: one scrubber, one place to
+    fix), and it must record ``restoring_note_id`` beside the text it stored. Both come from
+    here so the stored summary and the recalled summary are produced by the same code with
+    the same ``NameMap`` seeding; only ``limit`` differs (500 stored, 240 recalled).
+
+    ``names`` lets a caller that is scrubbing several fields of one incident share one map;
+    omitted, one is built from the same seeding ``redact_incident`` uses.
+    """
+    names = names if names is not None else _name_map(inc, notes)
+    raw = (inc.resolution_summary or "").strip()
+    note = _restoring_note(notes) if not raw else None
+    if note is not None:
+        raw = (note.body or "").strip()
+    return ScrubbedResolution(
+        text=(scrub_text(raw, names) or "")[:limit],
+        restoring_note_id=note.id if note is not None else None,
+    )
 
 
 # --------------------------------------------------------------------------- queries
@@ -388,6 +873,12 @@ def _episode_stmt(*, site_id: str, since: datetime | None):
     )
     if since is not None:
         stmt = stmt.where(_closed_at_expr() >= since)
+    # Bounded by the SITE, never by the operator (review M03): SQLite serves this from
+    # ``ix_incidents_site_id``, so the cost is the site's history, not the operator's table.
+    # SQLAlchemy cannot render SQLite's ``INDEXED BY``, and the operator clause must stay
+    # ``_owned``'s, so the plan is not forced here — it is PINNED instead:
+    # ``test_memory_recall.py`` runs EXPLAIN QUERY PLAN on every hot-path statement, with and
+    # without ANALYZE statistics, and fails on any use of ``ix_incidents_operator_id``.
     return stmt
 
 
@@ -417,16 +908,33 @@ def _build(
     rows: Sequence[IncidentRow],
     *,
     now: datetime,
-    relevance: float,
+    relevance: float | dict[str, float],
     match_reason: str,
 ) -> list[SimilarEpisode]:
-    """Turn owned incident rows into scrubbed, scored episodes."""
-    notes = _notes_by_incident(session, [r.id for r in rows])
+    """Turn owned incident rows into scrubbed, scored episodes.
+
+    ``relevance`` is a constant for a tier that assigns one (exact: 1.0) or a mapping from
+    ``incident_id`` to a per-row value for a tier that does not (lexical: normalised bm25).
+    Both tiers go through this one function on purpose: the scrubbing, the duration refusals
+    and the summary fallback are the properties that must not differ between tiers, and a
+    second builder is how they would.
+    """
+    ids = [r.id for r in rows]
+    notes = _notes_by_incident(session, ids)
+    history = person_name_history(session, ids)
+    # Review M02: a pseudonymised incident's text is never re-derived. It shows what its
+    # episode stored while its names were still known, or nothing.
+    frozen = {r.id for r in rows if is_pseudonymised(r)}
+    stored = _stored_summaries(session, sorted(frozen)) if frozen else {}
     episodes: list[SimilarEpisode] = []
     for inc in rows:
         inc_notes = notes.get(inc.id, [])
-        names = _name_map(inc, inc_notes)
+        if inc.id in frozen:
+            summary = stored.get(inc.id, "")[:SUMMARY_MAX_CHARS]
+        else:
+            summary = _resolution_text(inc, inc_notes, _name_map(inc, inc_notes, history.get(inc.id, ())))
         closed_at = _closed_at(inc)
+        row_relevance = relevance.get(inc.id, 0.0) if isinstance(relevance, dict) else relevance
         episodes.append(
             SimilarEpisode(
                 incident_id=inc.id,
@@ -436,9 +944,9 @@ def _build(
                 closed_at=closed_at,
                 restore_minutes=_restore_minutes(inc),
                 resolution_code=(inc.resolution_code or ""),
-                resolution_summary=_resolution_text(inc, inc_notes, names),
+                resolution_summary=summary,
                 match_reason=match_reason,
-                score=_score(inc, closed_at, now, relevance),
+                score=_score(inc, closed_at, now, float(row_relevance)),
             )
         )
     return episodes
@@ -473,9 +981,194 @@ def _clamp(limit: int) -> int:
         return 0
 
 
+#: The columns ranking needs — the fault-class key, the two impact inputs and the three
+#: timestamps ``_closed_at`` coalesces — and nothing else. Ranking runs over up to
+#: ``_MAX_ROWS`` candidates; hydrating ~70-column ORM rows for all of them was most of the
+#: remaining cost once only the shown rows were built (profiled at 5,000 episodes).
+_RANK_COLUMNS = (
+    IncidentRow.id,
+    IncidentRow.failure_domain,
+    IncidentRow.alarm_code,
+    IncidentRow.site_type,
+    IncidentRow.users_affected,
+    IncidentRow.priority,
+    IncidentRow.closed_at,
+    IncidentRow.restored_at,
+    IncidentRow.created_at,
+)
+
+
+def _top_by_score(
+    rows: Sequence[Any],
+    *,
+    now: datetime,
+    relevance: float | dict[str, float],
+    limit: int,
+) -> list[str]:
+    """Ids of the ``limit`` candidates :func:`_build` would rank highest — chosen *before*
+    building them.
+
+    ``score`` depends only on cheap columns (``users_affected``, ``priority`` and the episode's
+    end time), while building an episode costs a notes query and a regex scrub per row.
+    Ranking first and building only what will be shown is what keeps a chronic site — 200
+    prior outages of one fault class — inside MEM11's hot-path budget: measured at 5,000
+    episodes, building every candidate took ~1 s per call against a 25 ms target.
+
+    ``rows`` are column-only result rows (:data:`_RANK_COLUMNS`) — :func:`_score` and
+    :func:`_closed_at` read attributes, so a ``Row`` serves as well as the ORM object. The key
+    is exactly the one the caller sorts the built episodes by — ``(score, closed_at)`` with the
+    same :func:`_score` — and Python's sort is stable under ``reverse=True``, so the ids chosen
+    here and their order are identical to building everything and cutting after.
+    """
+
+    def key(row: Any) -> tuple[float, datetime]:
+        ended = _closed_at(row)
+        row_relevance = relevance.get(row.id, 0.0) if isinstance(relevance, dict) else relevance
+        return (_score(row, ended, now, float(row_relevance)), ended)
+
+    return [row.id for row in sorted(rows, key=key, reverse=True)[: max(0, int(limit))]]
+
+
+def _load_in_order(session: Session, ids: Sequence[str]) -> list[IncidentRow]:
+    """The full rows for ``ids``, in that order, re-fetched through ``_owned``.
+
+    The ids came from an ``_owned`` statement already; the operator clause is applied again
+    anyway because this is a second statement, and "the WHERE clause, never a check after the
+    fetch" is the rule for every one of them (MEM10).
+
+    **One primary-key probe per id, never ``id IN (...)``** (review M03). With the operator
+    clause beside an IN list and no ``ANALYZE`` statistics — this project never runs ANALYZE —
+    SQLite 3.49 chose ``ix_incidents_operator_id`` for five ids and walked every incident the
+    operator owns, inside the lifecycle's write transaction, on every HITL card: a cost that
+    grew with the whole table rather than with the site. Equality on the primary key is
+    always a single-row lookup whatever the statistics say, and there are at most
+    ``similar_limit`` (5) of them. ``test_memory_recall.py`` pins the plan of every hot-path
+    statement and counts SQLite VM steps as 20,000 incidents are added at other sites.
+    """
+    rows: list[IncidentRow] = []
+    for incident_id in ids:
+        inc = session.scalar(_owned(IncidentRow).where(IncidentRow.id == incident_id))
+        if inc is not None:
+            rows.append(inc)
+    return rows
+
+
+# --------------------------------------------------------------------------- lexical tier
+
+#: How many matching FTS rows — **of this operator's episodes** — one query may rank. Several
+#: rows can belong to one incident (its resolution plus each of its notes) and are collapsed
+#: to its best; still bounded, because an advisory read must never become a full index scan
+#: rendered into a panel.
+_FTS_SCAN = 200
+
+#: ``memory_note_fts`` as a selectable, so the lexical query can be JOINED to ``incidents``
+#: through ``_owned`` rather than written as raw SQL beside it. Two columns are all it needs.
+_FTS = table(FTS_TABLE, column("incident_id"), column("body"))
+
+
+def _fts_candidates(session: Session, match: str) -> dict[str, tuple[Any, float]]:
+    """``{incident_id: (rank_row, normalised_relevance)}`` — scored over THIS operator only.
+
+    ``memory_note_fts`` carries no ``operator_id`` (the §7.11.3 DDL has none), so the lexical
+    query is joined to ``incidents`` and the operator clause comes from ``_owned`` — the one
+    door — in the same statement. That ordering is the fix for review M05: the first version
+    ranked the top 200 rows of the whole shared index and min-max normalised bm25 over them
+    *before* dropping the other operator's ids, so Airtel's notes set the range Safaricom's
+    relevance was scaled into, reordered Safaricom's results, and (through the cap) could
+    push a Safaricom match out altogether. Now the other operator's rows never reach the
+    ranking, the normaliser or the cap.
+
+    The honest limit that remains: ``bm25()`` itself uses corpus-wide statistics — IDF and the
+    average document length are computed by FTS5 over the whole index, both operators' rows
+    included — so the *raw* score of a term moves a little as the other tenant writes notes.
+    The normalisation, the ranking among this operator's hits and the membership of the
+    result no longer depend on anything the other operator holds. Removing that last
+    dependence means one index per operator, which is a schema decision, not a query fix.
+
+    ``bm25()`` is lower-is-better (negative for a good match); raw scores are min-max
+    normalised into ``(0, _RELEVANCE_FTS_MAX]``, and when every hit scores the same they all
+    take the ceiling. The plan is FTS-driven (``SCAN memory_note_fts VIRTUAL TABLE INDEX
+    0:M…``) with one primary-key probe into ``incidents`` per match.
+
+    Degrades to ``{}`` on any error: no index yet and a build without FTS5 are both "no
+    lexical tier", which is a weaker answer, never a wrong one.
+    """
+    if not match:
+        return {}
+    # Checked, never created: this is a read path, and a read does not issue DDL. A file
+    # that has never been consolidated simply has no lexical tier yet — the consolidator
+    # (``memory/consolidate.py``) is the only thing that calls ``ensure_memory_schema``.
+    if not fts_available(session):
+        return {}
+    score = func.bm25(literal_column(FTS_TABLE)).label("fts_score")
+    try:
+        rows = session.execute(
+            _owned(IncidentRow)
+            .join(_FTS, _FTS.c.incident_id == IncidentRow.id)
+            .where(sql(f"{FTS_TABLE} MATCH :fts_q"), IncidentRow.status.in_(_EPISODE_STATUSES))
+            .with_only_columns(*_RANK_COLUMNS, score)
+            .order_by(score)
+            .limit(_FTS_SCAN)
+            .params(fts_q=match)
+        ).all()
+    except Exception:  # noqa: BLE001 — no index, no FTS5, or a query FTS5 refused
+        log.warning("memory lexical tier degraded to empty", exc_info=True)
+        return {}
+    if not rows:
+        return {}
+    # One incident can own several matching rows (resolution + notes); keep its best.
+    best: dict[str, tuple[Any, float]] = {}
+    for row in rows:
+        raw = float(row.fts_score)
+        if row.id not in best or raw < best[row.id][1]:
+            best[row.id] = (row, raw)
+    lo = min(raw for _row, raw in best.values())
+    hi = max(raw for _row, raw in best.values())
+    span = hi - lo
+    return {
+        incident_id: (row, _RELEVANCE_FTS_MAX if span <= 0 else _RELEVANCE_FTS_MAX * (hi - raw) / span)
+        for incident_id, (row, raw) in best.items()
+    }
+
+
+def _fts_episodes(
+    session: Session, *, query_text: str, now: datetime, exclude: set[str], limit: int
+) -> list[SimilarEpisode]:
+    """The lexical tier of §7.11.4's cascade: FTS5 ``MATCH`` over scrubbed note bodies.
+
+    ``exclude`` holds the incident ids the exact tier already returned, so the union is
+    deduplicated by ``incident_id`` with the stronger tier winning — a hit is never shown
+    twice, and never demoted by a weaker match reason.
+
+    Unlike the exact tier this one is **not** restricted to the site: finding the incident at
+    a different site whose note says "generator fuel" is the entire reason a lexical tier
+    exists. That is also why its relevance is capped below the structural tiers and why the
+    matched terms travel in ``match_reason`` — a reader has to be able to see why another
+    site's ticket is on their card (§7.11.7).
+    """
+    match = fts_query(query_text)
+    # Operator-scoped and episode-scoped inside the FTS statement itself (``_owned`` plus
+    # ``status IN``): an index row for an incident that has since reopened is stale, and
+    # stale is dropped there, before anything is ranked.
+    scored = _fts_candidates(session, match)
+    candidates = [row for incident_id, (row, _rel) in scored.items() if incident_id not in exclude]
+    if not candidates:
+        return []
+    relevances = {incident_id: rel for incident_id, (_row, rel) in scored.items()}
+    terms = fts_terms(query_text)[:_MATCH_REASON_TERMS]
+    return _build(
+        session,
+        _load_in_order(
+            session, _top_by_score(candidates, now=now, relevance=relevances, limit=limit)
+        ),
+        now=now,
+        relevance=relevances,
+        match_reason=MATCH_FTS_PREFIX + ", ".join(terms),
+    )
+
+
 # --------------------------------------------------------------------------- public API
-# Signatures are §7.11.4 verbatim so that M1 replaces the *bodies* (reading the derived
-# ``memory_episodes`` index and adding the FTS5 and vector tiers) without touching a caller.
+# Signatures are §7.11.4 verbatim so that a caller never changes when a tier is added.
 
 
 @_degrade_to_empty
@@ -532,27 +1225,34 @@ def recall_similar_episodes(
     now: datetime | None = None,
     query_text: str | None = None,
 ) -> tuple[SimilarEpisode, ...]:
-    """Prior incidents that look like this one — **exact tier only** in M0 (§7.11.4).
+    """Prior incidents that look like this one — the §7.11.4 retrieval cascade.
 
-    The full cascade is three tiers: exact (same ``site_id`` + same ``fault_class``), lexical
-    (FTS5 ``MATCH`` over scrubbed note bodies) and vector (cosine, only with
-    ``MEMORY_EMBEDDINGS_ENABLED``). M0 implements the first and only the first, because it is
-    the one tier that needs no table: it is an index scan on ``incidents``. The ordering rule
-    the other tiers must respect is already established here — an exact hit always outranks a
-    lexical hit, which always outranks a vector hit, *regardless of raw similarity*, because
-    the failure mode being designed against is the confidently-wrong neighbour: the
-    similarly-worded incident about a different site that sends an engineer to the wrong
-    fault class (§7.11.7).
+    Two of the three tiers are live:
 
-    ``cfg`` and ``query_text`` are accepted and unused today, and that is deliberate rather
-    than sloppy: ``cfg`` carries the ``memory:`` thresholds M1 reads and ``query_text`` is the
-    FTS5 query string, so M1 adds tiers instead of changing a signature every caller depends
-    on. ``cfg`` is optional here only because M0 has no threshold to read from it; M1 should
-    make it required.
+    1. **exact** — same ``site_id`` + same ``fault_class``, an index scan on ``incidents``;
+    2. **lexical** — FTS5 ``MATCH`` over the scrubbed bodies in ``memory_note_fts``, run only
+       when ``query_text`` is given and the index exists;
+    3. **vector** — cosine over ``memory_embeddings``, M4c, only with
+       ``MEMORY_EMBEDDINGS_ENABLED``. Nothing produces it; :data:`TIER_VECTOR` reserves its
+       place in the ordering so adding it later cannot reorder the two tiers above it.
 
-    Ranked by ``score`` (recency + relevance + impact), newest first on a tie — so a run of
-    comparable outages at one site reads chronologically, and a much larger prior outage can
-    still surface above a trivial recent one.
+    The tiers are unioned, **deduplicated by ``incident_id`` with the stronger tier winning**,
+    and ranked on ``(tier, score, closed_at)`` — so an exact hit always outranks a lexical
+    hit *regardless of raw similarity*. That is a hard rule, not a weighting: the failure mode
+    being designed against (§7.11.7) is the confidently-wrong neighbour — the similarly-worded
+    incident about a different site that sends an engineer to the wrong fault class — and a
+    weighting would let a recent, high-impact lexical hit overtake an exact one through the
+    recency and impact terms of the score.
+
+    Within a tier, ``score = recency + relevance + impact`` (§7.11.4), newest first on a tie,
+    so a run of comparable outages at one site reads chronologically while a much larger prior
+    outage can still surface above a trivial recent one.
+
+    ``query_text`` is what the lexical tier searches for — typically the new alarm's title or
+    description. Omitting it is not an error: the exact tier alone is the M0 behaviour, and
+    every M0 test exercises exactly that path. ``cfg`` carries the §7.11.3 ``memory:``
+    thresholds and stays optional because :func:`memory_settings` falls back to the code
+    defaults; it is read for nothing else here.
     """
     site = (site_id or "").strip()
     rows_wanted = _clamp(limit)
@@ -576,21 +1276,281 @@ def recall_similar_episodes(
         )
         .order_by(_closed_at_expr().desc())
         .limit(_MAX_ROWS)
+        .with_only_columns(*_RANK_COLUMNS)
     )
-    rows = [
-        inc
-        for inc in session.scalars(narrowed).all()
-        if fault_class(inc.failure_domain, inc.alarm_code, inc.site_type) == wanted
+    candidates = [
+        row
+        for row in session.execute(narrowed).all()
+        if fault_class(row.failure_domain, row.alarm_code, row.site_type) == wanted
     ]
-    episodes = _build(
+    exact = _build(
         session,
-        rows,
+        _load_in_order(
+            session, _top_by_score(candidates, now=at, relevance=_RELEVANCE_EXACT, limit=rows_wanted)
+        ),
         now=at,
         relevance=_RELEVANCE_EXACT,
         match_reason=MATCH_SAME_SITE_AND_FAULT_CLASS,
     )
-    episodes.sort(key=lambda e: (e.score, e.closed_at), reverse=True)
-    return tuple(episodes[:rows_wanted])
+    ranked: list[tuple[int, SimilarEpisode]] = [(TIER_EXACT, e) for e in exact]
+    if (query_text or "").strip():
+        seen = {e.incident_id for e in exact}
+        ranked += [
+            (TIER_LEXICAL, e)
+            for e in _fts_episodes(
+                session, query_text=query_text or "", now=at, exclude=seen, limit=rows_wanted
+            )
+        ]
+    # The tier is the FIRST sort key and it is not negotiable — see the docstring. ``score``
+    # and ``closed_at`` only break ties inside a tier.
+    ranked.sort(key=lambda t: (t[0], t[1].score, t[1].closed_at), reverse=True)
+    return tuple(e for _tier, e in ranked[:rows_wanted])
+
+
+# ------------------------------------------------------------- L2: the fault-class prior
+#
+# The one derived fact M1 produces. It is computed over ``memory_episodes`` — the derived
+# index — rather than over ``incidents``, because it is an *aggregate*: "how long does this
+# class of fault usually take to fix here" needs a population of comparable durations, and
+# the population is precisely what the consolidator exists to build (the durations it refused
+# to trust are already NULL). The full L2 table (``memory_facts``, bi-temporal, subject-typed)
+# is M3; this is the single prior that M1's own data can honestly support, with the same
+# support/confidence/as_of/evidence discipline every later fact will carry.
+
+
+def quantile(values: Sequence[float], q: float) -> float | None:
+    """Linear-interpolated quantile of a *sorted-on-entry-or-not* sample. ``None`` when empty.
+
+    No numpy: it is not a declared dependency (§7.11.4's vector tier is the only thing that
+    would add it, and it is unbudgeted). Linear interpolation rather than nearest-rank so a
+    four-sample IQR does not jump by a whole observation when one episode is added.
+    """
+    ordered = sorted(float(v) for v in values)
+    if not ordered:
+        return None
+    if len(ordered) == 1:
+        return ordered[0]
+    pos = (len(ordered) - 1) * max(0.0, min(1.0, q))
+    low = int(pos)
+    high = min(low + 1, len(ordered) - 1)
+    return ordered[low] + (ordered[high] - ordered[low]) * (pos - low)
+
+
+#: §7.11.7: a duration beyond 3×IQR from the quartiles is not a slow restore, it is a data
+#: error (a ticket closed a week late, a clock skew), and one of them moves a median.
+IQR_OUTLIER_FACTOR = 3.0
+#: Below four samples there are no meaningful quartiles, so nothing is called an outlier.
+#: Refusing to judge is the fail-safe direction: a wrong duration kept is visible in the
+#: evidence ids, a right duration discarded is invisible.
+IQR_MIN_SAMPLE = 4
+
+
+def outlier_bounds(values: Sequence[float]) -> tuple[float, float] | None:
+    """``(low, high)`` acceptable range at 3×IQR, or ``None`` when the sample is too small."""
+    if len(values) < IQR_MIN_SAMPLE:
+        return None
+    q1, q3 = quantile(values, 0.25), quantile(values, 0.75)
+    if q1 is None or q3 is None:
+        return None
+    span = IQR_OUTLIER_FACTOR * (q3 - q1)
+    return (q1 - span, q3 + span)
+
+
+#: The comparison population is the most recent this-many trusted durations of a fault class,
+#: not all of them. Two reasons, both measured rather than assumed: loading every row made one
+#: advisory read cost ~0.3-1 s at 5,000 episodes (MEM11's target is 25 ms), and it made the
+#: backfill quadratic — every incident compared against every earlier one. 500 recent cases
+#: is also the better reference statistically: a fault class's restore time drifts as MSP
+#: contracts and site hardware change, and a median over five years answers a question
+#: nobody on the floor is asking. Served by ``ix_memory_episodes_op_fault_closed``.
+POPULATION_MAX = 500
+
+
+def restore_minutes_population(
+    session: Session,
+    *,
+    fault_class_key: str,
+    exclude_incident_id: str | None = None,
+    limit: int = POPULATION_MAX,
+) -> list[int]:
+    """The most recent trusted restore durations for one fault class. Operator-scoped.
+
+    ``exclude_incident_id`` leaves the incident being consolidated out of its own comparison
+    set. That is what makes the 3×IQR decision **idempotent**: without it, the first
+    consolidation judges an incident against a population that does not contain it and the
+    second against one that does, and a borderline row would flip between runs.
+
+    NULL ``restore_minutes`` rows are absent by construction — the consolidator has already
+    refused every duration whose provenance it cannot stand behind (§7.0.8's M4 rule), so this
+    population contains only durations a median may be computed from. One column is selected,
+    not the ORM row: this runs on the hot path (via :func:`fault_class_prior`) and once per
+    incident in a backfill.
+    """
+    stmt = _owned(MemoryEpisodeRow).where(
+        MemoryEpisodeRow.fault_class == fault_class_key,
+        MemoryEpisodeRow.restore_minutes.isnot(None),
+    )
+    if exclude_incident_id:
+        stmt = stmt.where(MemoryEpisodeRow.incident_id != exclude_incident_id)
+    stmt = (
+        stmt.with_only_columns(MemoryEpisodeRow.restore_minutes)
+        .order_by(MemoryEpisodeRow.closed_at.desc())
+        .limit(max(1, int(limit)))
+    )
+    return [int(v) for v in session.execute(stmt).scalars().all() if v is not None]
+
+
+def _episode_evidence(
+    session: Session, *, fault_class_key: str, limit: int = EVIDENCE_MAX
+) -> tuple[str, ...]:
+    """The newest incident ids behind a fault-class prior — traceability, capped (§7.11.7)."""
+    ids = session.execute(
+        _owned(MemoryEpisodeRow)
+        .where(
+            MemoryEpisodeRow.fault_class == fault_class_key,
+            MemoryEpisodeRow.restore_minutes.isnot(None),
+        )
+        .order_by(MemoryEpisodeRow.closed_at.desc())
+        .limit(limit)
+        .with_only_columns(MemoryEpisodeRow.incident_id)
+    ).scalars().all()
+    return tuple(str(i) for i in ids)
+
+
+@_degrade_to_empty
+def fault_class_prior(
+    session: Session,
+    *,
+    fault_class_key: str,
+    cfg: OperatorConfig | None = None,
+    now: datetime | None = None,
+) -> tuple[MemoryHit, ...]:
+    """Median and p90 restore minutes for a fault class, or ``()`` when support is thin.
+
+    **Nothing below ``min_support`` is ever returned** (§7.11.4) — the primary defence against
+    the confidently-wrong neighbour. Two prior outages are an anecdote; rendering "median 214
+    min" from them on a P1 approval card is how an advisory becomes a wrong expectation.
+
+    ``confidence = support × (1 − dispersion)`` with ``dispersion = IQR / median`` (§7.11.4),
+    clamped into ``[0, 1]``: a fault class that sometimes takes 20 minutes and sometimes six
+    hours says so through a low confidence rather than through a confident-looking median.
+    """
+    key = (fault_class_key or "").strip()
+    if not key:
+        return ()
+    limits = memory_settings(cfg)
+    min_support = int(limits["min_support"])
+    sample = restore_minutes_population(session, fault_class_key=key)
+    if len(sample) < min_support:
+        return ()
+    median = quantile(sample, 0.5)
+    p90 = quantile(sample, 0.9)
+    q1, q3 = quantile(sample, 0.25), quantile(sample, 0.75)
+    dispersion = ((q3 - q1) / median) if (median and median > 0) else 1.0
+    support = min(len(sample) / float(min_support), 1.0)
+    confidence = max(0.0, min(1.0, support * (1.0 - dispersion)))
+    evidence = _episode_evidence(session, fault_class_key=key)
+    at = now or utcnow()
+    return tuple(
+        MemoryHit(
+            layer="L2",
+            subject_type="FAULT_CLASS",
+            subject_id=key,
+            key=name,
+            value=f"{int(round(value))} min",
+            numeric=round(float(value), 2),
+            unit="minutes",
+            support_count=len(sample),
+            confidence=round(confidence, 4),
+            # ``support`` stands in for the Generative-Agents *importance* term on a fact
+            # (§7.11.4); a fact has no recency of its own beyond the episodes behind it.
+            score=round(support, 4),
+            as_of=at,
+            evidence=evidence,
+            source="deterministic",
+        )
+        for name, value in (("median_restore_min", median), ("p90_restore_min", p90))
+        if value is not None
+    )
+
+
+# -------------------------------------------------------- the one call every reader makes
+
+
+def recall_for_incident(
+    session: Session,
+    *,
+    cfg: OperatorConfig | None = None,
+    site_id: str,
+    failure_domain: str,
+    alarm_code: str = "",
+    site_type: str = "BTS",
+    region_code: str = "",
+    msp_name: str | None = None,
+    now: datetime | None = None,
+    query_text: str | None = None,
+) -> MemoryBundle:
+    """Single entry point (§7.11.4). **NEVER raises.**
+
+    Any exception, a missing table, an empty store or ``MEMORY_ENABLED=false`` yields
+    ``MemoryBundle(degraded=True)`` with every tuple empty — and every caller must already
+    behave exactly as it does today in that state (MEM4/G9). The flag is checked *here*,
+    because this is where memory reaches a human; it is deliberately not checked inside the
+    ``recall_*`` functions, which the consolidator also uses.
+
+    ``region_code`` and ``msp_name`` are accepted and unused: they key the L2 ``REGION`` and
+    ``MSP`` priors of M3/M4a. Taking them now means the MSP prior arrives without touching a
+    caller — and ``msp_name`` is a **company**, never a person (§7.11.8); the ``PARTY_TOKEN``
+    branch does not exist in this code at all.
+
+    ``query_text`` extends §7.11.4's signature the same way ``recall_similar_episodes``'s
+    does: pass it to enable the lexical tier, omit it for the exact tier alone.
+
+    Budgeted to ``recall_limit`` facts and ``similar_limit`` episodes, and
+    ``token_estimate`` reports what that costs a caller that is about to prompt with it, so
+    the bundle is truncated rather than silently oversized.
+    """
+    if not memory_enabled():
+        # Not one query. "Off" must cost nothing, including on a hot path (MEM11).
+        return MemoryBundle()
+    try:
+        limits = memory_settings(cfg)
+        at = now or utcnow()
+        key = fault_class(failure_domain, alarm_code, site_type)
+        similar = recall_similar_episodes(
+            session,
+            site_id=site_id,
+            failure_domain=failure_domain,
+            alarm_code=alarm_code,
+            site_type=site_type,
+            cfg=cfg,
+            limit=int(limits["similar_limit"]),
+            now=at,
+            query_text=query_text,
+        )
+        facts = fault_class_prior(session, fault_class_key=key, cfg=cfg, now=at)[
+            : int(limits["recall_limit"])
+        ]
+        bundle = MemoryBundle(
+            fault_class=tuple(facts),
+            similar=tuple(similar),
+            degraded=not (facts or similar),
+        )
+        return replace(bundle, token_estimate=_token_estimate(bundle))
+    except Exception:  # noqa: BLE001 — MEM4: the caller behaves exactly as it does today
+        log.warning("recall_for_incident degraded", exc_info=True)
+        return MemoryBundle()
+
+
+def _token_estimate(bundle: MemoryBundle) -> int:
+    """``chars // 4`` over the rendered block — the same rule of thumb ``contracts.py`` uses.
+
+    There is no tokenizer dependency in this project and ``count_tokens`` is a network call;
+    an estimate is enough for a caller to decide whether a bundle fits a budget, and
+    :class:`MemoryBundle` names the field ``token_estimate`` so nobody reads it as measured.
+    """
+    rendered = str(_bundle_rows(bundle))
+    return len(rendered) // 4
 
 
 # --------------------------------------------------------------------------- rendering
@@ -619,3 +1579,152 @@ def episode_dict(episode: SimilarEpisode) -> dict[str, Any]:
 
 def episode_dicts(episodes: Iterable[SimilarEpisode]) -> list[dict[str, Any]]:
     return [episode_dict(e) for e in episodes]
+
+
+def hit_dict(hit: MemoryHit) -> dict[str, Any]:
+    """One derived fact on the wire. ``as_of``, ``support_count`` and ``evidence`` are not
+    optional decoration: §7.11.4 forbids a naked assertion, so the row a reader sees always
+    carries how many cases it rests on, when it was computed and which tickets prove it."""
+    return {
+        "layer": hit.layer,
+        "subject_type": hit.subject_type,
+        "subject_id": hit.subject_id,
+        "key": hit.key,
+        "value": hit.value,
+        "numeric": hit.numeric,
+        "unit": hit.unit,
+        "support_count": hit.support_count,
+        "confidence": round(hit.confidence, 4),
+        "score": round(hit.score, 4),
+        "as_of": hit.as_of,
+        "evidence": list(hit.evidence),
+        "source": hit.source,
+    }
+
+
+def _bundle_rows(bundle: MemoryBundle) -> dict[str, Any]:
+    """The bundle's payload without the envelope — what ``token_estimate`` is measured over."""
+    return {
+        "site": [hit_dict(h) for h in bundle.site],
+        "fault_class": [hit_dict(h) for h in bundle.fault_class],
+        "party": [hit_dict(h) for h in bundle.party],
+        "correlation": [hit_dict(h) for h in bundle.correlation],
+        "playbook": [],  # M2 (§7.11.10) — gated on the §8.1 resolution_code census
+        "similar": episode_dicts(bundle.similar),
+        "memos": [],  # M3
+    }
+
+
+def _z(row: Any) -> Any:
+    """Every outgoing timestamp as an ISO **string** ending in ``Z`` (§7.0.6, defect #41).
+
+    The same rule ``api/serializers.py`` and ``api/routers/memory.py`` apply, applied here
+    because the advisory block travels on two wires this lane does not own — and a naive ISO
+    string is read by a browser as *local* time, which in Nairobi backdates every prior
+    outage by three hours.
+
+    A **string**, not the ``_UtcZ`` datetime those two emit, because one of the wires is
+    ``hitl_tasks.proposed_payload_json``: its setter is a bare ``json.dumps`` (``models.py``)
+    with no encoder, so a datetime anywhere in this dict would raise ``TypeError`` **inside
+    the HITL node** and take a P1 approval card down with it. The block is therefore plain
+    JSON by construction, which is also what the serializer wants. Recursive, so a timestamp
+    nested inside an episode is converted too.
+    """
+    if isinstance(row, datetime):
+        return z_utc(row).isoformat()
+    if isinstance(row, dict):
+        return {k: _z(v) for k, v in row.items()}
+    if isinstance(row, list):
+        return [_z(v) for v in row]
+    return row
+
+
+def advisory_block(bundle: MemoryBundle) -> dict[str, Any]:
+    """§7.11.4's ``render.advisory_block`` — the bundle as the card and the API render it.
+
+    One shape, two wires: the HITL packet freezes this dict at task creation and the
+    single-incident serializer computes it at request time (§7.11.5, MEM2 channels (a) and
+    (b)). Rendering both from one function is what stops the workspace panel and the approval
+    card from disagreeing about the same ticket.
+
+    ``degraded`` is on the wire for the same reason the Wallboard shows STALE badges: an
+    empty advisory because the store has nothing must not read as "this site has a clean
+    record". Every key is present even when its layer is M2/M3, so a renderer written today
+    keeps working when they fill.
+    """
+    payload: dict[str, Any] = {
+        "enabled": True,
+        "degraded": bundle.degraded,
+        "token_estimate": bundle.token_estimate,
+    }
+    payload.update(_bundle_rows(bundle))
+    return _z(payload)
+
+
+def advisory_for_incident(
+    session: Session,
+    inc: IncidentRow,
+    cfg: OperatorConfig | None = None,
+) -> dict[str, Any] | None:
+    """The advisory block for one incident, or ``None`` when ``MEMORY_ENABLED`` is false.
+
+    The single door both hot-path-adjacent readers use (spec line 419): ``agents/hitl.py``
+    freezes it onto ``hitl_tasks.proposed_payload_json["advisory"]`` at task creation and
+    ``GET /api/v1/incidents/{id}`` computes it per request. ``None`` is what makes the two
+    treatments differ correctly: the HITL payload then gains **no key at all** (so a
+    flag-off task is byte-identical to one written before this lane existed), while the
+    serializer sets ``advisory: null`` (§7.11.11 test 25).
+
+    **It never raises**, for anything, ever. A P1 approval card must not fail to open because
+    an advisory read hit a half-migrated column. The caller in ``agents/hitl.py`` guards the
+    call a second time; that is belt and braces on the one path where the cost of being wrong
+    is an outage of the tool people use to fix outages.
+
+    No ``query_text``, so the hot path runs the **exact tier only**. Deliberate: the FTS index
+    is a cache that may be empty or a tick stale, MEM11 budgets this call at ~25 ms, and the
+    lexical tier's whole value is surfacing a *different* site's ticket — which is exactly the
+    confidently-wrong neighbour (§7.11.7) that should not reach an approval card until M2
+    renders support counts beside it. ``recall_similar_episodes`` and ``recall_for_incident``
+    still take it, so an opt-in caller loses nothing.
+    """
+    try:
+        if not memory_enabled():
+            return None
+        # Review M13. Every query below takes its operator from the PROCESS profile
+        # (``api.deps._owned`` reads ``get_settings()``), while this incident and ``cfg`` come
+        # from the caller — and ``run_incident_lifecycle`` accepts explicit settings. If the
+        # two ever disagree, recall would freeze the process operator's history onto this
+        # operator's card. There is exactly one safe answer to "whose memory is this?" when
+        # they disagree: nobody's. No advisory is always a valid state (MEM4).
+        process_operator = _settings().operator.operator_id
+        if (inc.operator_id or "") != process_operator or (
+            cfg is not None and getattr(cfg, "operator_id", process_operator) != process_operator
+        ):
+            log.warning(
+                "advisory withheld: incident operator %r / cfg operator %r != process operator %r",
+                inc.operator_id, getattr(cfg, "operator_id", None), process_operator,
+            )
+            return None
+        bundle = recall_for_incident(
+            session,
+            cfg=cfg,
+            site_id=inc.site_id,
+            failure_domain=inc.failure_domain,
+            alarm_code=inc.alarm_code or "",
+            site_type=inc.site_type or _SITE_TYPE_DEFAULT,
+            region_code=inc.region_code or "",
+            # A company (§7.11.8). The per-person prior is Phase 6 and is not in this code.
+            msp_name=getattr(inc, "responsible_msp", None) or getattr(inc, "msp_name", None),
+        )
+        block = advisory_block(bundle)
+        # Proven serialisable HERE, inside this function's own guard. The HITL node stores the
+        # payload through ``HitlTaskRow.proposed_payload``'s bare ``json.dumps`` — and that
+        # assignment sits *outside* the node's try/except, so a value that is not JSON would
+        # raise in a fail-closed node and roll back the whole lifecycle run. It is not
+        # hypothetical: an early draft of this block carried datetime objects, and the
+        # inertness test caught exactly that. A block that cannot be serialised is dropped.
+        json.dumps(block)
+        return block
+    except Exception:  # noqa: BLE001 — memory never blocks a card or a workspace load (MEM4)
+        log.warning("advisory_for_incident degraded to None", exc_info=True)
+        return None
