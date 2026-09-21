@@ -60,6 +60,7 @@ from noc_agents.domain.schemas import EventIngest
 from noc_agents.graph.pipeline import process_event
 from noc_agents.orchestrator.contract import SUCCEEDED, IncidentState, RunContext
 from noc_agents.pollers import weather as poller
+from noc_agents.services import signals
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "weather"
 OPEN_METEO_FIXTURE = FIXTURES / "open_meteo_westlands_nbi_w.json"
@@ -489,7 +490,11 @@ def test_a_slow_or_locked_database_does_not_raise(tmp_db, flag_on, monkeypatch):
     def slow(*args, **kwargs):
         raise OperationalError("SELECT 1", {}, Exception("database is locked"))
 
-    monkeypatch.setattr(poller, "weather_risk_for_region", slow)
+    # Patched on services.signals, which is where ENRICH reads it from (guardrail G4: the
+    # hot path may not import a poller module). Patching the poller's re-export instead would
+    # leave ENRICH calling the real function, and with a cache row seeded below this test
+    # would then fail for the right reason rather than pass for the wrong one.
+    monkeypatch.setattr(signals, "weather_risk_for_region", slow)
     _settings, session = tmp_db
     _cache_row(session)
 
@@ -499,15 +504,36 @@ def test_a_slow_or_locked_database_does_not_raise(tmp_db, flag_on, monkeypatch):
     assert enrich.WEATHER_KEY not in _context(state)
 
 
-def test_a_half_landed_poller_module_does_not_raise(tmp_db, flag_on, monkeypatch):
-    """The import is lazy and inside the try, so a broken poller degrades to "no signal"."""
-    monkeypatch.setitem(sys.modules, "noc_agents.pollers.weather", None)
+def test_a_half_landed_signals_module_does_not_raise(tmp_db, flag_on, monkeypatch):
+    """The import is lazy and inside the try, so a broken reader degrades to "no signal"."""
+    monkeypatch.setitem(sys.modules, "noc_agents.services.signals", None)
     _settings, session = tmp_db
+    _cache_row(session)  # a row IS there: what is broken is the code that would read it
 
     state, result = _run(session)
 
     _assert_golden_step_row(state, result)
     assert enrich.WEATHER_KEY not in _context(state)
+
+
+def test_a_broken_poller_module_cannot_touch_the_hot_path_at_all(tmp_db, flag_on, monkeypatch):
+    """ENRICH no longer imports the poller, so a broken poller costs it nothing.
+
+    This used to be ``test_a_half_landed_poller_module_does_not_raise``, which asserted that a
+    broken ``pollers.weather`` DEGRADED enrichment to "no weather". That was the right test for
+    the old arrangement and the wrong arrangement: the hot path was importing the module that
+    fetches forecasts over the network (and, through it, httpx) just to run one SELECT. With
+    the cache reads moved to ``services.signals`` the stronger statement holds -- the poller can
+    be missing, half-written or unimportable and an incident still gets its weather context,
+    because the row was already written and reading it needs nothing from the poller.
+    """
+    monkeypatch.setitem(sys.modules, "noc_agents.pollers.weather", None)
+    _settings, session = tmp_db
+    _cache_row(session)
+
+    state, _result = _run(session)
+
+    assert enrich.WEATHER_KEY in _context(state)
 
 
 def test_no_session_is_not_an_error(flag_on):

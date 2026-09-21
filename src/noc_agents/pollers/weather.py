@@ -153,95 +153,19 @@ def _external_id(region_code: str, bucket: datetime) -> str:
     return f"{region_code}:{bucket.strftime('%Y-%m-%dT%H:%MZ')}"
 
 
-def is_stale(row: ExternalSignalRow, now: datetime | None = None) -> bool:
-    """Stored flag OR past ``valid_until`` — computed against *now*, never trusted from disk alone."""
-    now = now or utcnow()
-    return bool(row.stale) or row.valid_until is None or now >= row.valid_until
-
-
-def staleness(row: ExternalSignalRow, now: datetime | None = None) -> dict[str, Any]:
-    """What a badge needs: ``stale``, ``age_s`` since the fetch, and the window bounds."""
-    now = now or utcnow()
-    age_s = max(0, int((now - row.fetched_at).total_seconds())) if row.fetched_at else None
-    return {
-        "stale": is_stale(row, now),
-        "age_s": age_s,
-        "fetched_at": row.fetched_at.replace(microsecond=0).isoformat() + "Z" if row.fetched_at else None,
-        "valid_until": row.valid_until.replace(microsecond=0).isoformat() + "Z" if row.valid_until else None,
-        "last_error": row.last_error,
-    }
-
-
-# ---------------------------------------------------------------------------- cache reads
-
-
-def latest_signal(
-    session: Session,
-    operator_id: str,
-    region_code: str,
-    *,
-    source: str | None = None,
-) -> ExternalSignalRow | None:
-    """The newest *good* weather row for a region (has a derived block), operator-scoped.
-
-    Pure database read: this is what ENRICH and the Wallboard call, and it works with the
-    network down. ``source`` narrows to one provider; by default any weather source counts.
-    """
-    stmt = (
-        select(ExternalSignalRow)
-        .where(
-            ExternalSignalRow.operator_id == operator_id,
-            ExternalSignalRow.region_code == region_code,
-            ExternalSignalRow.derived_json.is_not(None),
-        )
-        .order_by(ExternalSignalRow.fetched_at.desc(), ExternalSignalRow.created_at.desc())
-        .limit(1)
-    )
-    if source is not None:
-        stmt = stmt.where(ExternalSignalRow.source == source)
-    else:
-        stmt = stmt.where(ExternalSignalRow.source.in_(("OPEN_METEO", "MET_NORWAY")))
-    return session.scalars(stmt).first()
-
-
-def latest_error(session: Session, operator_id: str, region_code: str) -> ExternalSignalRow | None:
-    """The newest weather row for the region that carries a ``last_error`` (good or marker)."""
-    stmt = (
-        select(ExternalSignalRow)
-        .where(
-            ExternalSignalRow.operator_id == operator_id,
-            ExternalSignalRow.region_code == region_code,
-            ExternalSignalRow.source.in_(("OPEN_METEO", "MET_NORWAY")),
-            ExternalSignalRow.last_error.is_not(None),
-        )
-        .order_by(ExternalSignalRow.created_at.desc())
-        .limit(1)
-    )
-    return session.scalars(stmt).first()
-
-
-def weather_risk_for_region(
-    session: Session,
-    operator_id: str,
-    region_code: str,
-    now: datetime | None = None,
-) -> dict[str, Any] | None:
-    """The stored ``weather_risk`` block with ``stale`` recomputed, or ``None`` when the region
-    has never been fetched successfully. The ``noc_get_weather_risk`` cache read of §5.3.3."""
-    now = now or utcnow()
-    row = latest_signal(session, operator_id, region_code)
-    if row is None:
-        return None
-    try:
-        block = json.loads(row.derived_json or "{}")
-    except ValueError:
-        block = {}
-    if not isinstance(block, dict):
-        block = {}
-    block.update(staleness(row, now))
-    block["region_code"] = region_code
-    block["source"] = row.source
-    return block
+# The cache READS (is_stale, staleness, latest_signal, latest_error, weather_risk_for_region)
+# live in services/signals.py, not here. This module imports adapters/weather.py, which imports
+# httpx; ENRICH reads the cache from inside run_incident_lifecycle, and guardrail G4 forbids a
+# hot-path agent from importing a poller or adapter module at all. They are re-exported below so
+# every out-of-band caller (`from noc_agents.pollers.weather import weather_risk_for_region`)
+# is unchanged. See services/signals.py for the full reasoning.
+from noc_agents.services.signals import (  # noqa: E402,F401  (re-export; see comment above)
+    is_stale,
+    latest_error,
+    latest_signal,
+    staleness,
+    weather_risk_for_region,
+)
 
 
 # ---------------------------------------------------------------------------- writes

@@ -323,7 +323,14 @@ def read_weather_risk(ctx: RunContext, region_code: str) -> dict[str, Any] | Non
     if session is None:
         return None
     try:
-        from noc_agents.pollers.weather import weather_risk_for_region
+        # services.signals, NOT pollers.weather. Both expose this function, but the poller
+        # module imports the weather adapter and, with it, the HTTP client library; guardrail
+        # G4 forbids a hot-path agent from importing a poller or adapter at all, and this read
+        # runs inside run_incident_lifecycle. The import stays lazy and inside the try so that
+        # a broken signals module still degrades to "no weather" rather than failing the
+        # incident. Pinned by tests/unit/test_hot_path_imports.py. (The client library is not
+        # named here on purpose: test_enrich_with_signals greps this file's text for it.)
+        from noc_agents.services.signals import weather_risk_for_region
 
         with session.no_autoflush:
             return weather_risk_for_region(session, ctx.cfg.operator_id, region_code)
