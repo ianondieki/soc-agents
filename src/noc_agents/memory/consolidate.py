@@ -397,7 +397,7 @@ def consolidate_outcome(session: Session, *, settings: AppSettings, incident_id:
         # nightly prune something to delete again — and with housekeeping in its default
         # dry-run posture, nothing would.
         return SKIPPED
-    frozen = is_pseudonymised(inc)
+    frozen = is_pseudonymised(session, inc)
     _ensure_outer_transaction(session)
     with session.begin_nested():
         _write_episode(session, settings=settings, inc=inc, frozen=frozen)

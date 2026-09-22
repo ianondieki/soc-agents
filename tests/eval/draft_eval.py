@@ -57,16 +57,19 @@ it is 100 % by definition and is not an alarm.
 
 **Running it.**
 
-* ``C:\\Python313\\python.exe -m pytest -q tests/eval`` -- the always-on template-path test
-  (``test_draft_eval_graders.py``) plus the nightly module, which skips: ``tests/conftest.py``
-  pins ``LLM_ENABLED=false`` and blanks ``ANTHROPIC_API_KEY`` for the whole suite.
-* Nightly, with the model: ``LLM_ENABLED=true`` and ``ANTHROPIC_API_KEY`` exported in the shell
-  (``.env`` is not read), plus ``NOC_ENV=demo`` or the DPIA/TIA references the §7.0.10 transfer
-  gate asks for, then ``C:\\Python313\\python.exe tests\\eval\\draft_eval.py [--trials 2]
-  [--json report.json]``. Every draft is one model call -- 36 incidents x k trials with today's
-  fixture -- and nothing in the app budgets them (the on-demand assist path writes no
-  ``llm_calls`` row, which is what ``LLM_MONTHLY_BUDGET_USD`` sums), so the run refuses to plan
-  more than ``--max-model-calls`` (default 100; k=3 needs it raised).
+* ``C:\\Python313\\python.exe -m pytest -q tests/eval`` -- the deterministic tests only: every
+  sequence graded on the template path, the graders' negative controls
+  (``test_draft_eval_graders.py``) and this command's guards (``test_draft_eval_cli.py``).
+  **pytest never runs the nightly eval**: ``tests/conftest.py`` pins ``LLM_ENABLED=false`` and
+  blanks ``ANTHROPIC_API_KEY`` for the whole suite, so no model draft can happen under pytest.
+* Nightly, with the model -- this command line is the only nightly entry point:
+  ``LLM_ENABLED=true`` and ``ANTHROPIC_API_KEY`` exported in the shell (``.env`` is not read),
+  plus ``NOC_ENV=demo`` or the DPIA/TIA references the §7.0.10 transfer gate asks for, then
+  ``C:\\Python313\\python.exe tests\\eval\\draft_eval.py [--trials 2] [--json report.json]``.
+  Every draft is one model call -- 36 incidents x k trials with today's fixture -- and nothing
+  in the app budgets them (the on-demand assist path writes no ``llm_calls`` row, which is what
+  ``LLM_MONTHLY_BUDGET_USD`` sums), so the run refuses to plan more than ``--max-model-calls``
+  (default 100; k=3 needs it raised).
 * ``--template-only`` runs the same harness on the deterministic path with the LLM off.
 
 Exit codes (command line):  0 = graded, all passed   1 = graded, something failed (or the

@@ -55,7 +55,9 @@ where = ["src"]
 asyncio_mode = "auto"
 testpaths = ["tests"]
 pythonpath = ["src"]
+# The nightly LLM eval is not a pytest run: it is `python tests/eval/draft_eval.py` (tests/conftest.py
+# forces LLM_ENABLED=false for every test). `flagged` is spec 10.5 step 2's selector; no test
+# carries it yet (docs/CONFORMANCE.md), so `pytest -m flagged` currently selects nothing.
 markers = [
-    "eval: nightly LLM draft evals in tests/eval (need LLM_ENABLED=true; see tests/eval/draft_eval.py)",
     "flagged: feature-flag-ON fixtures (spec 10.5 step 2: pytest -q -m flagged)",
 ]

@@ -31,8 +31,20 @@ export const RELEASED_STATUSES: readonly string[] = ["PUBLISHED", "FINAL"];
 
 /** `api/routers/scorecards.INTERNAL_READERS`: may see DRAFT / SHADOW / WITHHELD. */
 export const INTERNAL_READERS: readonly string[] = ["duty_manager", "management", "admin"];
-/** `api/deps.COMMERCIAL`: may read scorecards at all (enforced once auth is on). */
-export const COMMERCIAL_READERS: readonly string[] = ["management", "msp_coordinator", "duty_manager", "admin"];
+/**
+ * `api/routers/scorecards.SCORECARD_READERS` (§9.3, the scorecards row): may read released
+ * cards at all, enforced once auth is on. field_engineer and planning have no read cell and get
+ * 403. msp_coordinator reads its own vendor only.
+ */
+export const SCORECARD_READERS: readonly string[] = [
+  "noc_analyst",
+  "shift_supervisor",
+  "duty_manager",
+  "management",
+  "msp_coordinator",
+  "legal",
+  "admin",
+];
 /** `services/scorecard.REVIEWER_ROLES` / `PUBLISHER_ROLES`: shadow review, publish, finalise. */
 export const PUBLISHER_ROLES: readonly string[] = ["duty_manager", "admin"];
 /** `api/deps.SUPERVISORS`: may trigger `POST /scorecards/compute`. */
@@ -40,6 +52,17 @@ export const COMPUTE_ROLES: readonly string[] = ["shift_supervisor", "duty_manag
 
 /** `services/scorecard.line_out` sends this on every line; kept as a fallback for older rows. */
 export const NORMALISED_LABEL_DEFAULT = "contract-agreed regional allowance";
+/**
+ * What the normalised column means, for its header. It is NOT `raw / multiplier`: the backend
+ * recomputes the line's own formula with each incident's minutes divided by THAT incident's
+ * region multiplier (`services/scorecard.py`, reading 8). A percentage is never divided; each
+ * incident is re-judged against its limit instead. So the normalised figure can sit above raw
+ * (SLA compliance 50 % raw, 60 % normalised) and needs no single multiplier.
+ */
+export const NORMALISED_EXPLAINER =
+  "Normalised: the line's own formula recomputed with each incident's minutes divided by that incident's region " +
+  "multiplier. Compliance re-judges each incident against its limit, so the figure can be above or below raw. " +
+  "Bands and credits use raw. The line's formula, in its drawer, shows the exact working.";
 /** `services/scorecard.PATH_SEP`: a composite `yaml_path` lists every term a line was judged against. */
 export const PATH_SEP = ";";
 
@@ -197,7 +220,16 @@ export type StatusView = {
   summary: string;
 };
 
-export function statusView(status: string | null | undefined): StatusView {
+/**
+ * `clock` is passed by a view that knows the time and the card's `dispute_window_ends_at`.
+ * Only then does a PUBLISHED summary say anything about the window, and it says it through
+ * `windowWords`, the same words as the countdown tile, so the two cannot disagree. Without a
+ * clock, the summary makes no claim about the window.
+ */
+export function statusView(
+  status: string | null | undefined,
+  clock?: { nowMs: number; windowEndsMs: number | null },
+): StatusView {
   const s = (status || "").trim().toUpperCase();
   switch (s) {
     case "DRAFT":
@@ -237,7 +269,7 @@ export function statusView(status: string | null | undefined): StatusView {
         chip: "chip ok",
         watermark: null,
         released: true,
-        summary: "A named human released this card. The vendor may see it, and the dispute window is running.",
+        summary: publishedSummary(clock),
       };
     case "FINAL":
       return {
@@ -259,6 +291,16 @@ export function statusView(status: string | null | undefined): StatusView {
         summary: "This build does not recognise this status. It is shown exactly as the server sent it.",
       };
   }
+}
+
+function publishedSummary(clock?: { nowMs: number; windowEndsMs: number | null }): string {
+  const released = "A named human released this card, and the vendor may see it.";
+  if (!clock) return released;
+  const w = windowWords(clock.nowMs, clock.windowEndsMs);
+  if (w === "closed")
+    return released + " The dispute window has closed. The card stays PUBLISHED until a duty manager finalises it.";
+  if (w === "no window recorded") return released + " The card records no dispute-window end.";
+  return released + ` The dispute window is running (${w}).`;
 }
 
 /** Mirrors `api/routers/scorecards._visible_statuses`, for the explanatory line only. */
@@ -727,33 +769,57 @@ export function periodWords(period: string | null | undefined): string {
 
 // --------------------------------------------------------------------------------- failures
 
-export type FailureView = { kind: "off" | "role" | "signin" | "notfound" | "state" | "input" | "unavailable" | "error"; title: string; body: string };
+export type FailureView = {
+  kind: "off" | "role" | "signin" | "notfound" | "state" | "input" | "unavailable" | "error";
+  title: string;
+  body: string;
+};
+
+export type FailureWhere = "list" | "detail" | "action" | "compute";
 
 /**
  * An HTTP status, read for this surface. The server's own words are always shown beside it;
  * this supplies the headline. A 403 or 404 is never shown as a crash or a blank page.
  *
- * `where`: `list` (the page's first read: a 404 there means the lane flag is off), `detail`
- * (one card: a 404 there means the card is not found, or is not visible to this role), and
- * `action` (a write).
+ * `where`:
+ * - `list`: the page's first read. A 404 there means the lane flag is off.
+ * - `detail`: one card. A 404 means the card is not found, or is not visible to this role.
+ * - `action`: shadow review, publish or finalise on one card.
+ * - `compute`: `POST /scorecards/compute`. No card is involved, so a 404 means no vendor with
+ *   terms in force for that month (or the lane is off), never "no such scorecard".
+ *
+ * `detail` is the server's sentence (`lib/apiError.detailOf`). It is read in one case only: a
+ * 503 is headlined "Terms unavailable" only when compute's own terms check produced it
+ * (`sla_terms unavailable: ...`). Any other 503, such as sign-in on with no
+ * `NOC_SESSION_SECRET`, gets a neutral headline, and the server's sentence names the cause.
  */
-export function failureView(status: number | null, where: "list" | "detail" | "action"): FailureView {
-  if (status === 401) return { kind: "signin", title: "Sign in required", body: "Sign in to read vendor scorecards." };
-  if (status === 403)
-    return {
-      kind: "role",
-      title: "Not available to your role",
-      body:
-        where === "action"
-          ? "Your role may not take this action on a scorecard."
-          : "Vendor scorecards are commercial documents. management, duty_manager, msp_coordinator (own vendor only) and admin may read them.",
-    };
+export function failureView(status: number | null, where: FailureWhere, detail = ""): FailureView {
+  const compute = where === "compute";
+  if (status === 401) return { kind: "signin", title: "Sign in required", body: "Sign in to use vendor scorecards." };
+  if (status === 403) {
+    let body: string;
+    if (compute) body = "Computing a period is for shift_supervisor, duty_manager and admin.";
+    else if (where === "action") body = "Your role may not take this action on a scorecard.";
+    else
+      body =
+        "Vendor scorecards can be read by noc_analyst, shift_supervisor, duty_manager, management, msp_coordinator " +
+        "(own vendor only), legal and admin (§9.3). field_engineer and planning cannot read them.";
+    return { kind: "role", title: "Not available to your role", body };
+  }
   if (status === 404) {
     if (where === "list")
       return {
         kind: "off",
         title: "Vendor scorecards are off",
         body: "Vendor scorecards are not enabled on this deployment. With SCORECARDS_ENABLED off, every /scorecards route answers 404 by design.",
+      };
+    if (compute)
+      return {
+        kind: "notfound",
+        title: "Nothing to compute",
+        body:
+          "No vendor with terms in force for that month matched (an unknown vendor, or a month outside its contract dates), " +
+          "or the scorecards lane is off. Nothing was computed.",
       };
     return {
       kind: "notfound",
@@ -762,9 +828,25 @@ export function failureView(status: number | null, where: "list" | "detail" | "a
         "No such scorecard, or none your role may see. The server answers 404, never 403, for another operator's card and for an unreleased card this role may not see, so it never confirms that a card exists.",
     };
   }
-  if (status === 409) return { kind: "state", title: "Refused in this state", body: "The card's current state does not allow this." };
-  if (status === 400 || status === 422) return { kind: "input", title: "Rejected", body: "The server rejected the request as sent." };
-  if (status === 503) return { kind: "unavailable", title: "Terms unavailable", body: "The SLA terms file is missing or unversioned, so nothing was computed." };
+  if (status === 409)
+    return {
+      kind: "state",
+      title: "Refused in this state",
+      body: compute
+        ? "A card for that period is already PUBLISHED or FINAL. A released card is not recomputed; a correction goes through a dispute or a correction period (§7.6.6)."
+        : "The card's current state does not allow this.",
+    };
+  if (status === 400 || status === 422)
+    return {
+      kind: "input",
+      title: "Rejected",
+      body: compute ? "The period is malformed or has not ended yet." : "The server rejected the request as sent.",
+    };
+  if (status === 503) {
+    if (compute && /^\s*sla_terms unavailable/i.test(detail))
+      return { kind: "unavailable", title: "Terms unavailable", body: "The SLA terms file is missing or unversioned, so nothing was computed." };
+    return { kind: "unavailable", title: "Service unavailable", body: "The server could not serve this request. Its own sentence below names the cause." };
+  }
   return { kind: "error", title: "Could not load", body: "The request failed. The rest of the page is unaffected." };
 }
 

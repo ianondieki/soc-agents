@@ -342,10 +342,78 @@ def test_the_list_route_never_carries_an_advisory_key(client, monkeypatch):
         assert "advisory" not in row
 
 
-def test_the_route_is_readable_by_the_whole_operations_floor(client, monkeypatch):
-    """§7.11.4 gates it to "any signed-in role", so ``READERS`` — a field engineer or MSP
-    coordinator working the ticket needs the panel. With ``AUTH_DISABLED=true`` (the demo and
-    test default) ``require_role`` never rejects, exactly like every other route."""
+# --- Who the advisory is for (§9.3's memory row; RBAC review C2) --------------------------
+#
+# GET /incidents/{id} is gated on §9.3 row 1, which lets msp_coordinator and field_engineer
+# read the ticket they are working. The advisory is not that ticket: it is EARLIER tickets at
+# the site -- possibly worked by a different MSP -- and §9.3's memory row gives those two roles
+# "—". So the route serves them the incident with ``advisory: null``, the flag-off shape.
+# §7.11.4's "as today" says otherwise; api/deps.MEMORY_READERS records why §9.3 wins.
+
+_ADVISORY_SECRET = "memory-advisory-secret"
+#: §9.3's memory row, read cell, as a literal -- an independent statement, not the code's tuple.
+_MEMORY_ROW = ("noc_analyst", "shift_supervisor", "duty_manager", "management", "planning", "legal", "admin")
+
+
+def _signed_in(client, role: str) -> None:
+    """A real signed session: with AUTH_DISABLED=false the cookie, not the switcher, is who you are."""
+    from noc_agents.api import auth
+
+    client.cookies.clear()
+    client.cookies.set(
+        auth.SESSION_COOKIE, auth.sign_session({"sub": f"u-{role}", "role": role, "name": role}, _ADVISORY_SECRET)
+    )
+
+
+@pytest.fixture()
+def auth_enforced(monkeypatch):
+    monkeypatch.setenv("AUTH_DISABLED", "false")
+    monkeypatch.setenv("NOC_SESSION_SECRET", _ADVISORY_SECRET)
+
+
+def test_the_advisory_is_null_for_the_roles_the_memory_row_excludes(client, monkeypatch, auth_enforced):
+    monkeypatch.setenv("MEMORY_ENABLED", "true")
+    _seed(number="INC-HIST-1", days_ago=30, note="Omondi from the other MSP swapped the ATS")
+    incident_id = _seed(number="INC-HIST-2", days_ago=1)
+    for role in ("msp_coordinator", "field_engineer"):
+        _signed_in(client, role)
+        r = client.get(f"/api/v1/incidents/{incident_id}")
+        assert r.status_code == 200, role  # the ticket itself: row 1 still lets them read it
+        body = r.json()
+        assert body["incident_number"] == "INC-HIST-2", role
+        assert "advisory" in body and body["advisory"] is None, (role, body.get("advisory"))
+        assert "INC-HIST-1" not in r.text and "Omondi" not in r.text, role
+
+
+def test_every_role_the_memory_row_admits_gets_the_advisory(client, monkeypatch, auth_enforced):
+    monkeypatch.setenv("MEMORY_ENABLED", "true")
+    _seed(number="INC-HIST-1", days_ago=30)
+    incident_id = _seed(number="INC-HIST-2", days_ago=1)
+    for role in _MEMORY_ROW:
+        _signed_in(client, role)
+        body = client.get(f"/api/v1/incidents/{incident_id}").json()
+        assert body["advisory"] and body["advisory"]["similar"], role
+
+
+def test_the_demo_serves_the_advisory_whichever_role_the_switcher_shows(client, monkeypatch):
+    """AUTH_DISABLED=true (the demo and suite default): there is no identity -- the switcher is a
+    UI affordance and every gate is inert -- so the advisory is served exactly as before."""
+    monkeypatch.setenv("MEMORY_ENABLED", "true")
+    _seed(number="INC-HIST-1", days_ago=30)
+    incident_id = _seed(number="INC-HIST-2", days_ago=1)
+    for role in ("msp_coordinator", "field_engineer"):
+        assert client.post("/api/v1/session", json={"role": role, "display_name": "Tester"}).status_code == 200
+        body = client.get(f"/api/v1/incidents/{incident_id}").json()
+        assert body["advisory"] and body["advisory"]["similar"], role
+
+
+def test_in_the_demo_every_role_the_switcher_offers_reads_the_route(client, monkeypatch):
+    """With ``AUTH_DISABLED=true`` (the demo and test default) ``require_role`` never rejects,
+    exactly like every other route. With auth ON the route is gated to ``deps.MEMORY_READERS``,
+    which follows §9.3's memory row and so EXCLUDES field_engineer and msp_coordinator:
+    §7.11.4 says "any signed-in role", but this route serves the same earlier-ticket episodes
+    as the incident advisory, and §9.3 is the stricter reading (review C1/C2). That matrix is
+    pinned in tests/system/test_auth.py."""
     monkeypatch.setenv("MEMORY_ENABLED", "true")
     _seed(number="INC-HIST-1")
     for role in ("noc_analyst", "field_engineer", "msp_coordinator", "shift_supervisor"):

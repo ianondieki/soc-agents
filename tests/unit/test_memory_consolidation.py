@@ -55,6 +55,9 @@ from noc_agents.services.memory import (
     EPISODE_SUMMARY_MAX_CHARS,
     fault_class,
     fault_class_prior,
+    is_pseudonymised,
+    recall_similar_episodes,
+    recall_site_history,
     restore_minutes_population,
 )
 
@@ -1070,14 +1073,19 @@ def _pseudonymise(session, settings, inc) -> None:
     assert report.rows_changed >= 1, "precondition: housekeeping pseudonymised the incident"
 
 
-def test_a_pseudonymised_incident_is_never_rebuilt_from_its_source_text(tmp_db, monkeypatch):
+@pytest.mark.parametrize("region, rnio", [("NBI_E", "RNIO-NBI-E"), ("MTK", "RNIO-MTK")])
+def test_a_pseudonymised_incident_is_never_rebuilt_from_its_source_text(tmp_db, monkeypatch, region, rnio):
     """Review M02, the reviewer's reproduction end to end with the real housekeeping duty.
 
     Consolidated while ``fe_name`` was a name, the episode and its FTS rows hold tokens.
-    Housekeeping then pseudonymises the row — ``fe_name`` becomes ``FE-NBI_E`` — but leaves the
-    notes and ``resolution_summary`` alone, and moves ``updated_at``, so the job sees the
+    Housekeeping then pseudonymises the row — ``fe_name`` becomes ``FE-<region>`` — but leaves
+    the notes and ``resolution_summary`` alone, and moves ``updated_at``, so the job sees the
     incident as stale. Re-deriving the text now would be scrubbed by a NameMap that no longer
     knows the name, and write it back. The rule: after pseudonymisation the text is frozen.
+
+    Run in MTK as well as NBI_E (round 3): MTK's live ``rnio_name`` is ``RNIO-MTK`` from the
+    very first second, so what freezes the text here must be housekeeping's durable marker —
+    not the columns' shape, which was identical before and after pseudonymisation in MTK.
     """
     settings, session = tmp_db
     monkeypatch.setenv("MEMORY_ENABLED", "true")
@@ -1085,18 +1093,21 @@ def test_a_pseudonymised_incident_is_never_rebuilt_from_its_source_text(tmp_db, 
         session,
         number="INC-PSEUDO",
         days_ago=0.01,
+        region_code=region,
         assignee_type="FIELD_ENGINEER",
         msp_name=None,
         fe_name="John Kamau",
+        rnio_name=rnio,
         resolution_summary="John Kamau refuelled generator",
         notes=(("NOC", "John Kamau on site, gate opened"),),
     )
-    consolidator.consolidate_recent(session, settings)
+    first = consolidator.consolidate_recent(session, settings)
     session.commit()
+    assert "text_frozen=0" in first.summary, "a live incident must never be read as pseudonymised"
     assert "kamau" not in _memory_text(session)
 
     _pseudonymise(session, settings, inc)
-    assert inc.fe_name == "FE-NBI_E"
+    assert inc.fe_name == f"FE-{region}"
     assert inc.id in consolidator.pending_incidents(session, since=None), (
         "precondition: pseudonymisation made the episode stale, so the job WILL revisit it"
     )
@@ -1141,6 +1152,110 @@ def test_an_incident_pseudonymised_before_its_first_consolidation_gets_numbers_b
     assert _fts_rows(session, inc.id) == []
     assert "kamau" not in _memory_text(session)
     assert consolidator.pending_incidents(session, since=None) == []
+
+
+#: Every region the Safaricom profile lists, plus one it does not. For an unlisted region
+#: ``services/assignment.py`` falls back to ``f"RNIO-{reg}"`` — the same string retention.yaml's
+#: ``RNIO-{region_code}`` renders — which is why it is here.
+_PROFILE_REGIONS = sorted(get_settings("safaricom").operator.regions)
+_UNLISTED_REGION = "XYZ"
+
+
+def _assigned_and_closed(session, settings, region: str) -> IncidentRow:
+    """An incident whose person columns were written by the REAL ASSIGN node, then closed.
+
+    ``agents/assign.run`` is driven with the two attributes it reads from the state and the
+    context, exactly as the reviewers' reproduction did, so the rnio/fe/assignee values are the
+    ones production writes for that region — not values a test chose.
+    """
+    from types import SimpleNamespace
+
+    from noc_agents.agents import assign as assign_node
+
+    ended = utcnow() - timedelta(hours=6)
+    started = ended - timedelta(hours=2)
+    inc = IncidentRow(
+        operator_id="safaricom", incident_number=f"INC-{region}", status="NEW", site_id=f"S-{region}",
+        site_type="BTS", region_code=region, failure_domain="POWER", alarm_code="MAINS_FAIL",
+        correlation_fingerprint=f"fp-{region}", created_at=started, outage_start_at=started,
+    )
+    session.add(inc)
+    session.flush()
+    state = SimpleNamespace(
+        event=SimpleNamespace(failure_domain="POWER", site_type="BTS", region_code=region, alarm_code="MAINS_FAIL"),
+        incident=inc,
+        outage_start=started,
+        sla_restore_due=ended,
+    )
+    assign_node.run(state, SimpleNamespace(cfg=settings.operator))
+    inc.status = "CLOSED"
+    inc.restored_at = ended
+    inc.closed_at = ended
+    inc.restored_source = RESTORE_SOURCE_MARK
+    inc.resolution_summary = "Generator refuelled and ATS reset after genset fuel starvation"
+    session.add(
+        WorkNoteRow(incident_id=inc.id, author="Vendor Desk", author_role="MSP",
+                    body="genset fuel starvation, refuelled; SERVICE RESTORED", created_at=ended, source="ui")
+    )
+    session.commit()
+    return inc
+
+
+def test_the_profile_really_has_regions_whose_live_rnio_looks_like_a_retention_token(tmp_db):
+    """Keeps the regression test below honest: if no region's ASSIGN output collided with a
+    retention token any more, that test would pass whether or not the fix existed."""
+    settings, session = tmp_db
+    colliding = [
+        r for r in _PROFILE_REGIONS + [_UNLISTED_REGION]
+        if _assigned_and_closed(session, settings, r).rnio_name == f"RNIO-{r}"
+    ]
+    assert _UNLISTED_REGION in colliding and len(colliding) >= 2, colliding
+
+
+@pytest.mark.parametrize("region", _PROFILE_REGIONS + [_UNLISTED_REGION])
+def test_every_region_keeps_its_memory_text_through_a_real_tick(tmp_db, monkeypatch, region):
+    """Review round 3, the defect itself. The first M02 fix inferred "pseudonymised" from a
+    person column looking like its retention token, and the ASSIGN node's own ``RNIO-MTK`` …
+    ``RNIO-WNY`` (and ``RNIO-<reg>`` for any unlisted region) looked exactly like one — so in
+    four of Safaricom's six regions a brand-new incident was stored with NO text and NO index
+    rows and recalled as ''. Every region, through the real assign step and the real job tick,
+    must store its summary, index it, and recall it.
+    """
+    settings, session = tmp_db
+    monkeypatch.setenv("MEMORY_ENABLED", "true")
+    inc = _assigned_and_closed(session, settings, region)
+
+    result = consolidator.consolidate_recent(session, settings)
+    session.commit()
+
+    assert "episodes=1" in result.summary and "text_frozen=0" in result.summary, result.summary
+    row = _episodes(session)[0]
+    assert row.resolution_summary.startswith("Generator refuelled"), (region, inc.rnio_name, row.resolution_summary)
+    assert len(_fts_rows(session, inc.id)) == 2, "the resolution and the note must both be indexed"
+    recalled = recall_site_history(session, site_id=f"S-{region}")
+    assert recalled and recalled[0].resolution_summary.startswith("Generator refuelled"), recalled
+    found = recall_similar_episodes(
+        session, site_id="NOWHERE", failure_domain="POWER", alarm_code="MAINS_FAIL",
+        query_text="genset fuel starvation",
+    )
+    assert [e.incident_number for e in found] == [f"INC-{region}"], "the lexical tier lost the incident"
+
+
+def test_columns_that_merely_look_like_tokens_do_not_freeze_the_text(tmp_db, monkeypatch):
+    """The distinction the marker exists for, stated directly: every person column equal to
+    its retention token, and no pseudonymisation ever run. Shape proves nothing; only
+    housekeeping's record does."""
+    settings, session = tmp_db
+    monkeypatch.setenv("MEMORY_ENABLED", "true")
+    inc = _seed(
+        session, number="INC-SHAPE", days_ago=0.01, assignee_type="FIELD_ENGINEER", msp_name=None,
+        assignee_name="FIELD_ENGINEER-NBI_E", fe_name="FE-NBI_E", rnio_name="RNIO-NBI_E",
+        restored_by="RESTORER-NBI_E", resolution_summary="Rectifier module swapped",
+    )
+    assert not is_pseudonymised(session, inc)
+    consolidator.consolidate_recent(session, settings)
+    session.commit()
+    assert _episodes(session)[0].resolution_summary == "Rectifier module swapped"
 
 
 def _memory_text(session) -> str:

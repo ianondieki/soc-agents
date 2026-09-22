@@ -413,6 +413,60 @@ def test_f05_the_overall_row_pools_only_regions_that_pass_the_floors_themselves(
     assert overall["episodes_resolved"] == 12 and "dropped" in overall["reason"]
 
 
+def _w14_seed(seed: Seed) -> None:
+    """The replayers' W14 case: two regions, both 100 days old. WNY never flags and has 30
+    incidents; NBI_E flags twelve times, each followed by an incident."""
+    seed.history(days=100, region="WNY")
+    seed.history(days=100, region="NBI_E")
+    for i in range(30):
+        seed.incident(NOW - timedelta(days=29) + timedelta(hours=23 * i), region="WNY")
+    _storms(seed, 12, hits=12, region="NBI_E")
+    seed.commit()
+
+
+def test_w14_recall_is_pooled_over_the_regions_that_pass_the_recall_floors(seed):
+    """W14: the ALL row pooled recall over the PRECISION pool, which drops a region that never
+    flags — exactly where the missed incidents are — so 12 warned of 12 read as recall 1.0.
+    Over both regions it is 12 of 42."""
+    _w14_seed(seed)
+    report = replay(seed.session, "safaricom", since=NOW - timedelta(days=30), until=NOW, now=NOW,
+                    regions=["WNY", "NBI_E"], families=("storm",))
+    storm = report["families"]["storm"]
+    assert storm["regions"]["WNY"]["verdict"] == VERDICT_INSUFFICIENT_DATA  # no episodes: out of the precision pool ...
+    assert storm["regions"]["WNY"]["recall_verdict"] == VERDICT_MEASURED   # ... but squarely in the recall pool
+    overall = storm["overall"]
+    assert (overall["incidents"], overall["incidents_warned"], overall["recall"]) == (42, 12, 0.286)
+    assert overall["recall_ci95"] == list(wilson_interval(12, 42)) and overall["recall_verdict"] == VERDICT_MEASURED
+    assert overall["precision"] == 1.0 and overall["episodes_resolved"] == 12  # precision still NBI_E's alone (F05)
+    assert overall["contributing_regions"] == ["NBI_E"] and list(overall["dropped_regions"]) == ["WNY"]
+    assert overall["recall_contributing_regions"] == ["WNY", "NBI_E"] and overall["recall_dropped_regions"] == {}
+    assert "precision pooled from NBI_E only" in overall["reason"] and "recall pooled from WNY, NBI_E" in overall["reason"]
+
+
+def test_w14_a_region_short_of_the_recall_floor_leaves_only_the_recall_pool(seed):
+    seed.history(days=100, region="WNY")
+    for i in range(4):  # history, but only 4 incidents: out of the recall pool
+        seed.incident(NOW - timedelta(days=20 - i), region="WNY")
+    seed.history(days=100, region="NBI_E")
+    _storms(seed, 12, hits=12, region="NBI_E")
+    seed.commit()
+    overall = replay(seed.session, "safaricom", since=NOW - timedelta(days=30), until=NOW, now=NOW,
+                     regions=["WNY", "NBI_E"], families=("storm",))["families"]["storm"]["overall"]
+    assert overall["recall_contributing_regions"] == ["NBI_E"] and overall["recall"] == 1.0
+    assert "4 incident(s) in the window" in overall["recall_dropped_regions"]["WNY"]
+
+
+def test_w14_the_cli_always_explains_the_all_row(seed, capsys):
+    """The CLI printed notes only for rows that were not MEASURED, so a MEASURED ALL row gave no
+    hint which regions its numbers came from."""
+    _w14_seed(seed)
+    report = replay(seed.session, "safaricom", since=NOW - timedelta(days=30), until=NOW, now=NOW,
+                    regions=["WNY", "NBI_E"], families=("storm",))
+    text = _script().format_report(report)
+    all_notes = [line for line in text.splitlines() if line.startswith("  ALL: ")]
+    assert len(all_notes) == 1 and "recall pooled from WNY, NBI_E" in all_notes[0]
+
+
 def test_the_dashboard_publishes_the_measured_precision_beside_the_storm_flag(seed):
     """The services/dashboards.py wiring, end to end: None below the floor, the number above it."""
     seed.history()

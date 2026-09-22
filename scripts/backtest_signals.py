@@ -103,7 +103,9 @@ def format_report(report: dict) -> str:
                 f"{episodes:>9} {s['episodes_hit']:>4} {s['incidents']:>9} {s['incidents_warned']:>6} "
                 f"{('-' if s['history_days'] is None else format(s['history_days'], '.0f')):>9}"
             )
-            if s["reason"] and s["verdict"] != "MEASURED":
+            # The ALL row always gets its note: which regions each pooled number came from is the
+            # thing a reader most needs, and a MEASURED verdict does not make it self-evident (W14).
+            if s["reason"] and (code == "ALL" or s["verdict"] != "MEASURED"):
                 notes.append(f"  {code}: {s['reason']}")
         lines.extend(notes)
         lines.append("")

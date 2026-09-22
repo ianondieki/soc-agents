@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import smtplib
 from datetime import datetime, timedelta
 
@@ -166,7 +167,8 @@ def _payload(inc: IncidentRow | None, *, ref=DEMO_RECIPIENTS_REF, **extra) -> di
         "operator_id": "safaricom",
         "incident_number": inc.incident_number if inc is not None else None,
         "audience": "RNIO",
-        "subject": f"[P3] {inc.incident_number if inc else 'handover'} | test",
+        # As every incident producer writes it (compose_email, regulatory.notice_text): "[Px] INC… | …"
+        "subject": f"[{inc.priority}] {inc.incident_number} | test" if inc is not None else "Shift handover | test",
         "body": "body",
         "recipients_ref": ref,
         "broadcast_ids": [],
@@ -627,13 +629,41 @@ def test_an_audience_bigger_than_the_whole_cap_is_refused_because_it_can_never_f
     _settings, session = tmp_db
     monkeypatch.setenv("EMAIL_DAILY_CAP", "2")
     monkeypatch.setattr(notify, "get_settings", lambda *_a, **_k: _settings_with({REF: _addresses(250)}))
-    inc = _incident(session, priority="P1")  # not even a P1 can be pushed through a relay this small
+    inc = _incident(session, priority="P3")  # below P1: waiting could never make 3 messages fit in 2
     row = _queue(session, inc, "EMAIL:huge:1", ref=REF)
     report = drain_once(session, now=NOW)
     dead = _get(session, row.id)
     assert report.dead == 1 and dead.status == DEAD and "can never fit" in dead.last_error
     assert smtp_on.sent == [] and transfers == []
     assert any(e["type"] == "outbox.failed" for e in hub._history)
+
+
+@pytest.mark.parametrize(
+    "cap,audience,seeded,messages",
+    [
+        (1, 101, 0, 2),  # round-3 C4-a, the verifier's repro: an EMPTY window, and a P1 that alone needs 2 > 1
+        (2, 250, 0, 3),
+        (2, 250, 2, 3),  # and a full window as well
+    ],
+)
+def test_a_p1_bigger_than_the_whole_cap_is_sent_with_the_override_note(
+    tmp_db, smtp_on, transfers, clean_hub, monkeypatch, cap, audience, seeded, messages
+):
+    """Round-3 C4: the "can never fit" refusal ran BEFORE the P1 override and killed the P1 DEAD.
+    A P1 is never held by the cap — not in a full window, and not for being bigger than the cap."""
+    _settings, session = tmp_db
+    monkeypatch.setenv("EMAIL_DAILY_CAP", str(cap))
+    monkeypatch.setattr(notify, "get_settings", lambda *_a, **_k: _settings_with({REF: _addresses(audience)}))
+    if seeded:
+        _seed_sent(session, seeded, at=NOW - timedelta(hours=1))
+    inc = _incident(session, priority="P1")
+    row = _queue(session, inc, "EMAIL:p1-huge:1", ref=REF)
+    report = drain_once(session, now=NOW)
+    assert (report.sent, report.dead) == (1, 0) and _get(session, row.id).status == SENT
+    assert len(smtp_on.sent) == messages and len(transfers) == 1
+    (note,) = [n for n in _notes(session, inc) if "EMAIL_DAILY_CAP" in n]
+    assert "P1 notice was SENT anyway" in note and f"({messages} message(s))" in note
+    assert not any(e["type"] == "outbox.failed" for e in hub._history)
 
 
 def test_an_unapproved_row_is_still_rejected_not_deferred(tmp_db, smtp_on, transfers, clean_hub, monkeypatch):
@@ -710,6 +740,66 @@ def test_a_failing_count_lets_a_p1_through_and_leaves_a_trace(tmp_db, smtp_on, t
     assert "sending uncounted" in caplog.text
 
 
+@pytest.mark.parametrize("priority,sent", [("P1", True), ("P3", False)])
+def test_a_database_that_refuses_every_read_still_lets_a_p1_through(
+    tmp_db, smtp_on, transfers, clean_hub, monkeypatch, priority, sent
+):
+    """Round-3 C5, verifier 2's repro at the ENGINE (not patched functions): every SELECT during the
+    cap gate fails, so the count AND the live priority lookup fail the same way. Before the fix the
+    P1 fail-open collapsed to fail-closed (FAILED, nothing sent). The P1 decision now falls back to
+    the priority the row was queued with, so it no longer depends on a second read that fails too;
+    a P3 is still not sent."""
+    import sqlite3
+
+    from sqlalchemy import event
+
+    _settings, session = tmp_db
+    inc = _incident(session, priority=priority)
+    row = _queue(session, inc, f"EMAIL:c5:{priority}")
+    engine, state, refused = session.get_bind(), {"on": False}, []
+
+    def refuse_reads(conn, cursor, statement, parameters, context, executemany):
+        if state["on"] and statement.lstrip().upper().startswith("SELECT"):
+            table = re.search(r"\bFROM\s+\"?(\w+)", statement)
+            refused.append(table.group(1) if table else "?")
+            raise sqlite3.OperationalError("disk I/O error")
+
+    real_decision, real_register = notify.email_cap_decision, outbox._register_then_dispatch
+
+    def unreadable_from_here(*a, **k):  # the database stops answering reads for the whole cap gate …
+        state["on"] = True
+        return real_decision(*a, **k)
+
+    def readable_again(*a, **k):  # … and answers again for the send and its outcome
+        state["on"] = False
+        return real_register(*a, **k)
+
+    monkeypatch.setattr(notify, "email_cap_decision", unreadable_from_here)
+    monkeypatch.setattr(outbox, "_register_then_dispatch", readable_again)
+    event.listen(engine, "before_cursor_execute", refuse_reads)
+    try:
+        report = drain_once(session, now=NOW)
+    finally:
+        state["on"] = False
+        event.remove(engine, "before_cursor_execute", refuse_reads)
+    assert {"outbox", "incidents"} <= set(refused)  # both reads really failed, at the engine
+    status = _get(session, row.id).status
+    if sent:
+        assert (report.sent, status, len(smtp_on.sent)) == (1, SENT, 1)
+        (note,) = [n for n in _notes(session, inc) if "could not be checked" in n]
+        assert "P1 notice was SENT without counting it against the cap" in note
+    else:
+        assert (report.sent, report.retried, status, smtp_on.sent) == (0, 1, PENDING, [])
+
+
+def test_the_queued_priority_is_read_from_the_subject_the_producers_write():
+    assert notify.queued_priority({"subject": "[P1] INC000123 | Embakasi East HUB | Nairobi East"}) == "P1"
+    assert notify.queued_priority({"subject": "  [p2] INC000123 | x"}) == "P2"
+    assert notify.queued_priority({"subject": "Shift handover 2026-09-21_DAY"}) is None
+    assert notify.queued_priority({"subject": "[P5] INC000123 | x"}) is None
+    assert notify.queued_priority({}) is None
+
+
 def test_a_failing_note_can_never_turn_a_deferral_into_a_send(tmp_db, smtp_on, transfers, clean_hub, monkeypatch):
     """Review E05, the reviewer's repro: at the cap, a P3 whose held-note write fails was SENT past
     the cap. The note is now written with the outcome, so a failure there leaves the row claimed
@@ -731,30 +821,33 @@ def test_a_failing_note_can_never_turn_a_deferral_into_a_send(tmp_db, smtp_on, t
     assert _get(session, row.id).status != SENT
 
 
-def test_concurrent_drainers_overshoot_by_at_most_one_message_each(tmp_db, smtp_on, transfers, clean_hub, monkeypatch):
-    """Review E06 — documented, not reserved (see ``notify.email_budget``). Two drainers holding two
-    different rows at cap−1 both read the same count and both send: the window ends at
-    cap + (drainers − 1). Pinned so the bound stays what the docstring says."""
+@pytest.mark.parametrize("drainers", [2, 4])
+def test_concurrent_drainers_overshoot_by_at_most_one_message_each(
+    tmp_db, smtp_on, transfers, clean_hub, monkeypatch, drainers
+):
+    """Review E06 — documented, not reserved (see ``notify.email_budget``). N drainers holding N
+    different rows at cap−1 all read the same count and all send: the window ends at
+    cap + (drainers − 1) × requested. 4 is the round-3 replay (3 over): every concurrent
+    synchronous ingest request is a drainer, so the count of drainers is not a fixed 3."""
     from noc_agents.db.models import get_session
 
     _settings, session = tmp_db
     monkeypatch.setenv("EMAIL_DAILY_CAP", "10")
     inc = _incident(session)
     _seed_sent(session, 9, at=NOW - timedelta(hours=1))
-    a = _get(session, _queue(session, inc, "EMAIL:race:a").id)
-    b = _get(session, _queue(session, inc, "EMAIL:race:b").id)
-    other = get_session()
+    rows = [_get(session, _queue(session, inc, f"EMAIL:race:{i}").id) for i in range(drainers)]
+    others = [get_session() for _ in range(drainers - 1)]
     try:
-        decisions = [notify.email_cap_decision(session, a, now=NOW), notify.email_cap_decision(other, b, now=NOW)]
+        decisions = [notify.email_cap_decision(s, r, now=NOW) for s, r in zip([session, *others], rows)]
     finally:
-        other.close()
-    assert [d.action for d in decisions] == [notify.CAP_SEND, notify.CAP_SEND]  # neither sees the other
-    drainers = len(decisions)
-    window_after_both = decisions[0].budget.sent + sum(d.budget.requested for d in decisions)
-    assert window_after_both == 10 + (drainers - 1)  # the documented bound, well inside the headroom
-    # One drainer is exact: it re-reads the count between rows, so the second row is held.
+        for other in others:
+            other.close()
+    assert [d.action for d in decisions] == [notify.CAP_SEND] * drainers  # none sees the others
+    window_after_all = decisions[0].budget.sent + sum(d.budget.requested for d in decisions)
+    assert window_after_all == 10 + (drainers - 1)  # the documented formula
+    # One drainer is exact: it re-reads the count between rows, so every row after the first is held.
     report = drain_once(session, now=NOW)
-    assert (report.sent, report.deferred) == (1, 1) and notify.email_budget(session, now=NOW).sent == 10
+    assert (report.sent, report.deferred) == (1, drainers - 1) and notify.email_budget(session, now=NOW).sent == 10
 
 
 # --- nothing observable changes when the cap is not in play -------------------------------------

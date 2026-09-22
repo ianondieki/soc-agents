@@ -408,8 +408,10 @@ class Score:
     recall_verdict: str = VERDICT_INSUFFICIENT_DATA
     reason: str | None = None
     label: str | None = None
-    contributing_regions: list[str] | None = None  # overall row only
-    dropped_regions: dict[str, str] | None = None  # overall row only: region -> why it was left out
+    contributing_regions: list[str] | None = None  # overall row only: the PRECISION pool
+    dropped_regions: dict[str, str] | None = None  # overall row only: region -> why it left the precision pool
+    recall_contributing_regions: list[str] | None = None  # overall row only: the RECALL pool
+    recall_dropped_regions: dict[str, str] | None = None  # overall row only: region -> why it left the recall pool
     config: dict[str, Any] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, Any]:
@@ -441,6 +443,8 @@ class Score:
             "reason": self.reason,
             "contributing_regions": self.contributing_regions,
             "dropped_regions": self.dropped_regions,
+            "recall_contributing_regions": self.recall_contributing_regions,
+            "recall_dropped_regions": self.recall_dropped_regions,
             "floors": {
                 "min_history_days": self.config.get("min_history_days"),
                 "min_episodes": self.config.get("min_episodes"),
@@ -656,9 +660,19 @@ def replay(
     **The overall row pools only regions that pass the floors on their own** (review finding
     F05). It used to take its history from the oldest row in *any* region, so one old calm row
     in WNY let twelve episodes from a 20-day-old NBI publish a precision NBI itself withheld.
-    Now a region whose own score is ``INSUFFICIENT_DATA`` contributes nothing — no episodes, no
-    incidents, no hours — and ``dropped_regions`` says which and why. Pooling can still add
-    information across regions that each stand up; it can no longer launder one that does not.
+    Now a region whose own score is ``INSUFFICIENT_DATA`` contributes nothing to the pooled
+    precision — no episodes, no hours — and ``dropped_regions`` says which and why. Pooling can
+    still add information across regions that each stand up; it can no longer launder one that
+    does not.
+
+    **Precision and recall are pooled separately** (review finding W14). They have different
+    floors — precision needs resolved flag episodes, recall needs incidents — so a region can
+    pass one and fail the other, and the pools must differ. Pooling recall over the precision
+    pool dropped exactly the regions that matter most to recall: a region that never flags has
+    no episodes, fails the precision floor, and is therefore where the missed incidents live.
+    With WNY (30 incidents, never flagged) left out, NBI's 12 warned incidents read as a pooled
+    recall of 1.0; the truth over both is 12/42. ``recall_contributing_regions`` and
+    ``recall_dropped_regions`` show the recall pool the same way the precision pool is shown.
     """
     now = now or utcnow()
     until = until or now
@@ -690,28 +704,76 @@ def replay(
                 family=family, region_code=code, regions=[code], episodes=episodes, incidents=incidents,
                 since=since, until=until, now=now, history_start=starts[code], config=config,
             ).as_dict()
-        contributors = [c for c in regions if per_region[c]["verdict"] != VERDICT_INSUFFICIENT_DATA]
-        dropped = {c: per_region[c]["reason"] for c in regions if c not in contributors}
-        if contributors:
-            overall = _score(
-                family=family, region_code="ALL", regions=contributors, episodes=episodes, incidents=incidents,
+        def pooled(pool: list[str]) -> Score:
+            return _score(
+                family=family, region_code="ALL", regions=pool, episodes=episodes, incidents=incidents,
                 since=since, until=until, now=now,
-                history_start=max(s for c in contributors if (s := starts[c]) is not None),
+                # The youngest history in the pool: the pool is only as old as its newest member.
+                history_start=max(s for c in pool if (s := starts[c]) is not None),
                 config=config,
             )
+
+        # Precision pool: regions that pass the PRECISION floors on their own (F05).
+        contributors = [c for c in regions if per_region[c]["verdict"] != VERDICT_INSUFFICIENT_DATA]
+        dropped = {c: per_region[c]["reason"] for c in regions if c not in contributors}
+        # Recall pool: regions that pass the RECALL floors on their own (W14) — a different set.
+        recall_pool = [c for c in regions if per_region[c]["recall_verdict"] == VERDICT_MEASURED]
+        recall_dropped = {c: _recall_shortfall(per_region[c], config) for c in regions if c not in recall_pool}
+
+        parts: list[str] = []
+        if contributors:
+            overall = pooled(contributors)
+            parts.append(overall.reason or "")
+            if dropped:
+                parts.append(f"precision pooled from {', '.join(contributors)} only (dropped: {', '.join(sorted(dropped))})")
         else:
             overall = Score(family=family, region_code="ALL", since=since, until=until, history_days=None, config=dict(config))
             overall.label = "precision: not yet measured"
-            overall.reason = (
-                "no region passes the floors on its own; pooling regions that each fail them would publish a "
-                "number none of them supports"
+            parts.append(
+                "no region passes the precision floors on its own; pooling regions that each fail them would "
+                "publish a number none of them supports"
             )
+
+        # The recall half comes from the recall pool alone, never from the precision pool.
+        if recall_pool:
+            recall = pooled(recall_pool)
+            overall.recall, overall.recall_ci95 = recall.recall, recall.recall_ci95
+            overall.recall_verdict = recall.recall_verdict
+            overall.incidents, overall.incidents_warned = recall.incidents, recall.incidents_warned
+            parts.append(
+                f"recall pooled from {', '.join(recall_pool)}"
+                + (f" (dropped: {', '.join(sorted(recall_dropped))})" if recall_dropped else "")
+            )
+        else:
+            overall.recall = overall.recall_ci95 = None
+            overall.recall_verdict = VERDICT_INSUFFICIENT_DATA
+            # Counts are always shown, the ratio withheld: every region's incidents, as its own row counts them.
+            overall.incidents = sum(per_region[c]["incidents"] for c in regions)
+            overall.incidents_warned = sum(per_region[c]["incidents_warned"] for c in regions)
+            parts.append(
+                f"no region passes the recall floors on its own (>= {config['min_history_days']} days of history and "
+                f">= {config['min_incidents']} incidents), so no pooled recall is published"
+            )
+        overall.reason = "; ".join(p for p in parts if p)
         overall.contributing_regions = contributors
         overall.dropped_regions = dropped
-        if contributors and dropped:
-            overall.reason = f"{overall.reason}; pooled from {', '.join(contributors)} only (dropped: {', '.join(sorted(dropped))})"
+        overall.recall_contributing_regions = recall_pool
+        overall.recall_dropped_regions = recall_dropped
         report["families"][family] = {"regions": per_region, "overall": overall.as_dict()}
     return report
+
+
+def _recall_shortfall(score: Mapping[str, Any], config: Mapping[str, Any]) -> str:
+    """Why a region's own recall is withheld, in the words of the floor it missed."""
+    reasons = []
+    history = score.get("history_days")
+    if history is None:
+        reasons.append("no stored signal history for this scope")
+    elif history < config["min_history_days"]:
+        reasons.append(f"signal history covers {history:g} days; recall needs {config['min_history_days']}")
+    if score.get("incidents", 0) < config["min_incidents"]:
+        reasons.append(f"{score.get('incidents', 0)} incident(s) in the window; recall needs at least {config['min_incidents']}")
+    return "; ".join(reasons) or "recall withheld"
 
 
 # ---------------------------------------------------------------------------- dashboard hooks

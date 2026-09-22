@@ -29,7 +29,10 @@ What is pinned, in the order the brief ranked it:
 The adversarial review's findings each have a test here, named in the test's docstring
 (F01 non-UTF-8 entity bypass, F02 staleness against now, F03 freshness from feed health, F04
 canonical county keys, F06 total deadline, F07 cancel ordering, F08 incomplete, F10
-re-attribution, F15 compression, F16 verbatim raw_xml, F17 areaDesc punctuation).
+re-attribution, F15 compression, F16 verbatim raw_xml, F17 areaDesc punctuation), and the
+round-3 replay findings (W02 header-phase deadline, over a real LOOPBACK socket — the one place
+this file lets a socket open, and only to 127.0.0.1; NEW1 pending documents survive a 304 and an
+outage; NEW2 a detached row is never extended; NEW3 punctuation is not a place).
 """
 
 from __future__ import annotations
@@ -37,6 +40,7 @@ from __future__ import annotations
 import json
 import re
 import socket
+import threading
 import time
 import tracemalloc
 import xml.etree.ElementTree as ET
@@ -95,6 +99,13 @@ SAFARICOM_REGIONS = {"NBI_E", "NBI_W", "MTK", "CST", "RFT", "WNY"}
 # ------------------------------------------------------------------------------ fixtures
 
 
+#: The real socket functions, captured before any fixture replaces them, so the loopback-only
+#: fixture below can re-admit 127.0.0.1 — and nothing else — for the W02 deadline tests.
+_REAL_CONNECT = socket.socket.connect
+_REAL_CREATE_CONNECTION = socket.create_connection
+_REAL_GETADDRINFO = socket.getaddrinfo
+
+
 @pytest.fixture(autouse=True)
 def no_sockets(monkeypatch):
     """Any attempt to open a real connection fails loudly. MockTransport never gets here."""
@@ -106,6 +117,70 @@ def no_sockets(monkeypatch):
     monkeypatch.setattr(socket.socket, "connect_ex", boom)
     monkeypatch.setattr(socket, "create_connection", boom)
     monkeypatch.setattr(socket, "getaddrinfo", boom)
+
+
+@pytest.fixture()
+def loopback_only(monkeypatch):
+    """Re-admit connections to 127.0.0.1 only. The W02 header-phase deadline cannot be tested
+    through MockTransport — the bug lived below httpx, in socket reads — so these tests run a
+    real server on the loopback interface. Any other host still fails exactly as before."""
+
+    def loopback(host) -> bool:
+        return str(host) in {"127.0.0.1", "localhost"}
+
+    def connect(self, address):
+        if not loopback(address[0]):
+            raise AssertionError(f"a KMD CAP test tried to reach {address!r}")
+        return _REAL_CONNECT(self, address)
+
+    def create_connection(address, *args, **kwargs):
+        if not loopback(address[0]):
+            raise AssertionError(f"a KMD CAP test tried to reach {address!r}")
+        return _REAL_CREATE_CONNECTION(address, *args, **kwargs)
+
+    def getaddrinfo(host, *args, **kwargs):
+        if not loopback(host):
+            raise AssertionError(f"a KMD CAP test tried to resolve {host!r}")
+        return _REAL_GETADDRINFO(host, *args, **kwargs)
+
+    monkeypatch.setattr(socket.socket, "connect", connect)
+    monkeypatch.setattr(socket, "create_connection", create_connection)
+    monkeypatch.setattr(socket, "getaddrinfo", getaddrinfo)
+
+
+def _drip_server(response: bytes, gap: float) -> int:
+    """A one-shot loopback HTTP server that sends ``response`` one byte every ``gap`` seconds —
+    each socket read answered promptly, so no per-read timeout ever trips."""
+    srv = socket.socket()
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(1)
+    port = srv.getsockname()[1]
+
+    def run():
+        try:
+            conn, _ = srv.accept()
+        except OSError:
+            return
+        try:
+            data = b""
+            while b"\r\n\r\n" not in data:
+                chunk = conn.recv(4096)
+                if not chunk:
+                    return
+                data += chunk
+            for byte in response:
+                conn.sendall(bytes([byte]))
+                time.sleep(gap)
+            if not response:
+                time.sleep(8.0)  # silent: longer than any per-read timeout the test gives the client
+        except OSError:
+            pass  # the client's watchdog shut the connection: exactly what is being tested
+        finally:
+            conn.close()
+            srv.close()
+
+    threading.Thread(target=run, daemon=True).start()
+    return port
 
 
 @pytest.fixture(autouse=True)
@@ -530,6 +605,96 @@ def test_f15_identity_is_requested_and_a_compressed_answer_is_refused_unread(mon
     assert seen[0].headers["Accept-Encoding"] == "identity"
     assert err.value.kind == "malformed" and "Content-Encoding 'gzip'" in str(err.value)
     assert consumed == []  # refused before a single byte was read, let alone inflated
+
+
+HEADER_DRIP_200 = b"HTTP/1.1 200 OK\r\nX-Pad: " + b"a" * 40 + b"\r\nContent-Length: 5\r\n\r\n<rss>"
+HEADER_DRIP_304 = b"HTTP/1.1 304 Not Modified\r\nX-Pad: " + b"a" * 40 + b"\r\n\r\n"
+
+
+def _continue_server(count: int, gap: float) -> int:
+    """A loopback server that answers with ``count`` whole ``100 Continue`` interim responses,
+    ``gap`` seconds apart, then a 304 — httpcore skips each 1xx and keeps reading headers."""
+    srv = socket.socket()
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(1)
+    port = srv.getsockname()[1]
+
+    def run():
+        try:
+            conn, _ = srv.accept()
+        except OSError:
+            return
+        try:
+            data = b""
+            while b"\r\n\r\n" not in data:
+                data += conn.recv(4096)
+            for _ in range(count):
+                conn.sendall(b"HTTP/1.1 100 Continue\r\n\r\n")
+                time.sleep(gap)
+            conn.sendall(b"HTTP/1.1 304 Not Modified\r\n\r\n")
+        except OSError:
+            pass
+        finally:
+            conn.close()
+            srv.close()
+
+    threading.Thread(target=run, daemon=True).start()
+    return port
+
+
+W02_CASES = {
+    "200-headers-dripped": (lambda: _drip_server(HEADER_DRIP_200, 0.07), 1.0),   # ~6.4 s of headers
+    "304-headers-dripped": (lambda: _drip_server(HEADER_DRIP_304, 0.08), 1.0),   # ~6.2 s; a 304 skipped the check
+    "100-continue-storm": (lambda: _continue_server(60, 0.07), 1.0),             # 60 interim responses, ~4.2 s
+    "silent-after-request": (lambda: _drip_server(b"", 0.0), 6.0),               # nothing; client per-read 6 s
+}
+
+
+@pytest.mark.parametrize("label", sorted(W02_CASES))
+def test_w02_the_total_deadline_covers_the_header_phase_over_a_real_socket(loopback_only, label):
+    """W02: the deadline was checked only in the body loop, so a server that dripped its
+    HEADERS (or sent endless 1xx responses, or a slow 304) ran 9-11 s against a 1 s budget. The
+    DeadlineWatchdog shuts the socket at the deadline, and no single wait may outlast the budget."""
+    make_server, per_read = W02_CASES[label]
+    port = make_server()
+    provider = KmdCapProvider(
+        f"http://127.0.0.1:{port}/rss.xml", client=httpx.Client(timeout=httpx.Timeout(per_read)), timeout_s=0.6
+    )
+    started = time.monotonic()
+    with pytest.raises(CapError) as err:
+        provider.fetch_feed(if_modified_since=LAST_MODIFIED)
+    elapsed = time.monotonic() - started
+    assert err.value.kind == "timeout" and "total deadline" in str(err.value)
+    assert elapsed < 2.5, f"{label}: {elapsed:.2f}s against a 0.6 s budget"
+
+
+def test_w02_a_304_is_checked_against_the_deadline_before_it_is_returned(monkeypatch):
+    """The 304 branch returned without consulting the deadline at all."""
+    monkeypatch.setattr(adapter, "_clock", _Clock(step=20.0))  # the exchange "took" past the budget
+    provider = KmdCapProvider(client=httpx.Client(transport=httpx.MockTransport(lambda req: httpx.Response(304))))
+    with pytest.raises(CapError) as err:
+        provider.fetch_feed(if_modified_since=LAST_MODIFIED)
+    assert err.value.kind == "timeout"
+
+
+def test_w02_every_request_opens_its_own_connection_and_is_traced():
+    """The watchdog can only shut a socket it has seen: Connection: close forces a fresh
+    connection (and so a connect_tcp trace) per request, and the trace hook is attached."""
+    seen: list[httpx.Request] = []
+
+    def handler(request):
+        seen.append(request)
+        return httpx.Response(200, content=_read("kmd_rss.xml"))
+
+    KmdCapProvider(client=httpx.Client(transport=httpx.MockTransport(handler))).fetch_feed()
+    assert seen[0].headers["Connection"] == "close" and callable(seen[0].extensions.get("trace"))
+
+
+def test_new1_a_304_to_an_unconditional_request_is_refused_not_read_as_unchanged():
+    provider = KmdCapProvider(client=httpx.Client(transport=httpx.MockTransport(lambda req: httpx.Response(304))))
+    with pytest.raises(CapError) as err:
+        provider.fetch_feed()  # no If-Modified-Since
+    assert err.value.kind == "http" and "no If-Modified-Since" in str(err.value)
 
 
 def test_a_declared_content_length_over_the_cap_is_not_read(monkeypatch):
@@ -1093,6 +1258,114 @@ def test_f17_punctuation_and_parentheses_do_not_lose_a_county(tmp_db, monkeypatc
     _serve(server, {"https://x.test/m.xml": _cap("m-1", areas=(area_desc,))})
     poll(session, settings, provider=server.provider(), now=T0)
     assert "Mombasa" in _by_eid(session)["m-1#CST"].county
+
+
+def test_new1_a_nonconformant_304_to_the_retry_keeps_the_pending_document_and_is_not_ok(tmp_db, monkeypatch):
+    """NEW1: the poller withheld If-Modified-Since to force a retry of an unread document; the
+    server answered 304 anyway, the pending list was erased, and the feed read "ok, 0 in force"
+    with the one Severe warning never read."""
+    settings, session = tmp_db
+    _enable(monkeypatch)
+    server = Server()
+    server.routes[RAIN_URL] = (503, b"document host down", {})
+    poll(session, settings, provider=server.provider(), now=T0)
+    assert cap_feed_health(session, "safaricom", "WNY", T0)["state"] == "incomplete"
+
+    server.routes[RAIN_URL] = (200, _read("cap_wny_heavy_rain.xml"), {})
+    server.routes[FEED_URL] = (304, b"", {"Last-Modified": LAST_MODIFIED})
+    t1 = T0 + timedelta(minutes=30)
+    poll(session, settings, provider=server.provider(), now=t1)
+    health = cap_feed_health(session, "safaricom", "WNY", t1)
+    assert health["state"] != "ok" and health["stale"] is True and "304" in health["reason"]
+    assert poller._previous_health(session, "safaricom")["pending_links"] == [RAIN_URL]
+
+    server.routes[FEED_URL] = (200, _read("kmd_rss.xml"), {"Last-Modified": LAST_MODIFIED})
+    t2 = t1 + timedelta(minutes=30)
+    poll(session, settings, provider=server.provider(), now=t2)
+    health = cap_feed_health(session, "safaricom", "WNY", t2)
+    assert health["state"] == "ok" and health["alerts_in_force"] == 1
+    assert server.urls().count(RAIN_URL) == 2
+
+
+def test_new1_an_outage_between_runs_does_not_erase_a_pending_document(tmp_db, monkeypatch):
+    """The conformant-server variant: an unreachable run wiped the list, the next conditional
+    request got a legitimate 304, and the unread warning was never read."""
+    settings, session = tmp_db
+    _enable(monkeypatch)
+    server = Server()
+
+    def conformant(request):
+        if request.headers.get("If-Modified-Since"):
+            return httpx.Response(304, headers={"Last-Modified": LAST_MODIFIED})
+        return httpx.Response(200, content=_read("kmd_rss.xml"), headers={"Last-Modified": LAST_MODIFIED})
+
+    server.routes[FEED_URL] = conformant
+    server.routes[RAIN_URL] = (503, b"document host down", {})
+    poll(session, settings, provider=server.provider(), now=T0)
+    server.routes[FEED_URL] = (503, b"feed down", {})
+    poll(session, settings, provider=server.provider(), now=T0 + timedelta(minutes=30))
+    assert poller._previous_health(session, "safaricom")["pending_links"] == [RAIN_URL]
+
+    server.routes[FEED_URL] = conformant
+    server.routes[RAIN_URL] = (200, _read("cap_wny_heavy_rain.xml"), {})
+    t2 = T0 + timedelta(hours=1)
+    poll(session, settings, provider=server.provider(), now=t2)
+    feed_requests = [r for r in server.calls if str(r.url) == FEED_URL]
+    assert "If-Modified-Since" not in feed_requests[-1].headers  # withheld: something was still owed
+    health = cap_feed_health(session, "safaricom", "WNY", t2)
+    assert health["state"] == "ok" and health["alerts_in_force"] == 1
+
+
+def test_new2_a_detached_held_row_is_never_extended_or_re_detached(tmp_db, monkeypatch):
+    """NEW2: _refresh_hold extended a DETACHED row of an alert with no <expires>, so it crept
+    forward every poll, the backtest kept crediting the old region, and every poll reported a
+    re-attribution."""
+    settings, session = tmp_db
+    _enable(monkeypatch)
+    server = Server()
+    _serve(server, {"https://x.test/held.xml": _cap("held-9", expires=None, areas=("Kwale",))})
+    mapped = _with_regions(settings, CST=["Mombasa", "Kwale"], WNY=["Kisumu"])
+    moved = _with_regions(settings, CST=["Mombasa"], WNY=["Kisumu", "Kwale"])
+    poll(session, mapped, provider=server.provider(), now=T0)
+
+    detach_at = T0 + timedelta(minutes=30)
+    result = poll(session, moved, provider=server.provider(), now=detach_at)
+    assert result.tools[0]["reattributed"] == 2  # WNY row created, CST row detached
+    for k in (2, 3, 4):
+        result = poll(session, moved, provider=server.provider(), now=T0 + timedelta(minutes=30 * k))
+        assert result.tools[0]["reattributed"] == 0, k
+        cst = _by_eid(session)["held-9#CST"]
+        assert cst.valid_until == detach_at and "detached" in json.loads(cst.derived_json), k
+    wny = _by_eid(session)["held-9#WNY"]
+    assert wny.valid_until > T0 + timedelta(minutes=120)  # the held alert lives on where it now belongs
+
+    from noc_agents.services import backtest
+
+    end = T0 + timedelta(hours=6)
+    rows = backtest._family_rows(session, "safaricom", family="cap", since=T0 - timedelta(days=1), until=end, now=end)
+    cst_episodes = [e for e in backtest.build_episodes(rows, family="cap") if e.region_code == "CST"]
+    assert [(e.start, e.end) for e in cst_episodes] == [(T0, detach_at)]
+
+
+@pytest.mark.parametrize("area_desc", ["Coast (Mombasa,Kilifi).", "Kwale (Coast region).", "Nakuru (and Baringo)!"])
+def test_new3_punctuation_left_between_separators_is_not_a_place(area_desc):
+    pieces = split_area_desc(area_desc)
+    assert pieces and all(any(ch.isalpha() for ch in p) for p in pieces), pieces
+
+
+def test_new3_no_junk_row_for_a_trailing_full_stop(tmp_db, monkeypatch):
+    """NEW3: "Coast (Mombasa,Kilifi)." stored a row a2#county=. and reported "." unattributed."""
+    settings, session = tmp_db
+    _enable(monkeypatch)
+    server = Server()
+    _serve(server, {"https://x.test/d.xml": _cap("dot-1", areas=("Coast (Mombasa,Kilifi).",))})
+    result = poll(session, settings, provider=server.provider(), now=T0)
+    rows = _by_eid(session)
+    assert sorted(k for k in rows if k.startswith("dot-1#")) == ["dot-1#CST", "dot-1#county=Coast"]
+    assert result.tools[0]["unmapped_areas"] == ["Coast"]
+    # Re-attribution from areas stored before the fix cannot recreate the junk row either.
+    targets, unknown = poller._targets(["Coast", ".", "Mombasa"], poller.county_region_map(settings.operator))
+    assert "county=." not in targets and "." not in unknown
 
 
 # ------------------------------------------------------------------------------ county → region

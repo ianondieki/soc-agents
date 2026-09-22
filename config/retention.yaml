@@ -204,6 +204,17 @@ tables:
 
   audit_events:
     class: llm_call_records     # §9.4 groups audit_events(external.call) with llm_calls
+    # LOAD-BEARING, so this class must stay `keep`: two features read audit rows back as facts.
+    # memory reads action=retention.pseudonymised (one row per pseudonymised incident) to know
+    # an incident's text must never be re-derived, and the scorecard shadow rule reads
+    # action=scorecard.published to know a predecessor card was really released. Pruning the
+    # scorecard rows errs the safe way (the next card needs a review again). Pruning the MEMORY
+    # markers does NOT: memory would treat those incidents as never pseudonymised and re-derive
+    # their text from the source notes, and a name that lived only in a person column (e.g. an
+    # fe_name set by a reassign) is then not in the scrub map, so it can come back into memory.
+    # Never give this table a delete rule without first moving the markers somewhere durable.
+    # See services/housekeeping.py pseudonymisation_marker_id and
+    # db/models_scorecards.py earlier_released_card_exists.
     timestamp_column: ts
 
   # work_notes, broadcasts, shift_ledger, incident_briefs, agent_runs, agent_run_steps,

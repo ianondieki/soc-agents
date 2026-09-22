@@ -828,8 +828,11 @@ def _cap_unchecked(session: Session, job: OutboxRow, exc: BaseException) -> tupl
     """
     try:
         priority = notify.incident_priority(session, job.incident_id)
-    except Exception:  # noqa: BLE001 — unknown priority is not a P1
-        priority = None
+    except Exception:  # noqa: BLE001 — most likely the same unreadable database as the count
+        # Round-3 C5: when the database refuses reads, this lookup fails exactly as the count did,
+        # and a P1 would collapse to fail-closed. So the P1 question falls back to the priority the
+        # row was QUEUED with — its own "[P1] INC… |" subject, already in hand, no second read.
+        priority = notify.queued_priority(job.payload_json)
     session.rollback()
     if priority in notify.EMAIL_CAP_OVERRIDE_PRIORITIES:
         log.error("outbox: EMAIL_DAILY_CAP unreadable for P1 row %s — sending uncounted", job.id, exc_info=exc)

@@ -18,7 +18,7 @@ Exit codes:  0 = every scenario matches its fixture (or --update wrote them)
              2 = refused or bad usage (DATABASE_URL or --tmp-dir inside the repo's data folder)
 
 **The same scenario as the test, not an approximation.** The four scenarios mirror the four
-golden tests in ``tests/integration/test_golden_sequence.py`` one for one, and nothing about
+replay tests in ``tests/integration/test_golden_sequence.py`` one for one, and nothing about
 them is restated here:
 
 * the environment is the suite's own -- ``tests/conftest.py`` is loaded first, so every flag
@@ -39,31 +39,60 @@ is deleted afterwards unless ``--keep-tmp`` is given. The script refuses to star
 folder, and checks every URL it builds again before opening it. A golden run creates
 incidents, runs, audit rows and outbox rows; none of that may ever land in a real database.
 
-**What the fixtures hold.** One JSON file per scenario: the run-scoped event sequence as the
-seven-field projection the test literals use (``type, seq, node, agent, status,
-incident_number, incident_id is set``); the payload of every event that is not an
-``agent.step.*`` event; the payload key set per event type and the envelope key set (G2
-compares both exactly); the full realtime history as ``[type, run_scoped]`` pairs, which is
-where the ``email.sent`` position of §2.1 R4 lives; the run row; every step row (input,
-output, rationale, tools, confidence -- the R3 literals); the new work notes in order (the R4
-note order); and the returned incident. Values that change on every run are masked, in the
-order ``MASKS`` lists them: uuids, timestamps, dates, the ledger file name's date and shift
-(the shift is DAY or NIGHT by the clock), and ``HH:MM EAT`` clock times. Everything else is
-literal. Durations are not captured at all.
+**What the fixtures hold.** One JSON file per scenario, masked (below):
 
-The fixtures are stricter than the test in places (the test checks some rationales with
-``startswith``; the fixture keeps the whole deterministic string) and never looser: every
-literal the test pins is in the fixture unmasked, or masked exactly where the test uses a
-regex.
+* the event side: the run-scoped sequence as the seven-field projection the test literals use
+  (``events``: type, seq, node, agent, status, incident_number, incident_id is set); every
+  ``agent.step.*`` payload as the UI receives it, ``duration_ms`` dropped (``step_events``);
+  the payload of every other run-scoped event (``event_payloads``); the whole realtime history
+  as ``[type, run_scoped]`` pairs, which is where the R4 ``email.sent`` position lives
+  (``global_history``), and each event outside the run with its incident binding
+  (``global_events``); the envelope and payload key sets and the ``ts`` form (G2 compares
+  them exactly);
+* the relation the test checks between the two (``_check_steps_against_events``): each step
+  payload's ``input`` / ``output`` / ``rationale`` equals the step row's ``input_summary[:120]``
+  / ``output_summary[:160]`` / full ``rationale`` (``step_event_mirror_mismatches``, empty
+  when they agree); and, because ``run_id`` is masked, every payload's ``run_id`` against its
+  envelope's (``payload_run_id_mismatches``, empty when they agree);
+* the database side: the run row, every step row (the R3 literals), the new work notes in order
+  (the R4 note order), the returned incident, the new audit rows (``actor, action, entity``,
+  sorted; entity is ``""``, ``<returned incident id>`` or a masked id), the broadcast rows
+  (``channel, audience, status``, sorted), the HITL tasks (``task_type, status``, and the type of
+  ``proposed_payload["sms"]``), the brief and ledger row counts and whether the ledger file was
+  written;
+* durability (§7.0.4, R5): every event that was announced before its row could be read from a
+  second Session (``announced_before_durable``, empty when all were durable -- the test's own
+  spy, run on every scenario), and what a second Session sees once the run is over
+  (``durable_after_run``).
+
+With these, every assertion of the four replay tests has a counterpart in the fixture, so a
+regression those tests fail on is also a golden diff. The fifth test in that file,
+``test_step_payload_truncation_boundaries``, drives ``RunTracker`` directly with synthetic
+200- and 300-character strings; it replays no alarm, so it has no fixture, and the 120/160
+caps themselves are only exercised by it (real step summaries are shorter than the caps).
+
+**Where the fixture is stricter than the test.** Some recorded values are not pinned by any
+literal in the golden test: they are taken from the current code, as the documented golden
+state, and were not checked against an independent literal. Each fixture lists them under
+``not_pinned_by_the_golden_test`` (see ``NOT_PINNED``), so a reviewer knows which lines of a
+diff contradict the test and which only contradict the last ``--update``.
+
+**Masking.** Values that change on every run are masked, in the order ``MASKS`` lists them:
+uuids, timestamps, dates, the ledger file name's date and shift (the shift is DAY or NIGHT by
+the clock), and ``HH:MM EAT`` clock times. Everything else is literal. Durations are not
+captured at all.
+
+**Comparison is on the canonical text, so it is type-strict.** A fixture is loaded and written
+back in the one canonical layout (dict keys sorted; a list or dict holding only scalars on one
+line), and MATCH means that text equals the capture's canonical text. JSON ``true`` against
+``1``, or ``12`` against ``12.0``, is therefore a MISMATCH even though Python calls them equal.
+A fixture file whose bytes differ from its canonical form (CRLF checkout, hand re-indent) gets
+a formatting note, never a golden change.
 
 **Updating is a decision, not a refresh.** A golden fixture may only move for an enumerated
 §2.1 re-baseline (R3-R5), in its own reviewed PR (G1, G2). ``--update`` prints what it is
 about to change, rewrites the files and says so loudly; review ``git diff tests/fixtures/golden``
 before committing. If the golden moves for any other reason, stop and investigate.
-
-Files are written as UTF-8 with LF endings and one fixed layout (dict keys sorted; a list or
-dict that holds only scalars on one line), and compared as parsed data, so a CRLF checkout
-or a hand re-indent is reported as a formatting note, never as a golden change.
 """
 
 from __future__ import annotations
@@ -81,7 +110,7 @@ import traceback
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
-from typing import Any
+from typing import Any, Callable
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA_DIR = ROOT / "data"
@@ -90,7 +119,8 @@ CONFTEST_PATH = ROOT / "tests" / "conftest.py"
 GOLDEN_TEST_PATH = ROOT / "tests" / "integration" / "test_golden_sequence.py"
 GOLDEN_TEST_ID = "tests/integration/test_golden_sequence.py"
 UPDATE_COMMAND = "python scripts/golden_diff.py --update"
-FIXTURE_FORMAT = 1
+FIXTURE_FORMAT = 2  # 2: step payloads, side tables, durability, provenance (keys only added)
+RETURNED_INCIDENT = "<returned incident id>"
 
 # Pinned on top of tests/conftest.py. The golden sequence is defined with every flag OFF (G2,
 # §10.1) and with the synchronous post-commit drain on (§10.1 integration row), but the conftest
@@ -130,6 +160,55 @@ SCENARIOS: tuple[Scenario, ...] = (
     Scenario("merge_short_circuit", "test_golden_merge_short_circuit", ("HUB_EVENT",), "HUB_EVENT"),
     Scenario("cascade_child_short_circuit", "test_golden_cascade_child_short_circuit", ("PARENT_HUB_EVENT",), "CHILD_EVENT"),
 )
+
+# Recorded values no literal in the scenario's golden test pins: taken from the current code as
+# the golden state and NOT checked against an independent literal. Written into each fixture.
+_ALL_SCENARIOS_NOT_PINNED = (
+    "run.graph_name",
+    "payload_run_id_mismatches (the test never compares a payload's run_id with its envelope's)",
+)
+_SHORT_CIRCUIT_NOT_PINNED = (
+    "step_events input/output/rationale and step_event_mirror_mismatches (this test does not call "
+    "_check_steps_against_events)",
+    "event_payloads agent.run.finished (only its shape is pinned)",
+    "global_history and global_events beyond the run-scoped events (the test filters by run_id)",
+    "broadcasts, hitl_tasks, row_counts (rows left by the setup alarm; this test does not read them)",
+    "announced_before_durable (the R5 spy runs only in test_golden_full_lifecycle_with_hitl)",
+    "steps[INGEST] output_summary/rationale/tools_called and every step's confidence (the test reads "
+    "only the CORRELATE row's text and tools)",
+)
+NOT_PINNED: dict[str, tuple[str, ...]] = {
+    "full_lifecycle_hitl": _ALL_SCENARIOS_NOT_PINNED
+    + (
+        "announced_before_durable for events other than agent.* and incident.created (the test's spy "
+        "decides only those types)",
+        "steps[ENRICH|SEVERITY|ASSIGN].rationale beyond the prefix the test checks with startswith",
+        "step_events rationale of those three steps beyond the same prefixes",
+        "incident.incidents_in_db, incident.child_sites_down",
+        "global_history and global_events beyond the run-scoped events (the test filters by run_id)",
+        "work_notes author_role, and work_notes[0] body beyond 'Monitoring started. SLA ack due '",
+        "durable_after_run.new_notes_visible, durable_after_run.child_sites_down_in_second_session",
+    ),
+    "full_lifecycle_auto_broadcast": _ALL_SCENARIOS_NOT_PINNED
+    + (
+        "steps output_summary/rationale of every node except HITL and BROADCAST (the test pins "
+        "those two, plus every input_summary, tool list and confidence)",
+        "step_events output/rationale of the same nodes, except through the mirror check",
+        "event_payloads agent.run.finished",
+        "incident.incidents_in_db, incident.child_sites_down",
+        "work_notes author_role and bodies",
+        "global_history order beyond email.sent following agent.run.finished",
+        "row_counts, ledger_file_written",
+        "announced_before_durable (the R5 spy runs only in test_golden_full_lifecycle_with_hitl)",
+        "durable_after_run (this test opens no second Session)",
+    ),
+    "merge_short_circuit": _ALL_SCENARIOS_NOT_PINNED
+    + _SHORT_CIRCUIT_NOT_PINNED
+    + ("durable_after_run.returned_incident_visible, durable_after_run.child_sites_down_in_second_session",),
+    "cascade_child_short_circuit": _ALL_SCENARIOS_NOT_PINNED
+    + _SHORT_CIRCUIT_NOT_PINNED
+    + ("durable_after_run.returned_incident_visible, durable_after_run.new_notes_visible",),
+}
 
 
 class Refused(Exception):
@@ -242,15 +321,87 @@ def _distinct_key_sets(records: list[dict], field: str | None) -> dict[str, list
     return {t: sorted(v) for t, v in sorted(seen.items())}
 
 
+def _mirror_mismatches(steps: list[Any], run_events: list[dict]) -> list[str]:
+    """``_check_steps_against_events``: each step payload mirrors its step row. Raw values, unmasked."""
+    started = {e["payload"].get("seq"): e["payload"] for e in run_events if e["type"] == "agent.step.started"}
+    completed = {e["payload"].get("seq"): e["payload"] for e in run_events if e["type"] == "agent.step.completed"}
+    problems: list[str] = []
+    for s in steps:
+        where = f"seq {s.seq} {s.node_name}"
+        if s.seq not in started:
+            problems.append(f"{where}: no agent.step.started event")
+        elif started[s.seq].get("input") != (s.input_summary or "")[:120]:
+            problems.append(f"{where}: started.input != input_summary[:120]")
+        if s.seq not in completed:
+            problems.append(f"{where}: no agent.step.completed event")
+            continue
+        if completed[s.seq].get("output") != (s.output_summary or "")[:160]:
+            problems.append(f"{where}: completed.output != output_summary[:160]")
+        if completed[s.seq].get("rationale") != (s.rationale or ""):
+            problems.append(f"{where}: completed.rationale != rationale")
+    return problems
+
+
+def _durability_probe(get_session: Callable[[], Any], run_model: Any, incident_model: Any) -> Callable[[Any], bool]:
+    """The golden test's R5 spy, generalised: is the event's row readable from a SECOND Session?
+
+    ``agent.step.*`` and ``agent.run.finished`` exactly as the test decides them (the step row
+    exists and, once completed, carries the announced status; the run row carries the announced
+    status). Every other event -- ``incident.created`` in the test, and here also
+    ``incident.merged``, ``incident.cascade_child`` and ``email.sent`` -- must name an incident a
+    second Session can read.
+    """
+
+    def in_other_session(read: Callable[[Any], Any]) -> Any:
+        other = get_session()
+        try:
+            return read(other)
+        finally:
+            other.close()
+
+    def durable(event: Any) -> bool:
+        payload = event.payload
+        if event.type == "agent.run.finished" or event.type.startswith("agent.step."):
+
+            def read(s: Any) -> bool:
+                run = s.get(run_model, event.run_id)
+                if run is None:
+                    return False
+                if event.type == "agent.run.finished":
+                    return run.status == payload.get("status")
+                step = next((x for x in run.steps if x.seq == payload.get("seq")), None)
+                if step is None:
+                    return False
+                return event.type == "agent.step.started" or step.status == payload.get("status")
+
+            return in_other_session(read)
+        if event.incident_id is None:
+            return False
+        return in_other_session(lambda s: s.get(incident_model, event.incident_id)) is not None
+
+    return durable
+
+
 def capture(scenario: Scenario, golden: ModuleType, workdir: Path) -> dict[str, Any]:
     """Replay the scenario exactly as its test does and return the masked golden record."""
     from sqlalchemy import select
 
     from noc_agents.config import clear_settings_cache, get_settings
-    from noc_agents.db.models import AgentRunRow, IncidentRow, WorkNoteRow, get_session, init_db
+    from noc_agents.db.models import (
+        AgentRunRow,
+        AuditRow,
+        BroadcastRow,
+        HitlTaskRow,
+        IncidentBriefRow,
+        IncidentRow,
+        ShiftLedgerRow,
+        WorkNoteRow,
+        get_session,
+        init_db,
+    )
     from noc_agents.domain.schemas import EventIngest
     from noc_agents.graph.pipeline import process_event
-    from noc_agents.realtime.hub import hub
+    from noc_agents.realtime.hub import EventHub, hub
 
     folder = workdir / scenario.name
     folder.mkdir(parents=True, exist_ok=False)
@@ -264,6 +415,7 @@ def capture(scenario: Scenario, golden: ModuleType, workdir: Path) -> dict[str, 
     refuse_data_dir(settings.database_url, what="the resolved settings")
     engine = init_db(url)
     session = get_session()
+    publish_sync = EventHub.publish_sync
     try:
         hub._history.clear()  # the clean_hub fixture
         setup_incident = None
@@ -271,10 +423,24 @@ def capture(scenario: Scenario, golden: ModuleType, workdir: Path) -> dict[str, 
             setup_incident = process_event(session, settings, EventIngest(**getattr(golden, name)))
         runs_before = {r.id for r in session.scalars(select(AgentRunRow)).all()}
         notes_before = {n.id for n in session.scalars(select(WorkNoteRow)).all()}
+        audit_before = {a.id for a in session.scalars(select(AuditRow)).all()}
         if scenario.setup:
             hub._history.clear()  # the merge/cascade tests clear again before the measured run
         measured = getattr(golden, scenario.measured)
-        incident = process_event(session, settings, EventIngest(**measured))
+
+        # The R5 spy, patched on the class as the test patches it, only around the measured run.
+        durable = _durability_probe(get_session, AgentRunRow, IncidentRow)
+        announced: list[tuple[str, bool]] = []
+
+        def spy(self: Any, event: Any) -> None:
+            announced.append((event.type, durable(event)))
+            publish_sync(self, event)
+
+        EventHub.publish_sync = spy  # type: ignore[method-assign]
+        try:
+            incident = process_event(session, settings, EventIngest(**measured))
+        finally:
+            EventHub.publish_sync = publish_sync  # type: ignore[method-assign]
 
         new_runs = [r for r in session.scalars(select(AgentRunRow)).all() if r.id not in runs_before]
         lifecycle = [r for r in new_runs if r.graph_name == "incident_lifecycle"]
@@ -284,12 +450,30 @@ def capture(scenario: Scenario, golden: ModuleType, workdir: Path) -> dict[str, 
         history = [dict(e) for e in hub._history]
         run_events = [e for e in history if e.get("run_id") == run.id]
         notes = [n for n in session.scalars(select(WorkNoteRow)).all() if n.id not in notes_before]
+        audits = [a for a in session.scalars(select(AuditRow)).all() if a.id not in audit_before]
+        ledger_step = next((s for s in run.steps if s.node_name == "LEDGER"), None)
+        ledger_dir = Path(os.environ["LEDGER_DIR"]) / settings.operator.operator_id
+
+        def other_session(read: Callable[[Any], Any]) -> Any:
+            other = get_session()
+            try:
+                return read(other)
+            finally:
+                other.close()
+
+        def entity(value: str | None) -> str:
+            return RETURNED_INCIDENT if value and value == incident.id else (value or "")
+
+        def sms_type(task: Any) -> str:
+            payload = task.proposed_payload
+            return type(payload.get("sms")).__name__ if isinstance(payload, dict) else type(payload).__name__
 
         record = {
             "format": FIXTURE_FORMAT,
             "scenario": scenario.name,
             "test": f"{GOLDEN_TEST_ID}::{scenario.test}",
             "masks": [f"{label} -> {replacement}" for label, _pattern, replacement in MASKS],
+            "not_pinned_by_the_golden_test": list(NOT_PINNED[scenario.name]),
             "input_events": [getattr(golden, name) for name in (*scenario.setup, scenario.measured)],
             "runs_created": len(new_runs),
             "run": {
@@ -309,13 +493,29 @@ def capture(scenario: Scenario, golden: ModuleType, workdir: Path) -> dict[str, 
             "event_payloads": [
                 {"type": e["type"], "payload": e["payload"]} for e in run_events if not e["type"].startswith("agent.step.")
             ],
+            "step_events": [
+                {"type": e["type"], "payload": {k: v for k, v in e["payload"].items() if k != "duration_ms"}}
+                for e in run_events
+                if e["type"].startswith("agent.step.")
+            ],
+            "step_event_mirror_mismatches": _mirror_mismatches(list(run.steps), run_events),
+            # run_id is masked everywhere, so its one invariant is recorded as a relation instead
+            "payload_run_id_mismatches": [
+                e["type"] for e in history if "run_id" in e["payload"] and e["payload"]["run_id"] != e.get("run_id")
+            ],
             "global_history": [[e["type"], e.get("run_id") == run.id] for e in history],
             "global_events": [
-                {"type": e["type"], "incident_id_set": e["incident_id"] is not None, "payload": e["payload"]}
+                {
+                    "type": e["type"],
+                    "incident_id_set": e["incident_id"] is not None,
+                    "incident_id_is_returned_incident": e["incident_id"] == incident.id,
+                    "payload": e["payload"],
+                }
                 for e in history
                 if e.get("run_id") != run.id
             ],
             "envelope_keys": sorted({tuple(sorted(e)) for e in history}),
+            "envelope_ts_is_str_ending_z": all(isinstance(e.get("ts"), str) and e["ts"].endswith("Z") for e in history),
             "payload_keys": _distinct_key_sets(history, "payload"),
             "steps": [
                 {
@@ -332,8 +532,27 @@ def capture(scenario: Scenario, golden: ModuleType, workdir: Path) -> dict[str, 
                 for s in run.steps
             ],
             "work_notes": [[n.author, n.author_role, n.source, n.body] for n in notes],
+            "audit_rows": sorted([a.actor, a.action, entity(a.entity_id)] for a in audits),
+            "broadcasts": sorted([b.channel, b.audience, b.status] for b in session.scalars(select(BroadcastRow)).all()),
+            "hitl_tasks": sorted(
+                [t.task_type, t.status, sms_type(t)] for t in session.scalars(select(HitlTaskRow)).all()
+            ),
+            "row_counts": {
+                "incident_briefs": len(session.scalars(select(IncidentBriefRow)).all()),
+                "shift_ledger_rows": len(session.scalars(select(ShiftLedgerRow)).all()),
+            },
+            "ledger_file_written": None if ledger_step is None else (ledger_dir / (ledger_step.output_summary or "")).is_file(),
+            "announced_before_durable": [etype for etype, ok in announced if not ok],
+            "durable_after_run": {
+                "returned_incident_visible": other_session(lambda s: s.get(IncidentRow, incident.id)) is not None,
+                "new_notes_visible": all(other_session(lambda s, i=n.id: s.get(WorkNoteRow, i)) is not None for n in notes),
+                "child_sites_down_in_second_session": other_session(
+                    lambda s: getattr(s.get(IncidentRow, incident.id), "child_sites_down", None)
+                ),
+            },
         }
     finally:
+        EventHub.publish_sync = publish_sync  # type: ignore[method-assign]
         session.close()
         engine.dispose()  # Windows will not delete an open SQLite file
         hub._history.clear()
@@ -368,6 +587,10 @@ def print_scenario(record: dict[str, Any]) -> None:
     for position, (etype, scoped) in enumerate(history, 1):
         if not scoped:
             print(f"   global history: {etype} at position {position} of {len(history)} (not run-scoped)")
+    mirror = record["step_event_mirror_mismatches"]
+    print(f"   step payloads vs step rows: {'mirror (input[:120], output[:160], rationale)' if not mirror else '; '.join(mirror)}")
+    wrong_run = record["payload_run_id_mismatches"]
+    print(f"   payload run_id vs envelope run_id: {'agree' if not wrong_run else 'differ on ' + ', '.join(wrong_run)}")
     print(f"   steps: {len(record['steps'])}")
     for step in record["steps"]:
         tools = ", ".join(
@@ -380,6 +603,19 @@ def print_scenario(record: dict[str, Any]) -> None:
         print(f"          tools : {tools or '(none)'}")
     for author, role, source, _body in record["work_notes"]:
         print(f"   work note: {author} / {role} / {source}")
+    print(f"   audit rows: {len(record['audit_rows'])}")
+    for actor, action, entity in record["audit_rows"]:
+        print(f"          {actor:<25}{action:<20}{entity or '(empty)'}")
+    print(f"   broadcasts: {', '.join('/'.join(b) for b in record['broadcasts']) or '(none)'}")
+    print(f"   hitl tasks: {', '.join(f'{t[0]}/{t[1]} (sms: {t[2]})' for t in record['hitl_tasks']) or '(none)'}")
+    counts = record["row_counts"]
+    print(
+        f"   briefs={counts['incident_briefs']}  ledger rows={counts['shift_ledger_rows']}  "
+        f"ledger file written={_cell(record['ledger_file_written'])}"
+    )
+    late = record["announced_before_durable"]
+    print(f"   durability: {'every event durable when announced' if not late else 'announced before durable: ' + ', '.join(late)}; "
+          f"after the run {record['durable_after_run']}")
     print()
 
 
@@ -402,18 +638,17 @@ def diff_text(expected: str, actual: str, name: str) -> str:
 
 
 def compare(scenario: Scenario, record: dict[str, Any]) -> tuple[bool, str]:
-    """(matches, message). Parsed data decides; the canonical text is only for the diff."""
+    """(matches, message). The canonical TEXT decides, so ``true`` and ``1`` are different values."""
     path = fixture_path(scenario)
     if not path.is_file():
         return False, f"   MISSING fixture {path.relative_to(ROOT).as_posix()} -- create it with {UPDATE_COMMAND}\n"
     raw = path.read_text(encoding="utf-8")
-    expected = json.loads(raw)
-    if expected == record:
-        note = ""
-        if raw != canonical_text(expected):
-            note = "   note: fixture text is not in canonical layout (CRLF or hand edit); data is identical\n"
+    expected = canonical_text(json.loads(raw))
+    actual = canonical_text(record)
+    if expected == actual:
+        note = "" if raw == expected else "   note: fixture text is not in canonical layout (CRLF or hand edit); data is identical\n"
         return True, note
-    return False, diff_text(canonical_text(expected), canonical_text(record), scenario.name)
+    return False, diff_text(expected, actual, scenario.name)
 
 
 def update(selected: list[Scenario], records: dict[str, dict[str, Any]]) -> int:

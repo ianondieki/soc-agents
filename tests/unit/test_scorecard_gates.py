@@ -26,12 +26,13 @@ from types import SimpleNamespace
 import pytest
 import yaml
 from fastapi.testclient import TestClient
-from sqlalchemy import event, select, text
+from sqlalchemy import event, select, text, update
 from sqlalchemy.exc import IntegrityError
 
 from noc_agents.api import auth
 from noc_agents.db.models import AgentRunRow, AgentRunStepRow, AuditRow, BroadcastRow, IncidentRow, OutboxRow
 from noc_agents.db.models_scorecards import (
+    COMPUTATION_SCOPE_KEY,
     CREDIT_NONE,
     CREDIT_PROPOSED,
     KPI_AVAILABILITY,
@@ -44,6 +45,7 @@ from noc_agents.db.models_scorecards import (
     STATUS_WITHHELD,
     ScorecardEvidenceError,
     VendorScorecardRow,
+    visible_human_name,
 )
 from noc_agents.realtime.hub import hub
 from noc_agents.scheduler import JobCard
@@ -150,10 +152,10 @@ def test_nobody_can_move_a_failed_gate_card_off_withheld_not_even_with_raw_sql(t
     for status in (STATUS_DRAFT, STATUS_SHADOW):  # not a release: the JSON edit is evidence changing with no computation behind it
         card = session.get(VendorScorecardRow, card_id)
         exc = _set_status(session, card, status, shadow_reviewed_by="Grace Mwangi", data_quality_json='{"passed": true}')
-        assert isinstance(exc, ScorecardEvidenceError) and "without a new computed_by_run_id" in str(exc), status
+        assert isinstance(exc, ScorecardEvidenceError) and "outside a computation" in str(exc), status
         card = session.get(VendorScorecardRow, card_id)
-        exc = _set_status(session, card, status)  # a bare status change: the CHECK re-does the arithmetic
-        assert isinstance(exc, IntegrityError) and "ck_vendor_scorecards_gate" in str(exc), status
+        exc = _set_status(session, card, status)  # a bare status change is the computation's too: the mapper stops it first
+        assert isinstance(exc, ScorecardEvidenceError) and "outside a computation" in str(exc), status
     for status in (STATUS_PUBLISHED, STATUS_FINAL):  # a release that edits evidence in the same write: the mapper refuses first
         card = session.get(VendorScorecardRow, card_id)
         exc = _set_status(session, card, status, shadow_reviewed_by="Grace Mwangi", data_quality_json='{"passed": true}')
@@ -180,15 +182,25 @@ def test_a_falsified_passed_flag_does_not_get_past_the_service_either(tmp_db):
     card = _compute(session, settings)
     card_id = card.id
     card.data_quality = {**card.data_quality, "passed": True}
-    with pytest.raises(ScorecardEvidenceError, match="without a new computed_by_run_id"):
+    with pytest.raises(ScorecardEvidenceError, match="outside a computation"):
         session.flush()  # a lone edit of the JSON is refused by the mapper
     session.rollback()
-    run_id = _run(session)  # dressed up as a recomputation it can be stored...
+    run_id = _run(session)  # dressed up with a real run id it is STILL refused: no computation scope
     card = session.get(VendorScorecardRow, card_id)
     card.data_quality = {**card.data_quality, "passed": True}
     card.computed_by_run_id = run_id
-    session.flush()
-    with pytest.raises(sc.ScorecardGateError):  # ...and the service still refuses: it re-does the arithmetic from the counts
+    with pytest.raises(ScorecardEvidenceError, match="outside a computation"):
+        session.flush()
+    session.rollback()
+    # belt and braces: even a caller that forces the service's own scope open and stores the
+    # flag finds that publish re-does the arithmetic from the counts
+    run_id = _run(session)
+    card = session.get(VendorScorecardRow, card_id)
+    with sc._computation_scope(session, card_id):
+        card.data_quality = {**card.data_quality, "passed": True}
+        card.computed_by_run_id = run_id
+        session.flush()
+    with pytest.raises(sc.ScorecardGateError):
         sc.publish_scorecard(session, card, terms=_terms(settings.operator), cfg=settings.operator, **DM)
     assert card.status == STATUS_WITHHELD
 
@@ -268,14 +280,22 @@ def test_clearing_the_shadow_required_column_alone_does_not_open_the_gate(tmp_db
     card = _compute(session, settings)
     card_id = card.id
     card.shadow_required = 0
-    with pytest.raises(ScorecardEvidenceError, match="without a new computed_by_run_id"):
-        session.flush()  # the lone edit is already refused by the mapper...
+    with pytest.raises(ScorecardEvidenceError, match="outside a computation"):
+        session.flush()  # the lone edit is refused by the mapper...
     session.rollback()
     run_id = _run(session)
     card = session.get(VendorScorecardRow, card_id)
     card.shadow_required = 0
-    card.computed_by_run_id = run_id  # ...so dress it up as a recomputation; the service still re-asks the table
-    session.flush()
+    card.computed_by_run_id = run_id  # ...and so is the same edit dressed up with a real run id: no computation scope
+    with pytest.raises(ScorecardEvidenceError, match="outside a computation"):
+        session.flush()
+    session.rollback()
+    run_id = _run(session)
+    card = session.get(VendorScorecardRow, card_id)
+    with sc._computation_scope(session, card_id):  # forcing the service's own scope open: the service still re-asks the table
+        card.shadow_required = 0
+        card.computed_by_run_id = run_id
+        session.flush()
     with pytest.raises(sc.ScorecardGateError, match="disagrees with the table"):
         sc.publish_scorecard(session, card, terms=_terms(settings.operator), cfg=settings.operator, **DM)
     assert card.status == STATUS_SHADOW and card.published_at is None
@@ -288,8 +308,8 @@ def test_shadow_review_needs_a_duty_manager_a_named_human_a_reason_and_a_shadow_
     for role in ("noc_analyst", "shift_supervisor", "management", "msp_coordinator", ""):
         with pytest.raises(sc.ScorecardPermissionError):
             sc.record_shadow_review(session, card, **{**REVIEW, "reviewer_role": role})
-    for who in ("", "  ", "system", "SlaScorecardAgent", "scheduler", "NOC"):
-        with pytest.raises(ValueError, match="named human"):
+    for who in ("", "  ", "system", "SlaScorecardAgent", "scheduler", "NOC", "\u200b", "12345"):
+        with pytest.raises(ValueError, match="visible human name"):
             sc.record_shadow_review(session, card, **{**REVIEW, "reviewer": who})
     with pytest.raises(ValueError, match="rationale"):
         sc.record_shadow_review(session, card, **{**REVIEW, "rationale": "  "})
@@ -745,16 +765,27 @@ def test_the_same_write_flip_of_shadow_required_is_refused_by_the_mapper(tmp_db)
     assert isinstance(exc, ScorecardEvidenceError) and "shadow_required" in str(exc) and "frozen" in str(exc)
     fresh = session.get(VendorScorecardRow, card_id)
     assert (fresh.status, fresh.shadow_required, fresh.shadow_reviewed_by) == (STATUS_SHADOW, 1, None)
-    # the two-step variant: a lone edit to the column is refused (evidence changes only with a
-    # computation); dressed up with a new run id it passes that test but is refused at the
-    # release, because the column is re-derived from the table at that moment
+    # the two-step variant: a lone edit to the column is refused (evidence is the computation's);
+    # dressed up with a real run id it is refused too (no computation scope); and with the
+    # service's own scope forced open it is refused at the release, because the column is
+    # re-derived from the table at that moment
     exc = _refused(session, lambda: setattr(fresh, "shadow_required", 0))
-    assert isinstance(exc, ScorecardEvidenceError) and "without a new computed_by_run_id" in str(exc)
+    assert isinstance(exc, ScorecardEvidenceError) and "outside a computation" in str(exc)
     run_id = _run(session)
     fresh = session.get(VendorScorecardRow, card_id)
-    fresh.shadow_required = 0
-    fresh.computed_by_run_id = run_id
-    session.flush()
+
+    def dressed():
+        fresh.shadow_required = 0
+        fresh.computed_by_run_id = run_id
+
+    exc = _refused(session, dressed)
+    assert isinstance(exc, ScorecardEvidenceError) and "outside a computation" in str(exc)
+    run_id = _run(session)
+    fresh = session.get(VendorScorecardRow, card_id)
+    with sc._computation_scope(session, card_id):
+        fresh.shadow_required = 0
+        fresh.computed_by_run_id = run_id
+        session.flush()
     exc = _refused(session, lambda: setattr(fresh, "status", STATUS_PUBLISHED))
     assert isinstance(exc, ScorecardEvidenceError) and "contradicts the table" in str(exc)
     # and with the column honest but no reviewer, the release itself is refused
@@ -790,11 +821,9 @@ def test_a_planted_predecessor_card_is_refused_and_cannot_propagate(tmp_db):
     assert isinstance(exc, ScorecardEvidenceError) and "cannot be inserted as FINAL" in str(exc)
     exc = _refused(session, lambda: fake(STATUS_DRAFT, 0))  # no earlier released card exists: the table says 1
     assert isinstance(exc, ScorecardEvidenceError) and "contradicts the table" in str(exc)
-    # an honest DRAFT for July (shadow_required = 1) may be inserted -- and then cannot be flipped
-    honest = fake(STATUS_DRAFT, 1)
-    session.flush()
-    exc = _refused(session, lambda: setattr(honest, "status", STATUS_PUBLISHED))
-    assert isinstance(exc, ScorecardEvidenceError) and "named shadow reviewer" in str(exc)
+    # even an honest-looking DRAFT for July (shadow_required = 1) is refused: a card is born of a computation
+    exc = _refused(session, lambda: fake(STATUS_DRAFT, 1))
+    assert isinstance(exc, ScorecardEvidenceError) and "inserted outside a computation" in str(exc)
     # nothing propagated: August is still a first period
     assert sc.shadow_required_for(session, operator_id="safaricom", vendor_id=vendor_id, period=PERIOD, sla_terms_version=august.sla_terms_version)
     session.expire_all()
@@ -830,9 +859,16 @@ def test_the_threshold_cannot_be_moved_to_let_a_withheld_card_out(tmp_db, tmp_pa
             assert isinstance(exc, REFUSALS), (status, threshold)
             fresh = session.get(VendorScorecardRow, card_id)
             assert (fresh.status, fresh.dq_gate_threshold_pct) == (STATUS_WITHHELD, 10.0)
-    # the same nudge dressed up as a recomputation still cannot LEAVE WITHHELD: the CHECK re-does the arithmetic
+    # the same nudge dressed up with a real run id is refused by the mapper (no computation scope)...
+    run_id = _run(session)
     card = session.get(VendorScorecardRow, card_id)
-    exc = _set_status(session, card, STATUS_DRAFT, dq_gate_threshold_pct=20.0, computed_by_run_id=_run(session))
+    exc = _set_status(session, card, STATUS_DRAFT, dq_gate_threshold_pct=20.0, computed_by_run_id=run_id)
+    assert isinstance(exc, ScorecardEvidenceError) and "outside a computation" in str(exc)
+    # ...and with the service's own scope forced open it still cannot LEAVE WITHHELD: the CHECK re-does the arithmetic
+    run_id = _run(session)
+    card = session.get(VendorScorecardRow, card_id)
+    with sc._computation_scope(session, card_id):
+        exc = _set_status(session, card, STATUS_DRAFT, dq_gate_threshold_pct=20.0, computed_by_run_id=run_id)
     assert isinstance(exc, IntegrityError) and "ck_vendor_scorecards_gate" in str(exc)
     # even on its own, an out-of-range threshold is refused by the table
     for threshold in (100, 100.0, -1, 250):
@@ -985,3 +1021,272 @@ def test_the_scorecard_paths_emit_no_sql_against_the_pir_tables(tmp_db, monkeypa
     touched = [s for s in statements if "post_incident_reviews" in s or "pir_action_items" in s]
     assert touched == [], touched[:3]
     assert session.scalars(select(VendorScorecardRow)).all()  # the job did compute
+
+
+# --------------------------------------------------------------------------
+# Round 3: the recompute exemption, planted predecessors, invisible names, the §9.3 read row
+# --------------------------------------------------------------------------
+
+
+def test_an_edit_posing_as_a_recomputation_is_refused_from_the_orm(tmp_db):
+    """SC01(b), the confirmers' exploit: ONE ORM write on a WITHHELD card -- threshold 30,
+    ``passed: True``, ``computed_by_run_id = 'not-a-real-run'``, status SHADOW -- used to commit,
+    after which review and publish succeeded at 3/10 inferred against a terms threshold of 10.
+    Evidence is now writable only inside ``compute_scorecard``'s session-scoped computation scope
+    AND with a run id that exists in ``agent_runs`` as a scorecard run of this operator."""
+    settings, session = tmp_db
+    build_fixture(session)
+    _infer_restores(session, {"G01": "VENDOR_NOTE_INFERRED", "G13": None})
+    card = _compute(session, settings)
+    card_id = card.id
+    assert (card.status, card.dq_gate_threshold_pct, card.data_quality["passed"]) == (STATUS_WITHHELD, 10.0, False)
+
+    def exploit(run_id):
+        c = session.get(VendorScorecardRow, card_id)
+        c.dq_gate_threshold_pct = 30.0
+        c.data_quality = {**c.data_quality, "passed": True}
+        c.computed_by_run_id = run_id
+        c.status = STATUS_SHADOW
+
+    exc = _refused(session, lambda: exploit("not-a-real-run"))
+    assert isinstance(exc, ScorecardEvidenceError) and "outside a computation" in str(exc)
+    exc = _refused(session, lambda: exploit(_run(session)))  # a real run id, but no computation scope
+    assert isinstance(exc, ScorecardEvidenceError) and "outside a computation" in str(exc)
+    # scope forced open (the service's own private API) but a run that does not exist
+    with sc._computation_scope(session, card_id):
+        exc = _refused(session, lambda: exploit("not-a-real-run"))
+    assert isinstance(exc, ScorecardEvidenceError) and "not a scorecard run" in str(exc)
+    # scope forced open with a run of ANOTHER lane (wrong graph_name)
+    other = AgentRunRow(operator_id="safaricom", graph_name="monitor", trigger="SCHEDULE", status="RUNNING")
+    session.add(other)
+    session.flush()
+    with sc._computation_scope(session, card_id):
+        exc = _refused(session, lambda: exploit(other.id))
+    assert isinstance(exc, ScorecardEvidenceError) and "not a scorecard run" in str(exc)
+    # ...and a scorecard run of ANOTHER operator
+    foreign = AgentRunRow(operator_id="airtel", graph_name=sc.GRAPH_NAME, trigger="REQUEST", status="RUNNING")
+    session.add(foreign)
+    session.flush()
+    with sc._computation_scope(session, card_id):
+        exc = _refused(session, lambda: exploit(foreign.id))
+    assert isinstance(exc, ScorecardEvidenceError) and "not a scorecard run" in str(exc)
+    # the card is untouched, and the sanctioned steps that followed the exploit cannot follow it now
+    fresh = session.get(VendorScorecardRow, card_id)
+    assert (fresh.status, fresh.dq_gate_threshold_pct, fresh.data_quality["passed"]) == (STATUS_WITHHELD, 10.0, False)
+    with pytest.raises(sc.ScorecardStateError):
+        sc.record_shadow_review(session, fresh, **REVIEW)
+    with pytest.raises(sc.ScorecardGateError):
+        sc.publish_scorecard(session, fresh, terms=_terms(settings.operator), cfg=settings.operator, **DM)
+    # the sanctioned recompute still works, through the same guards, and stays honest
+    _infer_restores(session, {"G01": "SUPERVISOR", "G13": "SUPERVISOR"})
+    again = _compute(session, settings)
+    assert again.status == STATUS_SHADOW and again.data_quality["inferred_restores"] == 1
+    assert session.get(AgentRunRow, again.computed_by_run_id).graph_name == sc.GRAPH_NAME
+    assert not session.info.get(COMPUTATION_SCOPE_KEY)  # the scope is closed again after the computation
+
+
+def test_a_lone_status_change_on_an_unreleased_card_is_the_computations_too(tmp_db):
+    settings, session = tmp_db
+    build_fixture(session)
+    card = _compute(session, settings)
+    exc = _refused(session, lambda: setattr(card, "status", STATUS_DRAFT))  # SHADOW -> DRAFT by assignment
+    assert isinstance(exc, ScorecardEvidenceError) and "outside a computation" in str(exc)
+    fresh = session.get(VendorScorecardRow, card.id)
+    fresh.narrative = "written by a human after the numbers"  # NOT the computation's: allowed
+    session.flush()
+    sc.record_shadow_review(session, fresh, **REVIEW)  # the reviewer's hand: allowed
+    assert fresh.status == STATUS_SHADOW and fresh.shadow_reviewed_by == "Grace Mwangi"
+
+
+def test_a_predecessor_planted_by_raw_sql_or_a_bulk_update_exempts_nobody_from_shadow_review(tmp_db):
+    """S02 hardening. Raw SQL and Core/legacy bulk ``update()`` bypass the mapper guards (documented),
+    so a card CAN be planted PUBLISHED that way. It must not propagate: ``shadow_required_for`` counts a
+    predecessor only when the service's ``scorecard.published`` audit row exists for it, and a planted
+    card has none. Control: a card the service really published does exempt the next period."""
+    settings, session = tmp_db
+    build_fixture(session)
+    terms = _terms(settings.operator)
+    august = _compute(session, settings)
+    vendor_id, version = august.vendor_id, august.sla_terms_version
+    # (a) raw INSERT of a fake PUBLISHED July with shadow_required = 0
+    session.execute(
+        text(
+            "INSERT INTO vendor_scorecards (id, operator_id, vendor_id, period, period_start, period_end, status, computed_at, "
+            "data_quality_json, dq_restored_incidents, dq_inferred_restores, dq_gate_threshold_pct, discipline_json, shadow_required, "
+            "sla_terms_version, terms_json, narrative_ai_assisted, computed_by_run_id) VALUES ('raw-fake', 'safaricom', :v, '2026-07', "
+            "'2026-06-30 21:00:00', '2026-07-31 21:00:00', 'PUBLISHED', '2026-08-01', '{}', 0, 0, 10, '{}', 0, :ver, '{}', 0, 'r')"
+        ),
+        {"v": vendor_id, "ver": version},
+    )
+    session.commit()
+    assert session.get(VendorScorecardRow, "raw-fake").status == STATUS_PUBLISHED  # planted (the documented gap)
+    assert sc.shadow_required_for(session, operator_id="safaricom", vendor_id=vendor_id, period=PERIOD, sla_terms_version=version)
+    august = _compute(session, settings)  # recomputed with the fake in place
+    assert (august.status, august.shadow_required) == (STATUS_SHADOW, 1)
+    with pytest.raises(sc.ScorecardGateError, match="shadow review"):
+        sc.publish_scorecard(session, august, terms=terms, cfg=settings.operator, **DM)
+    # (b) Core bulk update() flips August itself to PUBLISHED with shadow_required = 0 -- no mapper, no audit row
+    session.execute(update(VendorScorecardRow).where(VendorScorecardRow.id == august.id).values(status=STATUS_PUBLISHED, shadow_required=0))
+    session.commit()
+    session.expire_all()
+    assert session.get(VendorScorecardRow, august.id).status == STATUS_PUBLISHED
+    _incident(session, "SEP1", "P2", "S-A", "NBI_E", "POWER", _t(5, 9, month=9), _t(5, 9, 2, month=9), _t(5, 9, 10, month=9), _t(5, 10, month=9), "MARK_RESTORED", {})
+    september = _compute(session, settings, period="2026-09", now=datetime(2026, 10, 1, 6))
+    assert (september.status, september.shadow_required) == (STATUS_SHADOW, 1)  # NOT a DRAFT: the flip exempted nobody
+    with pytest.raises(sc.ScorecardGateError, match="shadow review"):
+        sc.publish_scorecard(session, september, terms=terms, cfg=settings.operator, now=datetime(2026, 10, 1, 7), **DM)
+    # (c) legacy query.update() is the same gap and the same non-propagation
+    session.query(VendorScorecardRow).filter(VendorScorecardRow.id == september.id).update({"status": STATUS_PUBLISHED, "shadow_required": 0})
+    session.commit()
+    _incident(session, "OCT1", "P2", "S-A", "NBI_E", "POWER", _t(5, 9, month=10), _t(5, 9, 2, month=10), _t(5, 9, 10, month=10), _t(5, 10, month=10), "MARK_RESTORED", {})
+    october = _compute(session, settings, period="2026-10", now=datetime(2026, 11, 1, 6))
+    assert (october.status, october.shadow_required) == (STATUS_SHADOW, 1)
+    # control: a card the SERVICE publishes (audit row written in the same transaction) does exempt the next period
+    sc.record_shadow_review(session, october, **REVIEW)
+    sc.publish_scorecard(session, october, terms=terms, cfg=settings.operator, now=datetime(2026, 11, 1, 7), **DM)
+    session.commit()
+    assert session.scalars(select(AuditRow).where(AuditRow.entity_id == october.id, AuditRow.action == "scorecard.published")).one()
+    _incident(session, "NOV1", "P2", "S-A", "NBI_E", "POWER", _t(5, 9, month=11), _t(5, 9, 2, month=11), _t(5, 9, 10, month=11), _t(5, 10, month=11), "MARK_RESTORED", {})
+    november = _compute(session, settings, period="2026-11", now=datetime(2026, 12, 1, 6))
+    assert (november.status, november.shadow_required) == (STATUS_DRAFT, 0)
+
+
+INVISIBLE_NAMES = ("\u200b", "\u200b\u200b", "\u3000", "\u2003", "\x0b", "\u2028", "\t", "\u00a0", "\ufeff", "\u200d", "", "   ", "12345", "system", " SlaScorecardAgent ", "NOC", "\u200bsystem\u200b")
+VISIBLE_NAMES = ("Grace Mwangi", "N'gang'a", "\u00d8degaard", "\u674e\u96f7", "  Grace  ", "Grace\u200bMwangi")
+
+
+def test_visible_human_name_is_one_predicate_for_every_layer():
+    for name in INVISIBLE_NAMES:
+        assert visible_human_name(name) is None, repr(name)
+        with pytest.raises(ValueError, match="visible human name"):
+            sc._named_human(name, "the reviewer")
+    assert visible_human_name(None) is None
+    assert [visible_human_name(n) for n in VISIBLE_NAMES] == ["Grace Mwangi", "N'gang'a", "\u00d8degaard", "\u674e\u96f7", "Grace", "GraceMwangi"]
+    assert sc._named_human("  Grace Mwangi\u200b ", "x") == "Grace Mwangi"  # stored clean
+
+
+@pytest.mark.parametrize("name", INVISIBLE_NAMES)
+def test_an_invisible_reviewer_name_is_refused_by_the_service_and_by_the_mapper(tmp_db, name):
+    settings, session = tmp_db
+    build_fixture(session)
+    card = _compute(session, settings)
+    with pytest.raises(ValueError, match="visible human name"):
+        sc.record_shadow_review(session, card, **{**REVIEW, "reviewer": name})
+    exc = _refused(session, lambda: setattr(card, "shadow_reviewed_by", name))  # the ORM writer that skips the service
+    if name == "":
+        assert exc is None or isinstance(exc, ScorecardEvidenceError)  # "" is refused or, at worst, stored as no reviewer
+    else:
+        assert isinstance(exc, ScorecardEvidenceError) and "visible human name" in str(exc), repr(name)
+    fresh = session.get(VendorScorecardRow, card.id)
+    assert fresh.shadow_reviewed_by in (None, "")
+    exc = _refused(session, lambda: setattr(fresh, "status", STATUS_PUBLISHED))
+    assert isinstance(exc, REFUSALS)  # and so the release stays shut
+    assert session.get(VendorScorecardRow, card.id).status == STATUS_SHADOW
+
+
+def test_a_zero_width_space_reviewer_through_the_api_is_a_400_and_publish_stays_a_409(client, monkeypatch):
+    """The confirmers' end-to-end: POST /shadow-review with reviewed_by='\u200b' used to record an
+    invisible reviewer and /publish then released the vendor's first card."""
+    _seed(monkeypatch)
+    _as(client, "duty_manager", "Grace Mwangi")
+    body = client.post("/api/v1/scorecards/compute?period=2026-08&vendor=EGYPRO").json()
+    card_id = body["scorecard_ids"][0]
+    for name in ("\u200b", "\ufeff", "\u200d\u200d", "\u200bsystem", "system", "12345"):
+        r = client.post(f"/api/v1/scorecards/{card_id}/shadow-review", json={"rationale": "looked", "reviewed_by": name})
+        assert r.status_code == 400 and "visible human name" in r.text, repr(name)
+    # a session whose own display name is invisible cannot review either
+    for session_name in ("\u200b", "\u3000", "\x0b", "\u2003"):
+        _as(client, "duty_manager", session_name)
+        r = client.post(f"/api/v1/scorecards/{card_id}/shadow-review", json={"rationale": "looked"})
+        assert r.status_code == 400 and "visible human name" in r.text, repr(session_name)
+    _as(client, "duty_manager", "Grace Mwangi")
+    assert client.post(f"/api/v1/scorecards/{card_id}/publish", json={"reason": "go"}).status_code == 409
+    detail = client.get(f"/api/v1/scorecards/{card_id}").json()
+    assert detail["status"] == "SHADOW" and detail["shadow_reviewed_by"] is None
+    # a whitespace-only CLAIM (U+3000 here) is discarded by api.deps._actor in favour of the
+    # session's visible name: the reviewer recorded is Grace, never the blank
+    r = client.post(f"/api/v1/scorecards/{card_id}/shadow-review", json={"rationale": "looked", "reviewed_by": "\u3000"})
+    assert r.status_code == 200 and r.json()["scorecard"]["shadow_reviewed_by"] == "Grace Mwangi"
+    for card in client.get("/api/v1/scorecards").json():
+        assert card["shadow_reviewed_by"] in (None, "Grace Mwangi")
+
+
+AUTH_SECRET = "scorecard-read-row-secret"
+READ_ROW = {  # §9.3, the scorecards row, read cells only
+    "noc_analyst": True,
+    "shift_supervisor": True,
+    "duty_manager": True,
+    "management": True,
+    "msp_coordinator": True,  # own vendor -- unbound in this deployment, so it reads nothing (fail closed) but is not 403
+    "field_engineer": False,
+    "planning": False,
+    "legal": True,
+    "admin": True,
+}
+
+
+def _published_card_id(client, monkeypatch) -> tuple[str, str]:
+    _seed(monkeypatch)
+    _as(client, "duty_manager", "Grace Mwangi")
+    body = client.post("/api/v1/scorecards/compute?period=2026-08").json()
+    egypro = next(i for i, c in zip(body["scorecard_ids"], body["computed_detail"]) if c.startswith("EGYPRO"))
+    tetranet = next(i for i, c in zip(body["scorecard_ids"], body["computed_detail"]) if c.startswith("TETRANET"))
+    assert client.post(f"/api/v1/scorecards/{egypro}/shadow-review", json={"rationale": "looked"}).status_code == 200
+    assert client.post(f"/api/v1/scorecards/{egypro}/publish", json={"reason": "go"}).status_code == 200
+    return egypro, tetranet  # one PUBLISHED, one still SHADOW
+
+
+@pytest.mark.parametrize("role", sorted(READ_ROW))
+def test_read_gates_follow_the_9_3_scorecards_row_with_auth_enforced(client, monkeypatch, role):
+    """C3: reads were COMMERCIAL-only, so noc_analyst, shift_supervisor and legal got 403 although
+    §9.3 gives each of them a read cell. Every role's cell, with AUTH_DISABLED=false and a signed
+    cookie: readers are let through (200, or an empty list / 404 where visibility says so),
+    field_engineer and planning are 403, no cookie is 401."""
+    published, shadow = _published_card_id(client, monkeypatch)
+    monkeypatch.setenv("AUTH_DISABLED", "false")
+    monkeypatch.setenv("NOC_SESSION_SECRET", AUTH_SECRET)
+    try:
+        client.cookies.clear()
+        assert client.get("/api/v1/scorecards").status_code == 401
+        assert client.get(f"/api/v1/scorecards/{published}").status_code == 401
+        client.cookies.set(auth.SESSION_COOKIE, auth.sign_session({"sub": f"u-{role}", "role": role, "name": role.title()}, AUTH_SECRET))
+        listing = client.get("/api/v1/scorecards")
+        detail = client.get(f"/api/v1/scorecards/{published}")
+        unreleased = client.get(f"/api/v1/scorecards/{shadow}")
+        if not READ_ROW[role]:
+            assert (listing.status_code, detail.status_code, unreleased.status_code) == (403, 403, 403), role
+            return
+        assert listing.status_code == 200 and detail.status_code != 403 and unreleased.status_code != 403, role
+        if role == "msp_coordinator":  # authenticated, no vendor binding on the principal yet: nothing, not 403
+            assert listing.json() == [] and detail.status_code == 404 and unreleased.status_code == 404
+        elif role in ("duty_manager", "management", "admin"):
+            assert {c["status"] for c in listing.json()} == {"PUBLISHED", "SHADOW"} and detail.status_code == 200 and unreleased.status_code == 200
+        else:  # noc_analyst, shift_supervisor, legal: released cards only
+            assert [c["status"] for c in listing.json()] == ["PUBLISHED"] and detail.status_code == 200 and unreleased.status_code == 404
+    finally:
+        client.cookies.clear()
+        monkeypatch.setenv("AUTH_DISABLED", "true")
+
+
+@pytest.mark.parametrize("role", sorted(READ_ROW))
+def test_unreleased_cards_are_visible_only_to_duty_manager_and_management_in_the_demo_too(client, monkeypatch, role):
+    """§7.6 line ~1552 holds with auth OFF as well: the role switcher never rejects, so the
+    visibility rule has to be enforced on the role in the router, for every role."""
+    published, shadow = _published_card_id(client, monkeypatch)
+    _as(client, role, role.title())
+    listing = client.get("/api/v1/scorecards")
+    assert listing.status_code == 200
+    statuses = sorted(c["status"] for c in listing.json())
+    if role in ("duty_manager", "management", "admin"):
+        assert statuses == ["PUBLISHED", "SHADOW"] and client.get(f"/api/v1/scorecards/{shadow}").status_code == 200
+    else:
+        assert statuses == ["PUBLISHED"] and client.get(f"/api/v1/scorecards/{shadow}").status_code == 404
+    assert client.get(f"/api/v1/scorecards/{published}").status_code == 200  # a released card: every role in the demo
+
+
+def test_the_read_row_is_spelled_out_in_the_router_not_borrowed_from_deps():
+    from noc_agents.api.routers import scorecards as router_module
+
+    assert router_module.SCORECARD_READERS == ("noc_analyst", "shift_supervisor", "duty_manager", "management", "msp_coordinator", "legal", "admin")
+    assert "field_engineer" not in router_module.SCORECARD_READERS and "planning" not in router_module.SCORECARD_READERS
+    assert router_module.INTERNAL_READERS == ("duty_manager", "management", "admin")

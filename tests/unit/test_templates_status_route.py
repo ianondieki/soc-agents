@@ -12,6 +12,9 @@
 * that a PUT of the status a row already has changes nothing, so a second "approve" can never
   overwrite who actually approved the words;
 * that every real change writes an audit row, and that another operator's id is a 404.
+* that the transition is a compare-and-set: a decision made on a stale read is a 409, and
+  concurrent approvals produce exactly one approval and one audit row (review
+  routes-correctness#5).
 
 Every test runs on its own SQLite file through the reload pattern the other route tests use.
 """
@@ -20,6 +23,7 @@ from __future__ import annotations
 
 import importlib
 import json
+import threading
 
 import pytest
 from fastapi.testclient import TestClient
@@ -434,3 +438,101 @@ def test_another_operators_template_is_a_404_and_is_left_alone(enforced):
 
     assert _reload(theirs.id).approval_status == "DRAFT"
     assert _audits(theirs.id) == []
+
+
+# --------------------------------------------------------------------------------------
+# Concurrency: the transition is a compare-and-set (review routes-correctness#5)
+# --------------------------------------------------------------------------------------
+
+
+def _paused(key: str = "incident_update", channel: str = "SMS") -> MessageTemplateRow:
+    """A template approved once and then paused: the state a re-approval race starts from."""
+    session = get_session()
+    try:
+        registry = TemplateRegistry(session, "safaricom")
+        row = registry.get(channel, key, "en", 1)
+        registry.set_status(row, "APPROVED", actor="Original Approver")
+        registry.set_status(row, "PAUSED", actor="Original Approver")
+        session.commit()
+        session.refresh(row)  # the commit expired it; load it before detaching
+        session.expunge(row)
+        return row
+    finally:
+        session.close()
+
+
+def _admin(name: str) -> auth.Principal:
+    return auth.Principal(role="admin", display_name=name, authenticated=True, source="cookie", subject=f"u-{name}")
+
+
+def test_a_transition_decided_on_a_stale_read_is_a_409_and_overwrites_nobody(enforced, monkeypatch):
+    """Alice's approval commits between Bob's read and Bob's write. Bob decided on PAUSED, which
+    is no longer true: he gets a 409 naming what he lost to, and Alice stays the approver."""
+    from noc_agents.api.routers import templates as templates_router
+
+    row = _paused()
+    real = templates_router._get_owned
+
+    def read_then_alice_approves(session, model, row_id, *, what):
+        found = real(session, model, row_id, what=what)
+        other = get_session()
+        try:
+            TemplateRegistry(other, "safaricom").set_status(other.get(MessageTemplateRow, row_id), "APPROVED", actor="Alice Admin")
+            other.commit()
+        finally:
+            other.close()
+        return found
+
+    monkeypatch.setattr(templates_router, "_get_owned", read_then_alice_approves)
+    _as(enforced, "admin", "Bob Admin")
+    r = _put(enforced, row.id, status="APPROVED")
+
+    assert r.status_code == 409, r.text
+    assert "was PAUSED and is now APPROVED" in r.json()["detail"]
+    after = _reload(row.id)
+    assert (after.approval_status, after.approved_by) == ("APPROVED", "Alice Admin")
+    assert [a.actor for a in _audits(row.id)] == []  # Bob wrote nothing; Alice went round the route
+
+
+def test_concurrent_approvals_produce_exactly_one_approval(client):
+    """No injection: six admins approve the same PAUSED template at once, five times over. Each
+    time exactly one request changes it, one audit row records it, and ``approved_by`` names
+    that request's admin. The others are 409s, or no-ops if they read after the commit."""
+    from fastapi import HTTPException
+
+    from noc_agents.api.routers.templates import TemplateStatusIn, set_template_status
+
+    for trial in range(5):
+        row = _paused("incident_restored", "EMAIL") if trial == 0 else _reload(row.id)
+        if trial:
+            session = get_session()
+            try:
+                TemplateRegistry(session, "safaricom").set_status(session.get(MessageTemplateRow, row.id), "PAUSED", actor="Pauser")
+                session.commit()
+            finally:
+                session.close()
+        before = len(_audits(row.id))
+        start = threading.Barrier(6)
+        outcomes: dict[str, object] = {}
+
+        def approve(name: str) -> None:
+            start.wait(timeout=30)
+            try:
+                out = set_template_status(row.id, TemplateStatusIn(status="APPROVED"), principal=_admin(name))
+                outcomes[name] = "changed" if out["changed"] else "no-op"
+            except HTTPException as exc:
+                outcomes[name] = exc.status_code
+
+        threads = [threading.Thread(target=approve, args=(f"Admin{i}",)) for i in range(6)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=60)
+
+        winners = [name for name, outcome in outcomes.items() if outcome == "changed"]
+        assert len(outcomes) == 6, (trial, outcomes)
+        assert len(winners) == 1, (trial, outcomes)
+        assert all(outcome in ("no-op", 409) for name, outcome in outcomes.items() if name not in winners), outcomes
+        new_audits = _audits(row.id)[before:]
+        assert [(a.action, a.actor) for a in new_audits] == [("template.approved", winners[0])], (trial, outcomes)
+        assert _reload(row.id).approved_by == winners[0]

@@ -71,7 +71,9 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from noc_agents.api.auth import require_role
-from noc_agents.api.deps import READERS, _settings
+# §9.3 row 1 names "signals read"; legal holds R on it. INCIDENT_READERS, the same tuple as
+# main.py's /signals/weather/regions, so the strip and the rows behind it cannot disagree.
+from noc_agents.api.deps import INCIDENT_READERS, _settings
 from noc_agents.db.models import get_session, utcnow
 from noc_agents.services import signals as svc
 from noc_agents.services.backtest import FAMILIES, precision_verdict_30d
@@ -186,7 +188,7 @@ def _source_status(session, operator_id: str, source: str, region_code: str | No
 # ------------------------------------------------------------------ routes
 
 
-@router.get("/signals", dependencies=[Depends(require_role(*READERS))])
+@router.get("/signals", dependencies=[Depends(require_role(*INCIDENT_READERS))])
 def list_external_signals(
     source: str | None = Query(None, description="OPEN_METEO | MET_NORWAY | KMD_CAP | GLOFAS | KPLC | COMPLAINTS"),
     region_code: str | None = Query(None),
@@ -228,7 +230,7 @@ def list_external_signals(
         session.close()
 
 
-@router.get("/signals/county-map", dependencies=[Depends(require_role(*READERS))])
+@router.get("/signals/county-map", dependencies=[Depends(require_role(*INCIDENT_READERS))])
 def county_map() -> dict[str, Any]:
     """The county→region reverse map, derived from the operator profile, with its problems."""
     report = svc.county_map_report(_settings().operator)
@@ -237,7 +239,7 @@ def county_map() -> dict[str, Any]:
     return report
 
 
-@router.get("/signals/precision", dependencies=[Depends(require_role(*READERS))])
+@router.get("/signals/precision", dependencies=[Depends(require_role(*INCIDENT_READERS))])
 def signal_precision(
     region_code: str | None = Query(None, description="one region; default every region of the operator"),
     family: str = Query("storm", description="storm | cap | flood"),

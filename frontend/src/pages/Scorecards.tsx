@@ -44,7 +44,10 @@ import { fmtDateTime } from "../lib/time";
  *    with the reason, rather than wired to an endpoint that does not exist.
  *
  * No WS event exists for scorecards, so the list refetches on filter changes (debounced
- * ~500 ms, §7.10), after an action on this page, and on demand.
+ * ~500 ms, §7.10), after an action on this page, and on demand. The open card refetches with
+ * it: `reloadTick` is passed to `ScorecardDetail` as `tick`, so Compute, Refresh, an action,
+ * and a click on the row that is already open all refetch the card. A recompute keeps the
+ * card's id, so without this the open card would keep showing its old status.
  */
 
 const DEBOUNCE_MS = 500;
@@ -97,7 +100,8 @@ export default function Scorecards({ session }: { session: Session }) {
           if (mine !== seq.current) return;
           // Drop the previous rows: they answered other filters and must not pass for these.
           setRows([]);
-          setListFailure({ view: failureView(statusOf(e), "list"), detail: detailOf(e, "") });
+          const detail = detailOf(e, "");
+          setListFailure({ view: failureView(statusOf(e), "list", detail), detail });
           setLoaded(true);
         });
     }, delay);
@@ -129,10 +133,17 @@ export default function Scorecards({ session }: { session: Session }) {
       setComputeResult(res);
       reload();
     } catch (e) {
-      setComputeFailure({ view: failureView(statusOf(e), "action"), detail: detailOf(e, "") });
+      const detail = detailOf(e, "");
+      setComputeFailure({ view: failureView(statusOf(e), "compute", detail), detail });
     } finally {
       setComputing(false);
     }
+  };
+
+  /** Open a card; a click on the card that is already open refetches it (and the list). */
+  const openCard = (id: string) => {
+    if (id === selected) reload();
+    else setSelected(id);
   };
 
   const heading = (
@@ -285,11 +296,11 @@ export default function Scorecards({ session }: { session: Session }) {
                     key={r.id}
                     tabIndex={0}
                     aria-selected={selected === r.id}
-                    onClick={() => setSelected(r.id)}
+                    onClick={() => openCard(r.id)}
                     onKeyDown={(e) => {
                       if (e.key === "Enter" || e.key === " ") {
                         e.preventDefault();
-                        setSelected(r.id);
+                        openCard(r.id);
                       }
                     }}
                     style={{ cursor: "pointer", background: selected === r.id ? "rgba(62, 203, 255, 0.07)" : undefined }}
@@ -342,7 +353,7 @@ export default function Scorecards({ session }: { session: Session }) {
 
       {selected && (
         <div style={{ marginTop: "1rem" }}>
-          <ScorecardDetail key={selected} cardId={selected} session={session} onChanged={reload} />
+          <ScorecardDetail key={selected} cardId={selected} tick={reloadTick} session={session} onChanged={reload} />
         </div>
       )}
     </div>

@@ -149,6 +149,7 @@ import os
 import re
 import statistics
 import uuid
+from contextlib import contextmanager
 from calendar import monthrange
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta, timezone
@@ -174,9 +175,10 @@ from noc_agents.db.models_scorecards import (
     KPI_MTTA,
     KPI_NOTE_COMPLIANCE,
     KPI_REPEAT_FAULT,
+    COMPUTATION_SCOPE_KEY,
     KPI_SLA_COMPLIANCE,
-    NOT_A_HUMAN_NAMES,
     RECOMPUTABLE_STATUSES,
+    SCORECARD_GRAPH_NAME,
     STATUS_DRAFT,
     STATUS_FINAL,
     STATUS_PUBLISHED,
@@ -185,6 +187,7 @@ from noc_agents.db.models_scorecards import (
     VendorScorecardLineRow,
     VendorScorecardRow,
     earlier_released_card_exists,
+    visible_human_name,
 )
 from noc_agents.db.models_vendors import ClockEventRow, VendorRow
 from noc_agents.orchestrator.contract import FAILED, SUCCEEDED
@@ -272,7 +275,7 @@ __all__ = [
 JOB_NAME = "scorecard_close"  # spec §4.4 SCHEDULED_JOBS
 INTERVAL_S = 3600  # hourly check; a no-op until a period has ended and has no card (§5.3.17)
 AGENT = "SlaScorecardAgent"  # spec roster #17
-GRAPH_NAME = "scorecard"  # agent_runs.graph_name, as "outbox" / "monitor" / "pir" do
+GRAPH_NAME = SCORECARD_GRAPH_NAME  # agent_runs.graph_name ("scorecard"), as "outbox" / "monitor" / "pir" do; the mapper checks runs against it
 ENABLED_ENV = FLAG  # SCORECARDS_ENABLED -- one flag for the whole of §7.6 (services/vendors.py)
 
 #: Who may record a shadow review, publish or finalise (§7.6.3 ``duty_manager``+). Enforced
@@ -282,9 +285,10 @@ ENABLED_ENV = FLAG  # SCORECARDS_ENABLED -- one flag for the whole of §7.6 (ser
 REVIEWER_ROLES: tuple[str, ...] = ("duty_manager", "admin")
 PUBLISHER_ROLES: tuple[str, ...] = REVIEWER_ROLES
 
-#: Names that are not a named human -- the table's ``ck_vendor_scorecards_shadow`` refuses the
-#: same list, so the service and the CHECK cannot drift (``models_scorecards.NOT_A_HUMAN_NAMES``).
-_NOT_A_HUMAN = frozenset({"", AGENT.lower(), *NOT_A_HUMAN_NAMES})
+# Whether a reviewer/publisher name is a VISIBLE human name is decided by ONE predicate,
+# ``models_scorecards.visible_human_name`` -- used here, by the mapper guards and by the
+# publish path -- so the service and the table's guard cannot drift (a U+200B "name" that one
+# layer strips and another keeps is exactly how an invisible reviewer gets recorded).
 
 #: Restore provenance a duration may be computed from (§7.6.2, §7.0.8).
 TRUSTED_RESTORE_SOURCES: frozenset[str] = frozenset({RESTORE_SOURCE_MARK, RESTORE_SOURCE_SUPERVISOR})
@@ -1592,11 +1596,13 @@ def shadow_required_for(session: Session, *, operator_id: str, vendor_id: str, p
     * a re-contracted vendor -- that is a new ``vendors`` row, so nothing earlier exists for it.
 
     "Released" and not merely "computed": if July's card was computed and never looked at,
-    August is still the first card any human will inspect. The same query runs inside the
-    mapper guards (``models_scorecards.earlier_released_card_exists``): a card's
-    ``shadow_required`` is checked against it on INSERT and again at the moment of release,
-    so the chain of "somebody named looked at this vendor's numbers under these terms"
-    cannot be skipped by planting a column value.
+    August is still the first card any human will inspect. "Released" also means released BY
+    THE SERVICE: the query requires the ``scorecard.published`` audit row ``publish_scorecard``
+    writes, so a predecessor planted PUBLISHED by raw SQL or a bulk ``update()`` exempts nobody.
+    The same query runs inside the mapper guards (``models_scorecards.earlier_released_card_exists``):
+    a card's ``shadow_required`` is checked against it on INSERT and again at the moment of
+    release, so the chain of "somebody named looked at this vendor's numbers under these
+    terms" cannot be skipped by planting a column value.
     """
     return not earlier_released_card_exists(
         session, operator_id=operator_id, vendor_id=vendor_id, period=period, sla_terms_version=sla_terms_version
@@ -1706,6 +1712,27 @@ def lines_of(session: Session, card_id: str) -> list[VendorScorecardLineRow]:
     return list(session.scalars(select(VendorScorecardLineRow).where(VendorScorecardLineRow.scorecard_id == card_id).order_by(VendorScorecardLineRow.seq)))
 
 
+@contextmanager
+def _computation_scope(session: Session, card_id: str):
+    """Mark ``card_id`` as being written BY THE COMPUTATION for the duration of the block.
+
+    The mapper guards in ``db/models_scorecards.py`` accept a change to a card's evidence or
+    status (before release) only while the card's id is in ``session.info[COMPUTATION_SCOPE_KEY]``
+    -- and only if ``computed_by_run_id`` names a real scorecard run. This is what makes the
+    "recompute" exemption unforgeable from an ORM session that merely assigns attributes: the
+    adversarial review's dressed-up edit (threshold 30, ``passed: True``,
+    ``computed_by_run_id='not-a-real-run'``, status SHADOW, one write) has no scope and no run.
+    Scoped to ONE card id, so a computation of card A cannot carry an edit of card B through the
+    same flush.
+    """
+    scope: set[str] = session.info.setdefault(COMPUTATION_SCOPE_KEY, set())
+    scope.add(card_id)
+    try:
+        yield
+    finally:
+        scope.discard(card_id)
+
+
 def compute_scorecard(
     session: Session,
     cfg: OperatorConfig,
@@ -1759,6 +1786,21 @@ def compute_scorecard(
     lines = _with_credits(session, comp, operator_id=vendor.operator_id, terms=terms)
 
     recomputed = card is not None
+    with _computation_scope(session, card_id):
+        card = _write_card(session, card, card_id, vendor, bounds, comp, lines, needs_shadow, status, terms, run_id, at, recomputed)
+    _audit(
+        session,
+        card,
+        actor=actor,
+        action="scorecard.recomputed" if recomputed else "scorecard.computed",
+        rationale=comp.gate.reason or f"computed against sla_terms {terms.version}",
+        payload={"run_id": run_id, "vendor": vendor.code, "gate_passed": comp.gate.passed, "shadow_required": needs_shadow},
+    )
+    return card
+
+
+def _write_card(session, card, card_id, vendor, bounds, comp, lines, needs_shadow, status, terms, run_id, at, recomputed) -> VendorScorecardRow:
+    """The one place a card's evidence is written. Called inside ``_computation_scope`` only."""
     if card is None:
         card = VendorScorecardRow(id=card_id, operator_id=vendor.operator_id, vendor_id=vendor.id, period=bounds.label)
         session.add(card)
@@ -1794,15 +1836,7 @@ def compute_scorecard(
         row.proposed_credit_pct, row.credit_status = line.proposed_credit_pct, line.credit_status
     for stale in existing.values():  # LINE_SHAPE shrank between releases
         session.delete(stale)
-    session.flush()
-    _audit(
-        session,
-        card,
-        actor=actor,
-        action="scorecard.recomputed" if recomputed else "scorecard.computed",
-        rationale=comp.gate.reason or f"computed against sla_terms {terms.version}",
-        payload={"run_id": run_id, "vendor": vendor.code, "gate_passed": comp.gate.passed, "shadow_required": needs_shadow},
-    )
+    session.flush()  # inside the scope: this is the write the mapper guards admit
     return card
 
 
@@ -1910,9 +1944,12 @@ def _require_role(role: str, allowed: tuple[str, ...], what: str) -> None:
 
 
 def _named_human(name: str | None, what: str) -> str:
-    who = (name or "").strip()
-    if who.lower() in _NOT_A_HUMAN:
-        raise ValueError(f"{what} must be a named human, not {name!r}")
+    """The cleaned, visible human name, or ``ValueError``. Control/format characters (zero-width
+    spaces included) are removed, whitespace stripped, and at least one letter is required --
+    the same predicate the mapper guard applies at write time (``visible_human_name``)."""
+    who = visible_human_name(name)
+    if who is None:
+        raise ValueError(f"{what} must be a visible human name (letters, not an automation name), not {name!r}")
     return who
 
 
@@ -2114,10 +2151,10 @@ def close_periods(session: Session, settings: AppSettings) -> JobResult:
 
 
 #: The job's card (spec §4.4: ``JobCard("scorecard_close", 3600, ..., "SCORECARDS_ENABLED",
-#: "SlaScorecardAgent")``). NOT registered by this lane -- ``scheduler/loop.py`` belongs to
-#: integration; adding ``services.scorecard.SCORECARD_JOB`` to ``SCHEDULED_JOBS`` is the whole
-#: change. ``default_enabled=False`` so ``/scheduler/status`` reports the job as off while the
-#: flag is unset, rather than claiming it is enabled and producing nothing.
+#: "SlaScorecardAgent")``). Registered in ``scheduler/loop.py`` (``_scorecard_job()`` in
+#: ``SCHEDULED_JOBS``, imported lazily like the other lanes' cards). ``default_enabled=False``
+#: so ``/scheduler/status`` reports the job as off while the flag is unset, rather than
+#: claiming it is enabled and producing nothing; ``close_periods`` re-checks the flag itself.
 SCORECARD_JOB = JobCard(
     JOB_NAME,
     INTERVAL_S,

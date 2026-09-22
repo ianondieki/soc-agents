@@ -1,5 +1,6 @@
-"""Generic additive schema migration for the SQLite database (spec §7.0.1) -- and ONE
-named exception to "additive", the schema_version 8 rebuild of ``hitl_tasks``.
+"""Generic additive schema migration for the SQLite database (spec §7.0.1) -- and two
+named exceptions to "additive": the schema_version 8 rebuild of ``hitl_tasks``, and the
+schema_version 9 refresh of CHECK constraints on EMPTY scorecard tables.
 
 The ORM classes in ``db/models.py`` are the single source of truth for the schema.
 This module brings a database file up to that shape using only three statements:
@@ -67,6 +68,30 @@ next table that "needs" one should be argued for from scratch. What keeps this o
   than rewritten during the copy: a migration that quietly changes a value on the approval
   trail is the very thing the verification step exists to prevent.
 
+THE SECOND EXCEPTION: ``_refresh_check_constraints`` (schema_version 9)
+----------------------------------------------------------------------
+Narrower than the first, and destructive only where there is nothing to destroy. A CHECK
+constraint is the one part of a table's definition the additive path can never deliver to
+an existing file: ``ADD COLUMN`` cannot add one, ``CREATE TABLE IF NOT EXISTS`` is a no-op
+on a table that exists, and ``create_all`` never alters. So when the scorecard lane
+tightened ``ck_vendor_scorecards_shadow`` (reviewer must be a human name, not whitespace or
+"system") and ``ck_vendor_scorecards_dq_counts`` (``dq_gate_threshold_pct < 100``) AFTER
+files had been created at v8, those files kept the old CHECKs and every test passed, because
+tests build fresh databases. The dev database was exactly such a file, with zero rows.
+
+The rule, for the two tables named in ``_CHECK_REFRESH_TABLES`` and no others: compare the
+live ``CREATE TABLE`` text in ``sqlite_master`` with what the CURRENT model compiles to (the
+DDL, never a version number, so it is idempotent and a fresh file is never touched). Where
+they differ and the table is EMPTY, drop it and create it from the model, inside the same
+transaction, verified before the drop (row count is zero, re-read under the write lock) and
+after the create (live DDL now equals the model's, indexes back). Where they differ and the
+table has ROWS, do nothing to it: log one warning naming the CHECKs the file is not enforcing
+and carry the same text in ``MigrationReport.note``. A populated table is never rebuilt
+here -- the ORM mapper guards in ``db/models_scorecards.py`` still refuse every ORM write,
+and adopting the constraints is a human's decision (export, empty, start once). The version
+bump to 9 exists only so that this step runs once, behind the usual backup, on files that
+already say 8; it adds no table and no column.
+
 **What the exception costs the rollback story** -- worked out against the v7 code, not assumed:
 
 * An older release still *starts* on a rebuilt file (it logs "newer than this code ...
@@ -114,6 +139,7 @@ Two SQLite facts shape the code:
 from __future__ import annotations
 
 import logging
+import re
 import sqlite3
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -140,7 +166,12 @@ from noc_agents.db.models import Base, HitlTaskRow, IncidentRow, SchemaVersionRo
 #     hitl_tasks.incident_id -- the one NON-additive step, see _rebuild_hitl_tasks and the
 #     module docstring. The additive tables landing in the same release (memory M1, vendor
 #     scorecards) ride on the same bump.
-SCHEMA_VERSION = 8  # bump per release that adds tables/columns
+# 9 = the scorecard CHECK refresh (module docstring, "THE SECOND EXCEPTION"): two CHECKs on
+#     vendor_scorecards were tightened after v8 files had been created, and nothing additive
+#     can reach an existing table's constraints. _refresh_check_constraints recreates the table
+#     from the model when -- and only when -- it is EMPTY; a populated one is left alone and
+#     warned about. No new table or column: the bump exists so the step runs once, with a backup.
+SCHEMA_VERSION = 9  # bump per release that adds tables/columns
 
 # Why the bump is not optional when a release adds COLUMNS, even though new TABLES seem to
 # appear without one: init_db() calls Base.metadata.create_all() after migrate_additive(),
@@ -342,19 +373,38 @@ def _hitl_tasks_needs_rebuild(conn: Connection) -> bool:
     return any(name == "incident_id" and notnull for name, notnull in _table_columns(conn, _HITL))
 
 
-def _attached_sql(conn: Connection) -> list[str]:
-    """The CREATE statements of every index and trigger on the old table, to replay afterwards.
+def _attached_sql(conn: Connection, table: str = _HITL) -> list[str]:
+    """The CREATE statements of every index and trigger on a table, to replay after a rebuild.
 
     DROP TABLE takes them with it. Read from ``sqlite_master`` rather than from the ORM so an
     index somebody added by hand survives too. Rows with NULL sql are SQLite's own
-    auto-indexes (the primary key's), which the new table's DDL recreates by itself.
+    auto-indexes (the primary key's, a UNIQUE's), which the new table's DDL recreates itself.
     """
     rows = conn.exec_driver_sql(
         "SELECT sql FROM sqlite_master WHERE tbl_name = ? AND type IN ('index', 'trigger') "
         "AND sql IS NOT NULL ORDER BY type, name",
-        (_HITL,),
+        (table,),
     ).fetchall()
     return [r[0] for r in rows]
+
+
+# ``hitl_tasks`` as an identifier: bare, "double-quoted", [bracketed] or `backticked`, in any
+# case, not glued to another identifier character on either side (so ``hitl_tasks_archive`` and
+# a trigger NAMED ``trg_hitl_tasks_mirror`` do not match) and not inside a string literal or a
+# comment (stripped before matching). This is what SQLite resolves at RENAME time; matching a
+# substring instead refused files whose triggers only ever touched ``hitl_tasks_archive``.
+_HITL_IDENTIFIER = re.compile(
+    r'(?<![\w$])(?:"' + _HITL + r'"|\[' + _HITL + r"\]|`" + _HITL + r"`|" + _HITL + r")(?![\w$])",
+    re.IGNORECASE,
+)
+
+
+def _names_hitl_tasks(sql: str) -> bool:
+    """Does this CREATE VIEW / CREATE TRIGGER statement refer to the ``hitl_tasks`` TABLE?"""
+    bare = re.sub(r"'(?:[^']|'')*'", "''", sql)  # string literals: 'hitl_tasks' is data, not a table
+    bare = re.sub(r"/\*.*?\*/", " ", bare, flags=re.S)  # block comments
+    bare = re.sub(r"--[^\n]*", " ", bare)  # line comments
+    return bool(_HITL_IDENTIFIER.search(bare))
 
 
 def _refuse_schema_references(conn: Connection) -> None:
@@ -364,12 +414,17 @@ def _refuse_schema_references(conn: Connection) -> None:
     start with a message that does not say what to do, and each attempt writes another backup.
     Refuse first, and say what to do. (Triggers ON hitl_tasks itself are fine: they are dropped
     with the old table and replayed by ``_attached_sql``.) No view or trigger exists in this
-    codebase; this is for the file somebody has been reporting from or patching by hand."""
-    rows = conn.exec_driver_sql(
-        "SELECT type, name FROM sqlite_master WHERE type IN ('view', 'trigger') AND tbl_name != ? "
+    codebase; this is for the file somebody has been reporting from or patching by hand.
+
+    ``LIKE`` is only the cheap prefilter; the decision is ``_names_hitl_tasks``, a whole-token
+    match. Refusing on the substring alone kept a file from starting because its trigger wrote
+    to ``hitl_tasks_archive`` -- a rebuild that would have succeeded, refused on every start."""
+    candidates = conn.exec_driver_sql(
+        "SELECT type, name, sql FROM sqlite_master WHERE type IN ('view', 'trigger') AND tbl_name != ? "
         "AND sql LIKE ? ORDER BY type, name",
         (_HITL, f"%{_HITL}%"),
     ).fetchall()
+    rows = [(kind, name) for kind, name, sql in candidates if _names_hitl_tasks(sql or "")]
     if rows:
         named = ", ".join(f"{kind} {name}" for kind, name in rows)
         raise HitlRebuildError(
@@ -567,6 +622,133 @@ def _rebuild_hitl_tasks(conn: Connection, engine: Engine) -> list[str]:
     return applied
 
 
+# ------------------------------------- the SECOND named exception (schema_version 9): CHECKs
+#
+# Read the module docstring ("THE SECOND EXCEPTION") first. Two tables, by name, and nothing
+# that would let a third join them without its own argument.
+
+#: The tables whose CHECK constraints were tightened after v8 files existed. The lines table is
+#: listed because it hangs off the cards table by foreign key and is refreshed in dependency
+#: order with it; today its DDL has not changed, so it is compared and left alone.
+_CHECK_REFRESH_TABLES = ("vendor_scorecards", "vendor_scorecard_lines")
+
+
+class CheckRefreshError(RuntimeError):
+    """The CHECK refresh found the file in a state it will not act on. Raised inside the
+    migration transaction, so the caller rolls back and the file is exactly what it was."""
+
+
+def _normalised_ddl(sql: str) -> str:
+    """One CREATE TABLE statement, in the form both sides can be compared in: whitespace
+    collapsed (the additive pass one-lines its DDL, ``create_all`` does not), ``IF NOT EXISTS``
+    dropped (``sqlite_master`` never stores it), the table name unquoted (a table renamed into
+    place is stored as ``CREATE TABLE "name"``)."""
+    s = " ".join(sql.split())
+    s = s.replace("CREATE TABLE IF NOT EXISTS ", "CREATE TABLE ", 1)
+    return re.sub(r'^CREATE TABLE "([^"]+)"', r"CREATE TABLE \1", s)
+
+
+def _live_ddl(conn: Connection, table: str) -> str | None:
+    return conn.exec_driver_sql(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)
+    ).scalar()
+
+
+def _compiled_ddl(table: Table, engine: Engine) -> str:
+    return _normalised_ddl(str(CreateTable(table).compile(dialect=engine.dialect)))
+
+
+def _check_clauses(ddl: str) -> dict[str, str]:
+    """``{constraint name: expression}`` for every named CHECK in a normalised CREATE TABLE."""
+    return dict(re.findall(r"CONSTRAINT (\w+) CHECK \((.*?)\)(?=, CONSTRAINT |, FOREIGN KEY|, PRIMARY KEY| \)$)", ddl))
+
+
+def _refresh_check_constraints(conn: Connection, engine: Engine) -> tuple[list[str], list[str]]:
+    """Bring the CHECKs of the tables in ``_CHECK_REFRESH_TABLES`` up to the model -- where that
+    costs nothing. Returns ``(statements applied, notes for the report)``.
+
+    Must run inside the migration transaction and after the additive pass, so every table it
+    looks at exists (a missing one was just created current, and compares equal). The live DDL
+    decides, never the version: a fresh file, a file created after the tightening and a file
+    this step already refreshed all compare equal and are left alone.
+
+    * DDL differs and the table is EMPTY: drop and create from the model, dependent tables
+      first for the drop and last for the create. The count is re-read immediately before each
+      DROP, under the write lock; a row appearing there aborts the whole migration. Indexes and
+      triggers that hung off the table are replayed from ``sqlite_master``; an ORM index that
+      still is not there afterwards is created. Verified afterwards: the live DDL now equals the
+      model's, the table is still empty, every index is back.
+    * DDL differs and the table has ROWS: untouched. One WARNING names the CHECKs the file is
+      not enforcing; the same text goes on the report. The mapper guards in
+      ``db/models_scorecards.py`` still hold for every ORM write; adopting the constraints for
+      raw SQL too is a human's call (export the rows, empty the table, start once).
+    """
+    applied: list[str] = []
+    notes: list[str] = []
+    tables = [t for t in Base.metadata.sorted_tables if t.name in _CHECK_REFRESH_TABLES]
+    drifted: dict[str, tuple[Table, str, str]] = {}
+    for table in tables:
+        live = _live_ddl(conn, table.name)
+        if live is None:
+            continue  # not on disk at all: nothing to compare (the additive pass creates it current)
+        compiled = _compiled_ddl(table, engine)
+        if _normalised_ddl(live) != compiled:
+            drifted[table.name] = (table, _normalised_ddl(live), compiled)
+    if not drifted:
+        return applied, notes
+
+    rebuild = [t for t, _live, _compiled in drifted.values() if _count(conn, t.name) == 0]
+    rebuilding = {t.name for t in rebuild}  # by name: Table objects are SQL expressions, not values
+    for name, (table, live, compiled) in drifted.items():
+        if name in rebuilding:
+            continue
+        old, new = _check_clauses(live), _check_clauses(compiled)
+        changed = sorted(k for k in set(old) | set(new) if old.get(k) != new.get(k))
+        message = (
+            f"{name} has {_count(conn, name)} row(s) and a definition older than the model's: CHECK constraint(s) "
+            f"{', '.join(changed) if changed else '<a difference outside the CHECK clauses>'} are not enforced by "
+            "this file. Left as it is -- a populated table is never rebuilt here; the ORM mapper guards in "
+            "db/models_scorecards.py still refuse every ORM write. To adopt the current constraints: export the "
+            "rows, empty the table, start once (it is then recreated from the model), reload."
+        )
+        log.warning(message)
+        notes.append(message)
+
+    if not rebuild:
+        return applied, notes
+    # Drop dependents first, create them last: sorted_tables is dependency order.
+    attached = {t.name: _attached_sql(conn, t.name) for t in rebuild}
+    for table in reversed(rebuild):
+        if _count(conn, table.name) != 0:
+            raise CheckRefreshError(f"{table.name} gained a row while the migration held the write lock; rolled back")
+        sql = f"DROP TABLE {table.name}"
+        conn.exec_driver_sql(sql)
+        applied.append(sql)
+    for table in rebuild:
+        statements = [_one_line(str(CreateTable(table).compile(dialect=engine.dialect))), *attached[table.name]]
+        for sql in statements:
+            conn.exec_driver_sql(sql)
+            applied.append(sql)
+        present = {r[1] for r in conn.exec_driver_sql(f"PRAGMA index_list({table.name})").fetchall()}
+        for ix in sorted(table.indexes, key=lambda ix: ix.name or ""):
+            if ix.name not in present:  # an ORM index the old table never had
+                sql = str(CreateIndex(ix).compile(dialect=engine.dialect))
+                conn.exec_driver_sql(sql)
+                applied.append(sql)
+        # Post-conditions, still inside the transaction.
+        live = _live_ddl(conn, table.name)
+        if live is None or _normalised_ddl(live) != _compiled_ddl(table, engine):
+            raise CheckRefreshError(f"{table.name} does not match the model after being recreated; rolled back")
+        if _count(conn, table.name) != 0:
+            raise CheckRefreshError(f"{table.name} is not empty after being recreated; rolled back")
+        present = {r[1] for r in conn.exec_driver_sql(f"PRAGMA index_list({table.name})").fetchall()}
+        missing = {ix.name for ix in table.indexes} - present
+        if missing or not set(attached[table.name]) <= set(_attached_sql(conn, table.name)):
+            raise CheckRefreshError(f"{table.name} lost an index or trigger in the refresh ({sorted(missing)}); rolled back")
+        log.info("%s was empty and its CHECK constraints were older than the model's: recreated from the model", table.name)
+    return applied, notes
+
+
 # ------------------------------------------------------------------------ entry point
 
 
@@ -580,6 +762,9 @@ def migrate_additive(engine: Engine, *, backup_dir: Path) -> MigrationReport:
           exception of step 3b.
        3b. Same transaction: _rebuild_hitl_tasks(), a no-op unless the file's hitl_tasks.incident_id is
           still NOT NULL (module docstring, "THE ONE EXCEPTION").
+       3c. Same transaction: _refresh_check_constraints(), a no-op unless a table in _CHECK_REFRESH_TABLES
+          has a definition older than the model's -- recreated if empty, warned about if not ("THE SECOND
+          EXCEPTION").
        4. Write schema_version = SCHEMA_VERSION in the same transaction; commit; PRAGMA journal_mode=WAL.
        5. On any exception: rollback, leave schema_version unchanged, log the backup path, re-raise.
        Returns the list of applied statements for the startup log."""
@@ -647,6 +832,11 @@ def migrate_additive(engine: Engine, *, backup_dir: Path) -> MigrationReport:
             # every column by now), inside the same transaction on purpose (a failure in it, or
             # after it, undoes it). Returns [] on every file that does not need it.
             applied.extend(_rebuild_hitl_tasks(conn, engine))
+            # The second one: CHECKs the additive path can never deliver. Destructive only on
+            # an EMPTY table; a populated one is warned about, and the warning rides on the report.
+            refreshed, refresh_notes = _refresh_check_constraints(conn, engine)
+            applied.extend(refreshed)
+            note = "; ".join(part for part in (note, *refresh_notes) if part)
             _stamp_version(conn, SCHEMA_VERSION)
             conn.commit()
         except BaseException:

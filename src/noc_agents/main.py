@@ -20,9 +20,14 @@ from noc_agents.api import auth
 from noc_agents.api.auth import require_role
 from noc_agents.api.deps import (
     AUDIT_READERS,
+    INCIDENT_READERS,
     INGEST,
+    LEDGER_DOWNLOAD_ROLES,
+    MEMORY_READERS,
+    NOTE_AUTHOR_ROLE,
+    NOTE_AUTHORS,
     OPERATIONS,
-    READERS,
+    PLATFORM_READERS,
     SUPERVISORS,
     _actor,
     _get_owned,
@@ -158,51 +163,11 @@ app.add_middleware(
 # main (main includes the routers). They are imported above; the routes below are
 # unchanged, and api/deps.py is still the one place the operator clause is built.
 #
-# The allow-lists below are ones §9.3 needs that api/deps.py does not carry yet.
-# They are declared HERE, beside the routes that use them (the same way
-# LEDGER_DOWNLOAD_ROLES is declared beside the ledger download), and belong next to
-# SUPERVISORS/OPERATIONS/READERS in api/deps.py once that file is free to edit.
-
-#: §9.3 row 1's READ column ("ingest, notes, timeline, workflow, signals read"): READERS
-#: plus ``legal``, which the row gives R and api/deps.READERS omits. Every incident-surface
-#: read in this file uses it, the list forms included -- a legal reader who could open an
-#: incident but not find it in the list would be reading by guessed id. (Whether READERS
-#: itself should gain legal is api/deps.py's decision: the lane routers use it too.)
-INCIDENT_READERS: tuple[str, ...] = READERS + ("legal",)
-
-#: §9.3 row 1, "ingest, notes, timeline, workflow, signals read". A work note is the ONE
-#: thing an ``msp_coordinator`` or a ``field_engineer`` may WRITE ("notes only" in both
-#: their cells) -- the vendor's progress update and the field engineer's "generator
-#: refuelled" are the two notes this system exists to collect. ``management``,
-#: ``planning`` and ``legal`` hold R on that row, not R/W, so they are absent: a note is
-#: evidence, and it can also declare the service restored
-#: (``services.lifecycle.note_declares_restored``), which sets the restore time MTTR and
-#: the restore SLA are measured to.
-NOTE_AUTHORS: tuple[str, ...] = OPERATIONS + ("msp_coordinator", "field_engineer")
-
-#: Who a note is FROM once the caller is authenticated -- derived from the principal, never
-#: read from the body (see add_note). ``author_role`` is not a display label: "MSP"/"FE"
-#: stamp ``first_vendor_note_at`` (services/lifecycle.py), the start of the vendor MTTA clock
-#: (§7.6.2), and make the note count as the vendor's in the scorecard and the silence chase.
-#: The keys must be exactly NOTE_AUTHORS, so no role can pass the gate without a mapping.
-NOTE_AUTHOR_ROLE: dict[str, str] = {
-    "noc_analyst": "NOC",
-    "shift_supervisor": "NOC",
-    "duty_manager": "NOC",
-    "admin": "NOC",
-    "msp_coordinator": "MSP",
-    "field_engineer": "FE",
-}
-if set(NOTE_AUTHOR_ROLE) != set(NOTE_AUTHORS):  # at import, not as a KeyError mid-incident
-    raise RuntimeError("NOTE_AUTHOR_ROLE must map exactly the NOTE_AUTHORS roles")
-
-#: §9.3 row "Templates status, outbox retry, scheduler run, MCP status, agents": read for
-#: the four internal roles, all of it for admin. Narrower than READERS on purpose -- these
-#: surfaces describe the PLATFORM (which jobs ticked, which agents are registered, which
-#: model is configured, which mailbox sends), not the incident an MSP coordinator or a
-#: field engineer is working. The ACTIONS in that row stay admin-only (scheduler run; the
-#: outbox retry when its lane lands).
-PLATFORM_READERS: tuple[str, ...] = ("noc_analyst", "shift_supervisor", "duty_manager", "management", "admin")
+# So, later, did the §9.3 allow-lists this file used to declare itself (INCIDENT_READERS,
+# NOTE_AUTHORS, NOTE_AUTHOR_ROLE, PLATFORM_READERS, LEDGER_DOWNLOAD_ROLES): a review found lane
+# routers gating the same §9.3 rows with READERS, because a router cannot import main.
+# MEMORY_READERS joined them there. Each is imported above, so ``main.PLATFORM_READERS`` and
+# the others still resolve.
 
 
 # Deliberately open: the load balancer / container liveness probe. It has no session and
@@ -444,8 +409,11 @@ def list_incidents(
 
 # The detail form of GET /api/v1/incidents, and gated with the same tuple: gating the list
 # while the record it lists answers anonymously is not a control.
-@app.get("/api/v1/incidents/{incident_id}", dependencies=[Depends(require_role(*INCIDENT_READERS))])
-def get_incident(incident_id: str) -> dict:
+@app.get("/api/v1/incidents/{incident_id}")
+def get_incident(
+    incident_id: str,
+    principal: auth.Principal = Depends(require_role(*INCIDENT_READERS)),
+) -> dict:
     session = get_session()
     try:
         row = _get_owned(session, IncidentRow, incident_id, what="incident")
@@ -455,7 +423,20 @@ def get_incident(incident_id: str) -> dict:
         # advisory there would be one recall per ticket per refresh (§7.11.4). None when
         # MEMORY_ENABLED is off, which makes the key null rather than absent (§7.11.11
         # test 25). The helper never raises; a broken memory store cannot 500 this route.
-        payload["advisory"] = advisory_for_incident(session, row)
+        #
+        # WHO gets it follows §9.3's MEMORY row, not the incident row that gates this route.
+        # msp_coordinator and field_engineer may read the ticket they are working (READERS),
+        # but the memory row gives them "—": the advisory is EARLIER tickets at this site,
+        # including ones a different MSP worked, with their numbers, restore minutes,
+        # resolution codes and scrubbed free text. §7.11.4 says this route's advisory is served
+        # "as today"; api/deps.MEMORY_READERS records why §9.3 wins. They get None -- the key
+        # stays present, the same shape as the flag being off, so a renderer written against
+        # it keeps working. With AUTH_DISABLED=true there is no identity (the switcher is a UI
+        # affordance and every gate is inert), so the demo computes it for everyone as before.
+        # The approval card's frozen copy (agents/hitl.py) is served only by /hitl/pending,
+        # which is OPERATIONS -- inside the memory row.
+        memory_reader = not principal.authenticated or principal.role in MEMORY_READERS
+        payload["advisory"] = advisory_for_incident(session, row) if memory_reader else None
         return payload
     finally:
         session.close()
@@ -1317,8 +1298,8 @@ def shift_current() -> dict:
 #      resolved path, not the string, is what a traversal actually escapes with.
 # The candidate path is then thrown away: the response body comes from the DB.
 XLSX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-#: §7.9.3: ledger rows carry names and access notes, so this is narrower than OPERATIONS.
-LEDGER_DOWNLOAD_ROLES: tuple[str, ...] = ("shift_supervisor", "duty_manager", "management", "admin")
+# LEDGER_DOWNLOAD_ROLES (narrower than OPERATIONS: ledger rows carry names and access notes)
+# lives in api/deps.py with the other §9.3 allow-lists.
 _SHIFT_ID_RE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}_(DAY|NIGHT)$")
 #: The DB key is ``<operator>:<date>:<SHIFT>`` (agents/ledger.py), which carries the
 #: operator; the URL form does not, and must not — the route is operator-scoped already.

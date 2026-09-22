@@ -745,6 +745,9 @@ _FORBIDDEN_PLAN_FRAGMENTS = (
     "SCAN work_notes",
     "SCAN agent_runs",
     "SCAN agent_run_steps",
+    # Round 3: the pseudonymisation marker is read on the hot path. It must stay one
+    # primary-key probe (its id is derived from the incident id), never a walk of the audit log.
+    "SCAN audit_events",
 )
 
 
@@ -898,6 +901,41 @@ def test_the_advisory_costs_the_same_with_twenty_thousand_incidents_at_other_sit
     assert after <= before * 1.25, (
         f"advisory VM steps grew from {before} to {after} (x{after / before:.2f}) when 20,000 incidents "
         "were added at OTHER sites — a hot-path statement is scanning the operator, not the site"
+    )
+
+
+#: The ACCEPTED cost of one site's history, in SQLite VM steps per prior finished incident at
+#: that site (fix round 3, secondary). The exact tier reads the site's whole finished history
+#: through ``ix_incidents_site_id`` and sorts it (``USE TEMP B-TREE FOR ORDER BY``) before its
+#: ``LIMIT``: bounded by the SITE, as review M03 requires, but linear in that site's history.
+#: Measured slope: ~30 steps per incident, flat from 100 to 5,000 at one site (10,548 → 39,995 →
+#: 69,799 → 158,923 steps). In wall-clock on the shared dev box that is ~15-23 ms at 100 prior
+#: outages and best 34 ms / median 94 ms (under load) at 5,000 — a site with 5,000 prior
+#: outages of ONE fault class is past MEM11's 25 ms target. Accepted because removing the sort
+#: needs an index on ``incidents`` (``db/migrate.py``, not this lane) and because the live-table
+#: read is what lets a ticket closed a minute ago be recalled before any job has run. The bound
+#: is 40 — a third over the measured slope — so this fails on a regression that makes each
+#: site row costlier or the growth super-linear, and not on noise.
+_ACCEPTED_VM_STEPS_PER_SITE_INCIDENT = 40
+
+
+def test_one_sites_growing_history_costs_at_most_the_accepted_steps_per_incident(tmp_db, monkeypatch):
+    """The tripwire the first review asked for and nothing had: grow ONE site's history and pin
+    what each extra prior outage there may cost the hot path (see the constant above)."""
+    settings, session = tmp_db
+    monkeypatch.setenv("MEMORY_ENABLED", "true")
+    _bulk_history(session, site_ids=[f"SFC-OTHER-{i % 500:03d}" for i in range(1_000)], start=100_000)
+    _bulk_history(session, site_ids=[SHARED_SITE] * 100, start=0)
+    before, _, block_before = _profile_advisory(session, _current_incident())
+
+    _bulk_history(session, site_ids=[SHARED_SITE] * 1_000, start=100)
+    after, _, block_after = _profile_advisory(session, _current_incident())
+
+    assert len(block_before["similar"]) == len(block_after["similar"]) == 5
+    per_incident = (after - before) / 1_000
+    assert per_incident <= _ACCEPTED_VM_STEPS_PER_SITE_INCIDENT, (
+        f"each prior incident at the site now costs {per_incident:.1f} VM steps on the hot path "
+        f"(accepted: {_ACCEPTED_VM_STEPS_PER_SITE_INCIDENT}); {before} -> {after} steps for +1,000"
     )
 
 

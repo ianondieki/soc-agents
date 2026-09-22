@@ -1,7 +1,24 @@
 {
+  "announced_before_durable": [],
+  "audit_rows": [
+    ["IngestCorrelationAgent", "step.succeeded", ""],
+    ["IngestCorrelationAgent", "step.succeeded", ""]
+  ],
+  "broadcasts": [
+    ["EMAIL", "FIELD_ENGINEER", "PENDING_HITL"],
+    ["EMAIL", "MANAGEMENT", "PENDING_HITL"],
+    ["EMAIL", "MSP", "PENDING_HITL"],
+    ["EMAIL", "RNIO", "PENDING_HITL"],
+    ["SMS", "FIELD_ENGINEER", "PENDING_HITL"],
+    ["SMS", "MANAGEMENT", "PENDING_HITL"],
+    ["SMS", "MSP", "PENDING_HITL"],
+    ["SMS", "RNIO", "PENDING_HITL"]
+  ],
+  "durable_after_run": {"child_sites_down_in_second_session": 0, "new_notes_visible": true, "returned_incident_visible": true},
   "envelope_keys": [
     ["incident_id", "operator_id", "payload", "run_id", "ts", "type"]
   ],
+  "envelope_ts_is_str_ending_z": true,
   "event_payloads": [
     {
       "payload": {"error": null, "incident_number": null, "run_id": "<uuid>", "seq": 2, "status": "SUCCEEDED"},
@@ -20,7 +37,7 @@
     ["agent.run.finished", 2, null, null, "SUCCEEDED", null, true],
     ["incident.merged", null, null, null, null, "INC000001", true]
   ],
-  "format": 1,
+  "format": 2,
   "global_events": [],
   "global_history": [
     ["agent.step.started", true],
@@ -30,12 +47,17 @@
     ["agent.run.finished", true],
     ["incident.merged", true]
   ],
+  "hitl_tasks": [
+    ["APPROVE_BROADCAST", "PENDING", "str"]
+  ],
   "incident": {"child_sites_down": 0, "incident_number": "INC000001", "incidents_in_db": 1, "same_as_setup_incident": true},
   "input_events": [
     {"access_notes": "Genset not started", "alarm_code": "POWER_GRID_FAIL", "failure_domain": "POWER", "region_code": "NBI_E", "site_id": "SFC-NBIE-HUB-EMB", "site_name": "Embakasi East Aggregation HUB", "site_type": "HUB", "users_affected": 450000},
     {"access_notes": "Genset not started", "alarm_code": "POWER_GRID_FAIL", "failure_domain": "POWER", "region_code": "NBI_E", "site_id": "SFC-NBIE-HUB-EMB", "site_name": "Embakasi East Aggregation HUB", "site_type": "HUB", "users_affected": 450000}
   ],
+  "ledger_file_written": null,
   "masks": ["ledger file name -> ledger_<date>_<shift>.xlsx", "uuid -> <uuid>", "timestamp -> <timestamp>", "date -> <date>", "EAT clock time -> <HH:MM> EAT"],
+  "not_pinned_by_the_golden_test": ["run.graph_name", "payload_run_id_mismatches (the test never compares a payload's run_id with its envelope's)", "step_events input/output/rationale and step_event_mirror_mismatches (this test does not call _check_steps_against_events)", "event_payloads agent.run.finished (only its shape is pinned)", "global_history and global_events beyond the run-scoped events (the test filters by run_id)", "broadcasts, hitl_tasks, row_counts (rows left by the setup alarm; this test does not read them)", "announced_before_durable (the R5 spy runs only in test_golden_full_lifecycle_with_hitl)", "steps[INGEST] output_summary/rationale/tools_called and every step's confidence (the test reads only the CORRELATE row's text and tools)", "durable_after_run.returned_incident_visible, durable_after_run.child_sites_down_in_second_session"],
   "payload_keys": {
     "agent.run.finished": [
       ["error", "incident_number", "run_id", "seq", "status"]
@@ -50,9 +72,30 @@
       ["incident_number"]
     ]
   },
+  "payload_run_id_mismatches": [],
+  "row_counts": {"incident_briefs": 1, "shift_ledger_rows": 1},
   "run": {"bound_to_returned_incident": true, "current_node": null, "error_summary": null, "graph_name": "incident_lifecycle", "status": "SUCCEEDED"},
   "runs_created": 1,
   "scenario": "merge_short_circuit",
+  "step_event_mirror_mismatches": [],
+  "step_events": [
+    {
+      "payload": {"agent": "IngestCorrelationAgent", "incident_number": null, "input": "site=SFC-NBIE-HUB-EMB", "node": "INGEST", "run_id": "<uuid>", "seq": 1},
+      "type": "agent.step.started"
+    },
+    {
+      "payload": {"agent": "IngestCorrelationAgent", "incident_number": null, "node": "INGEST", "output": "normalized event fingerprint=SFC-NBIE-HUB-EMB|POWER_GRID_FAIL|POWER", "rationale": "Normalized alarm payload; ready for correlation window check", "run_id": "<uuid>", "seq": 1, "status": "SUCCEEDED"},
+      "type": "agent.step.completed"
+    },
+    {
+      "payload": {"agent": "IngestCorrelationAgent", "incident_number": null, "input": "fp=SFC-NBIE-HUB-EMB|POWER_GRID_FAIL|POWER", "node": "CORRELATE", "run_id": "<uuid>", "seq": 2},
+      "type": "agent.step.started"
+    },
+    {
+      "payload": {"agent": "IngestCorrelationAgent", "incident_number": null, "node": "CORRELATE", "output": "merged into INC000001", "rationale": "Duplicate within 15m window — idempotent merge", "run_id": "<uuid>", "seq": 2, "status": "SUCCEEDED"},
+      "type": "agent.step.completed"
+    }
+  ],
   "steps": [
     {
       "agent": "IngestCorrelationAgent",

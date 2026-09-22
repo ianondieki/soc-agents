@@ -44,6 +44,70 @@ INGEST: tuple[str, ...] = OPERATIONS
 # coordinator read them, the wider operations floor does not need them (§7.6).
 COMMERCIAL: tuple[str, ...] = ("management", "msp_coordinator", "duty_manager", "admin")
 
+# --- The §9.3 allow-lists the A-02..A-05 round added ------------------------------
+# First declared in main.py, because this file had another owner that round, and moved
+# here when a cross-lane review found what that cost: a router cannot import main, so the
+# lane routers kept gating row-1 reads with READERS, and ``legal`` -- which §9.3 gives R --
+# got 200 from main.py's /signals/weather/regions and 403 from api/routers/signals.py's
+# /signals beside it. main.py re-imports every name below, so ``main.PLATFORM_READERS`` and
+# the rest stay importable (tests/unit/test_outbox_admin.py pins that one).
+
+#: §9.3 row 1's READ column ("ingest, notes, timeline, workflow, signals read"): READERS plus
+#: ``legal``, which the row gives R. Every incident-surface and signals read uses it, list
+#: forms included -- a legal reader who could open an incident but not find it in the list
+#: would be reading by guessed id. READERS itself is left as it is on purpose: every lane
+#: router gates on it, and whether each of THOSE rows gives legal R is a question per §9.3
+#: row, not a rename (contracts already answers it locally with READERS + legal).
+INCIDENT_READERS: tuple[str, ...] = READERS + ("legal",)
+
+#: §9.3 row 1, "notes only" for msp_coordinator and field_engineer: a work note is the ONE
+#: thing those two roles may WRITE -- the vendor's progress update and the field engineer's
+#: "generator refuelled" are the two notes this system exists to collect. ``management``,
+#: ``planning`` and ``legal`` hold R on that row, not R/W, so they are absent: a note is
+#: evidence, and it can also declare the service restored
+#: (``services.lifecycle.note_declares_restored``), which sets the restore time MTTR and the
+#: restore SLA are measured to.
+NOTE_AUTHORS: tuple[str, ...] = OPERATIONS + ("msp_coordinator", "field_engineer")
+
+#: Who a note is FROM once the caller is authenticated -- derived from the principal, never
+#: read from the body (main.add_note). ``author_role`` is not a display label: "MSP"/"FE"
+#: stamp ``first_vendor_note_at`` (services/lifecycle.py), the start of the vendor MTTA clock
+#: (§7.6.2), and make the note count as the vendor's in the scorecard and the silence chase.
+#: The keys must be exactly NOTE_AUTHORS, so no role can pass the gate without a mapping.
+NOTE_AUTHOR_ROLE: dict[str, str] = {
+    "noc_analyst": "NOC",
+    "shift_supervisor": "NOC",
+    "duty_manager": "NOC",
+    "admin": "NOC",
+    "msp_coordinator": "MSP",
+    "field_engineer": "FE",
+}
+if set(NOTE_AUTHOR_ROLE) != set(NOTE_AUTHORS):  # at import, not as a KeyError mid-incident
+    raise RuntimeError("NOTE_AUTHOR_ROLE must map exactly the NOTE_AUTHORS roles")
+
+#: §9.3 row "Templates status, outbox retry, scheduler run, MCP status, agents": read for the
+#: four internal roles, all of it for admin. Narrower than READERS on purpose -- these
+#: surfaces describe the PLATFORM (which jobs ticked, which agents are registered, which
+#: model is configured, which mailbox sends), not the incident an MSP coordinator or a field
+#: engineer is working. The ACTIONS in that row stay admin-only.
+PLATFORM_READERS: tuple[str, ...] = ("noc_analyst", "shift_supervisor", "duty_manager", "management", "admin")
+
+#: §9.3's memory row, read cell ("sites / playbooks / stats read"): R for noc_analyst,
+#: shift_supervisor, duty_manager, management, planning and legal, everything for admin, and
+#: "—" for msp_coordinator and field_engineer. §7.11.4 disagrees with itself here: its route
+#: table says "any signed-in role" for GET /memory/sites and "as today" for the incident
+#: route's advisory, while its header puts every memory route "behind require_role, §9.3".
+#: This resolves it toward §9.3, deliberately. A memory episode is an EARLIER ticket at the
+#: site -- possibly worked by a different MSP -- with its number, restore minutes, resolution
+#: code and scrubbed free text, and a name the structured columns never held survives the
+#: scrubber. An MSP coordinator reading a competitor's tickets is the exact thing the row's
+#: "—" is there to stop. (The same set as pir.PIR_READERS: §9.3's PIR row reads the same.)
+MEMORY_READERS: tuple[str, ...] = OPERATIONS + ("management", "planning", "legal")
+
+#: §7.9.3: ledger rows carry names and access notes, so the xlsx download is narrower than
+#: OPERATIONS -- §9.3 row "Ledger xlsx download, handover approve".
+LEDGER_DOWNLOAD_ROLES: tuple[str, ...] = ("shift_supervisor", "duty_manager", "management", "admin")
+
 
 def _actor(principal: auth.Principal, claimed: str | None) -> str:
     """Who to RECORD as having taken an action.

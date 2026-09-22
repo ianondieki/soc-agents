@@ -95,7 +95,6 @@ import logging
 import os
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
-from functools import lru_cache
 from typing import Any, Callable, Iterable, Sequence
 
 from sqlalchemy import column, func, literal_column, or_, select, table
@@ -731,57 +730,46 @@ def name_map_for(
 # keeps whatever scrubbed text the episode already had, and recall shows the episode's stored
 # summary or nothing.
 #
-# There is no "pseudonymised" flag column; housekeeping's own marker is that a person column
-# equals the token its policy template renders for that row — exactly the comparison
-# ``housekeeping._pseudonymise_row`` makes to skip a row it already did. The same policy and
-# the same ``role_token`` renderer are used here, so the two can never disagree about which
-# rows are done.
+# HOW "pseudonymised" IS KNOWN — and how it must not be (review round 3). The first version
+# inferred it from a person column *looking like* the token its retention template renders.
+# That was wrong for live data: ``services/assignment.py`` writes ``rnio_name`` straight from
+# the operator profile, and Safaricom's MTK, CST, RFT and WNY regions carry ``RNIO-MTK`` …
+# ``RNIO-WNY`` — exactly what ``RNIO-{region_code}`` renders — while a region the profile does
+# not list gets ``f"RNIO-{reg}"``, the same string again. Every new incident in those regions
+# was read as pseudonymised, and its memory text silently stored and recalled as empty.
+#
+# Now the answer comes only from housekeeping's own durable record: one ``AuditRow`` per
+# pseudonymised row, written in the same transaction as the column rewrite, at a
+# DETERMINISTIC id (``housekeeping.pseudonymisation_marker_id``) so the check is a single
+# primary-key probe — bounded on the hot path whatever the size of ``audit_events``.
+#
+# The heuristic is RETIRED, with no fallback. A fallback on column shape is exactly the defect
+# above, and there is no population for it to serve: housekeeping ships with
+# ``posture.dry_run: true`` and ``HOUSEKEEPING_APPLY`` unset, so no deployment has pseudonymised
+# an incident before the marker existed. A deployment that HAD (it would have had to turn both
+# keys on) must not guess either: its rows cannot be told apart from live RNIO-MTK rows after
+# the fact, so the honest remedy there is a one-off marker backfill reviewed by a human from
+# its own housekeeping audit trail — not an inference in this module. What still protects such
+# a row meanwhile is the name history (ASSIGN step and reassign notes, review M01), which the
+# pseudonymisation does not touch.
 
-#: What every shipped template in ``config/retention.yaml`` ends with. Used only when the
-#: policy file cannot be read, so that an unreadable policy makes this check *more* cautious
-#: (a person column shaped like ``PREFIX-<region_code>`` counts as a token) rather than off.
-_FALLBACK_TOKEN_SUFFIX = "-{region_code}"
 
+def is_pseudonymised(session: Session, inc: Any) -> bool:
+    """True only when housekeeping RECORDED pseudonymising this incident.
 
-@lru_cache(maxsize=8)
-def _pseudonym_templates(path: str, mtime: float) -> tuple[tuple[str, str], ...]:
-    """``(column, template)`` pairs for ``incidents`` from the retention policy, cached per file
-    version (path + mtime), so the YAML is parsed once per process, not once per card."""
-    from noc_agents.services.housekeeping import load_policy  # lazy: a heavy, write-side module
-
-    entry = load_policy(path).tables.get("incidents")
-    return tuple((str(c), str(t)) for c, t in (entry.role_tokens.items() if entry else ()))
-
-
-def is_pseudonymised(inc: Any) -> bool:
-    """True when housekeeping has already replaced any of this incident's person columns.
-
-    Never raises. If the policy cannot be read the answer errs towards True for any person
-    column shaped like a role token for the row's own region — refusing to re-derive text is
-    the direction that cannot write a name.
+    One primary-key probe into ``audit_events`` (the marker's id is derived from the incident
+    id), and the marker's operator must be the incident's. Never raises: an unreadable marker
+    reads as "not pseudonymised", which re-derives text with the full name history — the state
+    every non-pseudonymised incident is in.
     """
-    from noc_agents.services.housekeeping import default_policy_path, role_token
+    from noc_agents.services.housekeeping import is_marked_pseudonymised  # lazy: write-side module
 
-    row = {c.name: getattr(inc, c.name, None) for c in IncidentRow.__table__.columns}
-    try:
-        path = default_policy_path()
-        templates = _pseudonym_templates(str(path), path.stat().st_mtime)
-    except Exception:  # noqa: BLE001 — unreadable policy: fall back to the shape of a token
-        region = (row.get("region_code") or "UNKNOWN").strip() or "UNKNOWN"
-        suffix = _FALLBACK_TOKEN_SUFFIX.format(region_code=region)
-        return any(
-            str(row.get(f) or "").endswith(suffix) and str(row.get(f)) != suffix for f in _PERSON_FIELDS
-        )
-    for column, template in templates:
-        current = row.get(column)
-        if current is None or not str(current).strip():
-            continue
-        try:
-            if str(current) == role_token(template, row):
-                return True
-        except Exception:  # noqa: BLE001 — a malformed template cannot prove anything either way
-            continue
-    return False
+    incident_id = getattr(inc, "id", None)
+    if not incident_id:
+        return False
+    return is_marked_pseudonymised(
+        session, "incidents", incident_id, operator_id=getattr(inc, "operator_id", None)
+    )
 
 
 def _stored_summaries(session: Session, incident_ids: Sequence[str]) -> dict[str, str]:
@@ -924,7 +912,7 @@ def _build(
     history = person_name_history(session, ids)
     # Review M02: a pseudonymised incident's text is never re-derived. It shows what its
     # episode stored while its names were still known, or nothing.
-    frozen = {r.id for r in rows if is_pseudonymised(r)}
+    frozen = {r.id for r in rows if is_pseudonymised(session, r)}
     stored = _stored_summaries(session, sorted(frozen)) if frozen else {}
     episodes: list[SimilarEpisode] = []
     for inc in rows:

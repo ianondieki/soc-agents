@@ -573,14 +573,20 @@ def email_budget(session: Session, *, now: datetime, requested: int = 1) -> Emai
     again. A row with no entries (an ICS invite, whose transmitter reports no count, or a row
     sent before entries existed) counts 1 for an SMTP ``sent_at`` in the window, as before.
 
-    CONCURRENT DRAINERS (review E06) — documented, not reserved. Two drainers that each claimed
-    a DIFFERENT row read the same count, and both may send the last slot: the window can end at
-    most ``(concurrent drainers − 1) × requested`` over the cap — in this deployment the
-    scheduler tick, a request's synchronous drain and ``drain_after_commit``, so ≤ 2 messages for
-    a one-message row, well inside the 100-message headroom the cap keeps below the provider's
-    limit. Counting other drainers' live CLAIMED rows as reserved was considered and rejected:
-    ``drain_once`` claims up to 50 rows at once, most of which will themselves be deferred, so
-    reserving them would hold back real notices near the cap to prevent an overshoot of one or two.
+    CONCURRENT DRAINERS (review E06) — documented, not reserved. Drainers that each claimed a
+    DIFFERENT row read the same count, and all may send the last slot: the window can end at most
+    ``(concurrent drainers − 1) × requested`` over the cap. The number of drainers is NOT fixed:
+    besides the scheduler tick, every synchronous ingest request (``POST /api/v1/events`` and
+    ``/events/batch`` run ``process_event`` → ``drain_after_commit`` → ``drain_once`` in the
+    request thread while ``OUTBOX_SYNC_DRAIN`` is on, the default) is one — so a storm, which is
+    when the cap is near, is also when there are most of them (a replay with 4 drainers ended 3
+    over). What bounds them per process is the threadpool that runs sync handlers — AnyIO's
+    default limiter, 40 threads, which this app does not change — so ≤ 40 extra one-message sends
+    per uvicorn worker, still inside the 100-message headroom below the provider's limit for one
+    worker; each additional worker process adds its own. Counting other drainers' live CLAIMED
+    rows as reserved was considered and rejected: ``drain_once`` claims up to 50 rows at once, most
+    of which will themselves be deferred, so reserving them would hold back real notices near the
+    cap to prevent an overshoot that is bounded as above.
     """
     window_start = now - EMAIL_CAP_WINDOW
     rows = session.execute(
@@ -644,13 +650,16 @@ def email_cap_decision(session: Session, row: OutboxRow, *, now: datetime) -> Em
       firing on the one send that crosses the line) is what makes it exactly one per window:
       a crossing send that fails and retries does not write a second, and a crossing that
       happened on an ICS invite or a handover mail (no incident to annotate) is still noted by
-      the next incident mail. Two drainers racing on the same crossing can each write one — the
-      same bound as the count itself, see ``email_budget``;
-    * **past the cap, P1** → OVERRIDE: sent anyway, with a WorkNote saying so;
+      the next incident mail. Drainers racing on the same crossing can each write one, so a
+      window holds at most one note per concurrent drainer — the same race, and the same
+      unfixed-number-of-drainers caveat, as the count itself (see ``email_budget``);
+    * **past the cap, P1** → OVERRIDE: sent anyway, with a WorkNote saying so. This includes a
+      P1 whose audience alone needs more messages than the whole cap: the P1 rule is decided
+      before any refusal;
     * **past the cap, anything else** → DEFER: back to PENDING until the rolling window frees a
       slot, with one WorkNote the first time;
-    * **an audience that needs more messages than the whole cap** → REFUSE (DEAD): it can never
-      fit, so waiting would hold it forever.
+    * **below P1, an audience that needs more messages than the whole cap** → REFUSE (DEAD): it
+      can never fit, so waiting would hold it forever.
 
     WHY A P1 IS NEVER HELD. The cap is a guard rail set BELOW the provider's cliff (400 of
     Gmail's 500) to protect the account from a 24-hour suspension, and the reason that
@@ -691,6 +700,17 @@ def email_cap_decision(session: Session, row: OutboxRow, *, now: datetime) -> Em
 
     priority = incident_priority(session, row.incident_id)
     state = f"{EMAIL_DAILY_CAP_ENV}={budget.cap} reached ({budget.sent} SMTP messages in the last 24 h)"
+    # The P1 override comes FIRST, before any refusal (round-3 C4). Checked after the "can never
+    # fit" refusal, it let the cap kill a P1 DEAD — an audience that alone needs more messages
+    # than the cap, even in an empty window — which is exactly what "a P1 is never held" rules
+    # out. Such a P1 goes with the override note, like a P1 in a full window; the note names the
+    # message count, so an audience too big for the relay is visible to whoever fixes the config.
+    if priority in EMAIL_CAP_OVERRIDE_PRIORITIES:
+        note = (
+            f"[{EMAIL_NOTE_AUTHOR}] {state}; this {priority} notice was SENT anyway "
+            f"({budget.requested} message(s)): the volume cap never holds a {priority}."
+        )
+        return EmailCapDecision(CAP_OVERRIDE, budget, priority=priority, note=note)
     if budget.requested > budget.cap:
         reason = (
             f"refused: this notice needs {budget.requested} messages, more than {EMAIL_DAILY_CAP_ENV}="
@@ -699,12 +719,6 @@ def email_cap_decision(session: Session, row: OutboxRow, *, now: datetime) -> Em
         # No cap note: DEAD goes through ``record_email_outcome``, which already writes the
         # ``mode=error`` note quoting this reason, and publishes ``outbox.failed``.
         return EmailCapDecision(CAP_REFUSE, budget, priority=priority, reason=reason)
-    if priority in EMAIL_CAP_OVERRIDE_PRIORITIES:
-        note = (
-            f"[{EMAIL_NOTE_AUTHOR}] {state}; this {priority} notice was SENT anyway "
-            f"({budget.requested} message(s)): the volume cap never holds a {priority}."
-        )
-        return EmailCapDecision(CAP_OVERRIDE, budget, priority=priority, note=note)
 
     retry_at = budget.frees_at
     reason = f"{EMAIL_CAP_DEFER_PREFIX}={budget.cap} reached ({budget.sent} in 24 h); retry at {retry_at:%Y-%m-%dT%H:%M:%S}Z"
@@ -754,6 +768,29 @@ def cap_unchecked_note(priority: str | None, error: BaseException) -> str:
 def cap_unchecked_reason(error: BaseException) -> str:
     """``last_error`` for a non-P1 row held because the count could not be read (review E05)."""
     return f"{EMAIL_DAILY_CAP_ENV} could not be checked ({type(error).__name__}); nothing was transmitted"
+
+
+#: ``"[P1] INC000123 | …"`` — the subject every incident producer writes (``compose_email`` /
+#: ``alerts.email_subject``, ``render_email_payload``'s own prefix, ``regulatory.notice_text``).
+_SUBJECT_PRIORITY_RE = re.compile(r"^\s*\[(P[1-4])\]", re.IGNORECASE)
+
+
+def queued_priority(payload: dict | str | None) -> str | None:
+    """The priority an EMAIL row was QUEUED with, read from its own subject — no database.
+
+    Only the fallback for the one moment the live lookup (``incident_priority``) cannot run:
+    when the cap count failed and the same unreadable database fails the priority read too
+    (round-3 C5). The live priority is preferred everywhere else, because an override or a
+    re-evaluation after enqueue changes it. Accepts the payload dict or its JSON; anything that
+    does not parse, or a subject without the ``[Px]`` prefix (the handover mail), is ``None``.
+    """
+    if isinstance(payload, str) or payload is None:
+        try:
+            payload = json.loads(payload or "{}")
+        except ValueError:
+            return None
+    match = _SUBJECT_PRIORITY_RE.match(str((payload or {}).get("subject") or "")) if isinstance(payload, dict) else None
+    return match.group(1).upper() if match else None
 
 
 def incident_priority(session: Session, incident_id: str | None) -> str | None:

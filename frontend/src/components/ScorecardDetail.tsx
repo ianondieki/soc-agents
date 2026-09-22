@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { scorecardApi } from "./scorecardApi";
 import ScorecardLinesTable from "./ScorecardLinesTable";
 import LineDrawer from "./LineDrawer";
@@ -44,16 +44,27 @@ import { fmtDateTime, parseInstant } from "../lib/time";
  * Failure: a 404 is "not found, or not visible to your role" (the server hides unreleased
  * cards and other operators' cards behind a 404 on purpose), and a 403 is "not available to
  * your role". Both are said in words beside the server's own sentence; neither blanks the page.
+ *
+ * Freshness: the card is refetched whenever `tick` changes. The page passes its list tick, so
+ * Compute, Refresh, a click on the already-open row and every action refetch the open card as
+ * well as the list. A recompute keeps the card's id (it is derived from operator, vendor and
+ * period) and can turn SHADOW into WITHHELD and clear the shadow review, so a card fetched
+ * once at open is not good enough. While a refetch runs, the old card stays on screen marked
+ * REFRESHING. If the refetch fails, the card is taken down and the failure shown, rather than
+ * leaving figures on screen that could not be confirmed.
  */
 
 const WINDOW_TICK_MS = 60_000;
 
 export default function ScorecardDetail({
   cardId,
+  tick = 0,
   session,
   onChanged,
 }: {
   cardId: string;
+  /** Bumped by the page whenever the data may have changed; each change refetches the card. */
+  tick?: number;
   session: { display_name?: string; role?: string } | null;
   onChanged?: () => void;
 }) {
@@ -70,26 +81,58 @@ export default function ScorecardDetail({
   const [busy, setBusy] = useState(false);
   const [actionNote, setActionNote] = useState<string | null>(null);
   const [actionFailure, setActionFailure] = useState<{ view: FailureView; detail: string } | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+
+  /** The card id on screen, so a refetch of the SAME card keeps it visible while it loads. */
+  const shownId = useRef<string | null>(null);
+  /**
+   * Set by a successful action just before `onChanged()`. The refetch the page's reload then
+   * triggers is this component's own echo, so the action's success note stays. A refetch
+   * caused by anything else (Compute, Refresh) clears the note, which may no longer be true.
+   */
+  const ownChange = useRef(false);
 
   useEffect(() => {
     let live = true;
-    setCard(null);
-    setFailure(null);
-    setSelected(null);
-    setActionNote(null);
-    setActionFailure(null);
+    const sameCard = shownId.current === cardId;
+    shownId.current = cardId;
+    if (!sameCard) {
+      setCard(null);
+      setFailure(null);
+      setSelected(null);
+      setActionNote(null);
+      setActionFailure(null);
+    } else {
+      setRefreshing(true);
+      if (!ownChange.current) {
+        setActionNote(null);
+        setActionFailure(null);
+      }
+    }
+    ownChange.current = false;
     scorecardApi
       .get(cardId)
       .then((c) => {
-        if (live) setCard(c);
+        if (!live) return;
+        setCard(c);
+        setFailure(null);
+        // An open drawer stays on the same line, now showing the refetched figures.
+        setSelected((prev) => (prev ? (c.lines ?? []).find((l) => l.id === prev.id) ?? null : null));
       })
       .catch((e) => {
-        if (live) setFailure({ view: failureView(statusOf(e), "detail"), detail: detailOf(e, "") });
+        if (!live) return;
+        setCard(null);
+        setSelected(null);
+        const detail = detailOf(e, "");
+        setFailure({ view: failureView(statusOf(e), "detail", detail), detail });
+      })
+      .finally(() => {
+        if (live) setRefreshing(false);
       });
     return () => {
       live = false;
     };
-  }, [cardId]);
+  }, [cardId, tick]);
 
   // The dispute-window words move with the clock; a minute is fine-grained enough for "h left".
   useEffect(() => {
@@ -121,10 +164,10 @@ export default function ScorecardDetail({
     );
   }
 
-  const sv = statusView(card.status);
+  const windowEnds = parseInstant(card.dispute_window_ends_at)?.getTime() ?? null;
+  const sv = statusView(card.status, { nowMs: now, windowEndsMs: windowEnds });
   const terms = termsView(card);
   const gate = gateView(card.data_quality);
-  const windowEnds = parseInstant(card.dispute_window_ends_at)?.getTime() ?? null;
   const actions = cardActions(card, role, now, windowEnds);
   const dispute = disputeAffordance();
   const lines = card.lines ?? [];
@@ -155,9 +198,11 @@ export default function ScorecardDetail({
             ? "Published. The dispute window is running. Nothing was sent to anyone."
             : "Finalised."
       );
+      ownChange.current = true;
       onChanged?.();
     } catch (e) {
-      setActionFailure({ view: failureView(statusOf(e), "action"), detail: detailOf(e, "") });
+      const detail = detailOf(e, "");
+      setActionFailure({ view: failureView(statusOf(e), "action", detail), detail });
     } finally {
       setBusy(false);
     }
@@ -201,6 +246,7 @@ export default function ScorecardDetail({
             </span>
             <span className={terms.chip}>{terms.label}</span>
             {card.shadow_reviewed_by ? <span className="chip ok">SHADOW-REVIEWED · {card.shadow_reviewed_by}</span> : null}
+            {refreshing ? <span className="chip">REFRESHING…</span> : null}
           </div>
         </div>
         <p className="muted" style={{ marginTop: 0 }}>
@@ -307,7 +353,9 @@ export default function ScorecardDetail({
                     style={{ minWidth: "18rem" }}
                   />
                   <span className="muted">
-                    A named human, not a role label or "system". With sign-in on, the server records the signed-in user and ignores this field.
+                    A person's name. The server requires letters, strips invisible characters and refuses automation names such as
+                    "system" (400). Left empty, the session's display name is recorded. With sign-in on, the server records the
+                    signed-in user and ignores this field.
                   </span>
                 </div>
 

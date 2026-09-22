@@ -158,3 +158,122 @@ def test_the_golden_fixtures_hold_exactly_what_the_golden_test_pins():
 
     # A floor, so a refactor that silently skips a block cannot pass with fewer checks.
     assert checks >= 150, checks
+
+
+def test_every_value_golden_diff_records_that_the_golden_test_pins_agrees_with_it():
+    """The second half: the values ``golden_diff`` records beyond the event and step literals
+    (audit rows, broadcasts, HITL tasks, row counts, the ledger file, the ``email.sent`` binding,
+    the ``ts`` form, the step payloads and their mirror check, and the R5 durability spy).
+
+    Literals that live inside the golden test's functions cannot be imported, so they are
+    transcribed here AND each transcription is asserted to occur verbatim in the test source:
+    the check is against the test file, not against this file's memory of it. Comparisons are
+    type-strict (``true`` is not ``1``). Values the golden test does not pin are listed in each
+    fixture under ``not_pinned_by_the_golden_test`` and are deliberately not checked here.
+    """
+    TEST = ROOT / "tests" / "integration" / "test_golden_sequence.py"
+    SRC = TEST.read_text(encoding="utf-8")
+    RET = "<returned incident id>"
+    t = _load("_golden_sequence_literals_2", TEST)
+    fx = {p.stem: json.loads(p.read_text(encoding="utf-8")) for p in (ROOT / "tests" / "fixtures" / "golden").glob("*.json")}
+    H, A, M, C = fx["full_lifecycle_hitl"], fx["full_lifecycle_auto_broadcast"], fx["merge_short_circuit"], fx["cascade_child_short_circuit"]
+    checks = 0
+
+    def eq(a, b, what):
+        nonlocal checks
+        checks += 1
+        assert a == b and type(a) is type(b), f"{what}: fixture={a!r} expected={b!r}"
+
+    def in_source(snippet, what):
+        nonlocal checks
+        checks += 1
+        assert snippet in SRC, f"{what}: transcription not found verbatim in the test source: {snippet!r}"
+
+    # --- audit rows (_new_audit literals; inc.id -> the returned-incident marker) -----------------
+    AUDIT_HITL = [
+        ("IngestCorrelationAgent", "step.succeeded", ""),
+        ("IngestCorrelationAgent", "step.succeeded", ""),
+        ("EnrichmentAgent", "step.succeeded", ""),
+        ("SeverityImpactAgent", "step.succeeded", ""),
+        ("TicketingAgent", "step.succeeded", "inc.id"),
+        ("DispatchAssignmentAgent", "step.succeeded", "inc.id"),
+        ("SupervisorAgent", "step.waiting_hitl", "inc.id"),
+        ("BroadcastCommsAgent", "step.waiting_hitl", "inc.id"),
+        ("ExecutiveBriefingAgent", "step.succeeded", "inc.id"),
+        ("ShiftLedgerAgent", "step.succeeded", "inc.id"),
+        ("RecurrenceProblemAgent", "step.succeeded", "inc.id"),
+        ("WorklogMonitorAgent", "step.succeeded", "inc.id"),
+    ]
+    AUDIT_AUTO = [(a, "step.succeeded", e) for (a, _s, e) in AUDIT_HITL]
+    AUDIT_SHORT = [("IngestCorrelationAgent", "step.succeeded", ""), ("IngestCorrelationAgent", "step.succeeded", "")]
+    for a, s, e in AUDIT_HITL + AUDIT_AUTO:
+        in_source(f'("{a}", "{s}", {"inc.id" if e else chr(34) * 2})', "audit literal")
+
+
+    def as_fixture(rows):
+        return sorted([a, s, RET if e == "inc.id" else e] for a, s, e in rows)
+
+
+    eq(H["audit_rows"], as_fixture(AUDIT_HITL), "hitl audit rows")
+    eq(A["audit_rows"], as_fixture(AUDIT_AUTO), "auto audit rows")
+    eq(M["audit_rows"], as_fixture(AUDIT_SHORT), "merge audit rows")
+    eq(C["audit_rows"], as_fixture(AUDIT_SHORT), "cascade audit rows")
+
+    # --- broadcasts, HITL tasks, brief/ledger counts, ledger file -----------------------------------
+    BC_HITL = [(c, a, "PENDING_HITL") for c in ("EMAIL", "SMS") for a in ("FIELD_ENGINEER", "MANAGEMENT", "MSP", "RNIO")]
+    BC_AUTO = [("EMAIL", "FIELD_ENGINEER", "SENT"), ("EMAIL", "RNIO", "SENT"), ("SMS", "FIELD_ENGINEER", "SENT"), ("SMS", "RNIO", "SENT")]
+    for row in BC_HITL + BC_AUTO:
+        in_source(json.dumps(list(row))[1:-1].join("()"), "broadcast literal")
+    eq(H["broadcasts"], [list(r) for r in BC_HITL], "hitl broadcasts")
+    eq(A["broadcasts"], [list(r) for r in BC_AUTO], "auto broadcasts")
+    in_source('[(t.task_type, t.status) for t in tasks] == [("APPROVE_BROADCAST", "PENDING")]', "hitl task literal")
+    in_source('isinstance(tasks[0].proposed_payload["sms"], str)', "sms is str")
+    eq(H["hitl_tasks"], [["APPROVE_BROADCAST", "PENDING", "str"]], "hitl tasks")
+    in_source("assert not session.scalars(select(HitlTaskRow)).all()", "auto: no tasks")
+    eq(A["hitl_tasks"], [], "auto tasks")
+    in_source("assert len(session.scalars(select(IncidentBriefRow)).all()) == 1", "brief count")
+    in_source("assert len(session.scalars(select(ShiftLedgerRow)).all()) == 1", "ledger count")
+    eq(H["row_counts"], {"incident_briefs": 1, "shift_ledger_rows": 1}, "hitl counts")
+    in_source('assert (ledger_dir / by_node["LEDGER"].output_summary).exists()', "ledger file")
+    eq(H["ledger_file_written"], True, "hitl ledger file")
+
+    # --- email.sent bound to the returned incident; ts form --------------------------------------
+    in_source('assert emails[0]["incident_id"] == inc.id', "email incident binding")
+    eq(A["global_events"][0]["incident_id_is_returned_incident"], True, "email bound to inc.id")
+    in_source('assert isinstance(e["ts"], str) and e["ts"].endswith("Z")', "ts form")
+    for name, f in fx.items():
+        eq(f["envelope_ts_is_str_ending_z"], True, f"{name} ts form")
+
+    # --- step payloads (_check_steps_against_events) ----------------------------------------------
+    in_source('assert started[s.seq]["input"] == (s.input_summary or "")[:120], s.node_name', "mirror input")
+    in_source('assert completed[s.seq]["output"] == (s.output_summary or "")[:160], s.node_name', "mirror output")
+    in_source('assert completed[s.seq]["rationale"] == (s.rationale or ""), s.node_name', "mirror rationale")
+    for f, golden in ((H, t.GOLDEN_FULL_HITL), (A, t.GOLDEN_FULL_AUTO)):
+        eq(f["step_event_mirror_mismatches"], [], f"{f['scenario']} mirror")
+        steps = {s["seq"]: s for s in f["steps"]}
+        step_rows = [g for g in golden if g[0].startswith("agent.step.")]
+        eq(len(f["step_events"]), len(step_rows), f"{f['scenario']} step event count")
+        for ev, (etype, seq, node, agent, status, number, _has_id) in zip(f["step_events"], step_rows):
+            p = ev["payload"]
+            eq((ev["type"], p["seq"], p["node"], p["agent"], p.get("status"), p["incident_number"]), (etype, seq, node, agent, status, number), f"{f['scenario']} step event shape {seq}")
+            eq(sorted([*p, "duration_ms"]) if etype == "agent.step.completed" else sorted(p), sorted(t.PAYLOAD_KEYS[etype]), f"{etype} keys less duration_ms")
+            if etype == "agent.step.started":
+                eq(p["input"], steps[seq]["input_summary"][:120], f"{f['scenario']} input {seq}")
+            else:
+                eq(p["output"], steps[seq]["output_summary"][:160], f"{f['scenario']} output {seq}")
+                eq(p["rationale"], steps[seq]["rationale"], f"{f['scenario']} rationale {seq}")
+        for i, s in enumerate(f["steps"]):
+            want = (t.HITL_INPUT_SUMMARIES if f is H else t.AUTO_INPUT_SUMMARIES)[i]
+            eq(s["input_summary"], want, "input summaries still the pinned ones")
+
+    # --- durability (R5 spy; the second-Session reads of the merge/cascade tests) ------------------
+    in_source("assert all(durable for _, durable in seen)", "R5 all durable")
+    eq(H["announced_before_durable"], [], "hitl: every event durable at announce")
+    in_source("assert _visible_in_other_session(inc.id)", "hitl incident visible")
+    eq(H["durable_after_run"]["returned_incident_visible"], True, "hitl incident visible")
+    in_source("assert _in_other_session(lambda s: s.get(WorkNoteRow, new_notes[0].id)) is not None", "merge note visible")
+    eq(M["durable_after_run"]["new_notes_visible"], True, "merge note visible")
+    in_source("assert _in_other_session(lambda s: s.get(IncidentRow, parent.id).child_sites_down) == 1", "cascade committed")
+    eq(C["durable_after_run"]["child_sites_down_in_second_session"], 1, "cascade child count in a second session")
+
+    assert checks >= 250, checks

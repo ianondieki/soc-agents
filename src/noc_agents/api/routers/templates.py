@@ -34,6 +34,14 @@ again would overwrite ``approved_by``/``approved_at`` with the second caller and
 actually approved the words. A real re-approval (PAUSED -> APPROVED) does name the new approver,
 and the audit row keeps the previous one.
 
+**A compare-and-set, as the outbox retry has.** The transition is decided on a status read at
+the top of the request, so the write is made conditional on it: ``UPDATE ... WHERE
+approval_status = <the status read>`` runs before the registry writes, in the same transaction.
+Two admins who both read PAUSED and both approve therefore produce one approval, and the second
+gets a 409 naming the status it lost to, instead of overwriting ``approved_by`` and leaving a
+second audit row for a transition that did not happen (review routes-correctness#5). On SQLite
+that UPDATE also takes the write lock, so nothing can change the row between it and the commit.
+
 **Audit.** Every change writes ``AuditRow(action="template.<verb>")`` with the transition, the
 caller's role and the sign-off reference. The table has no column for the last two, so the
 audit row is where "who signed this off, in what capacity, recorded where" is kept.
@@ -50,11 +58,12 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict
+from sqlalchemy import update
 
 from noc_agents.api import auth
 from noc_agents.api.auth import require_role
-from noc_agents.api.deps import _actor, _get_owned, _settings
-from noc_agents.db.models import AuditRow, MessageTemplateRow, get_session
+from noc_agents.api.deps import _actor, _get_owned, _operator_scoped, _settings
+from noc_agents.db.models import AuditRow, MessageTemplateRow, get_session, utcnow
 from noc_agents.services.templates import (
     APPROVAL_STATUSES,
     REVIEWED_LANGUAGES,
@@ -145,9 +154,25 @@ def set_template_status(
                 f"{sorted(REVIEWER_ROLES)} (§6.4 hard rule); the caller's role is {principal.role!r}",
             )
         previous_by, previous_at = row.approved_by, row.approved_at
+        now = utcnow()
+        won = session.execute(
+            _operator_scoped(update(MessageTemplateRow), MessageTemplateRow)
+            .where(MessageTemplateRow.id == row.id, MessageTemplateRow.approval_status == previous_status)
+            .values(updated_at=now)
+        ).rowcount
+        if won != 1:
+            session.rollback()
+            session.refresh(row)
+            raise HTTPException(
+                409,
+                f"the template changed while this request was deciding: it was {previous_status} and is now "
+                f"{row.approval_status}; reload it and decide again",
+            )
         registry = TemplateRegistry(session, _settings().operator.operator_id)
         try:
-            registry.set_status(row, status, actor=actor, reviewer_role=principal.role, signoff_ref=body.signoff_ref)
+            registry.set_status(
+                row, status, actor=actor, reviewer_role=principal.role, signoff_ref=body.signoff_ref, now=now
+            )
         except TemplateNotFound as exc:  # unreachable after _get_owned; mapped so it can never be a 500
             session.rollback()
             raise HTTPException(404, "template not found") from exc

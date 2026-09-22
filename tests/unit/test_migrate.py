@@ -1,10 +1,12 @@
 """Phase 1 (spec §7.0.1): the generic additive migration, proven against a real v1 file.
 
 Since schema_version 8 the migration has ONE non-additive step, the rebuild of ``hitl_tasks``
-(``db/migrate.py``, "THE ONE EXCEPTION"). This file pins that a v1 file still gets all the way
-to the current version *through* it, and that it is the only destructive thing that runs; the
-rebuild's own proofs — populated data, injected failures, idempotency — are in
-``test_migrate_rebuild.py``.
+(``db/migrate.py``, "THE ONE EXCEPTION"), and since 9 a second, narrower one: the CHECK refresh
+of EMPTY scorecard tables ("THE SECOND EXCEPTION"). This file pins that a v1 file still gets all
+the way to the current version *through* them, and that the hitl_tasks rebuild is the only
+destructive thing that runs on such a file — the scorecard tables a v1 file receives are created
+current, so the refresh has nothing to do. The rebuild's own proofs are in
+``test_migrate_rebuild.py``; the refresh's are in ``test_migrate_checks.py``.
 
 ``tests/fixtures/db/v1_baseline.db`` was generated ONCE from the pre-Phase-1
 ``models.py`` by calling the then-current ``init_db()`` against an empty file and
@@ -60,6 +62,8 @@ HITL_REBUILD_DESTRUCTIVE = [
     "DROP TABLE hitl_tasks",
     "ALTER TABLE hitl_tasks__v8_rebuild RENAME TO hitl_tasks",
 ]
+# schema_version 9 adds no table and no column (see SCHEMA_VERSION's comment in db/migrate.py):
+# the sets above are unchanged, and the v1 path below must show NO scorecard DROP either.
 NEW_INCIDENT_COLUMNS = {
     "restored_source", "restored_by", "vendor_id", "context_json",
     "planned_maintenance", "access_risk", "child_site_ids_json", "assignment_confidence",
@@ -198,7 +202,10 @@ def test_v1_file_migrates_to_current_schema(tmp_path, restore_db_globals):
     ]
     # This line used to read "nothing destructive, ever". It now reads "exactly one thing, to
     # exactly one table": the v8 rebuild of hitl_tasks, after the additive pass, in this order.
+    # (The v9 CHECK refresh has nothing to do here: a v1 file gets its scorecard tables created
+    # from the current model a few statements earlier, so their DDL already matches.)
     assert [s for s in report.applied if s.startswith("DROP") or " RENAME " in s] == HITL_REBUILD_DESTRUCTIVE
+    assert not any("vendor_scorecard" in s and s.startswith("DROP") for s in report.applied)
     rebuild_at = report.applied.index("DROP TABLE hitl_tasks")
     assert all(s.startswith(("CREATE INDEX ix_hitl_tasks_", "ALTER TABLE hitl_tasks__v8_rebuild RENAME"))
                for s in report.applied[rebuild_at + 1:]), "nothing but the swap and its indexes follows the DROP"

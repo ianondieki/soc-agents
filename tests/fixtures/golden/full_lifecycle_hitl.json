@@ -1,7 +1,34 @@
 {
+  "announced_before_durable": [],
+  "audit_rows": [
+    ["BroadcastCommsAgent", "step.waiting_hitl", "<returned incident id>"],
+    ["DispatchAssignmentAgent", "step.succeeded", "<returned incident id>"],
+    ["EnrichmentAgent", "step.succeeded", ""],
+    ["ExecutiveBriefingAgent", "step.succeeded", "<returned incident id>"],
+    ["IngestCorrelationAgent", "step.succeeded", ""],
+    ["IngestCorrelationAgent", "step.succeeded", ""],
+    ["RecurrenceProblemAgent", "step.succeeded", "<returned incident id>"],
+    ["SeverityImpactAgent", "step.succeeded", ""],
+    ["ShiftLedgerAgent", "step.succeeded", "<returned incident id>"],
+    ["SupervisorAgent", "step.waiting_hitl", "<returned incident id>"],
+    ["TicketingAgent", "step.succeeded", "<returned incident id>"],
+    ["WorklogMonitorAgent", "step.succeeded", "<returned incident id>"]
+  ],
+  "broadcasts": [
+    ["EMAIL", "FIELD_ENGINEER", "PENDING_HITL"],
+    ["EMAIL", "MANAGEMENT", "PENDING_HITL"],
+    ["EMAIL", "MSP", "PENDING_HITL"],
+    ["EMAIL", "RNIO", "PENDING_HITL"],
+    ["SMS", "FIELD_ENGINEER", "PENDING_HITL"],
+    ["SMS", "MANAGEMENT", "PENDING_HITL"],
+    ["SMS", "MSP", "PENDING_HITL"],
+    ["SMS", "RNIO", "PENDING_HITL"]
+  ],
+  "durable_after_run": {"child_sites_down_in_second_session": 0, "new_notes_visible": true, "returned_incident_visible": true},
   "envelope_keys": [
     ["incident_id", "operator_id", "payload", "run_id", "ts", "type"]
   ],
+  "envelope_ts_is_str_ending_z": true,
   "event_payloads": [
     {
       "payload": {"error": null, "incident_number": "INC000001", "run_id": "<uuid>", "seq": 12, "status": "WAITING_HITL"},
@@ -40,7 +67,7 @@
     ["agent.run.finished", 12, null, null, "WAITING_HITL", "INC000001", true],
     ["incident.created", null, null, null, null, "INC000001", true]
   ],
-  "format": 1,
+  "format": 2,
   "global_events": [],
   "global_history": [
     ["agent.step.started", true],
@@ -70,11 +97,16 @@
     ["agent.run.finished", true],
     ["incident.created", true]
   ],
+  "hitl_tasks": [
+    ["APPROVE_BROADCAST", "PENDING", "str"]
+  ],
   "incident": {"child_sites_down": 0, "incident_number": "INC000001", "incidents_in_db": 1, "same_as_setup_incident": null},
   "input_events": [
     {"access_notes": "Genset not started", "alarm_code": "POWER_GRID_FAIL", "failure_domain": "POWER", "region_code": "NBI_E", "site_id": "SFC-NBIE-HUB-EMB", "site_name": "Embakasi East Aggregation HUB", "site_type": "HUB", "users_affected": 450000}
   ],
+  "ledger_file_written": true,
   "masks": ["ledger file name -> ledger_<date>_<shift>.xlsx", "uuid -> <uuid>", "timestamp -> <timestamp>", "date -> <date>", "EAT clock time -> <HH:MM> EAT"],
+  "not_pinned_by_the_golden_test": ["run.graph_name", "payload_run_id_mismatches (the test never compares a payload's run_id with its envelope's)", "announced_before_durable for events other than agent.* and incident.created (the test's spy decides only those types)", "steps[ENRICH|SEVERITY|ASSIGN].rationale beyond the prefix the test checks with startswith", "step_events rationale of those three steps beyond the same prefixes", "incident.incidents_in_db, incident.child_sites_down", "global_history and global_events beyond the run-scoped events (the test filters by run_id)", "work_notes author_role, and work_notes[0] body beyond 'Monitoring started. SLA ack due '", "durable_after_run.new_notes_visible, durable_after_run.child_sites_down_in_second_session"],
   "payload_keys": {
     "agent.run.finished": [
       ["error", "incident_number", "run_id", "seq", "status"]
@@ -89,9 +121,110 @@
       ["incident_number", "priority", "region_code", "requires_hitl", "site_id"]
     ]
   },
+  "payload_run_id_mismatches": [],
+  "row_counts": {"incident_briefs": 1, "shift_ledger_rows": 1},
   "run": {"bound_to_returned_incident": true, "current_node": "MONITOR", "error_summary": null, "graph_name": "incident_lifecycle", "status": "WAITING_HITL"},
   "runs_created": 1,
   "scenario": "full_lifecycle_hitl",
+  "step_event_mirror_mismatches": [],
+  "step_events": [
+    {
+      "payload": {"agent": "IngestCorrelationAgent", "incident_number": null, "input": "site=SFC-NBIE-HUB-EMB", "node": "INGEST", "run_id": "<uuid>", "seq": 1},
+      "type": "agent.step.started"
+    },
+    {
+      "payload": {"agent": "IngestCorrelationAgent", "incident_number": null, "node": "INGEST", "output": "normalized event fingerprint=SFC-NBIE-HUB-EMB|POWER_GRID_FAIL|POWER", "rationale": "Normalized alarm payload; ready for correlation window check", "run_id": "<uuid>", "seq": 1, "status": "SUCCEEDED"},
+      "type": "agent.step.completed"
+    },
+    {
+      "payload": {"agent": "IngestCorrelationAgent", "incident_number": null, "input": "fp=SFC-NBIE-HUB-EMB|POWER_GRID_FAIL|POWER", "node": "CORRELATE", "run_id": "<uuid>", "seq": 2},
+      "type": "agent.step.started"
+    },
+    {
+      "payload": {"agent": "IngestCorrelationAgent", "incident_number": null, "node": "CORRELATE", "output": "no open duplicate — new incident candidate", "rationale": "Fingerprint unique in correlation window; no parent HUB merge", "run_id": "<uuid>", "seq": 2, "status": "SUCCEEDED"},
+      "type": "agent.step.completed"
+    },
+    {
+      "payload": {"agent": "EnrichmentAgent", "incident_number": null, "input": "SFC-NBIE-HUB-EMB", "node": "ENRICH", "run_id": "<uuid>", "seq": 3},
+      "type": "agent.step.started"
+    },
+    {
+      "payload": {"agent": "EnrichmentAgent", "incident_number": null, "node": "ENRICH", "output": "users_est=450000, region=NBI_E, hub=True, class=CRITICAL", "rationale": "CMDB/mock enrich: Nairobi East; FE on-call=FE-NBI-E-01; alarm=POWER_GRID_FAIL domain=POWER → TT category POWER_GRID (Commercial power failure); site_class=CRITICAL; coverage=Eastlands (Umoja, Kayole, Pipeline, Donholm), Embakasi / Airport corridor, Industrial Area east", "run_id": "<uuid>", "seq": 3, "status": "SUCCEEDED"},
+      "type": "agent.step.completed"
+    },
+    {
+      "payload": {"agent": "SeverityImpactAgent", "incident_number": null, "input": "users=450000", "node": "SEVERITY", "run_id": "<uuid>", "seq": 4},
+      "type": "agent.step.started"
+    },
+    {
+      "payload": {"agent": "SeverityImpactAgent", "incident_number": null, "node": "SEVERITY", "output": "priority=P2 mpesa_risk=True", "rationale": "operator=safaricom; users=450000→P2; site_type=HUB floor=P2; mpesa_risk=true (CORE/HUB corridor rule); final=P2", "run_id": "<uuid>", "seq": 4, "status": "SUCCEEDED"},
+      "type": "agent.step.completed"
+    },
+    {
+      "payload": {"agent": "TicketingAgent", "incident_number": null, "input": "P2", "node": "TICKET", "run_id": "<uuid>", "seq": 5},
+      "type": "agent.step.started"
+    },
+    {
+      "payload": {"agent": "TicketingAgent", "incident_number": "INC000001", "node": "TICKET", "output": "created INC000001 category=POWER_GRID", "rationale": "Unique incident number; TT fields filled as NOC UI would: category=POWER_GRID, class=CRITICAL, tech=4G; HUB auto-ticket=yes", "run_id": "<uuid>", "seq": 5, "status": "SUCCEEDED"},
+      "type": "agent.step.completed"
+    },
+    {
+      "payload": {"agent": "DispatchAssignmentAgent", "incident_number": "INC000001", "input": "POWER", "node": "ASSIGN", "run_id": "<uuid>", "seq": 6},
+      "type": "agent.step.started"
+    },
+    {
+      "payload": {"agent": "DispatchAssignmentAgent", "incident_number": "INC000001", "node": "ASSIGN", "output": "MSP:EGYPRO", "rationale": "region=NBI_E (Nairobi East); lane=power; pool=['EGYPRO', 'EGYPRO_REMOTE']; primary=EGYPRO; radio_oem=MIXED; FE support=FE-NBI-E-01; RNIO=RNIO-NBI-E", "run_id": "<uuid>", "seq": 6, "status": "SUCCEEDED"},
+      "type": "agent.step.completed"
+    },
+    {
+      "payload": {"agent": "SupervisorAgent", "incident_number": "INC000001", "input": "L2_GUARDED", "node": "HITL", "run_id": "<uuid>", "seq": 7},
+      "type": "agent.step.started"
+    },
+    {
+      "payload": {"agent": "SupervisorAgent", "incident_number": "INC000001", "node": "HITL", "output": "HITL task <uuid>", "rationale": "P2 under L2_GUARDED requires human approval before external blast", "run_id": "<uuid>", "seq": 7, "status": "WAITING_HITL"},
+      "type": "agent.step.completed"
+    },
+    {
+      "payload": {"agent": "BroadcastCommsAgent", "incident_number": "INC000001", "input": "channels=SMS,EMAIL", "node": "BROADCAST", "run_id": "<uuid>", "seq": 8},
+      "type": "agent.step.started"
+    },
+    {
+      "payload": {"agent": "BroadcastCommsAgent", "incident_number": "INC000001", "node": "BROADCAST", "output": "broadcasts drafted; waiting HITL", "rationale": "External wording held for supervisor/duty manager — approve HITL to send Gmail", "run_id": "<uuid>", "seq": 8, "status": "WAITING_HITL"},
+      "type": "agent.step.completed"
+    },
+    {
+      "payload": {"agent": "ExecutiveBriefingAgent", "incident_number": "INC000001", "input": "P2", "node": "EXEC_BRIEF", "run_id": "<uuid>", "seq": 9},
+      "type": "agent.step.started"
+    },
+    {
+      "payload": {"agent": "ExecutiveBriefingAgent", "incident_number": "INC000001", "node": "EXEC_BRIEF", "output": "exec brief published", "rationale": "Proactive brief to reduce management call volume into NOC", "run_id": "<uuid>", "seq": 9, "status": "SUCCEEDED"},
+      "type": "agent.step.completed"
+    },
+    {
+      "payload": {"agent": "ShiftLedgerAgent", "incident_number": "INC000001", "input": "excel", "node": "LEDGER", "run_id": "<uuid>", "seq": 10},
+      "type": "agent.step.started"
+    },
+    {
+      "payload": {"agent": "ShiftLedgerAgent", "incident_number": "INC000001", "node": "LEDGER", "output": "ledger_<date>_<shift>.xlsx", "rationale": "Shift failure ledger row appended for supervisor scan", "run_id": "<uuid>", "seq": 10, "status": "SUCCEEDED"},
+      "type": "agent.step.completed"
+    },
+    {
+      "payload": {"agent": "RecurrenceProblemAgent", "incident_number": "INC000001", "input": "SFC-NBIE-HUB-EMB|POWER_GRID_FAIL|POWER", "node": "RECURRENCE", "run_id": "<uuid>", "seq": 11},
+      "type": "agent.step.started"
+    },
+    {
+      "payload": {"agent": "RecurrenceProblemAgent", "incident_number": "INC000001", "node": "RECURRENCE", "output": "count=1 threshold=3", "rationale": "Below recurrence threshold — no problem record", "run_id": "<uuid>", "seq": 11, "status": "SUCCEEDED"},
+      "type": "agent.step.completed"
+    },
+    {
+      "payload": {"agent": "WorklogMonitorAgent", "incident_number": "INC000001", "input": "sla_watch", "node": "MONITOR", "run_id": "<uuid>", "seq": 12},
+      "type": "agent.step.started"
+    },
+    {
+      "payload": {"agent": "WorklogMonitorAgent", "incident_number": "INC000001", "node": "MONITOR", "output": "sla timers armed", "rationale": "Note-interval chase scheduled per priority/region multiplier", "run_id": "<uuid>", "seq": 12, "status": "SUCCEEDED"},
+      "type": "agent.step.completed"
+    }
+  ],
   "steps": [
     {
       "agent": "IngestCorrelationAgent",

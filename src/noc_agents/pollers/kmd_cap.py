@@ -360,6 +360,8 @@ def _targets(
     unattributed: list[str] = []
     unknown: list[str] = []
     for piece in pieces:
+        if not any(ch.isalpha() for ch in str(piece)):
+            continue  # punctuation, not a place (NEW3) — also guards areas stored before that fix
         canonical = canonical_county(piece)
         name = canonical or piece
         if canonical is None:
@@ -603,7 +605,9 @@ def reattribute_live(
         by_identifier.setdefault(ident, []).append(row)
     changed = 0
     for ident, rows in by_identifier.items():
-        template = rows[0]
+        # A detached row is never the template: its areas are the same, but its validity is
+        # this region's ended one, not the alert's (review finding NEW2).
+        template = next((r for r in rows if not _loads(r.derived_json).get("detached")), rows[0])
         block = _loads(template.derived_json)
         pieces: list[str] = []
         for area in block.get("areas") or []:
@@ -831,6 +835,9 @@ def _process_feed(
     """
     seen_before = set(previous.get("seen_links") or [])
     known = _known_alert_links(session, operator_id) | seen_before
+    # The feed is authoritative for what is pending: this run's failures and deferrals replace
+    # whatever the previous run carried (a link KMD has dropped from the feed is no longer owed).
+    outcome.pending_links = []
     seen_now: list[str] = []
     sent_stamps: list[datetime] = []
     batch: list[tuple[datetime, int, str, CapAlert]] = []
@@ -914,6 +921,12 @@ def _refresh_hold(session: Session, operator_id: str, link: str, now: datetime, 
         block = _loads(row.derived_json)
         if block.get("kind") != KIND_CAP_ALERT or block.get("expires") or block.get("ended_by"):
             continue  # KMD gave an end, or withdrew it: never extended here
+        if block.get("detached"):
+            # The profile no longer maps this county to this region (reattribute_live). Extending
+            # it would revive the region's copy every poll: its valid_until crept forward each run,
+            # the backtest kept crediting the old region, and every poll reported a re-attribution
+            # (review finding NEW2). Only a profile change that maps it again brings it back.
+            continue
         sent = _parse_z(block.get("sent"))
         row.valid_until = max(row.valid_until or now, _held_until(sent, now, stale_days))
 
@@ -951,16 +964,23 @@ def _judge_completeness(outcome: CapRunOutcome) -> None:
     """A feed that answered while its documents could not all be read is not ``ok`` (F08).
 
     The one warning KMD published may be exactly the document that returned 503, so "0 alerts
-    in force" beside ``ok`` would be the reassuring lie this lane exists to prevent.
+    in force" beside ``ok`` would be the reassuring lie this lane exists to prevent. Documents
+    still pending from an earlier run count too: nothing is ``ok`` while one is unread (NEW1).
     """
     failed, deferred = len(outcome.document_failures), outcome.documents_deferred
-    if not failed and not deferred:
+    carried = len(set(outcome.pending_links)) if not failed and not deferred else 0
+    if not failed and not deferred and not carried:
         return
-    missing = (
-        f"{failed} CAP document(s) listed in the feed could not be read"
-        + (f" and {deferred} were deferred to the next run" if deferred else "")
-        if failed else f"{deferred} CAP document(s) listed in the feed were deferred to the next run"
-    )
+    if failed:
+        missing = f"{failed} CAP document(s) listed in the feed could not be read" + (
+            f" and {deferred} were deferred to the next run" if deferred else ""
+        )
+    elif deferred:
+        missing = f"{deferred} CAP document(s) listed in the feed were deferred to the next run"
+    else:
+        # A 304 (or any run that did not read the feed) says nothing about documents an earlier
+        # run could not read: they are still unread (review finding NEW1).
+        missing = f"{carried} CAP document(s) an earlier run could not read have still not been read"
     note = f"{missing}; an alert may be missing, so a count of zero is not a statement that KMD is silent"
     if outcome.state == "ok":
         outcome.state = "incomplete"
@@ -1004,9 +1024,14 @@ def poll(
         previous = {}
     outcome.last_modified = previous.get("last_modified")
     outcome.seen_links = list(previous.get("seen_links") or [])
-    # Documents the previous run could not read are retried now. A 304 would hide the feed
-    # that lists them, so when any are pending the conditional header is not sent (F08).
-    retry_pending = bool(previous.get("pending_links"))
+    # Documents an earlier run could not read stay owed until a run that reads the feed accounts
+    # for them. They are carried through every run that does not — unreachable, misconfigured, a
+    # 304 — so an outage can no longer erase them (review finding NEW1: an unreachable run wiped
+    # the list, and the next conditional 304 then read "ok, 0 in force" with a warning unread).
+    outcome.pending_links = list(previous.get("pending_links") or [])
+    # While any are pending the conditional header is withheld, so the server must send the feed;
+    # a 304 to that unconditional request is refused by the adapter as a protocol violation.
+    retry_pending = bool(outcome.pending_links)
 
     problems = validate_county_map(cfg)
     fatal = [p for p in problems if p.fatal]

@@ -30,6 +30,8 @@ from __future__ import annotations
 import copy
 import json
 import socket
+import threading
+import time
 from dataclasses import replace
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -62,6 +64,12 @@ FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "flood" / "glofas_k
 KISUMU = "SFC-WNY-HUB-KSM"
 #: The fixture's first forecast day is 2026-09-17.
 NOW = datetime(2026, 9, 17, 6, 0)
+
+
+#: The real socket functions, captured before any fixture replaces them (see loopback_only).
+_REAL_CONNECT = socket.socket.connect
+_REAL_CREATE_CONNECTION = socket.create_connection
+_REAL_GETADDRINFO = socket.getaddrinfo
 
 
 @pytest.fixture(autouse=True)
@@ -476,6 +484,86 @@ def test_f09_a_region_is_fresh_if_any_site_is_and_flags_only_on_fresh_readings(t
     poll(session, settings, provider=_provider(lambda req: httpx.Response(500)), now=NOW, sites=[replace(kisumu, region_code="CST", site_id="SFC-CST-X")])
     cst = flood_region_state(session, "safaricom", "CST", NOW)
     assert (cst["available"], cst["stale"], cst["flag"]) == (True, True, None)
+
+
+@pytest.fixture()
+def loopback_only(monkeypatch):
+    """Re-admit 127.0.0.1 only, for the W02 test: the header-phase deadline lives below httpx,
+    in socket reads, so MockTransport cannot exercise it. Every other host still fails."""
+
+    def check(host):
+        if str(host) not in {"127.0.0.1", "localhost"}:
+            raise AssertionError(f"a flood test tried to reach {host!r}")
+
+    def connect(self, address):
+        check(address[0])
+        return _REAL_CONNECT(self, address)
+
+    def create_connection(address, *args, **kwargs):
+        check(address[0])
+        return _REAL_CREATE_CONNECTION(address, *args, **kwargs)
+
+    def getaddrinfo(host, *args, **kwargs):
+        check(host)
+        return _REAL_GETADDRINFO(host, *args, **kwargs)
+
+    monkeypatch.setattr(socket.socket, "connect", connect)
+    monkeypatch.setattr(socket, "create_connection", create_connection)
+    monkeypatch.setattr(socket, "getaddrinfo", getaddrinfo)
+
+
+def _header_drip_server(gap: float) -> int:
+    """A one-shot loopback server that drips a 200's HEADERS a byte at a time (~6 s in all)."""
+    response = b"HTTP/1.1 200 OK" + bytes([13, 10]) + b"X-Pad: " + b"a" * 40 + bytes([13, 10]) + b"Content-Length: 2" + bytes([13, 10, 13, 10]) + b"{}"
+    srv = socket.socket()
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(1)
+    port = srv.getsockname()[1]
+
+    def run():
+        try:
+            conn, _ = srv.accept()
+        except OSError:
+            return
+        try:
+            data = b""
+            while bytes([13, 10, 13, 10]) not in data:
+                data += conn.recv(4096)
+            for byte in response:
+                conn.sendall(bytes([byte]))
+                time.sleep(gap)
+        except OSError:
+            pass  # the client's watchdog shut the connection
+        finally:
+            conn.close()
+            srv.close()
+
+    threading.Thread(target=run, daemon=True).start()
+    return port
+
+
+def test_w02_the_flood_deadline_covers_the_header_phase_over_a_real_socket(loopback_only):
+    """W02: _get_json checked the deadline only in the body loop; a server dripping its headers
+    ran ~10 s against a 1 s budget. The shared DeadlineWatchdog now ends it at the deadline."""
+    port = _header_drip_server(gap=0.07)
+    client = httpx.Client(timeout=httpx.Timeout(1.0))
+    started = time.monotonic()
+    with pytest.raises(FloodError) as err:
+        adapter._get_json(client, f"http://127.0.0.1:{port}/v1/flood", timeout_s=0.6)
+    elapsed = time.monotonic() - started
+    assert err.value.kind == "timeout" and "total deadline" in str(err.value)
+    assert elapsed < 2.5, f"{elapsed:.2f}s against a 0.6 s budget"
+
+
+def test_w02_flood_requests_open_their_own_traced_connection():
+    seen: list[httpx.Request] = []
+
+    def handler(request):
+        seen.append(request)
+        return httpx.Response(200, content=FIXTURE.read_bytes())
+
+    OpenMeteoFloodProvider(client=httpx.Client(transport=httpx.MockTransport(handler))).discharge(-0.09, 34.77, now=NOW)
+    assert seen[0].headers["Connection"] == "close" and callable(seen[0].extensions.get("trace"))
 
 
 # ------------------------------------------------------------------------------ the scheduler card

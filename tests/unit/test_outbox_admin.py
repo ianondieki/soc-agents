@@ -15,7 +15,15 @@ proved here, in order:
   refuses even when the pre-check is bypassed;
 * another operator's row is invisible to the view and a 404 to the retry;
 * §9.3: the view is for the platform readers, the retry is admin's, with auth enforced; the
-  audit row names the principal.
+  audit row names the principal;
+* the producer decides as well as the status (review routes-correctness#1, #3): a regulatory
+  notice is never retried here, because its lane re-releases it as a new row and a retry sent
+  the Communications Authority a second notice; a handover is re-run, not retried; a
+  maintenance invite only while it is the newest for its uid; a complaint reminder only on its
+  own day; an unclassified producer not at all. Each rule is driven through the REAL producer,
+  so the key format the classifier reads is the one the producer actually writes;
+* a housekeeping sweep that archives the payload between the check and the write turns the
+  retry into a 409 (review routes-correctness#6).
 
 Rows are driven to FAILED/DEAD by the real ``drain_once`` with the transmitters monkeypatched,
 the same way ``test_outbox.py`` does it, except where a status the machine cannot reach on its
@@ -26,7 +34,7 @@ from __future__ import annotations
 
 import importlib
 import json
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
@@ -34,11 +42,16 @@ from sqlalchemy import func, select, update
 
 from noc_agents.adapters.email_smtp import EmailResult
 from noc_agents.api import auth
-from noc_agents.db.models import AuditRow, OutboxRow, get_session, utcnow
+from noc_agents.config import get_settings
+from noc_agents.db.models import AuditRow, IncidentRow, OutboxRow, get_session, utcnow
+from noc_agents.db.models_complaints import RelationshipComplaintRow
+from noc_agents.db.models_regulatory import RegulatoryNotificationRow
 from noc_agents.orchestrator import outbox
 from noc_agents.orchestrator.outbox import drain_once, enqueue
 from noc_agents.realtime.hub import hub
-from noc_agents.services import notify
+from noc_agents.services import complaints, housekeeping, ics, notify
+from noc_agents.services import pir as pir_service
+from noc_agents.services.regulatory import open_notification, release_notice, request_approval
 
 SECRET = "outbox-admin-secret"
 LIST = "/api/v1/outbox"
@@ -48,9 +61,23 @@ RETRY = "/api/v1/outbox/{id}/retry"
 REFUSED = "SMTP send failed: SMTPRecipientsRefused: {'wanjiku.kamau@example.com': (550, b'5.1.1 no such user')}"
 
 SUMMARY_KEYS = {
-    "id", "kind", "status", "attempts", "max_attempts", "incident_id", "incident_number", "audience",
-    "run_id", "alert_id", "hitl_task_id", "requires_hitl", "approved_at", "provider", "last_error",
-    "created_at", "updated_at", "next_attempt_at", "retryable",
+    "id", "kind", "producer", "status", "attempts", "max_attempts", "incident_id", "incident_number",
+    "audience", "run_id", "alert_id", "hitl_task_id", "requires_hitl", "approved_at", "provider",
+    "last_error", "created_at", "updated_at", "next_attempt_at", "retryable", "retry_refusal",
+}
+
+#: The regulatory lane's own reference instants (tests/unit/test_regulatory_dispatch_outcome.py).
+FAILURE = datetime(2026, 9, 16, 9, 0, 0)
+ON_TIME = FAILURE + timedelta(hours=23)  # inside the 24-hour CA window
+
+BTS_EVENT = {  # P4 at L2_GUARDED: auto-broadcast, so the run queues SMS, EMAIL and ledger rows
+    "site_id": "SFC-MTK-BTS-MCH04",
+    "site_name": "Machakos Town BTS",
+    "site_type": "BTS",
+    "region_code": "MTK",
+    "alarm_code": "SITE_DOWN",
+    "failure_domain": "POWER",
+    "users_affected": 3200,
 }
 
 
@@ -439,7 +466,7 @@ def test_the_compare_and_set_refuses_even_when_the_precheck_is_bypassed(client, 
 
     row_id = _enqueue("EMAIL:cas")
     _force(row_id, status="SENT")
-    monkeypatch.setattr(outbox_admin, "_retry_refusal", lambda _row, _payload: None)
+    monkeypatch.setattr(outbox_admin, "_retry_refusal", lambda *_args: None)
 
     r = client.post(RETRY.format(id=row_id))
 
@@ -506,3 +533,357 @@ def test_the_readers_tuple_matches_mains_platform_readers(client):
     from noc_agents.api.routers import outbox_admin
 
     assert outbox_admin.PLATFORM_READERS == main.PLATFORM_READERS
+
+
+
+# --------------------------------------------------------------------------------------
+# The producer decides too (review routes-correctness#1, #3)
+# --------------------------------------------------------------------------------------
+
+
+def _released_notice() -> tuple[str, str, str]:
+    """An approved CA notice released to the outbox by the REAL ``release_notice``, committed.
+
+    Mirrors ``tests/unit/test_regulatory_dispatch_outcome.py::_released``. The shipped profile
+    declares no CA address, so the first drain kills row #1 -- the default path, not a contrivance.
+    """
+    session = get_session()
+    try:
+        cfg = get_settings().operator
+        inc = IncidentRow(
+            operator_id="safaricom",
+            incident_number="INC000901",
+            status="IN_PROGRESS",
+            priority="P1",
+            users_affected=450000,
+            site_id="SFC-MTK-HUB-THK",
+            site_name="Thika Hub",
+            site_type="HUB",
+            region_code="MTK",
+            county="Kiambu",
+            correlation_fingerprint="fp-outbox-admin",
+            failure_time=FAILURE,
+        )
+        session.add(inc)
+        session.flush()
+        notice = open_notification(session, inc, cfg)
+        task = request_approval(session, notice, inc, cfg)
+        task.status = "APPROVED"
+        task.resolved_by = "Grace Wanjiru"
+        task.resolved_at = utcnow()
+        session.flush()
+        row = release_notice(session, notice, inc, actor="Duty Manager", now=ON_TIME)
+        session.commit()
+        return inc.id, notice.id, row.id
+    finally:
+        session.close()
+
+
+def _notice(notice_id: str) -> tuple[str, dict]:
+    session = get_session()
+    try:
+        notice = session.get(RegulatoryNotificationRow, notice_id)
+        return notice.status, dict(notice.significance)
+    finally:
+        session.close()
+
+
+def _ca_sends(monkeypatch) -> list[str]:
+    """The CA address is now configured: every transmission succeeds and is counted, no socket."""
+    sends: list[str] = []
+
+    def delivered(payload):
+        sends.append(payload.get("regulatory_notification_id"))
+        return EmailResult(ok=True, mode="smtp", detail="250 accepted", to=["ca@example.ke"])
+
+    monkeypatch.setattr(notify, "transmit_email", delivered)
+    return sends
+
+
+def _view(row_id: str, client: TestClient) -> dict:
+    (item,) = [r for r in client.get(LIST).json() if r["id"] == row_id]
+    return item
+
+
+def test_a_failed_regulatory_notice_is_recovered_by_its_lane_and_never_by_a_retry(client, monkeypatch):
+    """routes-correctness#1. Row #1 dies for want of a CA address; the lane re-releases the
+    notice as row #2 once the address exists. Row #1 is still in the dead-letter view, and a
+    retry of it -- before the re-release or hours after -- must never reach the Authority."""
+    monkeypatch.setenv("REGULATORY_ENABLED", "true")
+    _inc_id, notice_id, row1 = _released_notice()
+    assert _drain(now=ON_TIME).dead == 1
+    assert _notice(notice_id)[0] == "SEND_FAILED"
+    sends = _ca_sends(monkeypatch)
+    lane_path = f"POST /api/v1/regulatory/{notice_id}/send"
+
+    item = _view(row1, client)
+    assert (item["producer"], item["status"], item["retryable"]) == ("regulatory_notice", "DEAD", False)
+    assert lane_path in item["retry_refusal"]
+    refused = client.post(RETRY.format(id=row1), json={"reason": "CA address now configured"})
+    assert refused.status_code == 409 and lane_path in refused.json()["detail"]
+    assert _row(row1).status == "DEAD" and _audits(row1) == []
+
+    # The recovery the lane owns: a new, attempt-numbered row.
+    released = client.post(
+        f"/api/v1/regulatory/{notice_id}/send", json={"reason_for_delay": "CA address was missing from the profile"}
+    )
+    assert released.status_code == 200, released.text
+    row2 = released.json()["outbox_id"]
+    assert row2 != row1 and _row(row2).idempotency_key == f"EMAIL:regulatory:{notice_id}:2"
+    assert _drain(now=ON_TIME + timedelta(minutes=1)).sent == 1
+    assert _notice(notice_id)[0] == "SENT" and sends == [notice_id]
+
+    # Hours later row #1 is still listed, still refused, and nothing more leaves.
+    assert _view(row1, client)["retryable"] is False
+    assert client.post(RETRY.format(id=row1)).status_code == 409
+    assert _drain(now=ON_TIME + timedelta(hours=3)).claimed == 0
+    assert sends == [notice_id]  # ONE notice at the Authority
+    assert _row(row1).status == "DEAD"
+
+
+def test_refusing_the_regulatory_retry_keeps_the_failed_attempt_in_the_evidence(client, monkeypatch):
+    """routes-correctness#3. The retry used to overwrite ``significance.dispatch`` and number the
+    resend attempt 1, erasing "we tried and it bounced" from the M10 evidence. Refused, the only
+    way on is the lane's re-release, which moves the failure into ``dispatch_history``."""
+    monkeypatch.setenv("REGULATORY_ENABLED", "true")
+    _inc_id, notice_id, row1 = _released_notice()
+    _drain(now=ON_TIME)
+    failed = _notice(notice_id)[1]["dispatch"]
+    assert (failed["outbox_id"], failed["outbox_status"], failed["attempt"]) == (row1, "DEAD", 1)
+    sends = _ca_sends(monkeypatch)
+
+    assert client.post(RETRY.format(id=row1)).status_code == 409  # the overlapping order: retry first
+    released = client.post(f"/api/v1/regulatory/{notice_id}/send", json={"reason_for_delay": "CA address added"})
+    assert released.status_code == 200, released.text
+    row2 = released.json()["outbox_id"]
+    report = _drain(now=ON_TIME + timedelta(minutes=1))
+
+    assert (report.claimed, report.sent) == (1, 1) and len(sends) == 1
+    status, significance = _notice(notice_id)
+    assert status == "SENT"
+    assert (significance["dispatch"]["outbox_id"], significance["dispatch"]["attempt"]) == (row2, 2)
+    assert [(h["outbox_id"], h["outbox_status"], h["attempt"]) for h in significance["dispatch_history"]] == [
+        (row1, "DEAD", 1)
+    ]
+
+
+def test_every_producer_that_feeds_its_outcome_back_is_one_the_retry_refuses():
+    """``orchestrator/outbox._PRODUCER_OUTCOMES`` lists the producers told what became of their
+    message, which is what lets them own a recovery path. A new one must be classified in
+    ``outbox_admin`` before its rows are silently retryable; this is where that gets asked."""
+    from noc_agents.api.routers import outbox_admin
+
+    assert set(outbox._PRODUCER_OUTCOMES) == {outbox_admin.REGULATORY_PAYLOAD_KEY}
+
+
+def test_a_shift_handover_is_re_run_not_retried(client):
+    """Each POST /shifts/handover composes the handover afresh under a new key. Retrying an old
+    row re-sends an old snapshot, and a second handover if it was already re-run. (With
+    HANDOVER_REQUIRES_HITL on, the default, the mail is queued HELD behind an approval card
+    anchored on an open incident, hence the ingest first.)"""
+    assert client.post("/api/v1/events", json=BTS_EVENT).status_code == 200
+    assert client.post("/api/v1/shifts/handover").status_code == 200
+    session = get_session()
+    try:
+        row_id = session.scalar(select(OutboxRow.id).where(OutboxRow.idempotency_key.like("EMAIL:handover:%")))
+    finally:
+        session.close()
+    assert row_id is not None
+    _force(row_id, status="DEAD", last_error="SMTP send failed: (535, b'bad credentials')")
+
+    item = _view(row_id, client)
+    assert (item["producer"], item["retryable"]) == ("shift_handover", False)
+    r = client.post(RETRY.format(id=row_id))
+    assert r.status_code == 409 and "POST /api/v1/shifts/handover" in r.json()["detail"]
+    assert _row(row_id).status == "DEAD"
+
+
+def test_broadcast_and_ledger_rows_from_the_real_lifecycle_stay_retryable(client):
+    """Keyed once per incident and audience (or shift): queueing again returns the same row, so
+    the retry is the only recovery these rows have."""
+    assert client.post("/api/v1/events", json=BTS_EVENT).status_code == 200
+    session = get_session()
+    try:
+        rows = {r.kind: r.id for r in session.scalars(select(OutboxRow))}
+    finally:
+        session.close()
+    assert {"EMAIL", "SMS", "EXCEL_ROW"} <= set(rows)
+    for row_id in rows.values():
+        _force(row_id, status="DEAD", last_error="relay down")
+
+    by_kind = {item["kind"]: item for item in client.get(LIST).json()}
+    assert {kind: (item["producer"], item["retryable"]) for kind, item in by_kind.items()} == {
+        "EMAIL": ("incident_broadcast", True),
+        "SMS": ("incident_broadcast", True),
+        "EXCEL_ROW": ("shift_ledger", True),
+    }
+    assert all(item["retry_refusal"] is None for item in by_kind.values())
+    assert client.post(RETRY.format(id=rows["EMAIL"])).status_code == 200
+
+
+def test_a_pir_model_draft_stays_retryable(client, monkeypatch):
+    """One row per review (a second queue returns the same row), and the transmitter writes no
+    text anywhere, so a retry cannot produce a second draft."""
+    monkeypatch.setenv("PIR_ENABLED", "true")
+    incident_id = client.post("/api/v1/events", json=BTS_EVENT).json()["incident"]["id"]
+    session = get_session()
+    try:
+        inc = session.get(IncidentRow, incident_id)
+        review, _created = pir_service.open_pir(session, inc, reason=pir_service.REASON_MANUAL)
+        row, _queued = pir_service.queue_llm_draft(session, review, inc)
+        session.commit()
+        row_id = row.id
+    finally:
+        session.close()
+    _force(row_id, status="DEAD", last_error="model refused: policy")
+
+    item = _view(row_id, client)
+    assert (item["kind"], item["producer"], item["retryable"]) == ("LLM_CALL", "pir_llm_draft", True)
+    assert client.post(RETRY.format(id=row_id)).status_code == 200
+
+
+def _invite(**over) -> ics.WindowInvite:
+    fields = dict(
+        window_id="mw-0001",
+        uid=ics.stable_uid("mw-0001", domain="noc.example.com"),
+        starts_at=datetime(2026, 9, 21, 22, 0),
+        ends_at=datetime(2026, 9, 22, 2, 0),
+        summary="Planned fibre splice - Embakasi ring",
+        organizer="noc.maintenance@example.com",
+        attendees=("fe.embakasi@example.com",),
+        sequence=0,
+        operator_id="safaricom",
+        location="SFC-NBIE-HUB-EMB",
+    )
+    fields.update(over)
+    return ics.WindowInvite(**fields)
+
+
+def _queue_invite(invite: ics.WindowInvite, method: str = "REQUEST", **payload_over) -> str:
+    """An invite row under the key the REAL ``ics.invite_idempotency_key`` writes."""
+    payload = {"operator_id": "safaricom", **payload_over}
+    return _enqueue(ics.invite_idempotency_key(invite, method), kind="ICS_INVITE", payload=payload)
+
+
+def test_a_maintenance_invite_is_retried_only_while_it_is_the_newest_for_its_uid(client):
+    first = _enqueue(
+        ics.invite_idempotency_key(_invite()), kind="ICS_INVITE", payload=ics.invite_outbox_payload(_invite())
+    )
+    _force(first, status="DEAD", last_error="SMTP send failed: (535, b'bad credentials')")
+    # A uid that merely starts with this one, with a higher sequence, supersedes nothing here.
+    _queue_invite(_invite(window_id="mw-0001x", uid=_invite().uid + ":x", sequence=5))
+    item = _view(first, client)
+    assert (item["producer"], item["retryable"]) == ("maintenance_invite", True)
+
+    # The window is rescheduled: sequence 1 is the invite the attendees must get.
+    second = _queue_invite(_invite(sequence=1))
+    _force(second, status="DEAD", last_error="SMTP send failed: (535, b'bad credentials')")
+    item = _view(first, client)
+    assert item["retryable"] is False and "REQUEST sequence 1" in item["retry_refusal"]
+    r = client.post(RETRY.format(id=first))
+    assert r.status_code == 409 and "superseded" in r.json()["detail"]
+    assert _view(second, client)["retryable"] is True
+
+    # Then cancelled: the old REQUEST must never follow the CANCEL into a calendar.
+    _queue_invite(_invite(sequence=2), method="CANCEL")
+    r = client.post(RETRY.format(id=second))
+    assert r.status_code == 409 and "CANCEL sequence 2" in r.json()["detail"]
+    assert (_row(first).status, _row(second).status) == ("DEAD", "DEAD")
+
+
+def test_a_complaint_reminder_is_retried_only_on_its_own_day(client, monkeypatch):
+    """The follow-up job re-issues a reminder each day with what is still overdue; yesterday's
+    may list complaints since closed. Today's has no other way out today."""
+    monkeypatch.setenv("COMPLAINTS_ENABLED", "true")
+    now = utcnow()
+    session = get_session()
+    try:
+        session.add(
+            RelationshipComplaintRow(
+                operator_id="safaricom",
+                filed_by="Grace Wanjiru",
+                filed_at=now - timedelta(days=10),
+                subject_type="VENDOR",
+                vendor_id="vendor-egypro",
+                category="NO_SHOW",
+                severity="MEDIUM",
+                description="Crew did not attend the 09:00 SLA visit.",
+                status=complaints.OPEN,
+                assigned_manager="Duty Manager East",
+                follow_up_due_at=now - timedelta(days=3),
+                retention_until=now + timedelta(days=complaints.RETENTION_DAYS),
+                updated_at=now,
+            )
+        )
+        session.commit()
+        settings = get_settings()
+        complaints.send_due_reminders(session, settings, now=now - timedelta(days=1))
+        complaints.send_due_reminders(session, settings, now=now)
+        session.commit()
+        keys = {r.id: r.idempotency_key for r in session.scalars(select(OutboxRow))}
+    finally:
+        session.close()
+    yesterday = next(i for i, k in keys.items() if k.endswith((now - timedelta(days=1)).date().isoformat()))
+    today = next(i for i, k in keys.items() if k.endswith(now.date().isoformat()))
+    for row_id in (yesterday, today):
+        _force(row_id, status="DEAD", last_error="UnresolvedRecipients: complaints.recipients.MANAGEMENT")
+
+    assert (_view(today, client)["producer"], _view(today, client)["retryable"]) == ("complaint_reminder", True)
+    old = _view(yesterday, client)
+    assert old["retryable"] is False and "fresh one each day" in old["retry_refusal"]
+    assert "Duty Manager East" not in json.dumps(old)  # the key names the manager; the view never does
+    assert client.post(RETRY.format(id=yesterday)).status_code == 409
+    assert client.post(RETRY.format(id=today)).status_code == 200
+
+
+def test_a_row_from_an_unclassified_producer_is_refused(client):
+    """Fail closed: a producer nobody has classified may own a recovery path of its own."""
+    row_id = _enqueue("HITL_NUDGE:task-1:T+5", kind="HITL_NUDGE", payload={"operator_id": "safaricom"})
+    _force(row_id, status="DEAD", last_error="no transmitter for outbox kind 'HITL_NUDGE'")
+
+    item = _view(row_id, client)
+    assert (item["producer"], item["retryable"]) == ("unknown", False)
+    r = client.post(RETRY.format(id=row_id))
+    assert r.status_code == 409 and "no retry rule" in r.json()["detail"]
+
+
+# --------------------------------------------------------------------------------------
+# The archive race (review routes-correctness#6)
+# --------------------------------------------------------------------------------------
+
+
+def _sweep() -> int:
+    """Housekeeping's §9.4 outbox sweep, applied, in its own session: what the daily job does."""
+    session = get_session()
+    try:
+        report = housekeeping.sweep_outbox(session, get_settings(), now=utcnow(), apply=True)
+        session.commit()
+        return report.archived
+    finally:
+        session.close()
+
+
+def test_a_sweep_that_archives_the_payload_after_the_check_turns_the_retry_into_a_409(client, monkeypatch):
+    """The pre-check reads a live payload; housekeeping archives it and commits; the write must
+    still refuse, or the row is queued with nothing left to send."""
+    from noc_agents.api.routers import outbox_admin
+
+    row_id = _dead_email(monkeypatch, "EMAIL:archive-race")
+    _force(row_id, updated_at=utcnow() - timedelta(days=100))  # past the 90-day retention
+    real = outbox_admin._retry_refusal
+    archived: list[int] = []
+
+    def check_then_sweep(*args):
+        verdict = real(*args)
+        if not archived:  # only between the route's own check and its compare-and-set
+            archived.append(_sweep())
+        return verdict
+
+    monkeypatch.setattr(outbox_admin, "_retry_refusal", check_then_sweep)
+    r = client.post(RETRY.format(id=row_id))
+
+    assert archived == [1]  # housekeeping really did archive it in between
+    assert r.status_code == 409 and "changed while" in r.json()["detail"]
+    after = _row(row_id)
+    assert after.status == "DEAD" and json.loads(after.payload_json)[housekeeping.ARCHIVED_KEY] is True
+    assert _audits(row_id) == []

@@ -27,7 +27,7 @@ export function hitlSubject(task: unknown): string {
     const win: Record<string, unknown> = isPlainObject(payload.window) ? payload.window : {};
     const scope = [text(win.scope), text(win.scope_ref)].filter(Boolean).join(" ");
     const starts = text(win.starts_at_eat);
-    return joinParts("Maintenance window", scope, starts && `${starts} EAT`);
+    return joinParts("Maintenance window", scope, eat(starts));
   }
 
   if (type === "APPROVE_SCHEDULE" || isPlainObject(payload.task)) {
@@ -38,7 +38,7 @@ export function hitlSubject(task: unknown): string {
     return joinParts(
       "Maintenance schedule",
       [what, site && `at ${site}`].filter(Boolean).join(" "),
-      due && `due ${due} EAT`,
+      due && `due ${eat(due)}`,
     );
   }
 
@@ -46,6 +46,17 @@ export function hitlSubject(task: unknown): string {
   // first thing the payload names it as being about.
   const about = text(payload.site_id) || text(payload.vendor_id) || text(payload.scope);
   return joinParts(humanizeType(type), about);
+}
+
+/**
+ * The zone suffix, exactly once. The backend's `*_at_eat` fields are services/clock.fmt_eat
+ * output, which already ends in " EAT" ("2026-11-12 00:00 EAT"); appending another printed
+ * "… 00:00 EAT EAT" on every maintenance card. A bare time (an older payload, a hand-written
+ * one) still gets the suffix, so the heading never shows a wall-clock time with no zone.
+ */
+function eat(when: string): string {
+  if (!when) return "";
+  return /\bEAT$/.test(when) ? when : `${when} EAT`;
 }
 
 function text(v: unknown): string {

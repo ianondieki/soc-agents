@@ -39,10 +39,11 @@ catalogue marks only one site riverine today (Kisumu, Winam Gulf / Kano-Nyando f
 
 Fetch bounds
 ------------
-The same two bounds as ``adapters/kmd_cap.py`` (review findings F06, F15): a total deadline on
-the whole response, checked on every chunk (httpx's timeout is per socket read, so a slow drip
-never trips it), and ``Accept-Encoding: identity`` with a compressed response refused unread,
-so the size cap counts the bytes that would actually be parsed.
+The same two bounds as ``adapters/kmd_cap.py`` (review findings F06, F15, W02): a total
+deadline on the whole exchange — headers included — enforced below httpx by the same
+:class:`~noc_agents.adapters.kmd_cap.DeadlineWatchdog` (httpx's timeout is per socket read, so a
+slow drip in the headers or the body never trips it), and ``Accept-Encoding: identity`` with a
+compressed response refused unread, so the size cap counts the bytes that would be parsed.
 
 Failure handling
 ----------------
@@ -67,6 +68,7 @@ from urllib.parse import urlencode
 
 import httpx
 
+from noc_agents.adapters.kmd_cap import DeadlineWatchdog, _per_wait
 from noc_agents.adapters.weather import DEFAULT_TIMEOUT_S, WeatherError, default_client
 
 log = logging.getLogger("noc_agents.adapters.flood")
@@ -166,17 +168,24 @@ def _is_tls_failure(exc: BaseException) -> bool:
 
 def _get_json(client: httpx.Client, url: str, *, timeout_s: float | None = None) -> dict[str, Any]:
     """One bounded GET → a JSON object, or :class:`FloodError`. Bounded in bytes (streams, stops
-    at the cap, refuses compression) and in total time (``timeout_s``, checked per chunk)."""
+    at the cap, refuses compression) and in total time (``timeout_s``, headers included: the
+    :class:`DeadlineWatchdog` shuts the socket at the deadline; a per-chunk check backs it up)."""
     if timeout_s is None:  # the budget the client was built with, as adapters/kmd_cap.py does
         timeout_s = getattr(getattr(client, "timeout", None), "read", None) or DEFAULT_TIMEOUT_S
     deadline = _clock() + timeout_s
+    watchdog = DeadlineWatchdog(timeout_s)
 
     def check_deadline() -> None:
-        if _clock() > deadline:
+        if watchdog.fired or _clock() > deadline:
             raise FloodError("timeout", f"flood API did not finish within the {timeout_s:g} s total deadline; abandoned")
 
+    # Connection: close so the watchdog sees this request's own connection (DeadlineWatchdog).
+    headers = {"Accept": "application/json", "Accept-Encoding": "identity", "Connection": "close"}
+    per_wait = _per_wait(client, timeout_s)
     try:
-        with client.stream("GET", url, headers={"Accept": "application/json", "Accept-Encoding": "identity"}) as response:
+        with client.stream(
+            "GET", url, headers=headers, timeout=per_wait, extensions={"trace": watchdog.trace}
+        ) as response:
             status = response.status_code
             encoding = (response.headers.get("Content-Encoding") or "identity").strip().lower()
             if encoding not in {"", "identity"}:
@@ -196,9 +205,12 @@ def _get_json(client: httpx.Client, url: str, *, timeout_s: float | None = None)
             check_deadline()
     except FloodError:
         raise
-    except httpx.TimeoutException as exc:
-        raise FloodError("timeout", f"flood API did not answer within the timeout ({exc.__class__.__name__})") from exc
-    except httpx.TransportError as exc:
+    except (httpx.TransportError, OSError) as exc:
+        # The deadline when the watchdog shut the socket, or a single wait ran out the budget cap.
+        if watchdog.fired or (isinstance(exc, httpx.TimeoutException) and per_wait.read == timeout_s):
+            raise FloodError("timeout", f"flood API did not finish within the {timeout_s:g} s total deadline; connection closed") from exc
+        if isinstance(exc, httpx.TimeoutException):
+            raise FloodError("timeout", f"flood API did not answer within the timeout ({exc.__class__.__name__})") from exc
         if _is_tls_failure(exc):
             raise FloodError(
                 "tls",
@@ -206,6 +218,8 @@ def _get_json(client: httpx.Client, url: str, *, timeout_s: float | None = None)
                 "NOC_USE_TRUSTSTORE=1 with truststore installed (docs/RUNBOOK.md §3)",
             ) from exc
         raise FloodError("network", f"flood API unreachable ({exc.__class__.__name__}: {exc})") from exc
+    finally:
+        watchdog.cancel()
 
     body_bytes = bytes(buf)
     if status >= 400:

@@ -37,7 +37,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, Query
 
 from noc_agents.api.auth import require_role
-from noc_agents.api.deps import READERS
+from noc_agents.api.deps import MEMORY_READERS
 from noc_agents.db.models import get_session
 from noc_agents.services.clock import z_utc
 from noc_agents.services.memory import episode_dicts, memory_enabled, recall_site_history
@@ -66,7 +66,10 @@ def _z(row: dict[str, Any]) -> dict[str, Any]:
     return {k: (z_utc(v) if isinstance(v, datetime) else v) for k, v in row.items()}
 
 
-@router.get("/memory/sites/{site_id}", dependencies=[Depends(require_role(*READERS))])
+# §9.3's memory row ("sites ... read"): legal R, msp_coordinator and field_engineer "—".
+# §7.11.4's "any signed-in role" conflicts with it; api/deps.MEMORY_READERS says why §9.3
+# wins, and main.get_incident withholds the advisory built from these same episodes.
+@router.get("/memory/sites/{site_id}", dependencies=[Depends(require_role(*MEMORY_READERS))])
 def get_site_memory(
     site_id: str,
     lookback_days: int = Query(DEFAULT_LOOKBACK_DAYS, ge=0, le=MAX_LOOKBACK_DAYS),

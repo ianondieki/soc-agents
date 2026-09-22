@@ -1,8 +1,9 @@
 """Draft-eval graders and fixtures, proved on the deterministic template path (always on).
 
-The nightly eval (``test_draft_eval_nightly.py``, ``draft_eval.py``) grades model drafts. That
-is only worth anything if the fixture's expectations are right and the graders pass what should
-pass and fail what should fail. This module proves both in the default suite, with the LLM off:
+The nightly eval (``python tests/eval/draft_eval.py``; pytest never runs it) grades model
+drafts. That is only worth anything if the fixture's expectations are right and the graders pass
+what should pass and fail what should fail. This module proves both in the default suite, with
+the LLM off:
 
 * every sequence in ``tests/fixtures/eval/alarm_sequences.yaml`` is replayed through the real
   pipeline, every incident's brief is drafted through ``llm.assist.draft_exec_brief``'s template

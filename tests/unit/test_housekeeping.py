@@ -602,6 +602,120 @@ def test_the_before_argument_overrides_the_configured_personal_window(tmp_db):
     assert row_snapshot(session, IncidentRow, recent)["fe_name"] == "FE-MTK"
 
 
+# ------------------------------------------------- the durable pseudonymisation marker
+
+
+def _marker(session, incident_id):
+    return session.get(AuditRow, hk.pseudonymisation_marker_id("incidents", incident_id))
+
+
+def test_pseudonymising_a_row_writes_one_durable_marker_naming_columns_not_values(tmp_db):
+    """Memory review round 3. The memory lane must know an incident was pseudonymised, and the
+    columns' SHAPE cannot tell it: live MTK incidents carry ``RNIO-MTK`` from assignment, which
+    is exactly the retention token. So housekeeping records it: one AuditRow per rewritten row,
+    at a deterministic id, holding column NAMES only — the marker itself carries nothing personal."""
+    settings, session = tmp_db
+    op = settings.operator.operator_id
+    old = seed_incident(session, operator_id=op, age_days=401, number="INC000030")
+    session.commit()
+
+    hk.pseudonymise_personal_fields(session, settings, hk.load_policy(), now=NOW, apply=True)
+    session.commit()
+
+    marker = _marker(session, old)
+    assert marker is not None and marker.action == hk.PSEUDONYMISED_ACTION
+    assert (marker.entity_type, marker.entity_id, marker.operator_id) == ("incidents", old, op)
+    payload = json.loads(marker.payload_json)
+    assert payload["columns"] == sorted(payload["columns"]) and "fe_name" in payload["columns"]
+    for name in ("Kevin", "Ochieng", "James", "Mwangi", "Grace", "Peter", "0712", "example.com"):
+        assert name not in marker.payload_json and name not in marker.rationale, name
+    assert hk.is_marked_pseudonymised(session, "incidents", old, operator_id=op)
+
+
+def test_the_marker_and_the_rewrite_commit_or_roll_back_together(tmp_db):
+    """Same session, same transaction: a rollback that loses the rewrite must lose the marker
+    too, or memory would freeze the text of a row whose names were never removed."""
+    settings, session = tmp_db
+    op = settings.operator.operator_id
+    old = seed_incident(session, operator_id=op, age_days=401, number="INC000031")
+    session.commit()
+
+    hk.pseudonymise_personal_fields(session, settings, hk.load_policy(), now=NOW, apply=True)
+    session.rollback()
+
+    assert _marker(session, old) is None
+    assert row_snapshot(session, IncidentRow, old)["fe_name"] == "James Mwangi"
+
+
+def test_a_dry_run_or_an_untouched_row_writes_no_marker(tmp_db):
+    settings, session = tmp_db
+    op = settings.operator.operator_id
+    old = seed_incident(session, operator_id=op, age_days=800, number="INC000032")
+    recent = seed_incident(session, operator_id=op, age_days=10, number="INC000033")
+    session.commit()
+
+    hk.pseudonymise_personal_fields(session, settings, hk.load_policy(), now=NOW, apply=False)
+    session.commit()
+    assert _marker(session, old) is None, "a dry run left a marker"
+
+    hk.pseudonymise_personal_fields(session, settings, hk.load_policy(), now=NOW, apply=True)
+    session.commit()
+    assert _marker(session, old) is not None
+    assert _marker(session, recent) is None, "a row inside the personal window was marked"
+
+
+def test_a_second_pass_writes_no_second_marker(tmp_db):
+    settings, session = tmp_db
+    op = settings.operator.operator_id
+    old = seed_incident(session, operator_id=op, age_days=800, number="INC000034")
+    session.commit()
+    policy = hk.load_policy()
+    for _ in range(2):
+        hk.pseudonymise_personal_fields(session, settings, policy, now=NOW, apply=True)
+        session.commit()
+    count = session.scalar(
+        select(func.count()).select_from(AuditRow).where(AuditRow.action == hk.PSEUDONYMISED_ACTION)
+    )
+    assert count == 1
+    assert _marker(session, old) is not None
+
+
+def test_a_row_that_merely_looks_pseudonymised_has_no_marker(tmp_db):
+    """The distinction the marker exists for: every person column already equal to its
+    retention token, and housekeeping never ran. There is no marker, so no reader may treat
+    the row as pseudonymised."""
+    settings, session = tmp_db
+    op = settings.operator.operator_id
+    shaped = seed_incident(
+        session, operator_id=op, age_days=800, number="INC000035",
+        assignee="FE-MTK", fe="FE-MTK", rnio="RNIO-MTK", restored_by="RESTORER-MTK", notes=None,
+    )
+    session.commit()
+    hk.pseudonymise_personal_fields(session, settings, hk.load_policy(), now=NOW, apply=True)
+    session.commit()
+    assert not hk.is_marked_pseudonymised(session, "incidents", shaped, operator_id=op)
+
+
+def test_a_marker_never_speaks_for_another_operator(tmp_db):
+    settings, session = tmp_db
+    op = settings.operator.operator_id
+    old = seed_incident(session, operator_id=op, age_days=800, number="INC000036")
+    session.commit()
+    hk.pseudonymise_personal_fields(session, settings, hk.load_policy(), now=NOW, apply=True)
+    session.commit()
+    assert hk.is_marked_pseudonymised(session, "incidents", old, operator_id=op)
+    assert not hk.is_marked_pseudonymised(session, "incidents", old, operator_id=OTHER_OPERATOR)
+
+
+def test_the_marker_lives_in_a_table_retention_never_deletes(tmp_db):
+    """Durability is the marker's whole value. audit_events resolves to a ``keep`` class; if
+    that ever changed, a purge would silently turn frozen memory text back into text that is
+    re-derived from notes whose names the NameMap no longer knows."""
+    policy = hk.load_policy()
+    entry = policy.tables["audit_events"]
+    assert policy.classes[entry.class_name].action == hk.KEEP
+
+
 # ------------------------------------------------------------------------- outbox sweep
 
 

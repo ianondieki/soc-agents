@@ -5,6 +5,7 @@ import {
   kpiView,
   lineDisputeView,
   multiplierText,
+  NORMALISED_EXPLAINER,
   NORMALISED_LABEL_DEFAULT,
   priorityLabel,
   valuePair,
@@ -17,8 +18,10 @@ import {
  *
  * **Raw and normalised sit in adjacent columns** (§7.6.2: "shown beside raw, never instead of
  * it"). The normalised column carries the server's own label ("contract-agreed regional
- * allowance"). Where a line has no normalised figure, the cell says so and the reason is in
- * its tooltip and in the drawer.
+ * allowance"). Its header tooltip is `NORMALISED_EXPLAINER`: the figure is the line's own formula
+ * recomputed per incident, not raw divided by a multiplier, so it can sit above raw. Where a
+ * line has no normalised figure, the cell says so and the reason is in its tooltip and in the
+ * drawer.
  *
  * **Dispute.** `canDispute` comes from `scorecardModel.disputeAffordance()`. It is false while
  * the backend has no dispute route (CONFORMANCE C-02), so every line's Dispute button is
@@ -67,7 +70,7 @@ export default function ScorecardLinesTable({
             <tr>
               <th>Priority</th>
               <th>Raw</th>
-              <th title={"Normalised = raw / the region's multiplier, labelled '" + normalisedLabel + "' (§7.6.1)"}>
+              <th title={NORMALISED_EXPLAINER}>
                 Normalised · {normalisedLabel}
               </th>
               <th>Region ×</th>

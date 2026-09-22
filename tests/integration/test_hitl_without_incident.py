@@ -68,8 +68,10 @@ def _maintenance_window_card() -> str:
             created_by="planning-desk",
             status="PENDING",
         )
+        # starts_at_eat as the backend writes it: services/clock.fmt_eat output, which already
+        # ends in " EAT" (the card heading in frontend/src/lib/hitlSubject.ts must not add another).
         card.proposed_payload = {
-            "window": {"scope": "SITE", "scope_ref": "SFC-CST-HUB-MSA", "starts_at_eat": "2026-09-22 01:00"}
+            "window": {"scope": "SITE", "scope_ref": "SFC-CST-HUB-MSA", "starts_at_eat": "2026-09-22 01:00 EAT"}
         }
         session.add(card)
         session.commit()

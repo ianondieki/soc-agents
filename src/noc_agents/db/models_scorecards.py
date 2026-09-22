@@ -39,10 +39,18 @@ and it matters to be exact about what each one stops:
    computed first), refuse any change to the evidence columns -- ``shadow_required``, the
    ``dq_*`` operands, the review, the terms version, the JSON -- once a card is or is
    becoming released, and refuse a released card leaving that state except PUBLISHED->FINAL.
-   This is what closes the APPLICATION-BUG paths, which are the ones that realistically
-   happen: the same-write flip (``card.shadow_required = 0; card.status = "PUBLISHED"``) and
-   the fake earlier card that would make the next period's shadow check find a "released"
-   predecessor.
+   Before release, a card is written by exactly two hands: the COMPUTATION and a REVIEWER.
+   Evidence (and the status) may change only inside ``services.scorecard.compute_scorecard``,
+   which opens a session-scoped computation scope (``COMPUTATION_SCOPE_KEY`` in
+   ``Session.info``, holding the ids being computed) and names a run that really exists in
+   ``agent_runs`` as a scorecard run of the same operator; a "dressed-up recompute" that sets
+   ``computed_by_run_id = 'anything'`` has neither and is refused. The reviewer columns take
+   only a VISIBLE human name (``visible_human_name``: control and format characters removed,
+   whitespace stripped, at least one letter, not an automation name). This is what closes the
+   APPLICATION-BUG paths, which are the ones that realistically happen: the same-write flip
+   (``card.shadow_required = 0; card.status = "PUBLISHED"``), the threshold nudged on a
+   WITHHELD card, and the fake earlier card that would make the next period's shadow check
+   find a "released" predecessor.
 3. **The CHECK constraints** are the last line for a writer that never touches the mapper
    (Core ``update()``/``insert()``, raw SQL). ``ck_vendor_scorecards_gate`` re-does the
    §7.6.2 arithmetic from the recorded counts -- ``inferred * 100 <= threshold_pct *
@@ -51,17 +59,21 @@ and it matters to be exact about what each one stops:
    (space, tab, LF, CR and NBSP all count as blank) and not one of the automation names the
    service also refuses. ``ck_vendor_scorecards_status`` keeps both to the exact literals.
 
-WHAT THIS DOES NOT PROMISE. A person or a script with raw write access to the SQLite file
-can issue ``UPDATE vendor_scorecards SET status = 'PUBLISHED', shadow_required = 0`` or
-``dq_gate_threshold_pct = 99`` in one statement, and the CHECKs -- which see one row and no
-history -- cannot tell that from a computation that found those values. A CHECK cannot
-compare a column with what it used to be, and a trigger is ruled out here on purpose:
-``db/migrate.py`` builds new tables from compiled ``CreateTable`` strings, so a trigger
-attached as a DDL event would exist on fresh databases and not on migrated ones. Raw write
-access to the database file is outside what a schema can promise; the audit trail
-(``audit_events``, one row per transition) and the deterministic recompute are what remain
-for that case. ``tests/unit/test_scorecard_gates.py`` exercises every path above and names
-the raw-SQL cases it can only document.
+WHAT THIS DOES NOT PROMISE. Mapper guards run for ORM unit-of-work writes only. A raw SQL
+statement, a Core ``update(VendorScorecardRow)`` / ``insert(...)``, a legacy
+``session.query(...).update(...)`` and ``bulk_*_mappings`` all bypass them, and a
+``UPDATE vendor_scorecards SET status = 'PUBLISHED', shadow_required = 0`` written that way
+produces a row the CHECKs -- which see one row and no history -- cannot tell from a
+computation that found those values. A CHECK cannot compare a column with what it used to
+be, and a trigger is ruled out here on purpose: ``db/migrate.py`` builds new tables from
+compiled ``CreateTable`` strings, so a trigger attached as a DDL event would exist on fresh
+databases and not on migrated ones. Write access of that kind is outside what a schema can
+promise. What remains for it: the audit trail (a card the service released always has a
+``scorecard.published`` row in ``audit_events``, written in the same transaction), and the
+shadow rule LEANS ON IT -- ``earlier_released_card_exists`` counts a predecessor only when
+that row exists, so a card planted PUBLISHED by raw SQL or a bulk update does not exempt
+the next period from its shadow review. ``tests/unit/test_scorecard_gates.py`` exercises
+every path above and names the raw-SQL cases it can only document.
 
 COLUMNS BEYOND THE §7.6.1 DDL (additive; each exists for a stated reason)
 =========================================================================
@@ -92,13 +104,14 @@ way an action item hangs off its review. It is therefore NOT readable through
 from __future__ import annotations
 
 import json
+import unicodedata
 from datetime import datetime
 from typing import Any
 
 from sqlalchemy import REAL, CheckConstraint, DateTime, ForeignKey, Index, Integer, Text, UniqueConstraint, event, inspect, select, text
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, object_session
 
-from noc_agents.db.models import Base, new_id, utcnow
+from noc_agents.db.models import AgentRunRow, AuditRow, Base, new_id, utcnow
 
 # ------------------------------------------------------------------------- vocabularies
 
@@ -146,8 +159,50 @@ NOT_A_HUMAN_NAMES: tuple[str, ...] = ("slascorecardagent", "system", "scheduler"
 
 #: Every character SQLite's one-argument ``trim()`` would NOT strip but a human reader would
 #: see as blank: tab, LF, CR and NBSP. (``char()`` is SQLite's code-point function; the
-#: migration is SQLite-only, and ``init_db`` says so for any other engine.)
+#: migration is SQLite-only, and ``init_db`` says so for any other engine.) The CHECK cannot
+#: know Unicode categories, so U+200B and its kin are stopped by ``visible_human_name`` in
+#: the service and the mapper, not by the table.
 _BLANKS_SQL = "' ' || char(9) || char(10) || char(13) || char(160)"
+
+#: ``agent_runs.graph_name`` of a scorecard computation. Owned here (not in the service) so
+#: the mapper guard can check a card's ``computed_by_run_id`` against a real run without
+#: importing the service layer; ``services.scorecard.GRAPH_NAME`` is this value.
+SCORECARD_GRAPH_NAME = "scorecard"
+
+#: ``Session.info`` key under which ``services.scorecard.compute_scorecard`` records the card
+#: ids it is writing. The mapper guards accept a change to a card's evidence only while its id
+#: is in this set: evidence is written by the computation and by nothing else.
+COMPUTATION_SCOPE_KEY = "scorecard_computation_scope"
+
+#: Unicode general categories that never belong in a person's name and that most renderers
+#: draw as nothing: control (Cc), format (Cf -- U+200B ZERO WIDTH SPACE, U+200D, U+2060,
+#: U+FEFF ...), surrogates (Cs), private use (Co), unassigned (Cn). Removed outright, so a
+#: name that is only made of them becomes empty and fails the letter test.
+_INVISIBLE_CATEGORIES = frozenset({"Cc", "Cf", "Cs", "Co", "Cn"})
+
+
+def visible_human_name(value: str | None) -> str | None:
+    """The cleaned name if ``value`` is a VISIBLE human name, else ``None``.
+
+    One predicate for the service (``_named_human``), the mapper guards (``_reviewer_named``,
+    the write-time check on ``shadow_reviewed_by``) and ``publish_scorecard``, so they cannot
+    disagree about what counts. The rules: control/format/surrogate/private/unassigned
+    characters are removed anywhere in the string; every Unicode whitespace (categories Zs,
+    Zl, Zp and the ASCII controls ``str.strip`` knows) is stripped from both ends; what is
+    left must contain at least one letter and must not be one of ``NOT_A_HUMAN_NAMES``.
+    ``"\u200b"`` (zero-width space), ``"\u3000"`` (ideographic space), ``"\x0b"``,
+    ``"12345"`` and ``"system"`` are all ``None``; ``"Grace Mwangi"``, ``"N'gang'a"`` and
+    ``"\u674e\u96f7"`` come back as themselves.
+    """
+    if value is None:
+        return None
+    without_invisibles = "".join(ch for ch in str(value) if unicodedata.category(ch) not in _INVISIBLE_CATEGORIES)
+    cleaned = without_invisibles.strip()
+    if not any(ch.isalpha() for ch in cleaned):
+        return None
+    if cleaned.casefold() in NOT_A_HUMAN_NAMES:
+        return None
+    return cleaned
 
 
 def _sql_list(values: tuple[str, ...]) -> str:
@@ -353,10 +408,23 @@ def earlier_released_card_exists(executor, *, operator_id: str, vendor_id: str, 
     """§7.6.2's shadow rule as ONE query, shared by the service and the mapper guards below.
 
     True when an EARLIER period's card for the same vendor row, under the same
-    ``sla_terms.version``, is PUBLISHED or FINAL. ``executor`` is a Session or the flush's own
-    Connection -- both ``execute()`` a select -- so the guard sees a card released earlier in
-    the same, still uncommitted, transaction.
+    ``sla_terms.version``, is PUBLISHED or FINAL **and was released by the service**: the
+    ``scorecard.published`` row ``publish_scorecard`` writes to ``audit_events`` in the same
+    transaction must exist for it. A card planted PUBLISHED by raw SQL or a bulk ``update()``
+    has no such row and therefore exempts nobody from a shadow review. (If an audit row were
+    ever pruned, the error runs the safe way: a review is required again, never skipped.)
+    ``executor`` is a Session or the flush's own Connection -- both ``execute()`` a select --
+    so the guard sees a card released earlier in the same, still uncommitted, transaction.
     """
+    released_by_service = (
+        select(AuditRow.id)
+        .where(
+            AuditRow.entity_type == "vendor_scorecard",
+            AuditRow.entity_id == VendorScorecardRow.id,
+            AuditRow.action == "scorecard.published",
+        )
+        .exists()
+    )
     row = executor.execute(
         select(VendorScorecardRow.id)
         .where(
@@ -365,6 +433,7 @@ def earlier_released_card_exists(executor, *, operator_id: str, vendor_id: str, 
             VendorScorecardRow.sla_terms_version == sla_terms_version,
             VendorScorecardRow.period < period,  # "YYYY-MM" sorts chronologically
             VendorScorecardRow.status.in_(RELEASED_STATUSES),
+            released_by_service,
         )
         .limit(1)
     ).scalar()
@@ -378,8 +447,44 @@ def _derived_shadow_required(connection, target: VendorScorecardRow) -> int:
 
 
 def _reviewer_named(target: VendorScorecardRow) -> bool:
-    who = (target.shadow_reviewed_by or "").strip(" \t\n\r\xa0").lower()
-    return bool(who) and who not in NOT_A_HUMAN_NAMES
+    return visible_human_name(target.shadow_reviewed_by) is not None
+
+
+def _in_computation_scope(target: VendorScorecardRow) -> bool:
+    """True while ``services.scorecard.compute_scorecard`` is writing THIS card."""
+    session = object_session(target)
+    return session is not None and target.id in (session.info.get(COMPUTATION_SCOPE_KEY) or ())
+
+
+def _run_is_a_scorecard_computation(connection, target: VendorScorecardRow) -> bool:
+    """``computed_by_run_id`` names a real ``agent_runs`` row: a scorecard run of this
+    operator. A run id that resolves to nothing is the signature of an edit posing as a
+    computation."""
+    if not target.computed_by_run_id:
+        return False
+    row = connection.execute(
+        select(AgentRunRow.graph_name, AgentRunRow.operator_id).where(AgentRunRow.id == target.computed_by_run_id)
+    ).first()
+    return row is not None and row[0] == SCORECARD_GRAPH_NAME and row[1] == target.operator_id
+
+
+def _require_computation(connection, target: VendorScorecardRow, what: str) -> None:
+    if not _in_computation_scope(target):
+        raise ScorecardEvidenceError(
+            f"scorecard {target.id}: {what} outside a computation -- evidence is written by "
+            "services.scorecard.compute_scorecard and by nothing else; recompute the card"
+        )
+    if not _run_is_a_scorecard_computation(connection, target):
+        raise ScorecardEvidenceError(
+            f"scorecard {target.id}: computed_by_run_id={target.computed_by_run_id!r} is not a scorecard run of "
+            f"operator {target.operator_id} in agent_runs -- a computation names the run that did it"
+        )
+
+
+#: What may change on an UNRELEASED card outside a computation: the human review (a named
+#: reviewer's act) and the QBR narrative. Everything else -- the evidence, the run and the
+#: status -- is the computation's.
+_FREE_BEFORE_RELEASE: frozenset[str] = frozenset({*REVIEW_COLUMNS, "narrative", "narrative_ai_assisted"})
 
 
 def _changed(target: object, column: str) -> bool:
@@ -412,6 +517,10 @@ def _refuse_released_insert(mapper, connection, target: VendorScorecardRow) -> N
             f"scorecard {target.id}: shadow_required={target.shadow_required} contradicts the table, which says {derived} "
             "(is there an earlier released card for this vendor under these terms?); the column is derived, not chosen"
         )
+    # And a card is born of a computation: inside compute_scorecard's scope, citing a real run.
+    _require_computation(connection, target, "inserted")
+    if target.shadow_reviewed_by is not None and not _reviewer_named(target):
+        raise ScorecardEvidenceError(f"scorecard {target.id}: shadow_reviewed_by must be a visible human name")
 
 
 @event.listens_for(VendorScorecardRow, "before_update")
@@ -422,26 +531,34 @@ def _freeze_released_card(mapper, connection, target: VendorScorecardRow) -> Non
     and the operand it keys on together (``shadow_required = 0`` with ``status = 'PUBLISHED'``,
     or ``dq_gate_threshold_pct = 99`` on a WITHHELD card on its way to DRAFT). This guard has
     what the CHECK has not -- the row's history -- so that write is refused, and so is every
-    later edit to the numbers a vendor was shown. Before release, computed evidence may change
-    only in a write that also names a new ``computed_by_run_id`` (a recomputation); at and
-    after release nothing but ``status`` (PUBLISHED -> FINAL), the publish/finalise timestamps
-    and the narrative may change. Mapper-level, so it covers every ORM writer; not Core/raw
-    SQL (see the module docstring for what that leaves).
+    later edit to the numbers a vendor was shown. Before release, evidence and status may
+    change only inside ``compute_scorecard``'s computation scope, citing a run that exists
+    (a recomputation); the review columns take a visible human name; at and after release
+    nothing but ``status`` (PUBLISHED -> FINAL), the publish/finalise timestamps and the
+    narrative may change. Mapper-level, so it covers every ORM unit-of-work writer; not Core
+    ``update()``, ``query.update()`` or raw SQL (see the module docstring for what that
+    leaves).
     """
     old_status, new_status = _previous(target, "status"), target.status
     releasing = new_status in RELEASED_STATUSES
     if old_status in RELEASED_STATUSES and new_status != old_status and (old_status, new_status) != (STATUS_PUBLISHED, STATUS_FINAL):
         raise ScorecardEvidenceError(f"scorecard {target.id} is {old_status}: the only move from there is PUBLISHED -> FINAL, not {new_status!r}")
     if not (releasing or old_status in RELEASED_STATUSES):
-        # Unreleased: the computation may rewrite its evidence, but ONLY as a computation --
-        # i.e. in the same write that names the new run. A lone edit to a dq_* operand or to
-        # shadow_required, with or without a status change, has no computation behind it.
-        computed = [c for c in COMPUTED_EVIDENCE_COLUMNS if _changed(target, c)]
-        if computed and not _changed(target, "computed_by_run_id"):
-            raise ScorecardEvidenceError(
-                f"scorecard {target.id}: {', '.join(computed)} changed without a new computed_by_run_id -- "
-                "evidence is written by a computation, never edited; recompute the card"
-            )
+        # Unreleased: two hands may write. A REVIEWER may set the review columns (to a visible
+        # human name); the COMPUTATION may rewrite everything else -- but only from inside
+        # compute_scorecard's scope, naming a run that exists. A "dressed-up recompute" that
+        # sets computed_by_run_id = 'anything' from the ORM has neither and is refused; so is
+        # a lone edit to a dq_* operand, to shadow_required or to the status.
+        if _changed(target, "shadow_reviewed_by") and target.shadow_reviewed_by is not None and not _reviewer_named(target):
+            raise ScorecardEvidenceError(f"scorecard {target.id}: shadow_reviewed_by must be a visible human name, not {target.shadow_reviewed_by!r}")
+        computed = [c.key for c in mapper.column_attrs if c.key not in _FREE_BEFORE_RELEASE and _changed(target, c.key)]
+        if computed:
+            _require_computation(connection, target, f"{', '.join(computed)} changed")
+            if not _changed(target, "computed_by_run_id"):
+                raise ScorecardEvidenceError(
+                    f"scorecard {target.id}: {', '.join(computed)} changed without a new computed_by_run_id -- "
+                    "a computation names the run that did it; recompute the card"
+                )
         return
     frozen = [c for c in CARD_EVIDENCE_COLUMNS if _changed(target, c)]
     if frozen:

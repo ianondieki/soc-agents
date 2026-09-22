@@ -426,8 +426,13 @@ def test_external_signals_table_shape_and_schema_version(tmp_db):
     # It fired again on 7 -> 8: the one non-additive step, the hitl_tasks rebuild that makes
     # incident_id nullable and gives the table its own operator_id (see db/migrate.py
     # _rebuild_hitl_tasks and tests/unit/test_migrate_rebuild.py), reviewed, literal moved.
+    # It fired again on 8 -> 9: no new table or column, but two CHECK constraints on
+    # vendor_scorecards were tightened after v8 files had been created, and nothing additive
+    # can reach an existing table's constraints; the bump makes _refresh_check_constraints run
+    # once, behind a backup -- recreating an EMPTY table from the model, warning about a
+    # populated one (db/migrate.py "THE SECOND EXCEPTION", tests/unit/test_migrate_checks.py).
     # Keep the canary; move it deliberately, with the reason recorded, every time.
-    assert session.execute(text("SELECT MAX(version) FROM schema_version")).scalar() == SCHEMA_VERSION == 8
+    assert session.execute(text("SELECT MAX(version) FROM schema_version")).scalar() == SCHEMA_VERSION == 9
 
     now = datetime(2026, 9, 17, 11, 0)
     common = dict(operator_id=OPERATOR, source=OPEN_METEO, source_url="mock://", region_code="NBI_W", fetched_at=now, valid_until=now, payload_json="{}", external_id="NBI_W:2026-09-17T11:00Z")

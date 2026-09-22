@@ -626,7 +626,7 @@ def test_a_pseudonymised_incident_is_recalled_from_its_stored_text_never_rederiv
     session.commit()
     for inc in (stored, fresh):
         session.refresh(inc)
-        assert memory_service.is_pseudonymised(inc), inc.fe_name
+        assert memory_service.is_pseudonymised(session, inc), inc.fe_name
 
     by_number = {e.incident_number: e for e in recall_site_history(session, site_id=SITE)}
     assert "kamau" not in _text_blob([episode_dict(e) for e in by_number.values()]).lower()

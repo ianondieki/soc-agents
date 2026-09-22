@@ -90,6 +90,8 @@ LEDGER_DOWNLOAD = frozenset({"shift_supervisor", "duty_manager", "management", "
 ADMIN = frozenset({"admin"})
 #: The PIR row, read side: edit / publish / read for everyone but the two vendor roles ("—").
 PIR_READERS = OPERATIONS | {"management", "planning", "legal"}
+#: The memory row, read cell ("sites / playbooks / stats read"): the two vendor roles "—".
+MEMORY_READERS = OPERATIONS | {"management", "planning", "legal"}
 
 #: How the allowed roles beyond ``probe`` are sent (``Gated.rest``).
 REAL, ABSENT, INVALID = "real", "absent", "invalid"
@@ -196,6 +198,20 @@ GATED: list[Gated] = [
     Gated("GET", "/api/v1/audit", AUDIT_READERS),
 ]
 
+#: Lane-router routes pinned here too, because each shares a §9.3 row with a main.py route and
+#: once drifted from it (review C1: legal was 200 on /signals/weather/regions and 403 on /signals
+#: beside it). The decision test covers main.py only; these ride the same three checks.
+ROUTER_GATED: list[Gated] = [
+    Gated("GET", "/api/v1/signals", INCIDENT_READERS),
+    Gated("GET", "/api/v1/signals/county-map", INCIDENT_READERS),
+    Gated("GET", "/api/v1/signals/precision", INCIDENT_READERS),
+    # The memory row, not row 1: the two vendor roles may read their ticket but not the
+    # site's earlier ones (api/deps.MEMORY_READERS, and the advisory tests in test_memory_api).
+    Gated("GET", "/api/v1/memory/sites/{site_id}", MEMORY_READERS),
+]
+#: Every route the three matrix checks run over.
+MATRIX: list[Gated] = GATED + ROUTER_GATED
+
 #: Open on purpose; the reason is the comment at each route in main.py.
 OPEN: list[tuple[str, str, object]] = [
     ("GET", "/health", None),  # the load balancer's liveness probe
@@ -300,6 +316,7 @@ def api(tmp_path_factory):
             "{job}": "no-such-job",
             "{name}": "SupervisorAgent",
             "{shift_id:path}": "2026-09-17_DAY",
+            "{site_id}": HUB_EVENT["site_id"],
         }
         yield client, ids
     finally:
@@ -354,7 +371,7 @@ def test_every_route_main_declares_has_a_recorded_decision(api):
 def test_every_gated_route_admits_only_real_roles():
     """A typo in this file's literals would make a 403 check vacuous; a probe-limited row with
     no ``rest`` shape would quietly check part of its row."""
-    for route in GATED:
+    for route in MATRIX:
         assert route.allowed and route.allowed <= ROLES, _rid(route)
         assert route.rest in (REAL, ABSENT, INVALID), _rid(route)
         if route.probe:
@@ -366,14 +383,14 @@ def test_every_gated_route_admits_only_real_roles():
 # ------------------------------------------------------------------------- gated routes
 
 
-@pytest.mark.parametrize("route", GATED, ids=_rid)
+@pytest.mark.parametrize("route", MATRIX, ids=_rid)
 def test_an_anonymous_caller_is_401(enforced, route):
     client, ids = enforced
     r = _call(client, route, ids)
     assert r.status_code == 401, f"{_rid(route)} answered an anonymous caller with {r.status_code}"
 
 
-@pytest.mark.parametrize("route", GATED, ids=_rid)
+@pytest.mark.parametrize("route", MATRIX, ids=_rid)
 def test_every_role_outside_the_row_is_403(enforced, route):
     client, ids = enforced
     outside = sorted(ROLES - route.allowed)
@@ -384,7 +401,7 @@ def test_every_role_outside_the_row_is_403(enforced, route):
     assert got == {role: 403 for role in outside}, _rid(route)
 
 
-@pytest.mark.parametrize("route", [g for g in GATED if g.probe != ()], ids=_rid)
+@pytest.mark.parametrize("route", [g for g in MATRIX if g.probe != ()], ids=_rid)
 def test_the_probed_roles_get_through(enforced, route):
     client, ids = enforced
     probe = sorted(route.allowed) if route.probe is None else list(route.probe)
@@ -397,7 +414,7 @@ def test_the_probed_roles_get_through(enforced, route):
 
 
 @pytest.mark.parametrize(
-    "route", [g for g in GATED if g.probe and g.allowed - set(g.probe)], ids=_rid
+    "route", [g for g in MATRIX if g.probe and g.allowed - set(g.probe)], ids=_rid
 )
 def test_the_rest_of_the_row_gets_through_too(enforced, route):
     """Every role in the literal, not just the probed ones: narrowing NOTE_AUTHORS to drop the
@@ -459,6 +476,9 @@ def test_legal_reads_the_incident_surface_it_holds_r_on(enforced):
         f"/api/v1/incidents/{incident}/workflow",
         f"/api/v1/runs/{ids['{run_id}']}",
         "/api/v1/problems",
+        "/api/v1/signals/weather/regions",
+        "/api/v1/signals",  # review C1: the lane router behind the same strip
+        f"/api/v1/memory/sites/{ids['{site_id}']}",  # the memory row gives legal R on sites
     ):
         assert client.get(path).status_code == 200, path
     # ... and R is not W: legal still may not write a note or ingest.

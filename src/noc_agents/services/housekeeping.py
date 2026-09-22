@@ -76,6 +76,7 @@ import json
 import logging
 import os
 import sqlite3
+import uuid
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -109,6 +110,7 @@ __all__ = [
     "JOB_NAME",
     "LICENCE_FLOOR_DAYS",
     "MEMORY_EXPIRY_SEAM",
+    "PSEUDONYMISED_ACTION",
     "REDACTION_MISS_ACTION",
     "BackupReport",
     "HousekeepingError",
@@ -128,8 +130,10 @@ __all__ = [
     "expire_memory",
     "freshness_report",
     "housekeeping_enabled",
+    "is_marked_pseudonymised",
     "load_policy",
     "post_send_redaction_scan",
+    "pseudonymisation_marker_id",
     "pseudonymise_personal_fields",
     "purge_expired",
     "run",
@@ -158,6 +162,88 @@ ACTOR_ROLE = "AGENT"
 #: Marker key written into an archived outbox payload. Its presence is what makes the
 #: archive idempotent, and what keeps the redaction scan from re-scanning a summary.
 ARCHIVED_KEY = "_archived"
+
+#: The durable, per-row record that ``pseudonymise_personal_fields`` rewrote a row's person
+#: columns (memory review round 3). One ``AuditRow`` per pseudonymised row, written in the SAME
+#: transaction as the column rewrite — the duty wrapper in :func:`run` commits both or neither —
+#: so the marker cannot exist without the rewrite, nor the rewrite without the marker.
+#:
+#: Why a marker at all: the memory lane must never re-derive an incident's free text once its
+#: names are gone from the person columns (the NameMap could no longer see the names still in
+#: the notes). The first attempt inferred "pseudonymised" from a column *looking like* its role
+#: token, and ``assignment`` legitimately writes ``RNIO-MTK`` / ``RNIO-{region}`` — exactly what
+#: ``RNIO-{region_code}`` renders — so live incidents in four of six Safaricom regions were
+#: misread as pseudonymised. Only housekeeping knows it pseudonymised a row, so housekeeping
+#: records it.
+#:
+#: Why its id is DETERMINISTIC: ``audit_events`` is indexed on ``ts`` alone, and the memory lane
+#: asks this question on the lifecycle's hot path. A uuid5 of ``(table, row id)`` makes the
+#: lookup a primary-key probe — one B-tree descent whatever the size of the audit table — with
+#: no new index and no schema change. uuid5 ids carry version nibble 5, so they can never
+#: collide with the uuid4 ids every other audit row has.
+#:
+#: Durability: ``audit_events`` is in the ``llm_call_records`` class, whose action is ``keep``
+#: (``config/retention.yaml``); ``test_housekeeping.py`` pins that, because a purge of these
+#: rows would silently turn frozen memory text back into re-derivable text.
+PSEUDONYMISED_ACTION = "retention.pseudonymised"
+_PSEUDONYMISED_NAMESPACE = uuid.uuid5(uuid.NAMESPACE_URL, "urn:noc-agents:retention:pseudonymised")
+
+
+def pseudonymisation_marker_id(table: str, row_id: Any) -> str:
+    """The deterministic ``audit_events.id`` of ``table``/``row_id``'s pseudonymisation marker."""
+    return str(uuid.uuid5(_PSEUDONYMISED_NAMESPACE, f"{table}:{row_id}"))
+
+
+def is_marked_pseudonymised(session: Session, table: str, row_id: Any, *, operator_id: str | None = None) -> bool:
+    """Whether housekeeping recorded pseudonymising this row. One primary-key probe; never raises.
+
+    ``operator_id``, when given, must match the marker's — a marker is another controller's
+    record otherwise, and cannot speak for this operator's row.
+    """
+    try:
+        marker = session.get(AuditRow, pseudonymisation_marker_id(table, row_id))
+    except Exception:  # noqa: BLE001 — an unreadable audit table proves nothing either way
+        log.warning("housekeeping: pseudonymisation marker lookup failed", exc_info=True)
+        return False
+    if marker is None or marker.action != PSEUDONYMISED_ACTION:
+        return False
+    return operator_id is None or marker.operator_id == operator_id
+
+
+def _mark_pseudonymised(
+    session: Session,
+    *,
+    operator_id: str,
+    table: str,
+    row_id: Any,
+    columns: Iterable[str],
+    class_name: str,
+    cutoff: datetime,
+    now: datetime,
+) -> None:
+    """Write the marker once per row. Column NAMES only in the payload — never a value, so the
+    marker itself holds nothing personal. A second pseudonymisation of the same row (a person
+    column filled in after the first pass) finds the marker and leaves it: it records that the
+    row HAS been pseudonymised, and the first time is the one that matters."""
+    marker_id = pseudonymisation_marker_id(table, row_id)
+    if session.get(AuditRow, marker_id) is not None:
+        return
+    session.add(
+        AuditRow(
+            id=marker_id,
+            ts=now,
+            operator_id=operator_id,
+            actor=ACTOR,
+            action=PSEUDONYMISED_ACTION,
+            entity_type=table,
+            entity_id=str(row_id),
+            rationale=f"personal columns replaced by role tokens under retention class {class_name}",
+            payload_json=json.dumps(
+                {"table": table, "columns": sorted(columns), "class": class_name, "cutoff": cutoff.isoformat()}
+            ),
+        )
+    )
+
 
 #: Where ``expire_memory()`` will live when Lane 4C ships it (§7.11, spec line ~2153).
 #: Housekeeping calls it through :func:`expire_memory` and does no memory SQL of its own.
@@ -957,6 +1043,17 @@ def pseudonymise_personal_fields(
             report.columns_changed += len(changes)
             if do_apply:
                 session.execute(update(table).where(pk == row[pk.name]).values(**changes))
+                # Same session, same transaction as the rewrite (see PSEUDONYMISED_ACTION).
+                _mark_pseudonymised(
+                    session,
+                    operator_id=operator_id,
+                    table=name,
+                    row_id=row[pk.name],
+                    columns=changes.keys(),
+                    class_name=personal.name,
+                    cutoff=cutoff,
+                    now=now,
+                )
                 outcome.changed += 1
         report.tables.append(outcome)
     if do_apply and report.rows_changed:
@@ -1071,15 +1168,20 @@ def sweep_outbox(
         report.archivable += 1
         report.by_kind[str(row["kind"])] = report.by_kind.get(str(row["kind"]), 0) + 1
         if do_apply and pk is not None:
-            session.execute(
+            archived = session.execute(
                 update(table)
                 .where(pk == row[pk.name])
+                # Re-check what the SELECT saw, in the same statement: the outbox dispatcher
+                # or an admin retry (POST /outbox/{id}/retry) may have moved the row back to
+                # PENDING between the read and this write, and archiving a queued row would
+                # leave it with nothing left to send. A row that moved is simply not archived.
+                .where(table.c.status.in_(terminal), table.c.updated_at < cutoff)
                 # payload_json is NOT NULL, so it becomes the summary rather than NULL;
                 # envelope_json is nullable and simply goes. `status` is NOT in this
                 # values() and must never be — see the docstring.
                 .values(payload_json=_archive_summary(row, payload, now), envelope_json=None, updated_at=now)
-            )
-            report.archived += 1
+            ).rowcount
+            report.archived += int(archived or 0)
 
     report.failed_rows = int(
         session.scalar(select(func.count()).select_from(table).where(table.c.status == outbox_mod.FAILED, *scope)) or 0

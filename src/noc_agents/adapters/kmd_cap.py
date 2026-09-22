@@ -31,9 +31,15 @@ closes each risk, in the order :func:`parse_xml` applies it:
    unread. Requests send ``Accept-Encoding: identity`` and a response that is compressed anyway
    is refused unread, so the cap measures the bytes that would reach the parser — a 300 KB gzip
    body cannot inflate to hundreds of megabytes before the cap is looked at.
-2. **Time.** A total deadline (the provider's ``timeout_s``, 10 s by default — spec §9) is checked
-   on every chunk. httpx's timeout is per socket read, so without it a server dripping one byte
-   every nine seconds could hold the poller for weeks while never tripping a single timeout.
+2. **Time.** A total deadline (the provider's ``timeout_s``, 10 s by default — spec §9) on the
+   whole exchange — connection, TLS, response headers (including any run of ``1xx`` interim
+   responses) and body. httpx's timeout is per socket read, so a server dripping one byte every
+   nine seconds never trips it, in the headers or in the body. The deadline is therefore
+   enforced *below* httpx, by :class:`DeadlineWatchdog`: it captures the connection's socket
+   through httpx's documented ``trace`` request extension and, if the deadline passes, shuts the
+   socket down from a timer thread, which unblocks whatever read is in progress. Requests send
+   ``Connection: close`` so every request opens (and so exposes) its own connection. A per-chunk
+   check remains as a second, clock-based bound on the body (review findings F06, W02).
 3. **Encoding: UTF-8 only, refused before any parser runs.** A UTF-16 or UTF-32 byte-order mark,
    any NUL byte, an XML declaration naming another encoding, or bytes that are not valid UTF-8 —
    each is ``malformed``. KMD serves UTF-8, and a CAP feed that is not UTF-8 is a malformed
@@ -77,7 +83,9 @@ from __future__ import annotations
 import logging
 import os
 import re
+import socket
 import ssl
+import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -478,7 +486,9 @@ def split_area_desc(area_desc: str | None) -> tuple[str, ...]:
     """
     if not area_desc:
         return ()
-    return tuple(p.strip() for p in _AREA_SPLIT.split(area_desc) if p and p.strip())
+    # A piece with no letters is punctuation left between separators ("Coast (Mombasa,Kilifi)."
+    # leaves "."), never a place; it would otherwise be stored as a county row (review finding NEW3).
+    return tuple(p.strip() for p in _AREA_SPLIT.split(area_desc) if p and any(ch.isalpha() for ch in p))
 
 
 # ---------------------------------------------------------------------------- parsers
@@ -647,6 +657,79 @@ def _is_tls_failure(exc: BaseException) -> bool:
     return False
 
 
+class DeadlineWatchdog:
+    """A total deadline on one HTTP exchange, enforced below httpx (review finding W02).
+
+    Why this and not a timeout setting: httpx (and httpcore beneath it) apply ``timeout`` to each
+    individual socket operation. No per-request value bounds a server that answers every read
+    promptly with one byte — in the body, in the response headers, or as an endless series of
+    ``100 Continue`` interim responses, all of which were confirmed over a real socket to run
+    8–11 s against a 1 s budget. The only thing that ends such an exchange at a fixed time is
+    closing the connection at that time.
+
+    How: :meth:`trace` is passed as httpx's documented ``trace`` request extension; httpcore calls
+    it with ``connection.connect_tcp.complete`` and the network stream, whose ``socket`` this
+    records. A ``threading.Timer`` fires at the deadline and calls ``shutdown(SHUT_RDWR)`` on the
+    socket — the base ``socket.socket`` method, so it works on a TLS socket too and does not touch
+    the SSL object another thread is using. On Linux a blocked ``recv`` then fails at once
+    (``close()`` alone would not reliably wake it). On Windows, measured here, shutdown wakes a
+    reader only when the next byte arrives: a dripping server is ended within one inter-byte gap
+    of the deadline, and a silent one by the per-request timeout, which :func:`_bounded_get` caps
+    at the budget. So an exchange is bounded by the deadline plus at most one budget-long wait
+    (2 x ``timeout_s``) in the worst case, and by the deadline itself on Linux. httpx then raises
+    a ``TransportError`` and the caller, seeing :attr:`fired`, reports ``timeout``. The timer is
+    cancelled when the exchange ends, so the normal case costs one short-lived thread.
+
+    The caller must send ``Connection: close``: a keep-alive connection reused from an earlier
+    request emits no ``connect_tcp`` event, so its socket could not be captured. A poller making
+    at most eleven requests per half hour loses nothing by not reusing connections.
+    """
+
+    def __init__(self, seconds: float) -> None:
+        self.fired = False
+        self._lock = threading.Lock()
+        self._sockets: list[socket.socket] = []
+        self._timer = threading.Timer(max(0.0, seconds), self._fire)
+        self._timer.daemon = True
+        self._timer.start()
+
+    def trace(self, event_name: str, info: Mapping[str, Any]) -> None:
+        if event_name != "connection.connect_tcp.complete":
+            return
+        stream = info.get("return_value")
+        sock = stream.get_extra_info("socket") if stream is not None else None
+        if sock is None:
+            return
+        with self._lock:
+            self._sockets.append(sock)
+            fired = self.fired
+        if fired:  # connected after the deadline had already passed
+            self._shutdown(sock)
+
+    def _fire(self) -> None:
+        with self._lock:
+            self.fired = True
+            sockets = list(self._sockets)
+        for sock in sockets:
+            self._shutdown(sock)
+
+    @staticmethod
+    def _shutdown(sock: socket.socket) -> None:
+        try:
+            socket.socket.shutdown(sock, socket.SHUT_RDWR)
+        except OSError:
+            pass  # already closed or never connected: nothing left to interrupt
+
+    def cancel(self) -> None:
+        self._timer.cancel()
+
+
+def _per_wait(client: httpx.Client, timeout_s: float) -> httpx.Timeout:
+    """A per-request httpx timeout no longer than the total budget, nor than the client's own."""
+    own = getattr(getattr(client, "timeout", None), "read", None)
+    return httpx.Timeout(min(timeout_s, own) if own else timeout_s)
+
+
 def _bounded_get(
     client: httpx.Client,
     url: str,
@@ -661,10 +744,9 @@ def _bounded_get(
     * **Bytes:** streams and stops at ``max_bytes``; a declared ``Content-Length`` over it is
       refused unread. ``Accept-Encoding: identity`` is sent and a compressed response is refused
       unread (review finding F15), so the count is of the bytes the parser would receive.
-    * **Time:** ``timeout_s`` is a total deadline on the whole response, checked on every chunk
-      (review finding F06). httpx's own timeout applies to each socket read, so a server that
-      drips a byte every nine seconds never trips it. The check runs as each chunk arrives, so
-      the worst case is the deadline plus one per-read timeout — bounded, which is the point.
+    * **Time:** ``timeout_s`` is a total deadline on the whole exchange, headers included,
+      enforced by :class:`DeadlineWatchdog` (review findings F06, W02), plus a per-chunk clock
+      check on the body. A 304 is checked against the deadline before it is returned too.
 
     A 304 returns an empty body; a status ≥ 400 is ``http``; transport problems are classified
     the way ``adapters/weather.py`` classifies them, so ``last_error`` reads the same whichever
@@ -675,16 +757,26 @@ def _bounded_get(
         # that configured a 1 s client gets a 1 s total deadline, not the module's 10 s.
         timeout_s = getattr(getattr(client, "timeout", None), "read", None) or DEFAULT_TIMEOUT_S
     deadline = _clock() + timeout_s
+    watchdog = DeadlineWatchdog(timeout_s)
+    # No single socket wait may outlast the whole budget either. The watchdog ends a DRIP at the
+    # deadline; a SILENT server is ended by this (on Windows, shutdown() does not wake a recv
+    # blocked on a socket that receives nothing -- measured -- so without it a silent server
+    # would run to the client's own per-read timeout).
+    per_wait = _per_wait(client, timeout_s)
 
     def check_deadline() -> None:
-        if _clock() > deadline:
+        if watchdog.fired or _clock() > deadline:
             raise CapError("timeout", f"{what} did not finish within the {timeout_s:g} s total deadline; abandoned")
 
-    request_headers = {"Accept-Encoding": "identity", **dict(headers or {})}
+    # Connection: close — each request opens its own connection, so the watchdog can see it.
+    request_headers = {"Accept-Encoding": "identity", "Connection": "close", **dict(headers or {})}
     try:
-        with client.stream("GET", url, headers=request_headers) as response:
+        with client.stream(
+            "GET", url, headers=request_headers, timeout=per_wait, extensions={"trace": watchdog.trace}
+        ) as response:
             status = response.status_code
             if status == 304:
+                check_deadline()  # a 304 that took past the deadline is still past the deadline
                 return status, b"", response.headers
             encoding = (response.headers.get("Content-Encoding") or "identity").strip().lower()
             if encoding not in {"", "identity"}:
@@ -716,9 +808,13 @@ def _bounded_get(
             return status, bytes(buf), response.headers
     except CapError:
         raise
-    except httpx.TimeoutException as exc:
-        raise CapError("timeout", f"{what} did not answer within the timeout ({exc.__class__.__name__})") from exc
-    except httpx.TransportError as exc:
+    except (httpx.TransportError, OSError) as exc:
+        # The deadline, not a network fault, when either the watchdog shut the socket or a single
+        # wait ran out the per-request cap that IS the budget (a silent server).
+        if watchdog.fired or (isinstance(exc, httpx.TimeoutException) and per_wait.read == timeout_s):
+            raise CapError("timeout", f"{what} did not finish within the {timeout_s:g} s total deadline; connection closed") from exc
+        if isinstance(exc, httpx.TimeoutException):
+            raise CapError("timeout", f"{what} did not answer within the timeout ({exc.__class__.__name__})") from exc
         if _is_tls_failure(exc):
             raise CapError(
                 "tls",
@@ -726,8 +822,8 @@ def _bounded_get(
                 "set NOC_USE_TRUSTSTORE=1 with truststore installed (docs/RUNBOOK.md §3)",
             ) from exc
         raise CapError("network", f"{what} unreachable ({exc.__class__.__name__}: {exc})") from exc
-    except ssl.SSLError as exc:  # pragma: no cover - httpx wraps these, but be explicit
-        raise CapError("tls", f"{what}: TLS verification failed ({exc}); see docs/RUNBOOK.md §3") from exc
+    finally:
+        watchdog.cancel()
 
 
 class KmdCapProvider:
@@ -772,6 +868,16 @@ class KmdCapProvider:
             timeout_s=self._timeout_s,
         )
         if status == 304:
+            if not if_modified_since:
+                # A 304 answers a CONDITIONAL request. To an unconditional one it is a protocol
+                # violation that carries no feed; treating it as "unchanged" would skip exactly the
+                # retry the poller withheld the conditional header to force (review finding NEW1).
+                raise CapError(
+                    "http",
+                    "KMD CAP feed answered 304 Not Modified to a request with no If-Modified-Since; "
+                    "no feed was received, so nothing was read",
+                    status=304,
+                )
             return FeedFetch(
                 source_url=self.feed_url, fetched_at=fetched_at, not_modified=True,
                 last_modified=resp_headers.get("Last-Modified") or if_modified_since,

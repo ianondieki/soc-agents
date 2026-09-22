@@ -22,9 +22,13 @@ the act needs a route. Nothing on this surface sends anything to anyone.
 Behind ``SCORECARDS_ENABLED`` (default OFF): every route answers **404** while the flag is
 off, so the surface is what it was before this lane existed.
 
-WHO SEES WHAT. ``require_role(*COMMERCIAL)`` gates the reads -- scorecards are commercial
-documents -- but it is inert while ``AUTH_DISABLED=true`` (the demo default), and two rules
-here must hold in the demo too, so they are enforced on the principal's ROLE in this module:
+WHO SEES WHAT. ``require_role(*SCORECARD_READERS)`` gates the reads with §9.3's scorecards
+row exactly: noc_analyst (read), shift_supervisor (read + dispute), duty_manager (all),
+management (read), msp_coordinator (own vendor), legal (read), admin (all); field_engineer
+and planning have no cell and get 403 once auth is on. The tuple is defined HERE, not in
+``api/deps.py``: it is this router's statement of its own row. ``require_role`` is inert
+while ``AUTH_DISABLED=true`` (the demo default), and two rules here must hold in the demo
+too, so they are enforced on the principal's ROLE in this module:
 
 * §7.6.2: a SHADOW card is "visible only to duty_manager/management". The same is true of
   DRAFT and WITHHELD -- they are the operator's working papers. Any other role is shown
@@ -53,7 +57,7 @@ from sqlalchemy import select
 
 from noc_agents.api import auth
 from noc_agents.api.auth import require_role
-from noc_agents.api.deps import COMMERCIAL, SUPERVISORS, _actor, _get_owned, _owned, _settings
+from noc_agents.api.deps import SUPERVISORS, _actor, _get_owned, _owned, _settings
 from noc_agents.db.models import get_session
 from noc_agents.db.models_scorecards import RELEASED_STATUSES, SCORECARD_STATUSES, VendorScorecardLineRow, VendorScorecardRow
 from noc_agents.db.models_vendors import VendorRow
@@ -75,6 +79,10 @@ from noc_agents.services.vendors import FLAG, lane_enabled, load_sla_terms, norm
 
 router = APIRouter(prefix="/api/v1", tags=["scorecards"])
 
+#: §9.3, the scorecards row: every role with a "read" cell. field_engineer and planning are
+#: absent on purpose. A RELEASED card is readable by all of these; which of them may see an
+#: UNRELEASED one is ``INTERNAL_READERS`` below, and the vendor role sees its own vendor only.
+SCORECARD_READERS: tuple[str, ...] = ("noc_analyst", "shift_supervisor", "duty_manager", "management", "msp_coordinator", "legal", "admin")
 #: Roles that may see a card BEFORE it is released (§7.6.2 names duty_manager and management
 #: for SHADOW; admin is listed explicitly, as everywhere -- no implicit bypass).
 INTERNAL_READERS: tuple[str, ...] = ("duty_manager", "management", "admin")
@@ -168,7 +176,7 @@ def list_scorecards(
     vendor: str | None = None,
     period: str | None = None,
     status: str | None = None,
-    principal: auth.Principal = Depends(require_role(*COMMERCIAL)),
+    principal: auth.Principal = Depends(require_role(*SCORECARD_READERS)),
 ) -> list[dict]:
     """Cards this caller may see, newest period first, without lines (``GET /scorecards/{id}`` has them)."""
     s = _settings()
@@ -199,7 +207,7 @@ def list_scorecards(
 
 
 @router.get("/scorecards/{card_id}", dependencies=[Depends(require_lane)])
-def get_scorecard(card_id: str, principal: auth.Principal = Depends(require_role(*COMMERCIAL))) -> dict:
+def get_scorecard(card_id: str, principal: auth.Principal = Depends(require_role(*SCORECARD_READERS))) -> dict:
     session = get_session()
     try:
         return _out(session, _card_for(session, principal, card_id), with_lines=True)

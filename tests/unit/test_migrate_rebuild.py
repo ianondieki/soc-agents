@@ -608,6 +608,72 @@ def test_a_trigger_on_another_table_that_mentions_hitl_tasks_is_refused_before_t
     con.close()
 
 
+ARCHIVE_TABLE = "CREATE TABLE hitl_tasks_archive (id TEXT, note TEXT)"
+# Every one of these mentions the letters "hitl_tasks" and NONE of them refers to the table, so
+# SQLite's RENAME succeeds and refusing any of them would keep a healthy file from starting.
+# The first three are the review's reproduction (fp.py / fp3.py); the rest are the other ways
+# the substring appears without being the identifier.
+NOT_A_REFERENCE = {
+    "archive_trigger": (ARCHIVE_TABLE, "CREATE TRIGGER trg_arch AFTER UPDATE ON outbox BEGIN INSERT INTO hitl_tasks_archive (id, note) VALUES (NEW.id, 'moved'); END"),
+    "archive_view": (ARCHIVE_TABLE, "CREATE VIEW v_arch AS SELECT id FROM hitl_tasks_archive"),
+    "trigger_on_archive": (ARCHIVE_TABLE, "CREATE TABLE audit_x (id TEXT)", "CREATE TRIGGER trg_a2 AFTER INSERT ON hitl_tasks_archive BEGIN INSERT INTO audit_x (id) VALUES (NEW.id); END"),
+    "trigger_name_only": (ARCHIVE_TABLE, "CREATE TRIGGER trg_hitl_tasks_mirror AFTER UPDATE ON outbox BEGIN INSERT INTO hitl_tasks_archive (id, note) VALUES (NEW.id, 'mirror'); END"),
+    "string_literal": (ARCHIVE_TABLE, "CREATE TRIGGER trg_lit AFTER UPDATE ON outbox BEGIN INSERT INTO hitl_tasks_archive (id, note) VALUES (NEW.id, 'hitl_tasks'); END"),
+    "comment_only": (ARCHIVE_TABLE, "CREATE TRIGGER trg_cmt AFTER UPDATE ON outbox BEGIN /* nothing to do with hitl_tasks */ INSERT INTO hitl_tasks_archive (id, note) VALUES (NEW.id, 'c'); END"),
+}
+# ...and every one of these DOES refer to the table, however it is spelled, so the RENAME would
+# fail ("error in trigger ...: no such table: main.hitl_tasks") and each must still be refused.
+A_REFERENCE = {
+    "double_quoted": 'CREATE TRIGGER trg_q AFTER UPDATE ON outbox BEGIN UPDATE "hitl_tasks" SET reason = \'q\' WHERE id = NEW.hitl_task_id; END',
+    "bracketed": "CREATE TRIGGER trg_b AFTER UPDATE ON outbox BEGIN UPDATE [hitl_tasks] SET reason = 'b' WHERE id = NEW.hitl_task_id; END",
+    "backticked": "CREATE TRIGGER trg_t AFTER UPDATE ON outbox BEGIN UPDATE `hitl_tasks` SET reason = 't' WHERE id = NEW.hitl_task_id; END",
+    "schema_qualified": "CREATE TRIGGER trg_s AFTER UPDATE ON outbox WHEN EXISTS (SELECT 1 FROM main.hitl_tasks) BEGIN SELECT 1; END",
+    "upper_case": "CREATE TRIGGER trg_u AFTER UPDATE ON outbox BEGIN UPDATE HITL_TASKS SET reason = 'u' WHERE id = NEW.hitl_task_id; END",
+    "view": "CREATE VIEW v_cards AS SELECT id FROM hitl_tasks WHERE status = 'PENDING'",
+}
+
+
+@pytest.mark.parametrize("case", sorted(NOT_A_REFERENCE))
+def test_a_trigger_or_view_that_only_resembles_a_reference_is_not_refused(tmp_path, restore_db_globals, case):
+    """The review's reproduction: a v7 file whose trigger writes to ``hitl_tasks_archive`` was
+    refused on every start by a substring match, although the rebuild would have succeeded.
+    The identifier is now matched as a whole token, outside string literals and comments."""
+    db = _build_v7(tmp_path, extra_sql=NOT_A_REFERENCE[case])
+    before = _snapshot(db)
+
+    init_db(_url(db), backup_dir=tmp_path / "backups").dispose()
+
+    assert _snapshot(db) == before and _notnull(db, "incident_id") == 0
+    assert _scalar(db, "PRAGMA integrity_check") == "ok"
+    assert _scalar(db, "SELECT MAX(version) FROM schema_version") == SCHEMA_VERSION
+    # Whatever was defined still exists and still works against the rebuilt schema.
+    con = sqlite3.connect(db)
+    try:
+        con.execute("UPDATE outbox SET status = 'SENT' WHERE id = 'ob-1'")
+        con.execute("INSERT INTO hitl_tasks_archive (id, note) VALUES ('a1', 'n')")
+        con.commit()
+        if case == "archive_view":
+            assert con.execute("SELECT COUNT(*) FROM v_arch").fetchone()[0] == 1
+        elif case == "trigger_on_archive":
+            assert con.execute("SELECT COUNT(*) FROM audit_x").fetchone()[0] == 1
+        else:
+            assert con.execute("SELECT COUNT(*) FROM hitl_tasks_archive").fetchone()[0] == 2, "the trigger fired"
+    finally:
+        con.close()
+
+
+@pytest.mark.parametrize("case", sorted(A_REFERENCE))
+def test_a_real_reference_in_any_spelling_is_still_refused_before_the_backup(tmp_path, restore_db_globals, case):
+    db = _build_v7(tmp_path, extra_sql=(A_REFERENCE[case],))
+    before, table_sql, attached = _snapshot(db), _table_sql(db), _attached(db)
+
+    with pytest.raises(HitlRebuildError, match=r"reference\(s\) to hitl_tasks.*no backup was written"):
+        init_db(_url(db), backup_dir=tmp_path / "backups")
+    models._engine.dispose()
+    _assert_untouched(db, before, table_sql, attached)
+    assert not (tmp_path / "backups").exists()
+
+
 def test_a_null_the_model_forbids_is_refused_before_the_backup_with_the_fix_spelled_out(tmp_path, restore_db_globals):
     """A file that grew from v1 has ``entity_type``/``edited`` nullable on disk (ADD COLUMN is
     rendered without NOT NULL); the rebuilt table takes the model's NOT NULL. A NULL there --
