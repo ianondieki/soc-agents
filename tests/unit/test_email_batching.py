@@ -619,7 +619,11 @@ def test_at_the_cap_a_p1_is_sent_anyway_and_says_so(tmp_db, smtp_on, transfers, 
     assert report.sent == 1 and report.deferred == 0 and _get(session, row.id).status == SENT
     assert len(smtp_on.sent) == 1 and len(transfers) == 1
     (note,) = [n for n in _notes(session, inc) if "EMAIL_DAILY_CAP" in n]
-    assert "P1 notice was SENT anyway" in note
+    # The full-window wording, pinned exactly: here the cap really WAS reached.
+    assert note == (
+        "[BroadcastCommsAgent] EMAIL_DAILY_CAP=10 reached (10 SMTP messages in the last 24 h); "
+        "this P1 notice was SENT anyway (1 message(s)): the volume cap never holds a P1."
+    )
     assert any(e["type"] == "email.sent" for e in hub._history)
 
 
@@ -662,7 +666,14 @@ def test_a_p1_bigger_than_the_whole_cap_is_sent_with_the_override_note(
     assert (report.sent, report.dead) == (1, 0) and _get(session, row.id).status == SENT
     assert len(smtp_on.sent) == messages and len(transfers) == 1
     (note,) = [n for n in _notes(session, inc) if "EMAIL_DAILY_CAP" in n]
-    assert "P1 notice was SENT anyway" in note and f"({messages} message(s))" in note
+    # Round-4 NEW:email:1 — say what happened: the notice ALONE is bigger than the cap. In an
+    # empty window the cap was never "reached", so the full-window wording would be false.
+    assert note == (
+        f"[BroadcastCommsAgent] This P1 notice alone needs {messages} messages, more than "
+        f"EMAIL_DAILY_CAP={cap} allows in a day ({seeded} already sent in the last 24 h); "
+        f"it was SENT anyway because the volume cap never holds a P1."
+    )
+    assert "reached" not in note
     assert not any(e["type"] == "outbox.failed" for e in hub._history)
 
 

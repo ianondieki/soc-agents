@@ -64,7 +64,16 @@ from pydantic import BaseModel
 
 from noc_agents.api import auth
 from noc_agents.api.auth import require_role
-from noc_agents.api.deps import OPERATIONS, READERS, SUPERVISORS, _actor, _get_owned, _owned, _settings
+from noc_agents.api.deps import (
+    INCIDENT_READERS,
+    OPERATIONS,
+    READERS,
+    SUPERVISORS,
+    _actor,
+    _get_owned,
+    _owned,
+    _settings,
+)
 from noc_agents.db.models import AuditRow, IncidentRow, get_session, utcnow
 from noc_agents.db.models_maintenance import (
     TASK_PROPOSED,
@@ -313,7 +322,8 @@ def get_window(window_id: str) -> dict:
 
 @router.get(
     "/maintenance/incidents/{incident_id}/stop-clock-proposal",
-    dependencies=[_ENABLED, Depends(require_role(*READERS))],
+    # An incident-scoped read beside /incidents/{id}/clock: §9.3 row 1, INCIDENT_READERS.
+    dependencies=[_ENABLED, Depends(require_role(*INCIDENT_READERS))],
 )
 def stop_clock_proposal(incident_id: str) -> dict:
     """The ``PLANNED_MAINTENANCE`` stop-clock **proposal** for one incident, or ``null``.

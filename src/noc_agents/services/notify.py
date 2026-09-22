@@ -576,11 +576,14 @@ def email_budget(session: Session, *, now: datetime, requested: int = 1) -> Emai
     CONCURRENT DRAINERS (review E06) — documented, not reserved. Drainers that each claimed a
     DIFFERENT row read the same count, and all may send the last slot: the window can end at most
     ``(concurrent drainers − 1) × requested`` over the cap. The number of drainers is NOT fixed:
-    besides the scheduler tick, every synchronous ingest request (``POST /api/v1/events`` and
-    ``/events/batch`` run ``process_event`` → ``drain_after_commit`` → ``drain_once`` in the
-    request thread while ``OUTBOX_SYNC_DRAIN`` is on, the default) is one — so a storm, which is
-    when the cap is near, is also when there are most of them (a replay with 4 drainers ended 3
-    over). What bounds them per process is the threadpool that runs sync handlers — AnyIO's
+    besides the scheduler tick, every synchronous ingest request is one — ``POST /api/v1/events``
+    and ``/events/batch`` call ``graph.pipeline.process_event``, which calls ``drain_once`` directly
+    on the request's own session, in the request thread, once the lifecycle has committed, while
+    ``OUTBOX_SYNC_DRAIN`` is on (the default) — and so is every HITL approval
+    (``POST /api/v1/hitl/{id}/approve`` arms ``graph.pipeline.drain_after_commit``, whose
+    after-commit listener runs ``drain_once`` in a fresh session, still in that request's thread).
+    A storm, which is when the cap is near, is also when there are most of them (a replay with 4
+    drainers ended 3 over). What bounds them per process is the threadpool that runs sync handlers — AnyIO's
     default limiter, 40 threads, which this app does not change — so ≤ 40 extra one-message sends
     per uvicorn worker, still inside the 100-message headroom below the provider's limit for one
     worker; each additional worker process adds its own. Counting other drainers' live CLAIMED
@@ -706,10 +709,19 @@ def email_cap_decision(session: Session, row: OutboxRow, *, now: datetime) -> Em
     # out. Such a P1 goes with the override note, like a P1 in a full window; the note names the
     # message count, so an audience too big for the relay is visible to whoever fixes the config.
     if priority in EMAIL_CAP_OVERRIDE_PRIORITIES:
-        note = (
-            f"[{EMAIL_NOTE_AUTHOR}] {state}; this {priority} notice was SENT anyway "
-            f"({budget.requested} message(s)): the volume cap never holds a {priority}."
-        )
+        if budget.requested > budget.cap:
+            # Round-4 NEW:email:1 — say what happened. This P1 is bigger than the cap on its own;
+            # the window may be empty, so "cap reached" would be false.
+            note = (
+                f"[{EMAIL_NOTE_AUTHOR}] This {priority} notice alone needs {budget.requested} messages, more than "
+                f"{EMAIL_DAILY_CAP_ENV}={budget.cap} allows in a day ({budget.sent} already sent in the last 24 h); "
+                f"it was SENT anyway because the volume cap never holds a {priority}."
+            )
+        else:
+            note = (
+                f"[{EMAIL_NOTE_AUTHOR}] {state}; this {priority} notice was SENT anyway "
+                f"({budget.requested} message(s)): the volume cap never holds a {priority}."
+            )
         return EmailCapDecision(CAP_OVERRIDE, budget, priority=priority, note=note)
     if budget.requested > budget.cap:
         reason = (

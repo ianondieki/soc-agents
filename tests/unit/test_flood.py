@@ -30,6 +30,7 @@ from __future__ import annotations
 import copy
 import json
 import socket
+import ssl
 import threading
 import time
 from dataclasses import replace
@@ -553,6 +554,119 @@ def test_w02_the_flood_deadline_covers_the_header_phase_over_a_real_socket(loopb
     elapsed = time.monotonic() - started
     assert err.value.kind == "timeout" and "total deadline" in str(err.value)
     assert elapsed < 2.5, f"{elapsed:.2f}s against a 0.6 s budget"
+
+
+TLS_CERT = Path(__file__).resolve().parents[1] / "fixtures" / "tls" / "test_only_cert.pem"
+TLS_KEY = Path(__file__).resolve().parents[1] / "fixtures" / "tls" / "test_only_key.pem"
+_CRLF = bytes([13, 10])
+
+
+def _tls_server(payload: bytes, gap: float, *, silent: bool = False) -> int:
+    """A one-shot loopback HTTPS server on the committed TEST-ONLY certificate (see its README)."""
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(str(TLS_CERT), str(TLS_KEY))
+
+    def run():
+        conn = None
+        try:
+            raw, _ = listener.accept()
+            conn = context.wrap_socket(raw, server_side=True)
+            data = b""
+            while _CRLF + _CRLF not in data:
+                chunk = conn.recv(4096)
+                if not chunk:
+                    return
+                data += chunk
+            if silent:
+                time.sleep(8.0)
+                return
+            for byte in payload:
+                conn.sendall(bytes([byte]))
+                time.sleep(gap)
+        except (OSError, ssl.SSLError):
+            pass  # the client's watchdog shut the connection
+        finally:
+            if conn is not None:
+                conn.close()
+            listener.close()
+
+    threading.Thread(target=run, daemon=True).start()
+    return listener.getsockname()[1]
+
+
+def _slow_proxy(upstream_port: int, gap: float) -> int:
+    """Forwards client bytes at once and server bytes one every ``gap`` s: a dripped TLS handshake."""
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+
+    def run():
+        try:
+            client, _ = listener.accept()
+            upstream = socket.create_connection(("127.0.0.1", upstream_port))
+
+            def forward_up():
+                try:
+                    while chunk := client.recv(4096):
+                        upstream.sendall(chunk)
+                except OSError:
+                    pass
+
+            threading.Thread(target=forward_up, daemon=True).start()
+            while chunk := upstream.recv(4096):
+                for byte in chunk:
+                    client.sendall(bytes([byte]))
+                    time.sleep(gap)
+        except OSError:
+            pass
+        finally:
+            listener.close()
+
+    threading.Thread(target=run, daemon=True).start()
+    return listener.getsockname()[1]
+
+
+_JSON_HEADERS = b"HTTP/1.1 200 OK" + _CRLF + b"X-Pad: " + b"z" * 80 + _CRLF + b"Content-Length: 2" + _CRLF + _CRLF + b"{}"
+_STORM = (b"HTTP/1.1 100 Continue" + _CRLF + _CRLF) * 80 + b"HTTP/1.1 200 OK" + _CRLF + b"Content-Length: 2" + _CRLF + _CRLF + b"{}"
+_OK = b"HTTP/1.1 200 OK" + _CRLF + b"Content-Length: 2" + _CRLF + _CRLF + b"{}"
+
+TLS_CASES = {
+    "tls-headers-dripped": (lambda: _tls_server(_JSON_HEADERS, 0.05), 1.0),
+    "tls-100-continue-storm": (lambda: _tls_server(_STORM, 0.002), 1.0),
+    # Regression guard: CPython bounds a handshake by the socket timeout as one total deadline.
+    "tls-handshake-dripped": (lambda: _slow_proxy(_tls_server(_OK, 0.0), 0.005), 1.0),
+    # Regression guard: already bounded before this fix by the round-3 per-wait cap.
+    "tls-silent-after-request": (lambda: _tls_server(b"", 0.0, silent=True), 6.0),
+}
+
+
+@pytest.mark.parametrize("label", sorted(TLS_CASES))
+def test_w02_tls_the_flood_deadline_holds_over_https(loopback_only, label):
+    """W02-TLS for the flood adapter: the production host (DEFAULT_FLOOD_BASE) is https, and the
+    watchdog's recorded plain socket was detached by the TLS wrap, so nothing bounded the drip."""
+    make_server, per_read = TLS_CASES[label]
+    port = make_server()
+    client = httpx.Client(timeout=httpx.Timeout(per_read), verify=ssl.create_default_context(cafile=str(TLS_CERT)))
+    started = time.monotonic()
+    with pytest.raises(FloodError) as err:
+        adapter._get_json(client, f"https://127.0.0.1:{port}/v1/flood", timeout_s=0.6)
+    elapsed = time.monotonic() - started
+    assert err.value.kind == "timeout" and "total deadline" in str(err.value), str(err.value)
+    assert elapsed < 2.5, f"{label}: {elapsed:.2f}s against a 0.6 s budget"
+
+
+def test_w02_tls_a_normal_https_flood_fetch_still_works(loopback_only):
+    body = FIXTURE.read_bytes()
+    ok = b"HTTP/1.1 200 OK" + _CRLF + b"Content-Length: " + str(len(body)).encode() + _CRLF + _CRLF + body
+    port = _tls_server(ok, 0.0)
+    client = httpx.Client(timeout=httpx.Timeout(5.0), verify=ssl.create_default_context(cafile=str(TLS_CERT)))
+    snapshot = OpenMeteoFloodProvider(f"https://127.0.0.1:{port}", client=client).discharge(-0.09, 34.77, now=NOW)
+    assert len(snapshot.days) == 7
+    alive = [t for t in threading.enumerate() if t.name == "noc-deadline-watchdog" and t.is_alive()]
+    assert alive == []  # the watchdog's timer thread was joined when the exchange ended
 
 
 def test_w02_flood_requests_open_their_own_traced_connection():

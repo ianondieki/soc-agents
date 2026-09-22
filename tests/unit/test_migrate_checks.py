@@ -15,12 +15,16 @@ Proven here:
 1. a v8 file whose ``vendor_scorecards`` still has the OLD definition and no rows comes out with
    the model's definition -- and the new CHECKs really bite where the old ones accepted;
 2. one with rows keeps every row byte for byte, keeps its old definition, starts, and says so
-   once (a WARNING naming the CHECKs, the same text on the report);
-3. a second start does nothing -- the DDL decides, not the version;
+   (a WARNING naming the CHECKs, on EVERY start until it is dealt with, the same text on the
+   report) -- and the remedy the warning gives works exactly as written, through the real
+   startup path (``import noc_agents.main``), without touching the version stamp;
+3. a second start does nothing -- the DDL decides, not the version -- and a current (v9) file
+   whose table is drifted and empty is recreated on a plain start, behind a backup;
 4. both tables drifted and empty: the dependent table is dropped first and created last, and
    its foreign key still points at the parent;
 5. one table populated and the other drifted-and-empty: each gets its own treatment;
-6. a v8 file whose definitions already match is only re-stamped.
+6. a v8 file whose definitions already match is only re-stamped;
+7. a hand-made trigger declared ON the table in another case or quoting survives the refresh.
 
 The OLD definition is the literal ``sqlite_master.sql`` of the dev database (byte copy, read
 only), which is what a v8 file created before the tightening carries.
@@ -28,8 +32,12 @@ only), which is what a v8 file created before the tightening carries.
 
 from __future__ import annotations
 
+import json
 import logging
+import os
 import sqlite3
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -141,7 +149,7 @@ def _write(path: Path, *statements: str) -> None:
         con.close()
 
 
-def _build_v8(tmp_path: Path, *, cards_sql: tuple[str, ...] = (), lines_ddl: str | None = None, lines_sql: tuple[str, ...] = ()) -> Path:
+def _build_v8(tmp_path: Path, *, cards_sql: tuple[str, ...] = (), lines_ddl: str | None = None, lines_sql: tuple[str, ...] = (), stamp: int = 8, extra_sql: tuple[str, ...] = ()) -> Path:
     """A schema_version 8 file whose vendor_scorecards has the OLD definition.
 
     Built from a current file: both scorecard tables are dropped and recreated -- the cards with
@@ -159,15 +167,15 @@ def _build_v8(tmp_path: Path, *, cards_sql: tuple[str, ...] = (), lines_ddl: str
         f"DROP TABLE {CARDS}",
         OLD_CARDS_DDL, *OLD_CARDS_INDEXES,
         lines_ddl or current_lines_ddl, *LINES_INDEXES,
-        *cards_sql, *lines_sql,
+        *cards_sql, *lines_sql, *extra_sql,
         "DELETE FROM schema_version",
-        "INSERT INTO schema_version (version, applied_at) VALUES (8, '2026-09-21 05:07:36')",
+        f"INSERT INTO schema_version (version, applied_at) VALUES ({stamp}, '2026-09-21 05:07:36')",
     )
     # Guard: the file is what a pre-tightening v8 release left behind, or nothing below proves anything.
     assert _ddl(db, CARDS) == OLD_CARDS_DDL and _ddl(db, CARDS) != _model_ddl(CARDS)
     assert "dq_gate_threshold_pct < 100" not in _ddl(db, CARDS) and "char(9)" not in _ddl(db, CARDS)
     assert (_ddl(db, LINES) == _model_ddl(LINES)) == (lines_ddl is None)
-    assert _scalar(db, "SELECT MAX(version) FROM schema_version") == 8
+    assert _scalar(db, "SELECT MAX(version) FROM schema_version") == stamp
     return db
 
 
@@ -238,7 +246,7 @@ def test_an_empty_v8_table_with_the_old_checks_is_recreated_from_the_model(tmp_p
 # ============================================================ 2. populated: untouched, warned about
 
 
-def test_a_populated_table_keeps_every_row_keeps_running_and_warns_once(tmp_path, caplog, restore_db_globals):
+def test_a_populated_table_keeps_every_row_keeps_running_and_warns_every_start(tmp_path, caplog, restore_db_globals):
     db = _build_v8(tmp_path, cards_sql=(OLD_ONLY_CARD,), lines_sql=(A_LINE,))
     cards_before, lines_before = _snapshot(db, CARDS), _snapshot(db, LINES)
     backups = tmp_path / "backups"
@@ -253,38 +261,175 @@ def test_a_populated_table_keeps_every_row_keeps_running_and_warns_once(tmp_path
         assert not any(s.startswith("DROP") for s in report.applied)
         assert _scalar(db, "SELECT MAX(version) FROM schema_version") == SCHEMA_VERSION
 
-        # Said once, naming exactly the CHECKs this file is not enforcing, in the log AND on the report.
+        # Said once per start, naming exactly the CHECKs this file is not enforcing, in the log
+        # AND on the report.
         warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING and CARDS in r.getMessage()]
         assert len(warnings) == 1, warnings
         assert "1 row(s)" in warnings[0]
         assert "ck_vendor_scorecards_dq_counts, ck_vendor_scorecards_shadow" in warnings[0]
         assert "ck_vendor_scorecards_gate" not in warnings[0], "an unchanged CHECK is not reported"
-        assert "export the rows, empty the table, start once" in warnings[0]
+        assert "export the rows, empty the table, restart" in warnings[0]
         assert warnings[0] in report.note
     finally:
         engine.dispose()
 
-    # Second start: nothing applied, no second backup -- and no second warning either.
+    # Second start: nothing applied, no second backup -- but the warning again. A warning that
+    # stops after the first start is a warning that gets lost (round-4 review).
     caplog.clear()
     with caplog.at_level(logging.WARNING, logger="noc_agents.db.migrate"):
         engine = init_db(_url(db), backup_dir=backups)
     try:
         assert migrate.LAST_REPORT.applied == [] and migrate.LAST_REPORT.backup_path is None
         assert len(list(backups.iterdir())) == 1
-        assert not [r for r in caplog.records if CARDS in r.getMessage()]
+        assert [r.getMessage() for r in caplog.records if CARDS in r.getMessage()] == warnings
+        assert warnings[0] in migrate.LAST_REPORT.note
         assert _snapshot(db, CARDS) == cards_before
     finally:
         engine.dispose()
 
-    # Doing what the warning says is enough: emptied, the next start recreates it from the model.
-    _write(db, f"DELETE FROM {LINES}", f"DELETE FROM {CARDS}", "DELETE FROM schema_version WHERE version > 8")
+    # Doing EXACTLY what the warning says is enough -- export (the operator's), empty, restart.
+    # Nothing about the version stamp: the file stays at 9 and the plain start recreates the
+    # table behind a backup of its own.
+    _write(db, f"DELETE FROM {LINES}", f"DELETE FROM {CARDS}")
     engine = init_db(_url(db), backup_dir=backups)
     try:
-        assert f"DROP TABLE {CARDS}" in migrate.LAST_REPORT.applied
+        report = migrate.LAST_REPORT
+        assert (report.from_version, report.to_version) == (SCHEMA_VERSION, SCHEMA_VERSION)
+        assert f"DROP TABLE {CARDS}" in report.applied
+        assert report.backup_path is not None and report.backup_path.name.startswith(f"v8.{SCHEMA_VERSION}-to-{SCHEMA_VERSION}.")
+        assert _ddl(report.backup_path, CARDS) == OLD_CARDS_DDL, "the backup is the file as it was before the recreate"
+        assert len(list(backups.iterdir())) == 2
         assert _ddl(db, CARDS) == _model_ddl(CARDS)
         _new_checks_bite(db)
     finally:
         engine.dispose()
+    # ...and now every start is the quiet fast path again.
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger="noc_agents.db.migrate"):
+        engine = init_db(_url(db), backup_dir=backups)
+    try:
+        assert migrate.LAST_REPORT.applied == [] and migrate.LAST_REPORT.backup_path is None
+        assert not [r for r in caplog.records if CARDS in r.getMessage()]
+        assert len(list(backups.iterdir())) == 2
+    finally:
+        engine.dispose()
+
+
+START = r"""
+import json, logging, os, sys
+warnings = []
+class H(logging.Handler):
+    def emit(self, record):
+        if record.levelno >= logging.WARNING:
+            warnings.append(record.getMessage())
+logging.getLogger("noc_agents.db.migrate").addHandler(H())
+import noc_agents.main  # noqa: F401  -- init_db() runs at import, on DATABASE_URL, with the default backup folder
+from noc_agents.db import migrate
+r = migrate.LAST_REPORT
+print("REPORT " + json.dumps({
+    "from": r.from_version, "to": r.to_version, "backup": r.backup_path.name if r.backup_path else None,
+    "dropped": [s for s in r.applied if s.startswith("DROP")], "warnings": warnings, "note": r.note,
+}))
+"""
+
+
+def _real_start(db: Path) -> dict:
+    """One real start: a fresh interpreter imports ``noc_agents.main`` with DATABASE_URL pointing at
+    ``db`` -- exactly what uvicorn does -- and reports what the migration did."""
+    env = {**os.environ, "DATABASE_URL": _url(db), "PYTHONPATH": str(Path(__file__).resolve().parents[2] / "src"), "PYTHONIOENCODING": "utf-8"}
+    proc = subprocess.run([sys.executable, "-c", START], env=env, capture_output=True, text=True, encoding="utf-8", timeout=600)
+    assert proc.returncode == 0, proc.stderr[-3000:]
+    line = next(l for l in proc.stdout.splitlines() if l.startswith("REPORT "))
+    return json.loads(line[7:])
+
+
+def test_the_remedy_works_through_the_real_startup_path(tmp_path, restore_db_globals):
+    """The round-4 finding, end to end: an operator reads the warning after the v9 start, does what
+    it says -- export, empty, restart -- and the new CHECKs are in force. No version stamp is
+    touched, no test-only shortcut is taken; each start is ``import noc_agents.main`` in its own
+    interpreter, and the backup goes where the app puts it (``<db folder>/backups``)."""
+    db = _build_v8(tmp_path, cards_sql=(OLD_ONLY_CARD,), lines_sql=(A_LINE,))
+    backups = db.parent / "backups"
+
+    first = _real_start(db)  # 8 -> 9: warns, keeps the rows and the old definition
+    assert (first["from"], first["to"]) == (8, SCHEMA_VERSION) and first["dropped"] == []
+    assert first["backup"].startswith(f"v8.8-to-{SCHEMA_VERSION}.")
+    assert len(first["warnings"]) == 1 and "export the rows, empty the table, restart" in first["warnings"][0]
+    assert _ddl(db, CARDS) == OLD_CARDS_DDL and _scalar(db, f"SELECT COUNT(*) FROM {CARDS}") == 1
+
+    # Export is the operator's business (skipped here); empty both tables; restart.
+    _write(db, f"DELETE FROM {LINES}", f"DELETE FROM {CARDS}")
+    second = _real_start(db)
+    assert (second["from"], second["to"]) == (SCHEMA_VERSION, SCHEMA_VERSION)
+    assert second["dropped"] == [f"DROP TABLE {CARDS}"] and second["warnings"] == []
+    assert second["backup"].startswith(f"v8.{SCHEMA_VERSION}-to-{SCHEMA_VERSION}.")
+    assert _ddl(backups / second["backup"], CARDS) == OLD_CARDS_DDL
+    assert _ddl(db, CARDS) == _model_ddl(CARDS)
+    _new_checks_bite(db)
+
+    third = _real_start(db)  # nothing left to do, nothing written
+    assert third["dropped"] == [] and third["warnings"] == [] and third["backup"] is None and third["note"] == "schema already current"
+    assert sorted(p.name for p in backups.iterdir()) == sorted([first["backup"], second["backup"]])
+    assert _scalar(db, "SELECT MAX(version) FROM schema_version") == SCHEMA_VERSION
+
+
+def test_a_current_file_with_a_drifted_empty_table_is_recreated_on_a_plain_start_behind_a_backup(tmp_path, restore_db_globals):
+    """The DDL comparison runs on every start, not only inside a version move."""
+    db = _build_v8(tmp_path, stamp=SCHEMA_VERSION)  # says 9, carries the OLD definition, empty
+    backups = tmp_path / "backups"
+    engine = init_db(_url(db), backup_dir=backups)
+    report = migrate.LAST_REPORT
+    try:
+        assert (report.from_version, report.to_version) == (SCHEMA_VERSION, SCHEMA_VERSION)
+        assert [s for s in report.applied if s.startswith("DROP")] == [f"DROP TABLE {CARDS}"]
+        assert report.backup_path is not None and _ddl(report.backup_path, CARDS) == OLD_CARDS_DDL
+        assert _ddl(db, CARDS) == _model_ddl(CARDS)
+        assert _sql(db, "SELECT version FROM schema_version") == [(SCHEMA_VERSION,)], "no second stamp"
+        _new_checks_bite(db)
+        assert migrate_additive(engine, backup_dir=backups).applied == []
+        assert len(list(backups.iterdir())) == 1
+    finally:
+        engine.dispose()
+
+
+# ============================================ 7. hand-made objects on the table, in another case
+
+SC_AUDIT = "CREATE TABLE sc_audit (card_id TEXT)"
+ON_CARDS_IN_ANOTHER_CASE = {
+    "lower": "CREATE TRIGGER trg_lower AFTER INSERT ON vendor_scorecards BEGIN INSERT INTO sc_audit VALUES (NEW.id); END",
+    "UPPER": "CREATE TRIGGER trg_upper AFTER INSERT ON VENDOR_SCORECARDS BEGIN INSERT INTO sc_audit VALUES (NEW.id); END",
+    "quoted_mixed": 'CREATE TRIGGER trg_qm AFTER INSERT ON "Vendor_Scorecards" BEGIN INSERT INTO sc_audit VALUES (NEW.id); END',
+    "bracket_lower": "CREATE TRIGGER trg_br AFTER INSERT ON [vendor_scorecards] BEGIN INSERT INTO sc_audit VALUES (NEW.id); END",
+    "index_UPPER": "CREATE INDEX ix_hand_upper ON VENDOR_SCORECARDS (period)",
+}
+A_HUMAN_CARD = OLD_ONLY_CARD.replace("'system'", "'Grace Wanjiru'")
+
+
+@pytest.mark.parametrize("case", sorted(ON_CARDS_IN_ANOTHER_CASE))
+def test_a_hand_made_object_on_the_table_in_another_case_survives_the_refresh(tmp_path, restore_db_globals, case):
+    """The round-4 reproduction (trigger_case.py): SQLite stores a trigger's tbl_name as spelled
+    ('VENDOR_SCORECARDS', 'Vendor_Scorecards') but drops it with the table regardless. A
+    case-sensitive capture missed it and the refresh reported success with the trigger gone."""
+    db = _build_v8(tmp_path, extra_sql=(SC_AUDIT, ON_CARDS_IN_ANOTHER_CASE[case]))
+    name = ON_CARDS_IN_ANOTHER_CASE[case].split()[2]
+    before = _sql(db, "SELECT type, name FROM sqlite_master WHERE name = ?", (name,))
+    assert len(before) == 1
+
+    init_db(_url(db), backup_dir=tmp_path / "backups").dispose()
+
+    assert _ddl(db, CARDS) == _model_ddl(CARDS), "the table was recreated"
+    assert _sql(db, "SELECT type, name FROM sqlite_master WHERE name = ?", (name,)) == before, "and the hand-made object is still there"
+    con = sqlite3.connect(db)
+    try:
+        con.execute(A_HUMAN_CARD)
+        if before[0][0] == "trigger":
+            assert con.execute("SELECT card_id FROM sc_audit").fetchall() == [("card-1",)], "and it still fires"
+        else:
+            plan = con.execute("EXPLAIN QUERY PLAN SELECT id FROM vendor_scorecards WHERE period = '2026-08'").fetchall()
+            assert any("ix_hand_upper" in row[-1] for row in plan), plan
+        con.rollback()
+    finally:
+        con.close()
 
 
 # ==================================================== 4. both drifted and empty: dependency order

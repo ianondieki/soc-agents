@@ -707,6 +707,45 @@ def test_a_marker_never_speaks_for_another_operator(tmp_db):
     assert not hk.is_marked_pseudonymised(session, "incidents", old, operator_id=OTHER_OPERATOR)
 
 
+def test_a_column_filled_after_the_first_pass_is_rewritten_without_a_second_marker(tmp_db):
+    """Round 4. The dedup check in ``_mark_pseudonymised`` is only reached when a row is
+    rewritten AGAIN — a person column filled in after the first APPLY pass (a late
+    ``restored_by`` on a ticket restored long after it was opened). The marker's id is
+    deterministic, so without the check the second INSERT hits the primary key
+    (``UNIQUE constraint failed: audit_events.id``) and the pseudonymise duty fails every night
+    from then on. With it, the late name is tokenised and the first marker stands unchanged.
+
+    ``expunge_all`` between the passes stands in for the next night's fresh session: the check
+    must find the marker in the DATABASE, not only in this session's identity map.
+    """
+    settings, session = tmp_db
+    op = settings.operator.operator_id
+    old = seed_incident(session, operator_id=op, age_days=800, number="INC000037", restored_by=None)
+    session.commit()
+    policy = hk.load_policy()
+    hk.pseudonymise_personal_fields(session, settings, policy, now=NOW, apply=True)
+    session.commit()
+    first = _marker(session, old)
+    first_ts, first_payload = first.ts, first.payload_json
+
+    session.expunge_all()
+    session.get(IncidentRow, old).restored_by = "Late Name Wafula"
+    session.commit()
+    session.expunge_all()
+
+    second = hk.pseudonymise_personal_fields(session, settings, policy, now=NOW + timedelta(days=1), apply=True)
+    session.commit()  # raised IntegrityError here before the check existed
+
+    assert second.rows_changed == 1, "the late name must be pseudonymised on the next pass"
+    assert row_snapshot(session, IncidentRow, old)["restored_by"] == "RESTORER-MTK"
+    count = session.scalar(
+        select(func.count()).select_from(AuditRow).where(AuditRow.action == hk.PSEUDONYMISED_ACTION)
+    )
+    assert count == 1
+    marker = _marker(session, old)
+    assert (marker.ts, marker.payload_json) == (first_ts, first_payload), "the first marker must stand"
+
+
 def test_the_marker_lives_in_a_table_retention_never_deletes(tmp_db):
     """Durability is the marker's whole value. audit_events resolves to a ``keep`` class; if
     that ever changed, a purge would silently turn frozen memory text back into text that is
@@ -739,6 +778,67 @@ def test_the_sweep_archives_the_payload_of_a_terminal_row_past_ninety_days(tmp_d
     assert payload["incident_number"] == "INC000100"  # the delivery record survives
     assert row.envelope_json is None
     assert row.status == "SENT"  # never rewritten
+
+
+def test_a_row_retried_between_the_sweeps_select_and_update_is_not_archived(tmp_db, monkeypatch):
+    """Round 4, the integrator's race fix in ``sweep_outbox`` (082db90).
+
+    The sweep SELECTs terminal rows past the cutoff, then UPDATEs each one. An admin retry
+    (``POST /outbox/{id}/retry``) or the dispatcher can move a row back to PENDING in between.
+    The UPDATE used to be keyed on the id alone, so it archived the now-queued row anyway —
+    replacing the message with a summary and leaving the dispatcher nothing to send — and
+    counted it. It now repeats ``status IN (SENT, DEAD) AND updated_at < cutoff`` and counts
+    the UPDATE's rowcount.
+
+    The retry is committed from a SECOND session, in the window between the SELECT and the
+    UPDATE (``_archive_summary`` is built just before each UPDATE runs), exactly as the route
+    would. A control row that nobody touches must still be archived, so the test cannot pass
+    by the sweep simply doing nothing.
+    """
+    from sqlalchemy import update
+
+    from noc_agents.db.models import get_session
+
+    settings, session = tmp_db
+    op = settings.operator.operator_id
+    moved = seed_outbox(
+        session, operator_id=op, status="DEAD", age_days=100, key="race-moved",
+        payload={"operator_id": op, "incident_number": "INC000101", "message": "Site down at Machakos"},
+    )
+    control = seed_outbox(
+        session, operator_id=op, status="SENT", age_days=100, key="race-control",
+        payload={"operator_id": op, "incident_number": "INC000102", "message": "Site up at Machakos"},
+    )
+    session.commit()
+    original_payload = session.get(OutboxRow, moved).payload_json
+
+    real = hk._archive_summary
+    retried: list[str] = []
+
+    def retry_in_the_window(row, payload, now):
+        if row["id"] == moved and not retried:
+            other = get_session()
+            try:
+                other.execute(
+                    update(OutboxRow).where(OutboxRow.id == moved).values(status="PENDING", attempts=0, updated_at=NOW)
+                )
+                other.commit()
+            finally:
+                other.close()
+            retried.append(moved)
+        return real(row, payload, now)
+
+    monkeypatch.setattr(hk, "_archive_summary", retry_in_the_window)
+    report = hk.sweep_outbox(session, settings, hk.load_policy(), now=NOW, apply=True)
+    session.commit()
+
+    assert retried == [moved], "precondition: the retry landed between the SELECT and the UPDATE"
+    assert report.archived == 1, "only the untouched row may be counted as archived"
+    session.expire_all()
+    row = session.get(OutboxRow, moved)
+    assert row.status == "PENDING"
+    assert row.payload_json == original_payload, "a queued row lost its message to the archive"
+    assert json.loads(session.get(OutboxRow, control).payload_json).get(hk.ARCHIVED_KEY) is True
 
 
 def test_a_terminal_row_inside_the_ninety_day_window_keeps_its_payload(tmp_db):

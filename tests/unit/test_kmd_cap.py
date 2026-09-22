@@ -40,6 +40,7 @@ from __future__ import annotations
 import json
 import re
 import socket
+import ssl
 import threading
 import time
 import tracemalloc
@@ -81,6 +82,9 @@ from noc_agents.services.signals import (
 )
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "cap"
+#: A self-signed certificate committed for the loopback TLS tests only (see its README).
+TLS_CERT = Path(__file__).resolve().parents[1] / "fixtures" / "tls" / "test_only_cert.pem"
+TLS_KEY = Path(__file__).resolve().parents[1] / "fixtures" / "tls" / "test_only_key.pem"
 FEED_URL = "https://meteo.go.ke/api/cap/rss.xml"
 RAIN_URL = "https://meteo.go.ke/api/cap/fixture-2026-05-07-wny-heavy-rain.xml"
 WIND_URL = "https://meteo.go.ke/api/cap/fixture-2026-05-06-nbi-strong-winds.xml"
@@ -690,6 +694,194 @@ def test_w02_every_request_opens_its_own_connection_and_is_traced():
     assert seen[0].headers["Connection"] == "close" and callable(seen[0].extensions.get("trace"))
 
 
+_CRLF = bytes([13, 10])
+
+
+def _tls_server(payload: bytes, gap: float, *, silent: bool = False) -> int:
+    """A one-shot loopback HTTPS server using the committed TEST-ONLY certificate. It completes
+    the handshake, reads the request, then drips ``payload`` a byte every ``gap`` seconds (or,
+    ``silent``, says nothing for longer than any per-read timeout the tests use)."""
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(str(TLS_CERT), str(TLS_KEY))
+
+    def run():
+        conn = None
+        try:
+            raw, _ = listener.accept()
+            conn = context.wrap_socket(raw, server_side=True)
+            data = b""
+            while _CRLF + _CRLF not in data:
+                chunk = conn.recv(4096)
+                if not chunk:
+                    return
+                data += chunk
+            if silent:
+                time.sleep(8.0)
+                return
+            for byte in payload:
+                conn.sendall(bytes([byte]))
+                time.sleep(gap)
+        except (OSError, ssl.SSLError):
+            pass  # the client's watchdog shut the connection: exactly what is being tested
+        finally:
+            if conn is not None:
+                conn.close()
+            listener.close()
+
+    threading.Thread(target=run, daemon=True).start()
+    return listener.getsockname()[1]
+
+
+def _slow_proxy(upstream_port: int, gap: float) -> int:
+    """A loopback TCP proxy that forwards client bytes at once and server bytes one every ``gap``
+    seconds — so the TLS HANDSHAKE itself arrives as a drip."""
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+
+    def run():
+        try:
+            client, _ = listener.accept()
+            upstream = socket.create_connection(("127.0.0.1", upstream_port))
+
+            def forward_up():
+                try:
+                    while chunk := client.recv(4096):
+                        upstream.sendall(chunk)
+                except OSError:
+                    pass
+
+            threading.Thread(target=forward_up, daemon=True).start()
+            while chunk := upstream.recv(4096):
+                for byte in chunk:
+                    client.sendall(bytes([byte]))
+                    time.sleep(gap)
+        except OSError:
+            pass
+        finally:
+            listener.close()
+
+    threading.Thread(target=run, daemon=True).start()
+    return listener.getsockname()[1]
+
+
+def _tls_client(per_read: float) -> httpx.Client:
+    """A client that trusts the TEST-ONLY certificate through its own ``verify`` setting —
+    certificate and hostname verification stay fully on; no production code changes."""
+    return httpx.Client(timeout=httpx.Timeout(per_read), verify=ssl.create_default_context(cafile=str(TLS_CERT)))
+
+
+_TLS_HEADERS = b"HTTP/1.1 200 OK" + _CRLF + b"X-Pad: " + b"z" * 80 + _CRLF + b"Content-Length: 5" + _CRLF + _CRLF + b"<rss>"
+_TLS_STORM = (b"HTTP/1.1 100 Continue" + _CRLF + _CRLF) * 80 + b"HTTP/1.1 304 Not Modified" + _CRLF + _CRLF
+_TLS_OK = b"HTTP/1.1 200 OK" + _CRLF + b"Content-Length: 5" + _CRLF + _CRLF + b"<rss>"
+
+TLS_CASES = {
+    # ~5.4 s of dripped response headers over TLS.
+    "tls-headers-dripped": (lambda: _tls_server(_TLS_HEADERS, 0.05), 1.0),
+    # 80 whole 100-Continue interim responses, dripped byte by byte (~4 s).
+    "tls-100-continue-storm": (lambda: _tls_server(_TLS_STORM, 0.002), 1.0),
+    # The server's first TLS flight dripped through a proxy (~7 s): the handshake itself. A
+    # REGRESSION GUARD: CPython already bounds a handshake by the socket timeout as one total
+    # deadline, which the round-3 per-wait cap sets to the budget; the watchdog covers it too.
+    "tls-handshake-dripped": (lambda: _slow_proxy(_tls_server(_TLS_OK, 0.0), 0.005), 1.0),
+    # Nothing after the handshake; client per-read 6 s. A REGRESSION GUARD: already bounded
+    # before this fix, by the round-3 per-wait cap, not by the watchdog (see the report).
+    "tls-silent-after-request": (lambda: _tls_server(b"", 0.0, silent=True), 6.0),
+}
+
+
+@pytest.mark.parametrize("label", sorted(TLS_CASES))
+def test_w02_tls_the_total_deadline_holds_over_https(loopback_only, label):
+    """W02-TLS: for https httpcore wraps the socket in an SSLSocket, which DETACHES the plain
+    socket the watchdog had recorded; at the deadline shutdown hit fileno -1, the error was
+    swallowed, and both production feeds (both https) had no header-phase bound at all. The
+    watchdog now owns a duplicate descriptor of the connection, which survives the wrap."""
+    make_server, per_read = TLS_CASES[label]
+    port = make_server()
+    client = _tls_client(per_read)
+    provider = KmdCapProvider(f"https://127.0.0.1:{port}/rss.xml", client=client, timeout_s=0.6)
+    started = time.monotonic()
+    with pytest.raises(CapError) as err:
+        provider.fetch_feed(if_modified_since=LAST_MODIFIED)
+    elapsed = time.monotonic() - started
+    assert err.value.kind == "timeout" and "total deadline" in str(err.value), str(err.value)
+    assert elapsed < 2.5, f"{label}: {elapsed:.2f}s against a 0.6 s budget"
+
+
+def test_w02_tls_a_normal_https_fetch_still_works_and_verifies_the_certificate(loopback_only):
+    """The watchdog must not disturb a healthy exchange, and verification is really on: the same
+    server is refused by a client that does not trust the test certificate."""
+    body = _read("kmd_rss.xml")
+    ok = b"HTTP/1.1 200 OK" + _CRLF + b"Content-Length: " + str(len(body)).encode() + _CRLF + _CRLF + body
+    port = _tls_server(ok, 0.0)
+    feed = KmdCapProvider(f"https://127.0.0.1:{port}/rss.xml", client=_tls_client(5.0), timeout_s=5.0).fetch_feed()
+    assert [i.link for i in feed.items] == [RAIN_URL, WIND_URL]
+    port = _tls_server(ok, 0.0)
+    with pytest.raises(CapError) as err:
+        KmdCapProvider(f"https://127.0.0.1:{port}/rss.xml", client=httpx.Client(timeout=5.0), timeout_s=5.0).fetch_feed()
+    assert err.value.kind == "tls"
+
+
+def test_w02_no_watchdog_thread_outlives_its_exchange(loopback_only):
+    """Every exchange — refused, timed out or successful — ends with its timer thread joined."""
+    port = _tls_server(_TLS_HEADERS, 0.05)
+    with pytest.raises(CapError):
+        KmdCapProvider(f"https://127.0.0.1:{port}/rss.xml", client=_tls_client(1.0), timeout_s=0.5).fetch_feed()
+    KmdCapProvider(client=httpx.Client(transport=httpx.MockTransport(
+        lambda req: httpx.Response(200, content=_read("kmd_rss.xml"))))).fetch_feed()
+    alive = [t for t in threading.enumerate() if t.name == adapter.DeadlineWatchdog.THREAD_NAME and t.is_alive()]
+    assert alive == []
+
+
+class _Stream:
+    """The one method of an httpcore network stream the watchdog uses."""
+
+    def __init__(self, sock: socket.socket) -> None:
+        self._sock = sock
+
+    def get_extra_info(self, name: str):
+        return self._sock if name == "socket" else None
+
+
+def test_w02_the_watchdogs_handle_survives_the_socket_being_detached(loopback_only):  # socketpair() is loopback TCP on Windows
+    """What wrap_socket does to the plain socket, done directly: the object the trace saw is
+    detached (fileno -1) and a new object owns the descriptor. Shutdown must still reach the
+    connection — the peer sees end-of-stream."""
+    a, b = socket.socketpair()
+    watchdog = adapter.DeadlineWatchdog(60.0)
+    try:
+        watchdog.trace("connection.connect_tcp.complete", {"return_value": _Stream(a)})
+        owner = socket.socket(fileno=a.detach())  # SSLSocket._create does this
+        assert a.fileno() == -1
+        watchdog._fire()
+        b.settimeout(2.0)
+        assert b.recv(16) == b""  # connection shut down although the recorded object was detached
+        owner.close()
+    finally:
+        watchdog.cancel()
+        b.close()
+
+
+def test_w02_a_late_fire_never_touches_a_connection_after_cancel(loopback_only):
+    """Shutdown can never hit another request's socket: once cancel() has run (always, in the
+    caller's finally), a timer that was already firing finds nothing to shut down."""
+    a, b = socket.socketpair()
+    watchdog = adapter.DeadlineWatchdog(60.0)
+    watchdog.trace("connection.connect_tcp.complete", {"return_value": _Stream(a)})
+    watchdog.cancel()
+    watchdog._fire()  # a fire that raced the end of the exchange
+    try:
+        a.sendall(b"still-open")
+        b.settimeout(2.0)
+        assert b.recv(16) == b"still-open"  # the connection was not shut down
+    finally:
+        a.close()
+        b.close()
+
+
 def test_new1_a_304_to_an_unconditional_request_is_refused_not_read_as_unchanged():
     provider = KmdCapProvider(client=httpx.Client(transport=httpx.MockTransport(lambda req: httpx.Response(304))))
     with pytest.raises(CapError) as err:
@@ -1222,10 +1414,13 @@ def test_f10_a_profile_fix_re_attributes_live_alerts_without_a_refetch(tmp_db, m
     poll(session, gappy, provider=server.provider(), now=T0 + timedelta(hours=2))
     rows = _by_eid(session)
     assert rows["kw-1#CST"].valid_until == T0 + timedelta(hours=2) and "detached" in json.loads(rows["kw-1#CST"].derived_json)
-    # ... and a later fix brings it back on the alert's own terms.
+    # ... and a later fix attributes it again — as a NEW span from now, never by reviving the
+    # detached row (NEW4: reviving it credited CST with the hours it was unmapped).
     poll(session, fixed, provider=server.provider(), now=T0 + timedelta(hours=3))
-    session.refresh(rows["kw-1#CST"])
-    assert rows["kw-1#CST"].valid_until == datetime(2026, 5, 10, 6, 0)
+    rows = _by_eid(session)
+    assert rows["kw-1#CST"].valid_until == T0 + timedelta(hours=2)
+    span = rows["kw-1#CST@20260507T150000Z"]
+    assert span.fetched_at == T0 + timedelta(hours=3) and span.valid_until == datetime(2026, 5, 10, 6, 0)
 
 
 def test_f04_a_gazetted_alias_in_the_feed_reaches_every_region_that_lists_the_county(tmp_db, monkeypatch):
@@ -1314,6 +1509,43 @@ def test_new1_an_outage_between_runs_does_not_erase_a_pending_document(tmp_db, m
     assert "If-Modified-Since" not in feed_requests[-1].headers  # withheld: something was still owed
     health = cap_feed_health(session, "safaricom", "WNY", t2)
     assert health["state"] == "ok" and health["alerts_in_force"] == 1
+
+
+def test_new4_re_attaching_a_county_opens_a_new_span_and_the_gap_is_never_credited(tmp_db, monkeypatch):
+    """NEW4: when a county moved back to a region, the detached row was revived — one continuous
+    span from the first fetch to KMD's expiry — so the backtest credited the region with a
+    warning through the hours it was not mapped. The replayers' case, exactly."""
+    from noc_agents.db.models import IncidentRow
+    from noc_agents.services import backtest
+
+    settings, session = tmp_db
+    _enable(monkeypatch)
+    server = Server()
+    _serve(server, {"https://x.test/a1.xml": _cap(
+        "a1", sent="2026-05-07T14:55:00+03:00", expires="2026-05-07T21:00:00+03:00", areas=("Kwale",))})
+    mapped = _with_regions(settings, CST=["Mombasa", "Kwale"], WNY=["Kisumu"])
+    moved = _with_regions(settings, CST=["Mombasa"], WNY=["Kisumu", "Kwale"])
+    for minutes, profile in ((0, mapped), (30, moved), (60, moved), (150, mapped), (180, mapped)):
+        poll(session, profile, provider=server.provider(), now=T0 + timedelta(minutes=minutes))
+
+    rows = _by_eid(session)
+    assert rows["a1#CST"].valid_until == T0 + timedelta(minutes=30)  # the first span stays ended
+    second = rows["a1#CST@20260507T143000Z"]
+    assert second.fetched_at == T0 + timedelta(minutes=150) and second.valid_until == datetime(2026, 5, 7, 18, 0)
+    assert "detached" not in json.loads(second.derived_json)
+
+    session.add(IncidentRow(id="inc-gap", operator_id="safaricom", incident_number="SAF9990001", site_id="S1",
+                            region_code="CST", correlation_fingerprint="fp-gap", failure_time=T0 + timedelta(minutes=90),
+                            created_at=T0 + timedelta(minutes=90), updated_at=T0 + timedelta(minutes=90)))
+    session.commit()
+    end = T0 + timedelta(hours=12)
+    episodes = backtest.build_episodes(
+        backtest._family_rows(session, "safaricom", family="cap", since=T0 - timedelta(days=1), until=end, now=end),
+        family="cap")
+    cst = sorted((e.start, e.end) for e in episodes if e.region_code == "CST")
+    assert cst == [(T0, T0 + timedelta(minutes=30)), (T0 + timedelta(minutes=150), datetime(2026, 5, 7, 18, 0))]
+    score = backtest.score_region(session, "safaricom", "CST", family="cap", since=T0 - timedelta(hours=1), until=end, now=end)
+    assert (score.incidents, score.incidents_warned) == (1, 0)  # 13:30 fell in the unmapped gap
 
 
 def test_new2_a_detached_held_row_is_never_extended_or_re_detached(tmp_db, monkeypatch):

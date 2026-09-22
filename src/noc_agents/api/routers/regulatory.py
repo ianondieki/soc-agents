@@ -36,7 +36,7 @@ from pydantic import BaseModel, Field
 
 from noc_agents.api import auth
 from noc_agents.api.auth import require_role
-from noc_agents.api.deps import AUDIT_READERS, READERS, SUPERVISORS, _actor, _get_owned, _settings
+from noc_agents.api.deps import AUDIT_READERS, INCIDENT_READERS, SUPERVISORS, _actor, _get_owned, _settings
 from noc_agents.db.models import IncidentRow, get_session
 from noc_agents.db.models_regulatory import EvidencePackRow, RegulatoryNotificationRow
 from noc_agents.realtime.commit_hook import buffer_event
@@ -147,7 +147,8 @@ def _pack_out(row: EvidencePackRow) -> dict[str, Any]:
 # ------------------------------------------------------------------------------------- reads
 
 
-@router.get("/incidents/{incident_id}/regulatory", dependencies=[Depends(require_role(*READERS))])
+# §9.3 row 1 read (incident surface): INCIDENT_READERS -- legal R, the vendor roles "notes only".
+@router.get("/incidents/{incident_id}/regulatory", dependencies=[Depends(require_role(*INCIDENT_READERS))])
 def get_incident_regulatory(incident_id: str) -> dict[str, Any]:
     """The incident's regulatory clocks and their countdowns — the workspace panel (§5.3.20).
 

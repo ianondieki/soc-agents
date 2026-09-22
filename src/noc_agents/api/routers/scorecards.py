@@ -54,12 +54,13 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from noc_agents.api import auth
 from noc_agents.api.auth import require_role
 from noc_agents.api.deps import SUPERVISORS, _actor, _get_owned, _owned, _settings
 from noc_agents.db.models import get_session
-from noc_agents.db.models_scorecards import RELEASED_STATUSES, SCORECARD_STATUSES, VendorScorecardLineRow, VendorScorecardRow
+from noc_agents.db.models_scorecards import RELEASED_STATUSES, SCORECARD_STATUSES, ScorecardEvidenceError, VendorScorecardLineRow, VendorScorecardRow
 from noc_agents.db.models_vendors import VendorRow
 from noc_agents.services.scorecard import (
     PUBLISHER_ROLES,
@@ -246,9 +247,12 @@ def compute_scorecards(
         label = period or last_ended_period(tz_name=s.operator.timezone)
         try:
             report, run_id = compute_on_request(session, s, label, vendor_code=vendor, actor=_actor(principal, None))
-        except ScorecardStateError as exc:
+        except (ScorecardStateError, ScorecardEvidenceError) as exc:  # a guard refused: the card's state, not the input
             session.rollback()
             raise HTTPException(409, str(exc)) from exc
+        except IntegrityError as exc:  # the table refused the write (a CHECK, a UNIQUE): the failure is on record, the session clean
+            session.rollback()
+            raise HTTPException(409, f"the card could not be written: {exc.orig}") from exc
         except LookupError as exc:
             session.rollback()
             raise HTTPException(404, str(exc)) from exc
@@ -274,9 +278,11 @@ def _transition(card_id: str, principal: auth.Principal, act) -> dict:
             act(session, card)
         except ScorecardPermissionError as exc:
             raise HTTPException(403, str(exc)) from exc
-        except ScorecardStateError as exc:  # includes ScorecardGateError: WITHHELD / unreviewed first period
+        except (ScorecardStateError, ScorecardEvidenceError) as exc:  # incl. ScorecardGateError: WITHHELD / unreviewed first period / a guard
+            session.rollback()
             raise HTTPException(409, str(exc)) from exc
         except (FileNotFoundError, ValueError) as exc:
+            session.rollback()
             raise HTTPException(400, str(exc)) from exc
         session.commit()
         return {"ok": True, "scorecard": _out(session, card, with_lines=True)}

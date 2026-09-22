@@ -1731,6 +1731,8 @@ def _computation_scope(session: Session, card_id: str):
         yield
     finally:
         scope.discard(card_id)
+        if not scope:
+            session.info.pop(COMPUTATION_SCOPE_KEY, None)
 
 
 def compute_scorecard(
@@ -1786,8 +1788,12 @@ def compute_scorecard(
     lines = _with_credits(session, comp, operator_id=vendor.operator_id, terms=terms)
 
     recomputed = card is not None
-    with _computation_scope(session, card_id):
-        card = _write_card(session, card, card_id, vendor, bounds, comp, lines, needs_shadow, status, terms, run_id, at, recomputed)
+    # Scope the row that will actually be written: an existing card keeps ITS id, which may be
+    # outside the uuid5 scheme (``_existing_card`` finds it by natural key on purpose); only a
+    # brand-new card gets the deterministic one.
+    written_id = card.id if card is not None else card_id
+    with _computation_scope(session, written_id):
+        card = _write_card(session, card, written_id, vendor, bounds, comp, lines, needs_shadow, status, terms, run_id, at, recomputed)
     _audit(
         session,
         card,
@@ -2092,16 +2098,44 @@ def compute_on_request(
     session.add(run)
     session.flush()
     tracker = RunTracker(session, run)
-    step = tracker.start_step(JOB_NAME, AGENT, f"period={period} vendor={vendor_code or '*'} requested_by={actor}")
+    input_summary = f"period={period} vendor={vendor_code or '*'} requested_by={actor}"
+    step = tracker.start_step(JOB_NAME, AGENT, input_summary)
     try:
         report = compute_period(session, cfg, period, run_id=run.id, vendor_code=vendor_code, now=now, actor=actor)
     except Exception as exc:
-        tracker.complete_step(step, status=FAILED, output_summary="", rationale=f"{type(exc).__name__}: {exc}"[:2000], confidence=None)
-        tracker.finish_run(FAILED, error=str(exc)[:2000])
+        # The failure may have come out of a flush (a mapper guard, an IntegrityError), which
+        # leaves the session needing a rollback: writing the step on it would raise
+        # PendingRollbackError over the real error, the route would answer 500 and the run row
+        # would be lost with the rollback. So: roll back first, then record the failure as its
+        # own committed run -- the only commit this function makes, and it persists nothing but
+        # that record -- and re-raise the ORIGINAL exception for the caller to map (400/404/409).
+        session.rollback()
+        _record_failed_run(session, cfg.operator_id, run.id, input_summary, exc)
         raise
     tracker.complete_step(step, status=SUCCEEDED, output_summary=report.summary(), rationale="arithmetic only; nothing published, nothing sent; per-vendor detail in audit_events", confidence=None)
     tracker.finish_run(SUCCEEDED)
     return report, run.id
+
+
+def _record_failed_run(session: Session, operator_id: str, run_id: str, input_summary: str, exc: BaseException) -> None:
+    """After a rollback: a FAILED ``agent_runs`` row (same id, so the caller's ``run_id`` stays
+    true) with one FAILED step naming the error, committed on its own. Best effort -- a second
+    failure here must not mask the first, so it is logged and swallowed."""
+    from noc_agents.graph.instrumentation import RunTracker
+
+    try:
+        started = utcnow()
+        run = AgentRunRow(id=run_id, incident_id=None, operator_id=operator_id, graph_name=GRAPH_NAME, trigger="REQUEST", status="RUNNING", started_at=started)
+        session.add(run)
+        session.flush()
+        tracker = RunTracker(session, run)
+        step = tracker.start_step(JOB_NAME, AGENT, input_summary)
+        tracker.complete_step(step, status=FAILED, output_summary="", rationale=f"{type(exc).__name__}: {exc}"[:2000], confidence=None)
+        tracker.finish_run(FAILED, error=str(exc)[:2000])
+        session.commit()
+    except Exception:  # noqa: BLE001 -- the original error is the one the caller must see
+        log.exception("scorecard: could not record the failed run %s", run_id)
+        session.rollback()
 
 
 def _scheduler_run_id(session: Session, operator_id: str) -> str | None:

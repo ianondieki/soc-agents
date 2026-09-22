@@ -175,16 +175,20 @@ def test_enforced_rbac_401_403_and_the_supervisor_path(make_client, monkeypatch)
     assert client.post(f"/api/v1/hitl/{task_id}/approve", json={"resolved_by": "X"}).status_code == 401
     client.cookies.clear()
 
-    # the spec's acceptance case: noc_analyst may claim, but may NOT approve
+    # the spec's acceptance case: noc_analyst may NOT approve. Since RBAC round 4 it may not
+    # claim either: §9.3 row 2 gives it "—" on claim/approve/reject, and a claim by someone
+    # who cannot decide would silence the §6.5 unclaimed-escalation ladder.
     _login(client, "noc_analyst")
-    assert client.post(f"/api/v1/hitl/{task_id}/claim", json={"resolved_by": "Analyst"}).status_code == 200
+    assert client.post(f"/api/v1/hitl/{task_id}/claim", json={"resolved_by": "Analyst"}).status_code == 403
     r = client.post(f"/api/v1/hitl/{task_id}/approve", json={"resolved_by": "Analyst"})
     assert r.status_code == 403
     assert "noc_analyst" in r.json()["detail"]
     # ... nor may an analyst run the shift handover
     assert client.post("/api/v1/shifts/handover").status_code == 403
-    # ... but an operations route they DO own still answers
-    assert client.get("/api/v1/hitl/pending").status_code == 200
+    # ... but an operations route they DO own still answers (the HITL inbox is no longer one:
+    # it lists the cards a role may act on, and row 2 gives the analyst none)
+    assert client.get("/api/v1/incidents").status_code == 200
+    assert client.get("/api/v1/hitl/pending").status_code == 403
 
     # a supervisor gets through the very same gate
     client.cookies.clear()

@@ -167,6 +167,9 @@ def test_v1_file_migrates_to_current_schema(tmp_path, restore_db_globals):
     creates = [s for s in report.applied if s.startswith("CREATE TABLE IF NOT EXISTS ")]
     assert {s.split()[5] for s in creates} == NEW_TABLES
     assert "CREATE INDEX IF NOT EXISTS ix_outbox_status_next ON outbox (status, next_attempt_at)" in report.applied
+    # An index added to a model after the table shipped reaches an old file through the same
+    # additive pass (and, since round 4, a CURRENT file through every start -- test_audit_index.py).
+    assert "CREATE INDEX IF NOT EXISTS ix_audit_events_entity_action ON audit_events (entity_type, entity_id, action)" in report.applied
     alters = [s for s in report.applied if s.startswith("ALTER TABLE ")]
     assert alters == [
         "ALTER TABLE incidents ADD COLUMN restored_source TEXT",

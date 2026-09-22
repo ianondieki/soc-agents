@@ -396,6 +396,15 @@ class ProblemRow(Base):
 
 class AuditRow(Base):
     __tablename__ = "audit_events"
+    # The subject lookup. ``db.models_scorecards.earlier_released_card_exists`` (§7.6.2's shadow
+    # rule) asks, for every card it checks, "is there a ``scorecard.published`` row for THIS
+    # entity?" -- a correlated EXISTS on (entity_type, entity_id, action). With only the ``ts``
+    # index that is a full scan of a keep-forever table on every check (measured ~1000x slower at
+    # 2M rows). Column order is the predicate's: type, then id, then action, so the EXISTS is a
+    # single index probe and a lookup by (entity_type, entity_id) alone uses the same prefix.
+    # An index carries no data, so db/migrate.py creates a missing one on EVERY start, without a
+    # version bump or a backup ("ON EVERY START" in its docstring); a fresh file gets it here.
+    __table_args__ = (Index("ix_audit_events_entity_action", "entity_type", "entity_id", "action"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     ts: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)

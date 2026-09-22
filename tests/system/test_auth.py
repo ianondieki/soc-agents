@@ -71,15 +71,20 @@ ROLES = frozenset(auth.ROLES)
 OPERATIONS = frozenset({"noc_analyst", "shift_supervisor", "duty_manager", "admin"})
 #: Alarm ingest is row 1 R/W minus the two "notes only" roles.
 INGEST = OPERATIONS
-#: api/deps.READERS, as the lane routers still use it. Not a §9.3 cell on its own: it is row
-#: 1's read column WITHOUT legal (see INCIDENT_READERS).
+#: api/deps.READERS, as the lane routers still use it for surfaces §9.3 has no row for.
 READERS = OPERATIONS | {"management", "msp_coordinator", "field_engineer", "planning"}
-#: Row 1's read column, legal included -- every incident-surface read in main.py.
-INCIDENT_READERS = READERS | {"legal"}
+#: Row 1's read column, read STRICTLY (round 4): legal R, and the two vendor roles "notes only"
+#: -- they read nothing in row 1. tests/system/test_rbac_matrix.py derives the same set from
+#: the spec's own cells; this literal is the independent statement.
+INCIDENT_READERS = OPERATIONS | {"management", "planning", "legal"}
 #: Row 1 "notes only": the one write msp_coordinator and field_engineer are given.
 NOTE_AUTHORS = OPERATIONS | {"msp_coordinator", "field_engineer"}
-#: HITL decide, and the handover run.
+#: The handover run (row 4 is its APPROVAL).
 SUPERVISORS = frozenset({"shift_supervisor", "duty_manager", "admin"})
+#: The four HITL routes' route-level gate: everyone who may act on at least one card TYPE --
+#: row 2's supervisors, planning (schedule/window), management (handover, row 4). Which card a
+#: role may act on is per type: tests/system/test_rbac_matrix.py tests every type.
+HITL_ANY = SUPERVISORS | {"planning", "management"}
 #: "Templates status, outbox retry, scheduler run, MCP status, agents" -- the read side.
 PLATFORM_READERS = frozenset({"noc_analyst", "shift_supervisor", "duty_manager", "management", "admin"})
 #: The regulator-facing audit trail.
@@ -182,15 +187,16 @@ GATED: list[Gated] = [
         {"assignee_type": "MSP", "assignee_name": "EGYPRO", "reason": "closer team"},
         absent=True,
     ),
-    # --- HITL: claim admits noc_analyst (recorded at the route); the decision does not ---
-    Gated("GET", "/api/v1/hitl/pending", OPERATIONS),
-    Gated("POST", "/api/v1/hitl/{task_id}/claim", OPERATIONS, {"resolved_by": "X"}, absent=True),
-    Gated("POST", "/api/v1/hitl/{task_id}/approve", SUPERVISORS, {"resolved_by": "X"}, absent=True),
+    # --- HITL: §9.3 row 2 gives noc_analyst "—", claim included (round 4); per-type below ---
+    Gated("GET", "/api/v1/hitl/pending", HITL_ANY),
+    Gated("POST", "/api/v1/hitl/{task_id}/claim", HITL_ANY, {"resolved_by": "X"}, absent=True),
+    Gated("POST", "/api/v1/hitl/{task_id}/approve", HITL_ANY, {"resolved_by": "X"}, absent=True),
     Gated(
-        "POST", "/api/v1/hitl/{task_id}/reject", SUPERVISORS, {"resolved_by": "X", "reason": "dup"}, absent=True
+        "POST", "/api/v1/hitl/{task_id}/reject", HITL_ANY, {"resolved_by": "X", "reason": "dup"}, absent=True
     ),
     # --- shifts and the audit trail ------------------------------------------------------
-    Gated("GET", "/api/v1/shifts/ledger", OPERATIONS),
+    # The JSON ledger list takes row 4 like the xlsx (the stricter reading; see main.py).
+    Gated("GET", "/api/v1/shifts/ledger", LEDGER_DOWNLOAD),
     Gated("GET", "/api/v1/shifts/ledger/{shift_id:path}.xlsx", LEDGER_DOWNLOAD),
     # REAL: the handover takes no input; each call queues one HELD mail behind a new approval
     # card in this module's throwaway file, and nothing leaves (EMAIL_ENABLED=false).
@@ -567,6 +573,7 @@ def test_a_vendor_note_is_recorded_as_the_vendors_whatever_the_body_says(enforce
         json={"author": "Somebody Else", "author_role": "NOC", "source": "ui", "body": "On site, rectifier swap"},
     )
     assert r.status_code == 200, r.text
+    _as(client, "noc_analyst")  # the vendor roles read nothing in row 1 ("notes only")
     after = client.get(f"/api/v1/incidents/{inc['id']}").json()
     assert after["first_vendor_note_at"] is not None, "the vendor's own note did not start its clock"
     assert ("msp_coordinator", "MSP", "ui", "On site, rectifier swap") in _notes(inc["id"])
@@ -588,6 +595,7 @@ def test_a_field_engineer_cannot_credit_the_restore_to_someone_else(enforced):
         },
     )
     assert r.status_code == 200, r.text
+    _as(client, "noc_analyst")  # the vendor roles read nothing in row 1 ("notes only")
     after = client.get(f"/api/v1/incidents/{inc['id']}").json()
     assert after["restored_source"] == "MARK_RESTORED"
     assert after["restored_by"] == "field_engineer", after["restored_by"]

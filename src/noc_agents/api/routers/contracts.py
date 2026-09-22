@@ -28,8 +28,10 @@ an inert gate in front of an MSP's confidential contract text is not a gate.
 **Operator scoping** is in the service (every statement starts from ``api.deps._owned``); this
 module adds no query of its own against a contract table.
 
-Roles (§7.8.2): ingest is ``legal``/``admin``; FAQ curation and the query log are ``legal``;
-reads are the ``READERS`` tuple plus ``legal``, and inside a read each contract's own
+Roles (§9.3's contracts row, via ``api/deps``): ingest, FAQ curation and the query log are
+``legal``/``admin`` ("all"; §7.8.2 names only ``legal`` for the FAQ and the log, a spec
+conflict resolved toward §9.3); reads take the "ask" cell -- noc_analyst, shift_supervisor,
+duty_manager, planning, legal, admin -- and inside a read each contract's own
 ``allowed_roles`` still applies — the route-level gate says who may *ask*, the contract row
 says who may *see*.
 """
@@ -45,7 +47,7 @@ from sqlalchemy import func, select
 
 from noc_agents.api import auth
 from noc_agents.api.auth import require_role
-from noc_agents.api.deps import READERS, _actor, _owned
+from noc_agents.api.deps import CONTRACT_ASKERS, CONTRACT_OWNERS, _actor, _owned
 from noc_agents.db.models import get_session
 from noc_agents.db.models_contracts import ContractClauseRow, ContractFaqRow, ContractQueryRow
 from noc_agents.services import contracts as svc
@@ -55,11 +57,13 @@ router = APIRouter(prefix="/api/v1", tags=["contracts"])
 
 #: Who may ask. ``legal`` is not in ``READERS`` (it is an audit/curation role elsewhere) but
 #: is the one role that must be able to read every contract it curates.
-CONTRACT_READERS: tuple[str, ...] = READERS + ("legal",)
+#: §9.3's "ask" cell (api/deps.CONTRACT_ASKERS). Until round 4 this was READERS + legal, which
+#: let management and the MSP coordinator list contracts and search clauses.
+CONTRACT_READERS: tuple[str, ...] = CONTRACT_ASKERS
 #: §7.8.2: ingest is legal/admin.
 CONTRACT_INGESTERS: tuple[str, ...] = ("legal", "admin")
 #: §7.8.2: FAQ curation and the query log are legal.
-CONTRACT_CURATORS: tuple[str, ...] = ("legal",)
+CONTRACT_CURATORS: tuple[str, ...] = CONTRACT_OWNERS  # §9.3 "all" for admin too; §7.8.2 says legal
 
 MAX_QUESTION_CHARS = 2000
 MAX_QUERY_LOG = 500

@@ -381,10 +381,25 @@ REVIEW_COLUMNS: tuple[str, ...] = ("shadow_reviewed_by", "shadow_reviewed_at")
 #: (the QBR narrative is written after release).
 CARD_EVIDENCE_COLUMNS: tuple[str, ...] = (*COMPUTED_EVIDENCE_COLUMNS, *REVIEW_COLUMNS, "computed_by_run_id")
 
-#: Line columns that are EVIDENCE: the number as published. What humans later decide about
-#: it -- ``band`` re-judged by a dispute, the credit's status, every ``dispute_*`` /
-#: ``adjusted_*`` / ``adjudicat*`` column -- stays writable, because that is the dispute
-#: lane's job; the published figure it argues about does not move.
+#: The DISPUTE SEAM: the only line columns a writer other than the computation may touch, on
+#: an unreleased card and on a released one alike. They are what a human decides ABOUT a
+#: published figure -- the C-02 dispute path (``DISPUTE_SCORECARD_LINE``) writes them, and a
+#: later feature that needs another column adds it HERE, explicitly, rather than finding a
+#: hole. ``band`` is here because an ADJUSTED dispute re-bands the line; ``credit_status``
+#: because Supply Chain/Legal accept or withdraw a proposal (§7.6.2).
+LINE_DISPUTE_COLUMNS: tuple[str, ...] = (
+    "band",
+    "credit_status",
+    "dispute_task_id",
+    "dispute_status",
+    "adjusted_value",
+    "adjudicated_by",
+    "adjudication_reason",
+)
+
+#: Line columns that are EVIDENCE: the number as computed and, once released, as published.
+#: Written by ``compute_scorecard`` only -- inserted, updated and deleted inside the parent
+#: card's computation scope -- and frozen for good once the card is released.
 LINE_EVIDENCE_COLUMNS: tuple[str, ...] = (
     "scorecard_id",
     "seq",
@@ -580,18 +595,62 @@ def _freeze_released_card(mapper, connection, target: VendorScorecardRow) -> Non
             )
 
 
-@event.listens_for(VendorScorecardLineRow, "before_update")
-def _freeze_published_line(mapper, connection, target: VendorScorecardLineRow) -> None:
-    """The published figure on a line does not move once its card is released (see
-    ``LINE_EVIDENCE_COLUMNS`` for what stays writable). The card's status is read on the
-    flush's own connection, so a card released earlier in the same transaction counts."""
-    changed = [c for c in LINE_EVIDENCE_COLUMNS if _changed(target, c)]
-    if not changed:
-        return
+def _card_in_scope(session, card_id: str) -> bool:
+    return session is not None and card_id in (session.info.get(COMPUTATION_SCOPE_KEY) or ())
+
+
+def _parent_status(connection, card_id: str) -> str | None:
+    """The parent card's status as the flush's own connection sees it; ``None`` when the card row
+    is not there yet (a brand-new card whose lines are inserted in the same flush)."""
+    return connection.execute(select(VendorScorecardRow.status).where(VendorScorecardRow.id == card_id)).scalar()
+
+
+def _line_evidence_write(mapper, connection, target: VendorScorecardLineRow, what: str, changed: list[str]) -> None:
+    """The one rule for a line's evidence: frozen on a released card; otherwise the
+    computation's, i.e. only inside the PARENT CARD's computation scope."""
     card_id = _previous(target, "scorecard_id") or target.scorecard_id
-    status = connection.execute(select(VendorScorecardRow.status).where(VendorScorecardRow.id == card_id)).scalar()
+    status = _parent_status(connection, card_id)
     if status in RELEASED_STATUSES:
         raise ScorecardEvidenceError(
-            f"scorecard line {target.id}: {', '.join(changed)} cannot change on a {status} card -- the published figure is frozen; "
-            "the dispute columns (dispute_status, adjusted_value, adjudicated_by, adjudication_reason) are where a correction lives"
+            f"scorecard line {target.id}: {what} on a {status} card ({', '.join(changed)}) -- the published figure is frozen; "
+            f"the dispute columns ({', '.join(LINE_DISPUTE_COLUMNS)}) are where a correction lives"
         )
+    if not _card_in_scope(object_session(target), card_id):
+        raise ScorecardEvidenceError(
+            f"scorecard line {target.id}: {what} outside a computation ({', '.join(changed)}) -- a line's evidence is "
+            "written by services.scorecard.compute_scorecard and by nothing else; recompute the card"
+        )
+
+
+@event.listens_for(VendorScorecardLineRow, "before_insert")
+def _line_born_of_computation(mapper, connection, target: VendorScorecardLineRow) -> None:
+    """A line is inserted by the computation of its card and by nothing else. An "extra line
+    with a 25 % credit" added to a SHADOW card from the ORM is refused here."""
+    _line_evidence_write(mapper, connection, target, "inserted", list(LINE_EVIDENCE_COLUMNS))
+
+
+@event.listens_for(VendorScorecardLineRow, "before_update")
+def _line_written_by_computation(mapper, connection, target: VendorScorecardLineRow) -> None:
+    """Evidence columns change only inside the parent card's computation scope, and never once
+    the card is released. The dispute seam (``LINE_DISPUTE_COLUMNS``) is free either way."""
+    changed = [c for c in LINE_EVIDENCE_COLUMNS if _changed(target, c)]
+    if changed:
+        _line_evidence_write(mapper, connection, target, "evidence changed", changed)
+
+
+@event.listens_for(VendorScorecardLineRow, "before_delete")
+def _line_deleted_by_computation(mapper, connection, target: VendorScorecardLineRow) -> None:
+    """A line disappears only when the computation drops it (LINE_SHAPE shrank between
+    releases) -- never from a released card, never from outside the scope."""
+    _line_evidence_write(mapper, connection, target, "deleted", ["row"])
+
+
+@event.listens_for(VendorScorecardRow, "before_delete")
+def _refuse_card_delete(mapper, connection, target: VendorScorecardRow) -> None:
+    """Nothing in this codebase deletes a card: a recompute updates in place, retention keeps
+    scorecards (§9.4, >= 3 years). A released card is evidence a vendor was shown; an
+    unreleased one may go only inside its own computation scope."""
+    if target.status in RELEASED_STATUSES:
+        raise ScorecardEvidenceError(f"scorecard {target.id} is {target.status}: a released card is never deleted")
+    if not _card_in_scope(object_session(target), target.id):
+        raise ScorecardEvidenceError(f"scorecard {target.id}: deleted outside a computation -- a card is not removed by hand")

@@ -344,11 +344,12 @@ def test_the_list_route_never_carries_an_advisory_key(client, monkeypatch):
 
 # --- Who the advisory is for (§9.3's memory row; RBAC review C2) --------------------------
 #
-# GET /incidents/{id} is gated on §9.3 row 1, which lets msp_coordinator and field_engineer
-# read the ticket they are working. The advisory is not that ticket: it is EARLIER tickets at
-# the site -- possibly worked by a different MSP -- and §9.3's memory row gives those two roles
-# "—". So the route serves them the incident with ``advisory: null``, the flag-off shape.
-# §7.11.4's "as today" says otherwise; api/deps.MEMORY_READERS records why §9.3 wins.
+# The advisory is EARLIER tickets at the site -- possibly worked by a different MSP -- and
+# §9.3's memory row gives msp_coordinator and field_engineer "—" (§7.11.4's "as today" says
+# otherwise; api/deps.MEMORY_READERS records why §9.3 wins). Since RBAC round 4 row 1 is read
+# strictly too ("notes only"), so those two roles are refused the incident itself -- the same
+# earlier tickets were readable unscrubbed through the list and the timeline otherwise.
+# get_incident still nulls the advisory for any non-memory-row reader, as defence in depth.
 
 _ADVISORY_SECRET = "memory-advisory-secret"
 #: §9.3's memory row, read cell, as a literal -- an independent statement, not the code's tuple.
@@ -371,18 +372,16 @@ def auth_enforced(monkeypatch):
     monkeypatch.setenv("NOC_SESSION_SECRET", _ADVISORY_SECRET)
 
 
-def test_the_advisory_is_null_for_the_roles_the_memory_row_excludes(client, monkeypatch, auth_enforced):
+def test_the_roles_the_memory_row_excludes_never_see_the_advisory(client, monkeypatch, auth_enforced):
     monkeypatch.setenv("MEMORY_ENABLED", "true")
     _seed(number="INC-HIST-1", days_ago=30, note="Omondi from the other MSP swapped the ATS")
     incident_id = _seed(number="INC-HIST-2", days_ago=1)
     for role in ("msp_coordinator", "field_engineer"):
         _signed_in(client, role)
         r = client.get(f"/api/v1/incidents/{incident_id}")
-        assert r.status_code == 200, role  # the ticket itself: row 1 still lets them read it
-        body = r.json()
-        assert body["incident_number"] == "INC-HIST-2", role
-        assert "advisory" in body and body["advisory"] is None, (role, body.get("advisory"))
+        assert r.status_code == 403, role  # row 1 read strictly: "notes only" (RBAC round 4)
         assert "INC-HIST-1" not in r.text and "Omondi" not in r.text, role
+        assert client.get(f"/api/v1/memory/sites/{SITE}").status_code == 403, role
 
 
 def test_every_role_the_memory_row_admits_gets_the_advisory(client, monkeypatch, auth_enforced):

@@ -20,6 +20,7 @@ from noc_agents.api import auth
 from noc_agents.api.auth import require_role
 from noc_agents.api.deps import (
     AUDIT_READERS,
+    HITL_ROLES,
     INCIDENT_READERS,
     INGEST,
     LEDGER_DOWNLOAD_ROLES,
@@ -34,6 +35,7 @@ from noc_agents.api.deps import (
     _operator_scoped,
     _owned,
     _settings,
+    hitl_deciders,
 )
 from noc_agents.api.routers import ROUTERS
 from noc_agents.api.serializers import incident_out, run_out, step_out
@@ -425,8 +427,10 @@ def get_incident(
         # test 25). The helper never raises; a broken memory store cannot 500 this route.
         #
         # WHO gets it follows §9.3's MEMORY row, not the incident row that gates this route.
-        # msp_coordinator and field_engineer may read the ticket they are working (READERS),
-        # but the memory row gives them "—": the advisory is EARLIER tickets at this site,
+        # Since round 4 the two sets are equal (row 1 is read strictly: the vendor roles are
+        # "notes only" and never reach this route), so this is defence in depth -- the day a
+        # vendor binding (D18) lets a coordinator read their own tickets, the memory row still
+        # gives them "—": the advisory is EARLIER tickets at this site,
         # including ones a different MSP worked, with their numbers, restore minutes,
         # resolution codes and scrubbed free text. §7.11.4 says this route's advisory is served
         # "as today"; api/deps.MEMORY_READERS records why §9.3 wins. They get None -- the key
@@ -883,8 +887,13 @@ def get_agent(name: str) -> dict:
     raise HTTPException(404, "agent not found")
 
 
-@app.get("/api/v1/hitl/pending", dependencies=[Depends(require_role(*OPERATIONS))])
-def hitl_pending() -> list[dict]:
+# §9.3 rows 2, 4, 5 and 7: the inbox shows a role the cards it may act on and no others --
+# planning its schedule and window cards, management its handover cards, a supervisor the
+# rest (api/deps.HITL_DECIDERS). noc_analyst, whose row-2 cell is "—", is refused the inbox:
+# the Wallboard's pending COUNT stays on the open /metrics/summary. With AUTH_DISABLED=true
+# there is no identity, so the demo lists every card as before.
+@app.get("/api/v1/hitl/pending")
+def hitl_pending(principal: auth.Principal = Depends(require_role(*HITL_ROLES))) -> list[dict]:
     session = get_session()
     try:
         tasks = session.scalars(
@@ -892,6 +901,8 @@ def hitl_pending() -> list[dict]:
             .where(HitlTaskRow.status.in_(["PENDING", "CLAIMED"]))
             .order_by(HitlTaskRow.created_at.asc())
         ).all()
+        if principal.authenticated:
+            tasks = [t for t in tasks if principal.role in hitl_deciders(t.task_type)]
         out = []
         for t in tasks:
             # Since schema v8 a maintenance card (APPROVE_SCHEDULE / APPROVE_MAINTENANCE_WINDOW)
@@ -952,6 +963,20 @@ def _not_the_raiser_or_403(t: HitlTaskRow, actor: str) -> None:
         raise HTTPException(403, "the person who raised a task may not approve or reject it")
 
 
+def _may_act_on_or_403(principal: auth.Principal, t: HitlTaskRow) -> None:
+    """§9.3: who may claim, approve or reject a card depends on its TYPE, which a route-level
+    allow-list cannot see -- planning decides schedule and window cards only (row 2),
+    management approves handovers (row 4), scorecard adjudication and notices are duty
+    manager's (row 5). ``api/deps.HITL_DECIDERS`` is the table; a type it does not name takes
+    row 2's supervisors. Inert with AUTH_DISABLED=true, like every gate (no identity to check).
+
+    403, not 404: the task is this operator's (``_open_task_or_409`` already applied the
+    operator clause), so its existence is not the secret here -- the refusal is about role.
+    """
+    if principal.authenticated and principal.role not in hitl_deciders(t.task_type):
+        raise HTTPException(403, f"role '{principal.role}' may not act on {t.task_type} cards")
+
+
 def _apply_overrides(inc: IncidentRow, overrides: dict) -> None:
     if overrides.get("priority"):
         inc.priority = overrides["priority"]
@@ -986,22 +1011,24 @@ def _cancel_pending_broadcasts(session, incident_id: str) -> int:
     return len(rows)
 
 
-# Claim is "I am looking at this" — any operations role may. The DECISION
-# (approve/reject) is a supervisor act: a noc_analyst gets 403 there (§7.0.5).
-# Kept as it stands against §9.3, whose HITL row gives noc_analyst "—": the recorded
-# reading is that the row governs the decision, and that an analyst who may not approve
-# must still be able to put their name on a card they are working — the alternative is a
-# queue where nobody can say who is on what until a supervisor logs in.
+# Claim is "this card is mine to decide". It follows §9.3 row 2, where noc_analyst is "—",
+# claim included: the same roles as the decision, per card type (_may_act_on_or_403).
+# Until round 4 any operations role could claim, recorded as a deliberate deviation so an
+# analyst could put their name on a card they were working. Dropped, because a claim is not
+# only a label: it takes the card out of "unclaimed", and the §6.5 escalation ladder (T+5
+# nudge, T+15 duty manager, T+30 red on the Wallboard) keys on unclaimed -- an analyst's claim
+# on a card they cannot decide would silence the ladder that fetches someone who can.
 @app.post("/api/v1/hitl/{task_id}/claim")
 def hitl_claim(
     task_id: str,
     body: HitlDecision,
-    principal: auth.Principal = Depends(require_role(*OPERATIONS)),
+    principal: auth.Principal = Depends(require_role(*HITL_ROLES)),
 ) -> dict:
     actor = _actor(principal, body.resolved_by)
     session = get_session()
     try:
         t = _open_task_or_409(session, task_id)
+        _may_act_on_or_403(principal, t)
         _transition_or_409(session, t, "CLAIMED", claimed_by=actor, claimed_at=utcnow())
         inc = session.get(IncidentRow, t.incident_id) if t.incident_id else None  # v8: see hitl_pending
         if inc:
@@ -1024,12 +1051,13 @@ def hitl_claim(
 def hitl_approve(
     task_id: str,
     body: HitlDecision,
-    principal: auth.Principal = Depends(require_role(*SUPERVISORS)),
+    principal: auth.Principal = Depends(require_role(*HITL_ROLES)),
 ) -> dict:
     actor = _actor(principal, body.resolved_by)
     session = get_session()
     try:
         t = _open_task_or_409(session, task_id)
+        _may_act_on_or_403(principal, t)  # §9.3 by card type: planning, management, ...
         _not_the_raiser_or_403(t, actor)
         gating = t.task_type == GATING_TASK_TYPE
         priority = body.overrides.get("priority")
@@ -1104,7 +1132,7 @@ def hitl_approve(
 def hitl_reject(
     task_id: str,
     body: HitlDecision,
-    principal: auth.Principal = Depends(require_role(*SUPERVISORS)),
+    principal: auth.Principal = Depends(require_role(*HITL_ROLES)),
 ) -> dict:
     actor = _actor(principal, body.resolved_by)
     if not body.reason:
@@ -1112,6 +1140,7 @@ def hitl_reject(
     session = get_session()
     try:
         t = _open_task_or_409(session, task_id)
+        _may_act_on_or_403(principal, t)
         _not_the_raiser_or_403(t, actor)
         _transition_or_409(
             session, t, "REJECTED", resolved_by=actor, resolved_at=utcnow(), reason=body.reason
@@ -1394,7 +1423,11 @@ if _PRODUCTION_GUARD:
     auth.log_production_guard(PRODUCTION_GUARDED_ROUTES)
 else:
 
-    @app.get("/api/v1/shifts/ledger", dependencies=[Depends(require_role(*OPERATIONS))])
+    # §9.3 names only "Ledger xlsx download" (row 4); this JSON list serves the same rows,
+    # owner names included. Row 1 (incident reads) could claim it too, so the cell is
+    # AMBIGUOUS; resolved to the stricter row 4 -- noc_analyst out, management in -- and
+    # listed for the owner.
+    @app.get("/api/v1/shifts/ledger", dependencies=[Depends(require_role(*LEDGER_DOWNLOAD_ROLES))])
     def shift_ledger() -> list[dict]:
         session = get_session()
         try:

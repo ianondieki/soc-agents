@@ -38,6 +38,7 @@ nullable — the additive path never writes NOT NULL).
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import re
 import sqlite3
@@ -620,6 +621,8 @@ NOT_A_REFERENCE = {
     "trigger_name_only": (ARCHIVE_TABLE, "CREATE TRIGGER trg_hitl_tasks_mirror AFTER UPDATE ON outbox BEGIN INSERT INTO hitl_tasks_archive (id, note) VALUES (NEW.id, 'mirror'); END"),
     "string_literal": (ARCHIVE_TABLE, "CREATE TRIGGER trg_lit AFTER UPDATE ON outbox BEGIN INSERT INTO hitl_tasks_archive (id, note) VALUES (NEW.id, 'hitl_tasks'); END"),
     "comment_only": (ARCHIVE_TABLE, "CREATE TRIGGER trg_cmt AFTER UPDATE ON outbox BEGIN /* nothing to do with hitl_tasks */ INSERT INTO hitl_tasks_archive (id, note) VALUES (NEW.id, 'c'); END"),
+    # an apostrophe in a comment, with NO reference after it: must not be refused either
+    "apostrophe_comment_no_ref": (ARCHIVE_TABLE, "CREATE TRIGGER trg_apc AFTER UPDATE ON outbox BEGIN -- the owner's archive\n INSERT INTO hitl_tasks_archive (id, note) VALUES (NEW.id, 'a'); END"),
 }
 # ...and every one of these DOES refer to the table, however it is spelled, so the RENAME would
 # fail ("error in trigger ...: no such table: main.hitl_tasks") and each must still be refused.
@@ -630,6 +633,21 @@ A_REFERENCE = {
     "schema_qualified": "CREATE TRIGGER trg_s AFTER UPDATE ON outbox WHEN EXISTS (SELECT 1 FROM main.hitl_tasks) BEGIN SELECT 1; END",
     "upper_case": "CREATE TRIGGER trg_u AFTER UPDATE ON outbox BEGIN UPDATE HITL_TASKS SET reason = 'u' WHERE id = NEW.hitl_task_id; END",
     "view": "CREATE VIEW v_cards AS SELECT id FROM hitl_tasks WHERE status = 'PENDING'",
+    # The seven spellings the round-3 regex tokenizer let through (round-4 review, matcher_probe.py):
+    # an apostrophe in a comment or a quoted alias opened a fake string literal that swallowed the
+    # reference; '--' inside a quoted alias looked like a comment; and SQLite accepts a
+    # single-quoted string where a table name goes. Decided by SQLite itself now.
+    "sq_ident_insert": "CREATE TRIGGER t_sqi AFTER UPDATE ON incidents BEGIN INSERT INTO 'hitl_tasks' (id, incident_id, task_type, proposed_payload_json, status, created_at) VALUES (NEW.id, NEW.id, 'G', '{}', 'PENDING', '2026-01-01'); END",
+    "sq_ident_from_view": "CREATE VIEW v_sqf AS SELECT id FROM 'hitl_tasks'",
+    "apos_line_comment": "CREATE TRIGGER t_alc AFTER UPDATE ON incidents BEGIN -- don't touch\n UPDATE hitl_tasks SET reason = 'x' WHERE incident_id = NEW.id; END",
+    "apos_block_comment": "CREATE TRIGGER t_abc AFTER UPDATE ON incidents BEGIN /* it's here */ UPDATE hitl_tasks SET reason = 'x' WHERE incident_id = NEW.id; END",
+    "apos_dq_alias": 'CREATE VIEW v_adq AS SELECT id AS "o\'k" FROM hitl_tasks WHERE status = \'PENDING\'',
+    "apos_bracket_alias": "CREATE VIEW v_abr AS SELECT id AS [o'k] FROM hitl_tasks WHERE status = 'PENDING'",
+    "dashdash_dq_alias": 'CREATE VIEW v_ddq AS SELECT id AS "queue -- owner" FROM hitl_tasks',
+    # ...and the controls the same probe used
+    "view_comment_owner_s": "CREATE VIEW v_rep AS\n-- the owner's queue\nSELECT id, status FROM hitl_tasks",
+    "nl_tokens": "CREATE TRIGGER t_nl AFTER UPDATE ON incidents BEGIN UPDATE\nhitl_tasks\nSET reason = 'x' WHERE incident_id = NEW.id; END",
+    "dq_schema_oddcase": 'CREATE VIEW v_dqs AS SELECT id FROM "main"."HiTl_TaSkS"',
 }
 
 
@@ -672,6 +690,101 @@ def test_a_real_reference_in_any_spelling_is_still_refused_before_the_backup(tmp
     models._engine.dispose()
     _assert_untouched(db, before, table_sql, attached)
     assert not (tmp_path / "backups").exists()
+
+
+def _sha(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+@pytest.mark.parametrize("journal", ["wal", "delete"])
+@pytest.mark.parametrize("blocked", [True, False], ids=["blocked", "clear"])
+def test_the_rename_probe_leaves_the_file_byte_identical(tmp_path, restore_db_globals, journal, blocked):
+    """The decision "does anything refer to hitl_tasks" is made by performing the rebuild's own
+    CREATE / DROP / RENAME inside a transaction that is rolled back. That must cost the file
+    nothing: same bytes afterwards, in both journal modes, whether or not SQLite objected."""
+    extra = (A_REFERENCE["apos_dq_alias"], A_REFERENCE["sq_ident_insert"]) if blocked else NOT_A_REFERENCE["archive_trigger"]
+    db = _build_v7(tmp_path, extra_sql=extra)
+    con = sqlite3.connect(db)
+    con.execute(f"PRAGMA journal_mode={journal}")
+    con.close()
+    assert _scalar(db, "PRAGMA journal_mode") == journal
+    before_bytes, before_rows, before_attached = _sha(db), _snapshot(db), _attached(db)
+
+    import noc_agents.db.models_all  # noqa: F401
+
+    engine = create_engine(_url(db), future=True, connect_args={"check_same_thread": False, "timeout": 30})
+    try:
+        with engine.connect() as conn:
+            blockers = migrate._rename_blockers(conn, engine)
+            assert not conn.connection.driver_connection.in_transaction, "the probe must not leave a transaction open"
+    finally:
+        engine.dispose()
+
+    assert blockers == ([("view", "v_adq"), ("trigger", "t_sqi")] if blocked else [])
+    assert _sha(db) == before_bytes, "the probe changed the database file"
+    assert (_snapshot(db), _attached(db)) == (before_rows, before_attached)
+    assert _notnull(db, "incident_id") == 1 and _scalar(db, "PRAGMA integrity_check") == "ok"
+    assert _sql(db, "SELECT name FROM sqlite_master WHERE name LIKE '%rebuild%'") == []
+
+
+def test_every_blocker_is_named_not_only_the_first(tmp_path, restore_db_globals):
+    """SQLite reports one offender per failed RENAME. Inside the doomed probe transaction each one
+    is dropped and the RENAME retried, so the operator gets the whole list in one refusal and
+    fixes the file in one go instead of once per start."""
+    db = _build_v7(tmp_path, extra_sql=(A_REFERENCE["apos_line_comment"], A_REFERENCE["view"], A_REFERENCE["dashdash_dq_alias"]))
+    before, table_sql, attached = _snapshot(db), _table_sql(db), _attached(db)
+
+    with pytest.raises(HitlRebuildError) as refused:
+        init_db(_url(db), backup_dir=tmp_path / "backups")
+    models._engine.dispose()
+    message = str(refused.value)
+    assert "trigger t_alc" in message and "view v_cards" in message and "view v_ddq" in message
+    assert "no backup was written" in message and not (tmp_path / "backups").exists()
+    _assert_untouched(db, before, table_sql, attached)
+    assert _sql(db, "SELECT COUNT(*) FROM sqlite_master WHERE type IN ('view','trigger')") == [(3,)], "nothing was dropped for the caller"
+
+    # Following the message for all three at once is enough.
+    con = sqlite3.connect(db)
+    for stmt in ("DROP TRIGGER t_alc", "DROP VIEW v_cards", "DROP VIEW v_ddq"):
+        con.execute(stmt)
+    con.commit()
+    con.close()
+    init_db(_url(db), backup_dir=tmp_path / "backups").dispose()
+    assert _snapshot(db) == before and _notnull(db, "incident_id") == 0
+
+
+ON_THE_TABLE_IN_ANOTHER_CASE = {
+    "UPPER": "CREATE TRIGGER trg_uc AFTER INSERT ON HITL_TASKS BEGIN INSERT INTO hitl_tasks_archive (id, note) VALUES (NEW.id, 'uc'); END",
+    "quoted_mixed": 'CREATE TRIGGER trg_qm AFTER INSERT ON "Hitl_Tasks" BEGIN INSERT INTO hitl_tasks_archive (id, note) VALUES (NEW.id, \'qm\'); END',
+    "bracket_lower": "CREATE TRIGGER trg_br AFTER INSERT ON [hitl_tasks] BEGIN INSERT INTO hitl_tasks_archive (id, note) VALUES (NEW.id, 'br'); END",
+}
+
+
+@pytest.mark.parametrize("case", sorted(ON_THE_TABLE_IN_ANOTHER_CASE))
+def test_a_trigger_declared_on_the_table_in_another_case_is_replayed_after_the_rebuild(tmp_path, restore_db_globals, case):
+    """SQLite stores a trigger's tbl_name as the CREATE spelled it ('HITL_TASKS') but drops it
+    with the table regardless of case. A case-sensitive capture missed it, DROP took it, and the
+    rebuild reported success with the trigger gone. Captured case-insensitively now, replayed,
+    and the post-check compares by name against everything that was attached before the drop."""
+    db = _build_v7(tmp_path, extra_sql=(ARCHIVE_TABLE, ON_THE_TABLE_IN_ANOTHER_CASE[case]))
+    name = ON_THE_TABLE_IN_ANOTHER_CASE[case].split()[2]
+    note = re.search(r"VALUES \(NEW\.id, '(\w+)'\)", ON_THE_TABLE_IN_ANOTHER_CASE[case]).group(1)
+    assert _sql(db, "SELECT name FROM sqlite_master WHERE type='trigger'") == [(name,)]
+
+    init_db(_url(db), backup_dir=tmp_path / "backups").dispose()
+
+    assert _notnull(db, "incident_id") == 0
+    assert _sql(db, "SELECT name FROM sqlite_master WHERE type='trigger'") == [(name,)], "the trigger survived the rebuild"
+    con = sqlite3.connect(db)
+    try:
+        con.execute(
+            "INSERT INTO hitl_tasks (id, operator_id, task_type, proposed_payload_json, status, created_at) "
+            "VALUES ('t-new', 'safaricom', 'GENERIC', '{}', 'PENDING', '2026-09-22 01:00:00')"
+        )
+        assert con.execute("SELECT note FROM hitl_tasks_archive WHERE id = 't-new'").fetchall() == [(note,)], "and it still fires"
+        con.rollback()
+    finally:
+        con.close()
 
 
 def test_a_null_the_model_forbids_is_refused_before_the_backup_with_the_fix_spelled_out(tmp_path, restore_db_globals):

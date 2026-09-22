@@ -15,6 +15,7 @@ from sqlalchemy import select
 
 from noc_agents.api import auth
 from noc_agents.config import get_settings
+from noc_agents.domain.enums import HitlTaskType
 from noc_agents.db.models import IncidentBriefRow, IncidentRow
 
 
@@ -52,13 +53,26 @@ COMMERCIAL: tuple[str, ...] = ("management", "msp_coordinator", "duty_manager", 
 # /signals beside it. main.py re-imports every name below, so ``main.PLATFORM_READERS`` and
 # the rest stay importable (tests/unit/test_outbox_admin.py pins that one).
 
-#: §9.3 row 1's READ column ("ingest, notes, timeline, workflow, signals read"): READERS plus
-#: ``legal``, which the row gives R. Every incident-surface and signals read uses it, list
-#: forms included -- a legal reader who could open an incident but not find it in the list
-#: would be reading by guessed id. READERS itself is left as it is on purpose: every lane
-#: router gates on it, and whether each of THOSE rows gives legal R is a question per §9.3
-#: row, not a rename (contracts already answers it locally with READERS + legal).
-INCIDENT_READERS: tuple[str, ...] = READERS + ("legal",)
+#: §9.3 row 1's READ column ("ingest, notes, timeline, workflow, signals read"), read
+#: STRICTLY: R for noc_analyst, shift_supervisor, duty_manager, management, planning and legal,
+#: R/W for admin -- and NOT msp_coordinator or field_engineer, whose cells say "notes only".
+#: Every incident-surface and signals read uses it, list forms included.
+#:
+#: It used to be READERS + legal, i.e. with both vendor roles in. The RBAC review (round 4,
+#: NEW:rbac:1) showed what that cost: an msp_coordinator refused the memory advisory and
+#: /memory/sites (§9.3's memory row) could read the SAME earlier tickets at the site, unscrubbed,
+#: through GET /incidents?q=<site>&status=CLOSED, /incidents/{earlier_id} and its /timeline --
+#: a rival MSP's name, the crew's names, a phone number in a work note. Nothing on the principal
+#: says which vendor a coordinator works for, so there is no narrower read to offer yet.
+#: The strict reading is inert in the demo (AUTH_DISABLED=true) and no authenticated
+#: deployment exists (there is no login route yet, B-17), so it breaks nobody today.
+#:
+#: OPEN QUESTION for the owner, raised by exactly this reading: how does a vendor find the ticket
+#: id to note on? A plausible answer is own-vendor-scoped reads once the principal carries a
+#: vendor binding (D18) -- the scorecard lane already anticipates one -- but that is a decision,
+#: and nothing here invents the binding. READERS itself (vendor roles in, legal out) is left
+#: alone: the lane routers that still use it gate surfaces §9.3 has no row for.
+INCIDENT_READERS: tuple[str, ...] = OPERATIONS + ("management", "planning", "legal")
 
 #: §9.3 row 1, "notes only" for msp_coordinator and field_engineer: a work note is the ONE
 #: thing those two roles may WRITE -- the vendor's progress update and the field engineer's
@@ -107,6 +121,65 @@ MEMORY_READERS: tuple[str, ...] = OPERATIONS + ("management", "planning", "legal
 #: §7.9.3: ledger rows carry names and access notes, so the xlsx download is narrower than
 #: OPERATIONS -- §9.3 row "Ledger xlsx download, handover approve".
 LEDGER_DOWNLOAD_ROLES: tuple[str, ...] = ("shift_supervisor", "duty_manager", "management", "admin")
+
+#: §9.3's PIR row, "PIR edit / publish": noc_analyst "edit", shift_supervisor and duty_manager
+#: "publish", management / planning / legal "read", admin ✓, the two vendor roles "—".
+PIR_READERS: tuple[str, ...] = OPERATIONS + ("management", "planning", "legal")
+#: The edit cell, read literally: the table writes "file + assign" and "read + dispute" when a
+#: role holds two actions, so a bare "publish" is publish ONLY. A supervisor reviews and
+#: publishes; the analyst edits. AMBIGUOUS in the spec, resolved to the stricter reading and
+#: listed for the owner (a publisher who cannot fix a typo sends the draft back).
+PIR_EDITORS: tuple[str, ...] = ("noc_analyst", "admin")
+PIR_PUBLISHERS: tuple[str, ...] = ("shift_supervisor", "duty_manager", "admin")
+
+#: §9.3's contracts row, "Contracts ingest / ask / FAQ": ask for noc_analyst, shift_supervisor,
+#: duty_manager and planning; "all" for legal and admin; "—" for management, msp_coordinator
+#: and field_engineer. Listing contracts, searching clauses and the status page are the asker's
+#: view of the same corpus, so they take the ask cell.
+CONTRACT_ASKERS: tuple[str, ...] = OPERATIONS + ("planning", "legal")
+#: "all": ingest, the FAQ and the query log. §7.8.2 names only ``legal`` for the FAQ and the
+#: query log; §9.3 gives admin "all". The spec conflicts; this follows §9.3 (admin is listed
+#: explicitly everywhere else, never granted by implication) and the conflict is an owner question.
+CONTRACT_OWNERS: tuple[str, ...] = ("legal", "admin")
+
+# --- HITL decisions: who may act on a card depends on the card's TYPE ------------------
+# §9.3 spreads HITL decisions over four rows, so a route-level allow-list cannot express it:
+#   row 2  "HITL claim/approve/reject (broadcast, priority, assignment, power, schedule,
+#          window, regulatory)": shift_supervisor, duty_manager, admin ✓; planning "schedule/
+#          window only"; noc_analyst, management, the vendor roles and legal "—";
+#   row 4  "... handover approve": shift_supervisor, duty_manager, management, admin;
+#   row 5  scorecards "adjudicate" / "notice": duty_manager and admin ("all");
+#   row 7  performance actions "decide": duty_manager ("propose / decide") and admin.
+# A type §9.3 does not name (EXEC_BRIEF, GENERIC escalation, TICKET_SYNC, PAGE, LEDGER_SYNC)
+# takes row 2's ✓ roles -- the stricter default, listed for the owner. Raiser != approver
+# applies on top of all of it (main._not_the_raiser_or_403).
+_ROW2_DECIDERS: tuple[str, ...] = SUPERVISORS
+HITL_DECIDERS: dict[str, tuple[str, ...]] = {
+    HitlTaskType.APPROVE_BROADCAST.value: _ROW2_DECIDERS,
+    HitlTaskType.APPROVE_PRIORITY.value: _ROW2_DECIDERS,
+    HitlTaskType.APPROVE_ASSIGNMENT.value: _ROW2_DECIDERS,
+    HitlTaskType.CONFIRM_POWER_NOTICE.value: _ROW2_DECIDERS,  # row 2 "power"
+    HitlTaskType.APPROVE_REGULATORY_NOTICE.value: _ROW2_DECIDERS,  # row 2 "regulatory"
+    HitlTaskType.APPROVE_SCHEDULE.value: _ROW2_DECIDERS + ("planning",),  # "schedule/window only"
+    HitlTaskType.APPROVE_MAINTENANCE_WINDOW.value: _ROW2_DECIDERS + ("planning",),
+    HitlTaskType.APPROVE_HANDOVER.value: LEDGER_DOWNLOAD_ROLES,  # row 4 "handover approve"
+    HitlTaskType.DISPUTE_SCORECARD_LINE.value: ("duty_manager", "admin"),  # row 5 "adjudicate"
+    HitlTaskType.APPROVE_VENDOR_NOTICE.value: ("duty_manager", "admin"),  # row 5 "notice"
+    HitlTaskType.APPROVE_PERFORMANCE_ACTION.value: ("duty_manager", "admin"),  # row 7 "decide"
+}
+
+
+def hitl_deciders(task_type: str | None) -> tuple[str, ...]:
+    """The roles §9.3 lets claim, approve or reject a card of ``task_type``."""
+    return HITL_DECIDERS.get(task_type or "", _ROW2_DECIDERS)
+
+
+#: Everyone who may act on at least one card type: the route-level gate on /hitl/pending and
+#: /hitl/{id}/claim|approve|reject. The per-type check inside each route does the rest.
+#: noc_analyst is not here: §9.3 row 2 gives it "—", claim included (see main.hitl_claim).
+HITL_ROLES: tuple[str, ...] = tuple(
+    dict.fromkeys(role for roles in (_ROW2_DECIDERS, *HITL_DECIDERS.values()) for role in roles)
+)
 
 
 def _actor(principal: auth.Principal, claimed: str | None) -> str:

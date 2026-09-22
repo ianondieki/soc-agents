@@ -6,9 +6,12 @@ idiom ``GET /api/v1/metrics/summary`` uses in ``main.py``. All the rollup logic,
 and every operator-scoped query behind it, lives in the service so it can be
 tested without an HTTP client and so this file stays reviewable at a glance.
 
-Read-only: nothing here writes, enqueues or sends. ``READERS`` is the right gate —
-a duty manager, a field engineer and an MSP coordinator all have business looking
-at where the network hurts tonight. Inert while ``AUTH_DISABLED=true``.
+Read-only: nothing here writes, enqueues or sends. Gated with ``INCIDENT_READERS``,
+§9.3 row 1's read column: the payload carries problem records (numbers, sites, known-error
+flags) and signal freshness, which are row-1 reads, so legal holds R and the two vendor
+roles ("notes only") do not. This used to be ``READERS`` on the reasoning that a field
+engineer and an MSP coordinator have business looking at where the network hurts tonight;
+that is now an owner question, not a gate. Inert while ``AUTH_DISABLED=true``.
 """
 
 from __future__ import annotations
@@ -18,14 +21,14 @@ from typing import Any
 from fastapi import APIRouter, Depends
 
 from noc_agents.api.auth import require_role
-from noc_agents.api.deps import READERS
+from noc_agents.api.deps import INCIDENT_READERS
 from noc_agents.db.models import get_session
 from noc_agents.services.dashboards import regions_dashboard
 
 router = APIRouter(prefix="/api/v1", tags=["dashboards"])
 
 
-@router.get("/dashboard/regions", dependencies=[Depends(require_role(*READERS))])
+@router.get("/dashboard/regions", dependencies=[Depends(require_role(*INCIDENT_READERS))])
 def dashboard_regions() -> dict[str, Any]:
     """Per-region fault picture, signal freshness and regulatory baseline (§7.4.2).
 

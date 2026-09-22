@@ -37,7 +37,16 @@ from sqlalchemy import select
 
 from noc_agents.api import auth
 from noc_agents.api.auth import require_role
-from noc_agents.api.deps import OPERATIONS, READERS, SUPERVISORS, _actor, _get_owned, _owned, _settings
+from noc_agents.api.deps import (
+    INCIDENT_READERS,
+    PIR_EDITORS,
+    PIR_PUBLISHERS,
+    PIR_READERS,
+    _actor,
+    _get_owned,
+    _owned,
+    _settings,
+)
 from noc_agents.db.models import AuditRow, IncidentRow, ProblemRow, get_session, utcnow
 from noc_agents.db.models_pir import PirActionItemRow, PostIncidentReviewRow
 from noc_agents.services import pir as pir_service
@@ -59,8 +68,9 @@ _ENABLED = Depends(require_pir_enabled)
 #: both vendor roles while leaving legal out: a review's root causes, its went-poorly list and
 #: its vendor-attributed action items are exactly what an external MSP role should not read,
 #: and exactly what legal is in the row to read. (The known-error route at the bottom is an
-#: incident-workspace read of the problem record, not a review, and keeps READERS.)
-PIR_READERS: tuple[str, ...] = OPERATIONS + ("management", "planning", "legal")
+#: incident-workspace read of the problem record, not a review: §9.3 row 1, INCIDENT_READERS.)
+#: PIR_READERS, PIR_EDITORS (the "edit" cell) and PIR_PUBLISHERS (the "publish" cells) live
+#: in api/deps.py with the other §9.3 allow-lists.
 
 
 # ------------------------------------------------------------------------------- bodies
@@ -310,7 +320,7 @@ def list_actions(pir_id: str) -> list[dict]:
 
 
 @router.patch("/pir/{pir_id}", dependencies=[_ENABLED])
-def patch_pir(pir_id: str, body: PirPatchIn, principal: auth.Principal = Depends(require_role(*OPERATIONS))) -> dict:
+def patch_pir(pir_id: str, body: PirPatchIn, principal: auth.Principal = Depends(require_role(*PIR_EDITORS))) -> dict:
     """Edit the narrative. The blameless validator gates ``root_causes``/``contributing_factors``."""
     values = body.model_dump(exclude_unset=True)
     session = get_session()
@@ -348,7 +358,7 @@ def patch_pir(pir_id: str, body: PirPatchIn, principal: auth.Principal = Depends
 
 
 @router.post("/pir/{pir_id}/actions", dependencies=[_ENABLED])
-def add_action(pir_id: str, body: ActionIn, principal: auth.Principal = Depends(require_role(*OPERATIONS))) -> dict:
+def add_action(pir_id: str, body: ActionIn, principal: auth.Principal = Depends(require_role(*PIR_EDITORS))) -> dict:
     """Add one typed action item with exactly one owner and a due date.
 
     §7.7.6: ``owner_token`` is a role token, never a person. An action outlives whoever is
@@ -375,7 +385,7 @@ def patch_action(
     pir_id: str,
     action_id: str,
     body: ActionPatchIn,
-    principal: auth.Principal = Depends(require_role(*OPERATIONS)),
+    principal: auth.Principal = Depends(require_role(*PIR_EDITORS)),
 ) -> dict:
     """Move an action item along, or correct it.
 
@@ -413,7 +423,7 @@ def patch_action(
 
 
 @router.post("/pir/{pir_id}/publish", dependencies=[_ENABLED])
-def publish_pir(pir_id: str, body: PublishIn, principal: auth.Principal = Depends(require_role(*SUPERVISORS))) -> dict:
+def publish_pir(pir_id: str, body: PublishIn, principal: auth.Principal = Depends(require_role(*PIR_PUBLISHERS))) -> dict:
     """Publish the review. 422 with every unmet precondition listed (§7.7.2)."""
     reviewer = _actor(principal, body.reviewer)
     session = get_session()
@@ -446,7 +456,7 @@ def publish_pir(pir_id: str, body: PublishIn, principal: auth.Principal = Depend
 
 
 @router.post("/pir/{pir_id}/draft/llm", dependencies=[_ENABLED])
-def draft_llm(pir_id: str, principal: auth.Principal = Depends(require_role(*OPERATIONS))) -> dict:
+def draft_llm(pir_id: str, principal: auth.Principal = Depends(require_role(*PIR_EDITORS))) -> dict:
     """Queue the optional model draft (§7.7.2: assist; DRAFT text only).
 
     The request itself calls nothing: it writes a redacted ``LLM_CALL`` row to the outbox
@@ -473,7 +483,7 @@ def draft_llm(pir_id: str, principal: auth.Principal = Depends(require_role(*OPE
 
 
 @router.post("/incidents/{incident_id}/pir", dependencies=[_ENABLED])
-def open_pir_for_incident(incident_id: str, principal: auth.Principal = Depends(require_role(*OPERATIONS))) -> dict:
+def open_pir_for_incident(incident_id: str, principal: auth.Principal = Depends(require_role(*PIR_EDITORS))) -> dict:
     """Manually open a review (``opened_reason=MANUAL``). Idempotent: an existing one is returned.
 
     A CANCELLED incident gets ``NOT_REQUIRED`` rather than DRAFT — the service decides that,
@@ -493,7 +503,7 @@ def open_pir_for_incident(incident_id: str, principal: auth.Principal = Depends(
 
 @router.patch("/problems/{problem_id}", dependencies=[_ENABLED])
 def patch_problem(
-    problem_id: str, body: ProblemPatchIn, principal: auth.Principal = Depends(require_role(*OPERATIONS))
+    problem_id: str, body: ProblemPatchIn, principal: auth.Principal = Depends(require_role(*PIR_EDITORS))
 ) -> dict:
     """Record the known-error fields on a problem record (§7.7.1).
 
@@ -557,7 +567,9 @@ def patch_problem(
         session.close()
 
 
-@router.get("/incidents/{incident_id}/known-error", dependencies=[_ENABLED, Depends(require_role(*READERS))])
+# The incident workspace's known-error panel: §9.3 row 1 read (and the PIR row's read cell
+# agrees -- both give legal R and the vendor roles nothing).
+@router.get("/incidents/{incident_id}/known-error", dependencies=[_ENABLED, Depends(require_role(*INCIDENT_READERS))])
 def known_error_for(incident_id: str) -> dict:
     """The open known error matching this incident's signature, for the workspace panel.
 

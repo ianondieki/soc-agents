@@ -81,11 +81,17 @@ FILERS: tuple[str, ...] = ("noc_analyst", "shift_supervisor", "field_engineer", 
 VIEW_ALL: tuple[str, ...] = ("shift_supervisor", "duty_manager", "management", "admin")
 #: Anyone who may reach the surface at all. A filer sees their own filings; the rest see all.
 COMPLAINT_ROLES: tuple[str, ...] = tuple(dict.fromkeys(FILERS + VIEW_ALL))
-#: §9.3 "assign".
-ASSIGNERS: tuple[str, ...] = ("shift_supervisor", "duty_manager", "management", "admin")
+#: §9.3 "assign": shift_supervisor ("file + assign") and admin ("all") -- nobody else.
+#: duty_manager and management hold "view all"; this used to include them, which the row,
+#: read as literally as this module reads it everywhere else, does not support (RBAC review
+#: round 4).
+ASSIGNERS: tuple[str, ...] = ("shift_supervisor", "admin")
 #: Acknowledging and resolving are the manager's acts; a supervisor who assigned it is
-#: included because on a small NOC floor they are often the person who handles it.
-HANDLERS: tuple[str, ...] = ASSIGNERS
+#: included because on a small NOC floor they are often the person who handles it. §9.3 names
+#: neither act. Kept as the managers plus the supervisor and admin: ``assign`` hands a
+#: complaint TO a manager, and a manager who could not acknowledge it would end the workflow
+#: there. The reading is listed as an owner question.
+HANDLERS: tuple[str, ...] = ("shift_supervisor", "duty_manager", "management", "admin")
 #: §9.3 "subject access" — and nothing else. Legal exercises DPA s.26 on behalf of a person;
 #: ``legal`` is deliberately NOT in COMPLAINT_ROLES, so the queue itself stays closed to them.
 SUBJECT_ACCESS: tuple[str, ...] = ("legal", "admin")

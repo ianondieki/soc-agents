@@ -96,6 +96,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any, Iterable, Mapping
@@ -459,6 +460,10 @@ def store_alert(
     for sfx, (region_code, cs) in targets.items():
         row, created = _upsert(session, operator_id=operator_id, external_id=f"{alert.identifier}#{sfx}", now=now)
         previous_block = {} if created else _loads(row.derived_json)
+        if previous_block.get("detached"):
+            # A re-store must not revive a detached span (NEW4); reattribute_live, which runs
+            # later in the same poll, opens a new span for this target if the map covers it.
+            continue
         row.source_url = alert.source_url
         row.region_code = region_code
         row.county = ", ".join(cs) if cs else None
@@ -572,6 +577,21 @@ def _end_referenced(
     return ended, tombs
 
 
+#: A re-attached span's ``external_id`` suffix: ``<target>@<YYYYmmddTHHMMSSZ>`` (review finding NEW4).
+_SPAN = re.compile(r"(?P<target>.*)@(?P<at>\d{8}T\d{6}Z)")
+
+
+def _span_target(identifier: str, row: ExternalSignalRow) -> str:
+    """Which target (region code, ``county=<name>`` or ``no-area``) a row is a span of."""
+    rest = (row.external_id or "")[len(identifier) + 1:]
+    match = _SPAN.fullmatch(rest)
+    return match.group("target") if match else rest
+
+
+def _identifier_of(row: ExternalSignalRow) -> str:
+    return str(_loads(row.derived_json).get("identifier") or (row.external_id or "").split("#", 1)[0])
+
+
 def reattribute_live(
     session: Session,
     *,
@@ -582,13 +602,23 @@ def reattribute_live(
     """Re-attribute every alert still in force against the CURRENT county map (review finding F10).
 
     From what is already stored — each row's ``derived.areas`` — never a re-fetch. For each
-    identifier with a row in force: a region the current map now covers gets a new row (its
-    ``fetched_at`` is *now*, because that region only learned of the warning now, and the M6
-    lead time must not pretend otherwise); a row whose target the map no longer produces is
-    **ended at now** (``valid_until = now``, ``derived.detached``) rather than deleted, so the
-    backtest keeps what the floor actually saw; rows that stay get their county list refreshed.
-    Nothing about what KMD said changes. Returns the number of rows created or ended. Does not
-    commit.
+    identifier with a row in force:
+
+    * a target (region) the current map covers but that has no row in force gets a **new span**
+      whose ``fetched_at`` is *now* — that region only learned of the warning now, and the M6
+      lead time must not pretend otherwise;
+    * a row in force whose target the map no longer produces is **ended at now**
+      (``valid_until = now``, ``derived.detached``), never deleted, so the backtest keeps what
+      the floor actually saw;
+    * rows that stay get their county list refreshed.
+
+    **A detached row is never revived** (review finding NEW4). Reviving it restored one
+    continuous validity span from its first fetch to KMD's expiry, so the backtest credited the
+    region with a warning through the hours it was not mapped to the county at all. When the
+    map covers the target again, a new row is written instead — ``<identifier>#<target>@<now>``
+    — so the history reads "warned 12:00-12:30, not warned 12:30-14:30, warned again from 14:30",
+    which is what the floor saw. Nothing about what KMD said changes. Returns the number of rows
+    created or ended. Does not commit.
     """
     session.flush()  # autoflush is off: see this run's own writes
     live = session.scalars(
@@ -601,8 +631,7 @@ def reattribute_live(
     ).all()
     by_identifier: dict[str, list[ExternalSignalRow]] = {}
     for row in live:
-        ident = (row.external_id or "").split("#", 1)[0]
-        by_identifier.setdefault(ident, []).append(row)
+        by_identifier.setdefault(_identifier_of(row), []).append(row)
     changed = 0
     for ident, rows in by_identifier.items():
         # A detached row is never the template: its areas are the same, but its validity is
@@ -615,31 +644,28 @@ def reattribute_live(
                 if piece not in pieces:
                     pieces.append(piece)
         targets, unknown = _targets(pieces, mapping)
-        existing = {(r.external_id or "").split("#", 1)[1]: r for r in _alert_rows(session, operator_id, ident)}
-        for sfx, (region_code, cs) in targets.items():
-            row = existing.get(sfx)
-            if row is not None:
-                rb = _loads(row.derived_json)
-                if rb.get("detached") and not rb.get("ended_by") and (row.valid_until is None or row.valid_until <= now):
-                    # Detached by an earlier profile edit, mapped again by this one: back in
-                    # force on the alert's own terms. (A row KMD ended stays ended.)
-                    rb.pop("detached", None)
-                    rb["region_counties"] = cs
-                    row.derived_json = _dumps(rb)
-                    row.county = ", ".join(cs) if cs else None
-                    row.valid_until = template.valid_until
-                    row.stale = template.stale
-                    row.last_error = template.last_error
-                    changed += 1
-                    continue
-                if row.valid_until is not None and row.valid_until > now:
+        spans: dict[str, list[ExternalSignalRow]] = {}
+        for row in _alert_rows(session, operator_id, ident):
+            spans.setdefault(_span_target(ident, row), []).append(row)
+
+        for target, (region_code, cs) in targets.items():
+            in_force = [
+                r for r in spans.get(target, ())
+                if r.valid_until is not None and r.valid_until > now and not _loads(r.derived_json).get("detached")
+            ]
+            if in_force:
+                for row in in_force:
                     rb = _loads(row.derived_json)
                     if rb.get("region_counties") != cs:
                         rb["region_counties"] = cs
                         row.derived_json = _dumps(rb)
                         row.county = ", ".join(cs) if cs else None
                 continue
-            new, _ = _upsert(session, operator_id=operator_id, external_id=f"{ident}#{sfx}", now=now)
+            if any(_loads(r.derived_json).get("ended_by") for r in spans.get(target, ())):
+                continue  # KMD itself ended this alert here: a profile edit must not restart it
+            # First span for this target, or a NEW span after a detachment (never a revival).
+            external_id = f"{ident}#{target}" if not spans.get(target) else f"{ident}#{target}@{now:%Y%m%dT%H%M%SZ}"
+            new, _ = _upsert(session, operator_id=operator_id, external_id=external_id, now=now)
             nb = dict(block, region_counties=cs, unrecognised_areas=unknown)
             nb.pop("detached", None)
             nb["attributed_at"] = _z(now)
@@ -658,14 +684,18 @@ def reattribute_live(
             new.derived_json = _dumps(nb)
             new.last_error = template.last_error
             changed += 1
-        for sfx, row in existing.items():
-            if sfx in targets or row.valid_until is None or row.valid_until <= now:
+
+        for target, target_rows in spans.items():
+            if target in targets:
                 continue
-            rb = _loads(row.derived_json)
-            rb["detached"] = {"at": _z(now), "reason": "the operator profile no longer maps this county to this scope"}
-            row.derived_json = _dumps(rb)
-            row.valid_until = now
-            changed += 1
+            for row in target_rows:
+                if row.valid_until is None or row.valid_until <= now:
+                    continue
+                rb = _loads(row.derived_json)
+                rb["detached"] = {"at": _z(now), "reason": "the operator profile no longer maps this county to this scope"}
+                row.derived_json = _dumps(rb)
+                row.valid_until = now
+                changed += 1
     return changed
 
 

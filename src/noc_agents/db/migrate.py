@@ -59,7 +59,7 @@ next table that "needs" one should be argued for from scratch. What keeps this o
   SQLite's own rebuild procedure requires.
 * **Refuse up front, before the backup.** Two things make the rebuild fail on EVERY start --
   rolled back each time, so no data is lost, but the NOC never comes up: a view, or a trigger
-  on some OTHER table, whose SQL mentions ``hitl_tasks`` (SQLite cannot RENAME underneath it:
+  on some OTHER table, that refers to ``hitl_tasks`` (SQLite cannot RENAME underneath it:
   "error in trigger ...: no such table"); and a NULL in a column the model declares NOT NULL
   (``entity_type``, ``edited``), which a file that grew from v1 by ADD COLUMN permits on disk
   and which only raw SQL could have written. Both are checked by ``_hitl_rebuild_preflight``
@@ -67,6 +67,20 @@ next table that "needs" one should be argued for from scratch. What keeps this o
   names each object or column and the one statement that fixes it. A NULL is refused rather
   than rewritten during the copy: a migration that quietly changes a value on the approval
   trail is the very thing the verification step exists to prevent.
+* **SQLite decides what refers to the table, not a tokenizer.** Two hand-written matchers
+  were tried for the first check and both were wrong in opposite directions: a substring
+  match refused files whose triggers only touched ``hitl_tasks_archive``; a regex tokenizer
+  let seven real references through (an apostrophe in a comment or a quoted alias, ``--``
+  inside a quoted alias, ``FROM 'hitl_tasks'`` -- SQLite accepts a string where a table name
+  goes). ``_rename_blockers`` now asks the only authority there is: inside a transaction that
+  is always rolled back it performs the rebuild's own CREATE, DROP and RENAME, and each
+  failure names one blocking view or trigger, which is dropped (inside that same doomed
+  transaction) so the next failure names the next one. Whatever SQLite's parser would trip
+  over at the real RENAME -- including under a ``legacy_alter_table`` setting, since the
+  probe runs on the same connection state -- it trips over here first, and nothing else does.
+  A ``BEGIN IMMEDIATE ... ROLLBACK`` probe leaves the file byte for byte as it was (pinned by
+  test, in WAL and rollback-journal modes); inside the migration transaction the same probe
+  runs in a SAVEPOINT that is rolled back to.
 
 THE SECOND EXCEPTION: ``_refresh_check_constraints`` (schema_version 9)
 ----------------------------------------------------------------------
@@ -82,15 +96,30 @@ tests build fresh databases. The dev database was exactly such a file, with zero
 The rule, for the two tables named in ``_CHECK_REFRESH_TABLES`` and no others: compare the
 live ``CREATE TABLE`` text in ``sqlite_master`` with what the CURRENT model compiles to (the
 DDL, never a version number, so it is idempotent and a fresh file is never touched). Where
-they differ and the table is EMPTY, drop it and create it from the model, inside the same
+they differ and the table is EMPTY, drop it and create it from the model, inside one
 transaction, verified before the drop (row count is zero, re-read under the write lock) and
-after the create (live DDL now equals the model's, indexes back). Where they differ and the
-table has ROWS, do nothing to it: log one warning naming the CHECKs the file is not enforcing
-and carry the same text in ``MigrationReport.note``. A populated table is never rebuilt
-here -- the ORM mapper guards in ``db/models_scorecards.py`` still refuse every ORM write,
-and adopting the constraints is a human's decision (export, empty, start once). The version
-bump to 9 exists only so that this step runs once, behind the usual backup, on files that
-already say 8; it adds no table and no column.
+after the create (live DDL now equals the model's; every index and trigger that hung off the
+table before the drop is there again, by name). Where they differ and the table has ROWS,
+do nothing to it: log a warning naming the CHECKs the file is not enforcing -- on every start,
+because a warning that stops is a warning that gets lost -- and carry the same text in
+``MigrationReport.note``. A populated table is never rebuilt here; the ORM mapper guards in
+``db/models_scorecards.py`` still refuse every ORM write, and adopting the constraints is a
+human's decision: export the rows, empty the table, restart.
+
+ON EVERY START, not only when the version moves
+-----------------------------------------------
+The comparison above runs on every start (two ``sqlite_master`` reads), and so does the
+check for a mapped index that is missing from the file. Both used to run only inside the
+version bump -- and that broke the remedy just described: after the first v9 start had
+stamped the file, "empty the table and restart" took the "schema already current" path and
+the old CHECKs stayed for good. So the fast path is no longer purely a version read. When it
+finds nothing (the common case) it is what it was: no backup, no transaction. When it finds a
+drifted EMPTY table it takes a backup first (named ``<db>.9-to-9.<ts>.db``: same version,
+because the version did not move) and recreates the table in a transaction. When it finds
+only a missing index it creates it -- ``CREATE INDEX IF NOT EXISTS`` -- without a backup: an
+index holds no data, and the version bump that used to be the only way to get one to an
+existing file was never worth what a bump costs. The bump to 9 itself stays: it records
+that the refresh exists and puts one backup behind the first start that could act.
 
 **What the exception costs the rollback story** -- worked out against the v7 code, not assumed:
 
@@ -147,6 +176,7 @@ from pathlib import Path
 
 from sqlalchemy import Column, Table
 from sqlalchemy.engine import Connection, Engine
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.schema import CreateIndex, CreateTable
 
 from noc_agents.db.models import Base, HitlTaskRow, IncidentRow, SchemaVersionRow, utcnow
@@ -309,10 +339,27 @@ def _plan(conn: Connection, engine: Engine) -> list[str]:
         for col in table.columns:
             if col.name not in present_cols:
                 statements.append(_add_column_sql(table, col, engine))
+        statements.extend(_missing_index_sql(conn, engine, table))
+    return statements
+
+
+def _missing_index_sql(conn: Connection, engine: Engine, only: Table | None = None) -> list[str]:
+    """``CREATE INDEX IF NOT EXISTS`` for every mapped index a table on disk does not have.
+
+    Part of ``_plan`` -- and, since an index holds no data, also run on EVERY start on its own
+    (module docstring, "ON EVERY START"), so an index added to a model reaches existing files
+    without a version bump or a backup. Tables not on disk are skipped: ``_plan`` creates them
+    whole, indexes included.
+    """
+    existing = _user_tables(conn)
+    statements: list[str] = []
+    for table in Base.metadata.sorted_tables if only is None else [only]:
+        if table.name not in existing:
+            continue
         present_idx = {r[1] for r in conn.exec_driver_sql(f"PRAGMA index_list({table.name})").fetchall()}
-        for ix in indexes:
+        for ix in sorted(table.indexes, key=lambda ix: ix.name or ""):
             if ix.name not in present_idx:
-                statements.append(str(CreateIndex(ix, if_not_exists=True).compile(dialect=dialect)))
+                statements.append(str(CreateIndex(ix, if_not_exists=True).compile(dialect=engine.dialect)))
     return statements
 
 
@@ -379,54 +426,102 @@ def _attached_sql(conn: Connection, table: str = _HITL) -> list[str]:
     DROP TABLE takes them with it. Read from ``sqlite_master`` rather than from the ORM so an
     index somebody added by hand survives too. Rows with NULL sql are SQLite's own
     auto-indexes (the primary key's, a UNIQUE's), which the new table's DDL recreates itself.
+    ``COLLATE NOCASE`` because SQLite stores a trigger's ``tbl_name`` as the CREATE spelled it
+    (``ON VENDOR_SCORECARDS``, ``ON "Vendor_Scorecards"``) while matching the table itself
+    case-insensitively -- so the DROP takes such a trigger too, and a case-sensitive capture
+    would silently lose it.
     """
     rows = conn.exec_driver_sql(
-        "SELECT sql FROM sqlite_master WHERE tbl_name = ? AND type IN ('index', 'trigger') "
+        "SELECT sql FROM sqlite_master WHERE tbl_name = ? COLLATE NOCASE AND type IN ('index', 'trigger') "
         "AND sql IS NOT NULL ORDER BY type, name",
         (table,),
     ).fetchall()
     return [r[0] for r in rows]
 
 
-# ``hitl_tasks`` as an identifier: bare, "double-quoted", [bracketed] or `backticked`, in any
-# case, not glued to another identifier character on either side (so ``hitl_tasks_archive`` and
-# a trigger NAMED ``trg_hitl_tasks_mirror`` do not match) and not inside a string literal or a
-# comment (stripped before matching). This is what SQLite resolves at RENAME time; matching a
-# substring instead refused files whose triggers only ever touched ``hitl_tasks_archive``.
-_HITL_IDENTIFIER = re.compile(
-    r'(?<![\w$])(?:"' + _HITL + r'"|\[' + _HITL + r"\]|`" + _HITL + r"`|" + _HITL + r")(?![\w$])",
-    re.IGNORECASE,
-)
-
-
-def _names_hitl_tasks(sql: str) -> bool:
-    """Does this CREATE VIEW / CREATE TRIGGER statement refer to the ``hitl_tasks`` TABLE?"""
-    bare = re.sub(r"'(?:[^']|'')*'", "''", sql)  # string literals: 'hitl_tasks' is data, not a table
-    bare = re.sub(r"/\*.*?\*/", " ", bare, flags=re.S)  # block comments
-    bare = re.sub(r"--[^\n]*", " ", bare)  # line comments
-    return bool(_HITL_IDENTIFIER.search(bare))
-
-
-def _refuse_schema_references(conn: Connection) -> None:
-    """A view, or a trigger on ANOTHER table, whose SQL mentions ``hitl_tasks`` makes
-    ``ALTER TABLE ... RENAME`` fail once the old table is gone ("error in trigger ...: no such
-    table: main.hitl_tasks"). That failure is safe -- it rolls back -- but it recurs on every
-    start with a message that does not say what to do, and each attempt writes another backup.
-    Refuse first, and say what to do. (Triggers ON hitl_tasks itself are fine: they are dropped
-    with the old table and replayed by ``_attached_sql``.) No view or trigger exists in this
-    codebase; this is for the file somebody has been reporting from or patching by hand.
-
-    ``LIKE`` is only the cheap prefilter; the decision is ``_names_hitl_tasks``, a whole-token
-    match. Refusing on the substring alone kept a file from starting because its trigger wrote
-    to ``hitl_tasks_archive`` -- a rebuild that would have succeeded, refused on every start."""
-    candidates = conn.exec_driver_sql(
-        "SELECT type, name, sql FROM sqlite_master WHERE type IN ('view', 'trigger') AND tbl_name != ? "
-        "AND sql LIKE ? ORDER BY type, name",
-        (_HITL, f"%{_HITL}%"),
+def _attached_names(conn: Connection, table: str) -> set[tuple[str, str]]:
+    """``{(type, name)}`` of EVERYTHING hanging off a table -- auto-indexes included -- which is
+    what a DROP TABLE removes and what must exist again after a rebuild. The post-check compares
+    against this, not against what ``_attached_sql`` chose to replay."""
+    rows = conn.exec_driver_sql(
+        "SELECT type, name FROM sqlite_master WHERE tbl_name = ? COLLATE NOCASE AND type IN ('index', 'trigger')",
+        (table,),
     ).fetchall()
-    rows = [(kind, name) for kind, name, sql in candidates if _names_hitl_tasks(sql or "")]
-    if rows:
-        named = ", ".join(f"{kind} {name}" for kind, name in rows)
+    return {(r[0], r[1]) for r in rows}
+
+
+def _quote_ident(name: str) -> str:
+    return '"' + name.replace('"', '""') + '"'
+
+
+# What SQLite says when a view or trigger elsewhere in the schema still refers to a table that
+# a RENAME is about to give a name to: 'error in trigger t_alc: no such table: main.hitl_tasks'.
+_RENAME_BLOCKER = re.compile(r"error in (view|trigger) (.+?): ", re.IGNORECASE)
+_PROBE_SAVEPOINT = "hitl_v8_rename_probe"
+
+
+def _rename_blockers(conn: Connection, engine: Engine) -> list[tuple[str, str]]:
+    """Every view and trigger that would make the rebuild's RENAME fail, decided by SQLite itself.
+
+    Inside a transaction that is always rolled back: CREATE the rebuild table (the exact DDL the
+    rebuild uses), DROP ``hitl_tasks``, RENAME. If the RENAME fails naming a view or trigger,
+    drop that object -- inside the same doomed transaction -- and try again, so the list is
+    complete and not just the first thing SQLite happened to parse. Then roll everything back.
+
+    Two hand-written matchers preceded this and both were wrong (module docstring). SQLite's
+    parser is the only correct oracle for "does this SQL refer to that table", and running the
+    real statements on the real connection also inherits whatever ``legacy_alter_table`` or
+    other pragma state the real RENAME will run under.
+
+    Outside a transaction the probe is ``BEGIN IMMEDIATE ... ROLLBACK``, which leaves the file
+    byte for byte as it was in both journal modes (pinned by test). Inside the migration's own
+    transaction it nests as a SAVEPOINT that is rolled back to.
+    """
+    inside = bool(getattr(conn.connection.driver_connection, "in_transaction", False))
+    begin, undo, done = (
+        (f"SAVEPOINT {_PROBE_SAVEPOINT}", f"ROLLBACK TO {_PROBE_SAVEPOINT}", f"RELEASE {_PROBE_SAVEPOINT}")
+        if inside
+        else ("BEGIN IMMEDIATE", "ROLLBACK", None)
+    )
+    blockers: list[tuple[str, str]] = []
+    conn.exec_driver_sql(begin)
+    try:
+        conn.exec_driver_sql(_rebuild_table_ddl(engine))
+        conn.exec_driver_sql(f"DROP TABLE {_HITL}")
+        for _ in range(500):
+            try:
+                conn.exec_driver_sql(f"ALTER TABLE {_HITL_REBUILD} RENAME TO {_HITL}")
+                break
+            except OperationalError as exc:
+                found = _RENAME_BLOCKER.search(str(exc.orig))
+                if found is None:
+                    raise HitlRebuildError(
+                        f"SQLite refused the {_HITL} rebuild's RENAME for a reason other than a view or trigger: "
+                        f"{exc.orig}. Nothing was changed and no backup was written."
+                    ) from exc
+                kind, name = found.group(1).lower(), found.group(2)
+                blockers.append((kind, name))
+                conn.exec_driver_sql(f"DROP {kind.upper()} {_quote_ident(name)}")
+        else:
+            raise HitlRebuildError(f"more than 500 views/triggers block the {_HITL} rebuild; giving up the count")
+    finally:
+        conn.exec_driver_sql(undo)
+        if done:
+            conn.exec_driver_sql(done)
+    return blockers
+
+
+def _refuse_rename_blockers(conn: Connection, engine: Engine) -> None:
+    """A view, or a trigger on ANOTHER table, that refers to ``hitl_tasks`` makes the rebuild's
+    ``ALTER TABLE ... RENAME`` fail once the old table is gone. That failure is safe -- it rolls
+    back -- but it recurs on every start with a message that does not say what to do, and each
+    attempt writes another backup. Refuse first, name every one, and say what to do. (Triggers
+    ON hitl_tasks itself are fine: they go with the old table and ``_attached_sql`` replays
+    them.) No view or trigger exists in this codebase; this is for the file somebody has been
+    reporting from or patching by hand."""
+    blockers = _rename_blockers(conn, engine)
+    if blockers:
+        named = ", ".join(f"{kind} {name}" for kind, name in blockers)
         raise HitlRebuildError(
             f"{named}: reference(s) to {_HITL} from elsewhere in the schema; SQLite cannot rename the rebuilt "
             f"table underneath them. Drop each one (DROP VIEW / DROP TRIGGER <name>), start again, then recreate "
@@ -478,18 +573,23 @@ def _hitl_rebuild_preflight(conn: Connection, engine: Engine) -> None:
             f"{_HITL} has column(s) the model does not know: {unknown}; a rebuild would drop them. Refusing; "
             "nothing was changed and no backup was written."
         )
-    _refuse_schema_references(conn)
+    _refuse_rename_blockers(conn, engine)
     _refuse_nulls_the_model_forbids(conn, engine)
 
 
-def _create_rebuild_table(conn: Connection, engine: Engine) -> str:
-    """CREATE the new table from the ORM's own DDL -- the statement a fresh database gets, with
-    only the table name changed -- so a migrated file and a new file cannot drift apart."""
+def _rebuild_table_ddl(engine: Engine) -> str:
+    """The new table's CREATE, from the ORM's own DDL -- the statement a fresh database gets, with
+    only the table name changed -- so a migrated file and a new file cannot drift apart. Shared by
+    the rebuild and by the rename probe, so the probe exercises exactly what the rebuild runs."""
     ddl = _one_line(str(CreateTable(HitlTaskRow.__table__).compile(dialect=engine.dialect)))
     head = f"CREATE TABLE {_HITL} ("
     if not ddl.startswith(head) or ddl.count(head) != 1:
         raise HitlRebuildError(f"unexpected DDL for {_HITL}; refusing to rewrite it: {ddl[:80]!r}")
-    sql = f"CREATE TABLE {_HITL_REBUILD} (" + ddl[len(head):]
+    return f"CREATE TABLE {_HITL_REBUILD} (" + ddl[len(head):]
+
+
+def _create_rebuild_table(conn: Connection, engine: Engine) -> str:
+    sql = _rebuild_table_ddl(engine)
     conn.exec_driver_sql(sql)
     return sql
 
@@ -600,6 +700,7 @@ def _rebuild_hitl_tasks(conn: Connection, engine: Engine) -> list[str]:
             f"model only: {sorted(set(new_columns) - set(old_columns))}); refusing to rebuild"
         )
     attached = _attached_sql(conn)
+    attached_names = _attached_names(conn, _HITL)  # everything the DROP will take, replayed or not
 
     applied = [_create_rebuild_table(conn, engine), _copy_hitl_rows(conn, new_columns)]
     rows, unowned = _verify_hitl_copy(conn, new_columns)
@@ -609,8 +710,9 @@ def _rebuild_hitl_tasks(conn: Connection, engine: Engine) -> list[str]:
     # the new one, it has every row, and nothing that hung off the old one went missing.
     if _hitl_tasks_needs_rebuild(conn) or _count(conn, _HITL) != rows:
         raise HitlRebuildError(f"{_HITL} is not in the expected state after the swap; rolled back")
-    if sorted(_attached_sql(conn)) != sorted(attached):
-        raise HitlRebuildError(f"{_HITL} lost an index or trigger in the swap; rolled back")
+    lost = attached_names - _attached_names(conn, _HITL)
+    if lost or sorted(_attached_sql(conn)) != sorted(attached):
+        raise HitlRebuildError(f"{_HITL} lost an index or trigger in the swap ({sorted(lost)}); rolled back")
 
     log.info("%s rebuilt: %d row(s) copied and verified, incident_id is now nullable", _HITL, rows)
     if unowned:
@@ -663,61 +765,75 @@ def _check_clauses(ddl: str) -> dict[str, str]:
     return dict(re.findall(r"CONSTRAINT (\w+) CHECK \((.*?)\)(?=, CONSTRAINT |, FOREIGN KEY|, PRIMARY KEY| \)$)", ddl))
 
 
+def _check_drift(conn: Connection, engine: Engine) -> dict[str, tuple[Table, str, str, int]]:
+    """``{table: (Table, live DDL, model DDL, row count)}`` for every table in
+    ``_CHECK_REFRESH_TABLES`` whose live definition differs from the model's. Read-only; runs on
+    every start. A table not on disk is skipped: the additive pass creates it current."""
+    drifted: dict[str, tuple[Table, str, str, int]] = {}
+    for table in Base.metadata.sorted_tables:
+        if table.name not in _CHECK_REFRESH_TABLES:
+            continue
+        live = _live_ddl(conn, table.name)
+        if live is None:
+            continue
+        compiled = _compiled_ddl(table, engine)
+        if _normalised_ddl(live) != compiled:
+            drifted[table.name] = (table, _normalised_ddl(live), compiled, _count(conn, table.name))
+    return drifted
+
+
+def _drift_warning(name: str, live: str, compiled: str, rows: int) -> str:
+    """The one message a populated, drifted table gets -- on every start, until it is dealt with."""
+    old, new = _check_clauses(live), _check_clauses(compiled)
+    changed = sorted(k for k in set(old) | set(new) if old.get(k) != new.get(k))
+    return (
+        f"{name} has {rows} row(s) and a definition older than the model's: CHECK constraint(s) "
+        f"{', '.join(changed) if changed else '<a difference outside the CHECK clauses>'} are not enforced by "
+        "this file. Left as it is -- a populated table is never rebuilt here; the ORM mapper guards in "
+        "db/models_scorecards.py still refuse every ORM write. To adopt the current constraints: export the "
+        "rows, empty the table, restart (the table is then recreated from the model, behind a backup taken at "
+        "that start), reload."
+    )
+
+
 def _refresh_check_constraints(conn: Connection, engine: Engine) -> tuple[list[str], list[str]]:
     """Bring the CHECKs of the tables in ``_CHECK_REFRESH_TABLES`` up to the model -- where that
     costs nothing. Returns ``(statements applied, notes for the report)``.
 
-    Must run inside the migration transaction and after the additive pass, so every table it
-    looks at exists (a missing one was just created current, and compares equal). The live DDL
-    decides, never the version: a fresh file, a file created after the tightening and a file
-    this step already refreshed all compare equal and are left alone.
+    Runs inside a write transaction: the migration's own after the additive pass (so every table
+    it looks at exists), or the fast path's when a start finds a drifted empty table (module
+    docstring, "ON EVERY START"). The live DDL decides, never the version: a fresh file, a file
+    created after the tightening and a file this step already refreshed all compare equal.
 
     * DDL differs and the table is EMPTY: drop and create from the model, dependent tables
       first for the drop and last for the create. The count is re-read immediately before each
-      DROP, under the write lock; a row appearing there aborts the whole migration. Indexes and
-      triggers that hung off the table are replayed from ``sqlite_master``; an ORM index that
-      still is not there afterwards is created. Verified afterwards: the live DDL now equals the
-      model's, the table is still empty, every index is back.
-    * DDL differs and the table has ROWS: untouched. One WARNING names the CHECKs the file is
-      not enforcing; the same text goes on the report. The mapper guards in
-      ``db/models_scorecards.py`` still hold for every ORM write; adopting the constraints for
-      raw SQL too is a human's call (export the rows, empty the table, start once).
+      DROP, under the write lock; a row appearing there aborts the whole transaction. Indexes and
+      triggers that hung off the table are replayed from ``sqlite_master`` (matched
+      case-insensitively, as SQLite matches them); an ORM index that still is not there
+      afterwards is created. Verified afterwards: the live DDL now equals the model's, the table
+      is still empty, and every index and trigger that existed before the drop exists again --
+      compared by name against what WAS there, not against what was captured for replay.
+    * DDL differs and the table has ROWS: untouched, warned about (``_drift_warning``), noted.
     """
     applied: list[str] = []
     notes: list[str] = []
-    tables = [t for t in Base.metadata.sorted_tables if t.name in _CHECK_REFRESH_TABLES]
-    drifted: dict[str, tuple[Table, str, str]] = {}
-    for table in tables:
-        live = _live_ddl(conn, table.name)
-        if live is None:
-            continue  # not on disk at all: nothing to compare (the additive pass creates it current)
-        compiled = _compiled_ddl(table, engine)
-        if _normalised_ddl(live) != compiled:
-            drifted[table.name] = (table, _normalised_ddl(live), compiled)
+    drifted = _check_drift(conn, engine)
     if not drifted:
         return applied, notes
 
-    rebuild = [t for t, _live, _compiled in drifted.values() if _count(conn, t.name) == 0]
+    rebuild = [table for table, _live, _compiled, rows in drifted.values() if rows == 0]
     rebuilding = {t.name for t in rebuild}  # by name: Table objects are SQL expressions, not values
-    for name, (table, live, compiled) in drifted.items():
-        if name in rebuilding:
-            continue
-        old, new = _check_clauses(live), _check_clauses(compiled)
-        changed = sorted(k for k in set(old) | set(new) if old.get(k) != new.get(k))
-        message = (
-            f"{name} has {_count(conn, name)} row(s) and a definition older than the model's: CHECK constraint(s) "
-            f"{', '.join(changed) if changed else '<a difference outside the CHECK clauses>'} are not enforced by "
-            "this file. Left as it is -- a populated table is never rebuilt here; the ORM mapper guards in "
-            "db/models_scorecards.py still refuse every ORM write. To adopt the current constraints: export the "
-            "rows, empty the table, start once (it is then recreated from the model), reload."
-        )
-        log.warning(message)
-        notes.append(message)
+    for name, (table, live, compiled, rows) in drifted.items():
+        if name not in rebuilding:
+            message = _drift_warning(name, live, compiled, rows)
+            log.warning(message)
+            notes.append(message)
 
     if not rebuild:
         return applied, notes
     # Drop dependents first, create them last: sorted_tables is dependency order.
     attached = {t.name: _attached_sql(conn, t.name) for t in rebuild}
+    attached_names = {t.name: _attached_names(conn, t.name) for t in rebuild}
     for table in reversed(rebuild):
         if _count(conn, table.name) != 0:
             raise CheckRefreshError(f"{table.name} gained a row while the migration held the write lock; rolled back")
@@ -743,10 +859,35 @@ def _refresh_check_constraints(conn: Connection, engine: Engine) -> tuple[list[s
             raise CheckRefreshError(f"{table.name} is not empty after being recreated; rolled back")
         present = {r[1] for r in conn.exec_driver_sql(f"PRAGMA index_list({table.name})").fetchall()}
         missing = {ix.name for ix in table.indexes} - present
-        if missing or not set(attached[table.name]) <= set(_attached_sql(conn, table.name)):
-            raise CheckRefreshError(f"{table.name} lost an index or trigger in the refresh ({sorted(missing)}); rolled back")
+        lost = attached_names[table.name] - _attached_names(conn, table.name)
+        if missing or lost or not set(attached[table.name]) <= set(_attached_sql(conn, table.name)):
+            raise CheckRefreshError(
+                f"{table.name} lost an index or trigger in the refresh (ORM indexes missing: {sorted(missing)}; "
+                f"objects gone: {sorted(lost)}); rolled back"
+            )
         log.info("%s was empty and its CHECK constraints were older than the model's: recreated from the model", table.name)
     return applied, notes
+
+
+# ------------------------------------------------------------ what every start looks for
+
+
+@dataclass(frozen=True)
+class _RoutineWork:
+    """What a start on a file that is already at SCHEMA_VERSION still has to do (usually nothing)."""
+
+    indexes: list[str]  # CREATE INDEX IF NOT EXISTS for mapped indexes the file lacks
+    refresh: bool  # a drifted, EMPTY table in _CHECK_REFRESH_TABLES: recreate it, behind a backup
+    warnings: list[str]  # drifted, POPULATED tables: say so, every start
+
+
+def _routine_work(conn: Connection, engine: Engine) -> _RoutineWork:
+    drifted = _check_drift(conn, engine)
+    return _RoutineWork(
+        indexes=_missing_index_sql(conn, engine),
+        refresh=any(rows == 0 for _t, _l, _c, rows in drifted.values()),
+        warnings=[_drift_warning(name, live, compiled, rows) for name, (_t, live, compiled, rows) in drifted.items() if rows],
+    )
 
 
 # ------------------------------------------------------------------------ entry point
@@ -767,6 +908,9 @@ def migrate_additive(engine: Engine, *, backup_dir: Path) -> MigrationReport:
           EXCEPTION").
        4. Write schema_version = SCHEMA_VERSION in the same transaction; commit; PRAGMA journal_mode=WAL.
        5. On any exception: rollback, leave schema_version unchanged, log the backup path, re-raise.
+       6. If SCHEMA_VERSION == stored (every later start): still look for a mapped index the file lacks
+          (created, no backup) and for a drifted table in _CHECK_REFRESH_TABLES (recreated behind a backup
+          when empty, warned about when not) -- module docstring, "ON EVERY START". Usually nothing.
        Returns the list of applied statements for the startup log."""
     global LAST_REPORT
 
@@ -777,21 +921,31 @@ def migrate_additive(engine: Engine, *, backup_dir: Path) -> MigrationReport:
         return LAST_REPORT
 
     db_file = sqlite_file(engine)
+    routine: _RoutineWork | None = None
     with engine.connect() as conn:
         stored = _read_version(conn, _user_tables(conn))
         if stored < SCHEMA_VERSION:
-            # Read-only, and BEFORE the backup: anything that would make the hitl_tasks rebuild
-            # fail on every start is refused here, so a refused start does not write a backup
-            # per attempt. The fast path below never reaches this line.
+            # BEFORE the backup, and read-only in effect (the rename probe rolls back): anything
+            # that would make the hitl_tasks rebuild fail on every start is refused here, so a
+            # refused start does not write a backup per attempt.
             _hitl_rebuild_preflight(conn, engine)
+        else:
+            # Every start after the first: the two things that must not wait for a version bump
+            # (module docstring, "ON EVERY START"), found with a few catalogue reads.
+            routine = _routine_work(conn, engine)
 
-    if stored >= SCHEMA_VERSION:
-        # The common case -- every start after the first. No backup, no transaction.
+    if routine is not None:
         if stored > SCHEMA_VERSION:
             log.info("database schema_version %s is newer than this code (%s); additive schema, carrying on", stored, SCHEMA_VERSION)
-        _enable_wal(engine)
-        LAST_REPORT = MigrationReport(stored, SCHEMA_VERSION, None, note="schema already current")
-        return LAST_REPORT
+        if not routine.indexes and not routine.refresh:
+            # The common case -- no backup, no transaction. A populated, drifted table is
+            # named every start; the refresh below would say it too, so it is said here only
+            # when nothing else is going to run.
+            for warning in routine.warnings:
+                log.warning(warning)
+            _enable_wal(engine)
+            LAST_REPORT = MigrationReport(stored, SCHEMA_VERSION, None, note="; ".join(["schema already current", *routine.warnings]))
+            return LAST_REPORT
 
     backup_path: Path | None = None
     note = ""
@@ -799,7 +953,11 @@ def migrate_additive(engine: Engine, *, backup_dir: Path) -> MigrationReport:
         note = "new database: created in full, nothing to back up"
     elif db_file is None:
         note = "in-memory database: nothing to back up"
+    elif routine is not None and not routine.refresh:
+        note = "mapped index(es) missing from a current file: created without a backup (an index holds no data)"
     else:
+        # A version move, or a drifted empty table about to be recreated on a current file --
+        # the latter is named <db>.9-to-9.<ts>.db: same version, because the version did not move.
         backup_path = _backup(engine, db_file, backup_dir, stored, SCHEMA_VERSION)
         log.info("schema_version %s -> %s: pre-migration backup written to %s", stored, SCHEMA_VERSION, backup_path)
 
@@ -821,23 +979,33 @@ def migrate_additive(engine: Engine, *, backup_dir: Path) -> MigrationReport:
             # the plan, the DDL and the version stamp are one atomic unit (and a second
             # process starting at the same moment waits here, then finds nothing to do).
             conn.exec_driver_sql("BEGIN IMMEDIATE")
-            if _read_version(conn, _user_tables(conn)) >= SCHEMA_VERSION:
-                conn.rollback()
-                LAST_REPORT = MigrationReport(stored, SCHEMA_VERSION, backup_path, note="migrated by another process")
-                return LAST_REPORT
-            for sql in _plan(conn, engine):
-                conn.exec_driver_sql(sql)
-                applied.append(sql)
-            # The one non-additive step. After the additive pass on purpose (the old table has
-            # every column by now), inside the same transaction on purpose (a failure in it, or
-            # after it, undoes it). Returns [] on every file that does not need it.
-            applied.extend(_rebuild_hitl_tasks(conn, engine))
-            # The second one: CHECKs the additive path can never deliver. Destructive only on
-            # an EMPTY table; a populated one is warned about, and the warning rides on the report.
+            if routine is None:
+                if _read_version(conn, _user_tables(conn)) >= SCHEMA_VERSION:
+                    conn.rollback()
+                    LAST_REPORT = MigrationReport(stored, SCHEMA_VERSION, backup_path, note="migrated by another process")
+                    return LAST_REPORT
+                for sql in _plan(conn, engine):
+                    conn.exec_driver_sql(sql)
+                    applied.append(sql)
+                # The one non-additive step. After the additive pass on purpose (the old table has
+                # every column by now), inside the same transaction on purpose (a failure in it, or
+                # after it, undoes it). Returns [] on every file that does not need it.
+                applied.extend(_rebuild_hitl_tasks(conn, engine))
+            else:
+                # A current file with work left over: indexes the model has and the file lacks.
+                # Re-derived under the write lock; another process may have got here first.
+                for sql in _missing_index_sql(conn, engine):
+                    conn.exec_driver_sql(sql)
+                    applied.append(sql)
+            # The second exception: CHECKs the additive path can never deliver. Destructive only
+            # on an EMPTY table; a populated one is warned about, and the warning rides on the
+            # report. Re-derives the drift itself, so a file another process already refreshed
+            # is left alone.
             refreshed, refresh_notes = _refresh_check_constraints(conn, engine)
             applied.extend(refreshed)
             note = "; ".join(part for part in (note, *refresh_notes) if part)
-            _stamp_version(conn, SCHEMA_VERSION)
+            if routine is None:
+                _stamp_version(conn, SCHEMA_VERSION)
             conn.commit()
         except BaseException:
             conn.rollback()

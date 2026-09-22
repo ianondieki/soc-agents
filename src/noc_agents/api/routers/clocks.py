@@ -27,7 +27,7 @@ from pydantic import BaseModel
 
 from noc_agents.api import auth
 from noc_agents.api.auth import require_role
-from noc_agents.api.deps import OPERATIONS, READERS, SUPERVISORS, _actor, _get_owned, _settings
+from noc_agents.api.deps import INCIDENT_READERS, OPERATIONS, SUPERVISORS, _actor, _get_owned, _settings
 from noc_agents.db.models import IncidentRow, get_session
 from noc_agents.db.models_vendors import ClockEventRow
 from noc_agents.services.clock import z_utc
@@ -104,7 +104,8 @@ def _clock_view(session, inc: IncidentRow) -> dict:
     }
 
 
-@router.get("/incidents/{incident_id}/clock", dependencies=[Depends(require_lane), Depends(require_role(*READERS))])
+# §9.3 row 1 read (incident surface): INCIDENT_READERS -- legal R, the vendor roles "notes only".
+@router.get("/incidents/{incident_id}/clock", dependencies=[Depends(require_lane), Depends(require_role(*INCIDENT_READERS))])
 def get_clock(incident_id: str) -> dict:
     session = get_session()
     try:

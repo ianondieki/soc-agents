@@ -43,8 +43,12 @@ from noc_agents.db.models_scorecards import (
     STATUS_PUBLISHED,
     STATUS_SHADOW,
     STATUS_WITHHELD,
+    LINE_DISPUTE_COLUMNS,
+    LINE_EVIDENCE_COLUMNS,
     ScorecardEvidenceError,
+    VendorScorecardLineRow,
     VendorScorecardRow,
+    earlier_released_card_exists,
     visible_human_name,
 )
 from noc_agents.realtime.hub import hub
@@ -1290,3 +1294,205 @@ def test_the_read_row_is_spelled_out_in_the_router_not_borrowed_from_deps():
     assert router_module.SCORECARD_READERS == ("noc_analyst", "shift_supervisor", "duty_manager", "management", "msp_coordinator", "legal", "admin")
     assert "field_engineer" not in router_module.SCORECARD_READERS and "planning" not in router_module.SCORECARD_READERS
     assert router_module.INTERNAL_READERS == ("duty_manager", "management", "admin")
+
+
+# --------------------------------------------------------------------------
+# Round 4: natural-key recompute, the failure path, line guards, the audit predicate
+# --------------------------------------------------------------------------
+
+
+def _rekey(session, old_id: str, new_id: str) -> None:
+    """What a foreign id scheme leaves behind: the same card under an id the uuid5 rule would
+    never produce. Raw SQL on purpose -- the mapper guards are not the thing under test here."""
+    session.execute(text("UPDATE vendor_scorecards SET id = :new WHERE id = :old"), {"new": new_id, "old": old_id})
+    session.execute(text("UPDATE vendor_scorecard_lines SET scorecard_id = :new WHERE scorecard_id = :old"), {"new": new_id, "old": old_id})
+    session.commit()
+    session.expire_all()
+
+
+@pytest.mark.parametrize("make_status", ["SHADOW", "WITHHELD", "DRAFT"])
+def test_a_card_found_by_its_natural_key_can_be_recomputed(tmp_db, make_status):
+    """NEW:scorecards:1 (regression). ``_existing_card`` finds a card by (operator, vendor, period)
+    even under a foreign id, but the computation scope was opened with the uuid5 id, so the
+    mapper refused the legitimate recompute. The scope is now the id of the row actually written."""
+    settings, session = tmp_db
+    build_fixture(session)
+    terms = _terms(settings.operator)
+    if make_status == "WITHHELD":
+        _infer_restores(session, {"G01": "VENDOR_NOTE_INFERRED", "G13": None})
+    if make_status == "DRAFT":  # a released July first, so August is not a first period
+        _incident(session, "JUL1", "P2", "S-A", "NBI_E", "POWER", _t(5, 9, month=7), _t(5, 9, 2, month=7), _t(5, 9, 10, month=7), _t(5, 10, month=7), "MARK_RESTORED", {})
+        july = _compute(session, settings, period="2026-07")
+        sc.record_shadow_review(session, july, **REVIEW)
+        sc.publish_scorecard(session, july, terms=terms, cfg=settings.operator, **DM)
+        session.commit()
+    card = _compute(session, settings)
+    assert card.status == make_status
+    card_id, vendor_id = card.id, card.vendor_id  # the ORM object is stale once the row is rekeyed underneath it
+    original_lines = {l.id: sc.line_out(l) for l in sc.lines_of(session, card_id)}
+    _rekey(session, card_id, "legacy-card-1")
+    assert session.get(VendorScorecardRow, "legacy-card-1") is not None
+    again = _compute(session, settings)  # the recompute the mapper used to refuse
+    assert again.id == "legacy-card-1" and again.status == make_status
+    assert session.scalars(select(VendorScorecardRow).where(VendorScorecardRow.period == PERIOD, VendorScorecardRow.vendor_id == vendor_id)).one().id == "legacy-card-1"  # never duplicated
+    assert {l.id: sc.line_out(l) for l in sc.lines_of(session, "legacy-card-1")} == original_lines  # same 22 lines, same digits
+    assert not session.info.get(COMPUTATION_SCOPE_KEY)
+    # the request path too
+    report, run_id = sc.compute_on_request(session, settings, PERIOD, vendor_code="EGYPRO", actor="Grace Mwangi", now=NOW)
+    session.commit()
+    assert report.card_ids == ["legacy-card-1"] and session.get(AgentRunRow, run_id).status == "SUCCEEDED"
+
+
+def test_a_failed_compute_on_request_rolls_back_records_a_failed_run_and_raises_the_real_error(tmp_db, monkeypatch):
+    """NEW:scorecards:1(b). When the computation failed INSIDE a flush, the except block wrote
+    the FAILED step on a session that needed a rollback: ``PendingRollbackError`` over the real
+    error, a 500 from the route, and the run row lost with the rollback. The flush failure here
+    is deterministic: every line id collapses to one value, so a fresh card's 22 line inserts
+    collide on the primary key."""
+    settings, session = tmp_db
+    build_fixture(session)
+    real_line_id = sc._line_id
+    monkeypatch.setattr(sc, "_line_id", lambda card_id, kpi, priority: "same-id-for-every-line")
+    with pytest.raises(IntegrityError):  # the ORIGINAL error -- never PendingRollbackError
+        sc.compute_on_request(session, settings, PERIOD, vendor_code="TETRANET", actor="Grace Mwangi", now=NOW)
+    # the session is usable, and the failure is on record
+    failed = session.scalars(select(AgentRunRow).where(AgentRunRow.graph_name == sc.GRAPH_NAME, AgentRunRow.status == "FAILED")).all()
+    assert len(failed) == 1 and failed[0].trigger == "REQUEST" and "IntegrityError" in failed[0].error_summary
+    steps = session.scalars(select(AgentRunStepRow).where(AgentRunStepRow.run_id == failed[0].id)).all()
+    assert len(steps) == 1 and steps[0].status == "FAILED" and "IntegrityError" in steps[0].rationale
+    assert session.scalars(select(VendorScorecardRow)).all() == []  # nothing half-written survived the rollback
+    # a plain input error takes the same path: ValueError out, FAILED run recorded, no poisoned session
+    with pytest.raises(ValueError, match="has not ended"):
+        sc.compute_on_request(session, settings, "2026-09", vendor_code="EGYPRO", actor="Grace Mwangi", now=NOW)
+    assert len(session.scalars(select(AgentRunRow).where(AgentRunRow.status == "FAILED")).all()) == 2
+    monkeypatch.setattr(sc, "_line_id", real_line_id)  # not undo(): that would also revert the fixture's environment
+    assert _compute(session, settings).status == STATUS_SHADOW  # and the session still computes afterwards
+    assert not session.info.get(COMPUTATION_SCOPE_KEY)
+
+
+def test_the_compute_route_answers_4xx_never_500_when_the_computation_fails(client, monkeypatch):
+    _seed(monkeypatch)
+    _as(client, "duty_manager", "Grace Mwangi")
+    assert client.post("/api/v1/scorecards/compute?period=2026-08&vendor=EGYPRO").status_code == 200
+    r = client.post("/api/v1/scorecards/compute?period=2026-09&vendor=EGYPRO")  # not ended (clock frozen at 21 Sep)
+    assert r.status_code == 400 and "has not ended" in r.text
+    real_line_id = sc._line_id
+    monkeypatch.setattr(sc, "_line_id", lambda card_id, kpi, priority: "same-id-for-every-line")  # a flush failure on a fresh card
+    r = client.post("/api/v1/scorecards/compute?period=2026-08&vendor=TETRANET")
+    assert r.status_code == 409 and "could not be written" in r.text, r.text  # never a 500 from a poisoned session
+    runs = client.get("/api/v1/runs?graph_name=scorecard").json()
+    assert sorted(run["status"] for run in runs) == ["FAILED", "FAILED", "SUCCEEDED"]
+    assert all(step["status"] == "FAILED" for run in runs if run["status"] == "FAILED" for step in run["steps"])
+    monkeypatch.setattr(sc, "_line_id", real_line_id)  # not undo(): the client fixture shares this monkeypatch
+    assert client.post("/api/v1/scorecards/compute?period=2026-08&vendor=TETRANET").status_code == 200  # the app is not wedged
+
+
+def test_line_evidence_on_an_unreleased_card_is_the_computations_too(tmp_db):
+    """NEW:scorecards:2. On a SHADOW card an ORM writer could edit a line's raw_value /
+    normalised_value / proposed_credit_pct / formula, add a line carrying a credit, or delete
+    one -- and the card was then published with the edits. Lines now follow the card's rule:
+    insert, update and delete of evidence only inside the PARENT card's computation scope."""
+    settings, session = tmp_db
+    build_fixture(session)
+    terms = _terms(settings.operator)
+    card = _compute(session, settings)
+    card_id = card.id
+    credit_line = next(l for l in sc.lines_of(session, card_id) if l.proposed_credit_pct is not None)
+    lid = credit_line.id
+    before = {l.id: sc.line_out(l) for l in sc.lines_of(session, card_id)}
+
+    def edit():
+        ln = session.get(VendorScorecardLineRow, lid)
+        ln.raw_value, ln.normalised_value, ln.proposed_credit_pct, ln.formula = 99.99, 99.99, 50.0, "edited outside compute"
+
+    def add():
+        session.add(VendorScorecardLineRow(id="extra-line", scorecard_id=card_id, seq=99, kpi="MTTA_MIN", priority="P9", raw_value=1.0, band="RED", credit_status="PROPOSED", unit="min",
+                                           scc_minutes_deducted=0, eligible_incidents=0, excluded_incidents=0, formula="extra", yaml_path="x", evidence_json="{}", proposed_credit_pct=25.0))
+
+    def delete_one():
+        session.delete(next(ln for ln in sc.lines_of(session, card_id) if ln.kpi == KPI_AVAILABILITY))
+
+    for label, fn in (("evidence changed", edit), ("inserted", add), ("deleted", delete_one)):
+        exc = _refused(session, fn)
+        assert isinstance(exc, ScorecardEvidenceError) and label in str(exc) and "outside a computation" in str(exc), label
+    for column in LINE_EVIDENCE_COLUMNS:
+        if column in ("scorecard_id", "kpi", "priority", "unit", "yaml_path", "formula", "evidence_json"):
+            value = "x"
+        else:
+            value = 7
+        ln = session.get(VendorScorecardLineRow, lid)
+        exc = _refused(session, lambda ln=ln, column=column, value=value: setattr(ln, column, value))
+        assert isinstance(exc, ScorecardEvidenceError), column
+    assert {l.id: sc.line_out(l) for l in sc.lines_of(session, card_id)} == before  # nothing moved, nothing added, nothing gone
+    exc = _refused(session, lambda: session.delete(session.get(VendorScorecardRow, card_id)))
+    assert isinstance(exc, ScorecardEvidenceError) and "not removed by hand" in str(exc)
+    # the dispute seam is named and stays writable, before release...
+    ln = session.get(VendorScorecardLineRow, lid)
+    for column, value in (("band", "AMBER"), ("credit_status", "WITHDRAWN"), ("dispute_status", "OPEN"), ("dispute_task_id", "t1"), ("adjusted_value", 55.0), ("adjudicated_by", "Grace Mwangi"), ("adjudication_reason", "clock evidence")):
+        assert column in LINE_DISPUTE_COLUMNS
+        setattr(ln, column, value)
+    session.flush()
+    for column in LINE_DISPUTE_COLUMNS:
+        assert column not in LINE_EVIDENCE_COLUMNS
+    # ...and after: the card publishes with its 22 computed lines exactly as computed
+    sc.record_shadow_review(session, session.get(VendorScorecardRow, card_id), **REVIEW)
+    sc.publish_scorecard(session, session.get(VendorScorecardRow, card_id), terms=terms, cfg=settings.operator, **DM)
+    session.commit()
+    published = {l.id: sc.line_out(l) for l in sc.lines_of(session, card_id)}
+    assert len(published) == 22 and "extra-line" not in published
+    for key in ("raw_value", "normalised_value", "proposed_credit_pct", "formula"):
+        assert {i: v[key] for i, v in published.items()} == {i: v[key] for i, v in before.items()}
+    ln = session.get(VendorScorecardLineRow, lid)
+    ln.dispute_status = "UPHELD"
+    session.flush()
+    exc = _refused(session, lambda: setattr(session.get(VendorScorecardLineRow, lid), "raw_value", 1.0))
+    assert isinstance(exc, ScorecardEvidenceError) and "frozen" in str(exc)
+    exc = _refused(session, lambda: session.delete(session.get(VendorScorecardLineRow, lid)))
+    assert isinstance(exc, ScorecardEvidenceError) and "frozen" in str(exc)
+    exc = _refused(session, lambda: session.delete(session.get(VendorScorecardRow, card_id)))
+    assert isinstance(exc, ScorecardEvidenceError) and "never deleted" in str(exc)
+
+
+def test_the_computation_itself_still_inserts_updates_and_drops_lines(tmp_db, monkeypatch):
+    """The guards admit the computation: first compute inserts 22 lines, a recompute updates
+    them in place, and a shrunken LINE_SHAPE drops the surplus rows."""
+    settings, session = tmp_db
+    build_fixture(session)
+    card = _compute(session, settings)
+    ids = {l.id for l in sc.lines_of(session, card.id)}
+    assert len(ids) == 22
+    again = _compute(session, settings)
+    assert {l.id for l in sc.lines_of(session, again.id)} == ids
+    monkeypatch.setattr(sc, "LINE_SHAPE", tuple(k for k in sc.LINE_SHAPE if k[0] != KPI_AVAILABILITY))
+    shrunk = _compute(session, settings)
+    assert len(sc.lines_of(session, shrunk.id)) == 21 and not any(l.kpi == KPI_AVAILABILITY for l in sc.lines_of(session, shrunk.id))
+
+
+def test_the_audit_exists_predicate_is_sargable_on_entity_type_and_entity_id(tmp_db):
+    """NEW:scorecards:3. The S02 EXISTS must be answerable from an index on
+    ``audit_events (entity_type, entity_id)`` -- equality on both columns, no function around
+    either. The index ships with the schema: ``ix_audit_events_entity_action`` on
+    ``audit_events (entity_type, entity_id, action)``, declared on ``AuditRow`` and created for
+    existing files by ``db/migrate.py`` on every start (tests/unit/test_audit_index.py). This
+    asserts the plan uses THAT index, so dropping it from the model fails here too."""
+    settings, session = tmp_db
+    build_fixture(session)
+    card = _compute(session, settings)
+    session.commit()
+    engine = session.get_bind()
+    with engine.connect() as conn:
+        compiled = str(select(VendorScorecardRow.id).where(
+            select(AuditRow.id).where(AuditRow.entity_type == "vendor_scorecard", AuditRow.entity_id == VendorScorecardRow.id, AuditRow.action == "scorecard.published").exists()
+        ).compile(compile_kwargs={"literal_binds": True}))
+        assert "audit_events.entity_type = 'vendor_scorecard' AND audit_events.entity_id = vendor_scorecards.id AND audit_events.action = 'scorecard.published'" in compiled
+        plan = " | ".join(
+            row[3]
+            for row in conn.execute(text(
+                "EXPLAIN QUERY PLAN SELECT v.id FROM vendor_scorecards v WHERE v.operator_id = :o AND v.vendor_id = :v AND v.sla_terms_version = :t "
+                "AND v.period < :p AND v.status IN ('PUBLISHED', 'FINAL') AND EXISTS (SELECT a.id FROM audit_events a WHERE a.entity_type = 'vendor_scorecard' "
+                "AND a.entity_id = v.id AND a.action = 'scorecard.published') LIMIT 1"
+            ), {"o": "safaricom", "v": card.vendor_id, "t": card.sla_terms_version, "p": "2026-09"})
+        )
+        assert "INDEX ix_audit_events_entity_action (entity_type=? AND entity_id=?" in plan, plan
+        assert "SCAN a" not in plan, plan
+    assert earlier_released_card_exists(session, operator_id="safaricom", vendor_id=card.vendor_id, period="2026-09", sla_terms_version=card.sla_terms_version) is False

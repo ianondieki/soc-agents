@@ -35,11 +35,13 @@ closes each risk, in the order :func:`parse_xml` applies it:
    whole exchange — connection, TLS, response headers (including any run of ``1xx`` interim
    responses) and body. httpx's timeout is per socket read, so a server dripping one byte every
    nine seconds never trips it, in the headers or in the body. The deadline is therefore
-   enforced *below* httpx, by :class:`DeadlineWatchdog`: it captures the connection's socket
-   through httpx's documented ``trace`` request extension and, if the deadline passes, shuts the
-   socket down from a timer thread, which unblocks whatever read is in progress. Requests send
-   ``Connection: close`` so every request opens (and so exposes) its own connection. A per-chunk
-   check remains as a second, clock-based bound on the body (review findings F06, W02).
+   enforced *below* httpx, by :class:`DeadlineWatchdog`: through httpx's documented ``trace``
+   request extension it takes its own duplicate descriptor of the connection and, if the
+   deadline passes, shuts the connection down from a timer thread, which unblocks whatever
+   read is in progress — plain HTTP or TLS, handshake included (both production feeds are
+   ``https``; review finding W02-TLS). Requests send ``Connection: close`` so every request opens
+   (and so exposes) its own connection. A per-chunk check remains as a second, clock-based
+   bound on the body (review findings F06, W02).
 3. **Encoding: UTF-8 only, refused before any parser runs.** A UTF-16 or UTF-32 byte-order mark,
    any NUL byte, an XML declaration naming another encoding, or bytes that are not valid UTF-8 —
    each is ``malformed``. KMD serves UTF-8, and a CAP feed that is not UTF-8 is a malformed
@@ -658,70 +660,121 @@ def _is_tls_failure(exc: BaseException) -> bool:
 
 
 class DeadlineWatchdog:
-    """A total deadline on one HTTP exchange, enforced below httpx (review finding W02).
+    """A total deadline on one HTTP exchange, enforced below httpx (review findings W02, W02-TLS).
 
     Why this and not a timeout setting: httpx (and httpcore beneath it) apply ``timeout`` to each
     individual socket operation. No per-request value bounds a server that answers every read
     promptly with one byte — in the body, in the response headers, or as an endless series of
-    ``100 Continue`` interim responses, all of which were confirmed over a real socket to run
-    8–11 s against a 1 s budget. The only thing that ends such an exchange at a fixed time is
-    closing the connection at that time.
+    ``100 Continue`` interim responses, all confirmed over a real socket to run 8-11 s against a
+    1 s budget. The only thing that ends such an exchange at a fixed time is shutting the
+    connection down at that time.
 
-    How: :meth:`trace` is passed as httpx's documented ``trace`` request extension; httpcore calls
-    it with ``connection.connect_tcp.complete`` and the network stream, whose ``socket`` this
-    records. A ``threading.Timer`` fires at the deadline and calls ``shutdown(SHUT_RDWR)`` on the
-    socket — the base ``socket.socket`` method, so it works on a TLS socket too and does not touch
-    the SSL object another thread is using. On Linux a blocked ``recv`` then fails at once
-    (``close()`` alone would not reliably wake it). On Windows, measured here, shutdown wakes a
-    reader only when the next byte arrives: a dripping server is ended within one inter-byte gap
-    of the deadline, and a silent one by the per-request timeout, which :func:`_bounded_get` caps
-    at the budget. So an exchange is bounded by the deadline plus at most one budget-long wait
-    (2 x ``timeout_s``) in the worst case, and by the deadline itself on Linux. httpx then raises
-    a ``TransportError`` and the caller, seeing :attr:`fired`, reports ``timeout``. The timer is
-    cancelled when the exchange ends, so the normal case costs one short-lived thread.
+    **The watchdog owns its own handle on the connection.** :meth:`trace` is passed as httpx's
+    documented ``trace`` request extension. On ``connection.connect_tcp.complete`` (and again on
+    ``connection.start_tls.complete``) it takes a *duplicate descriptor* of the connection's
+    socket (``socket.fromfd``), which this object owns. At the deadline a ``threading.Timer``
+    calls ``shutdown(SHUT_RDWR)`` on those duplicates. ``shutdown`` acts on the connection, not on
+    one descriptor, so every reader of that connection — plain or TLS, in the handshake, the
+    headers or the body — is cut off.
 
-    The caller must send ``Connection: close``: a keep-alive connection reused from an earlier
-    request emits no ``connect_tcp`` event, so its socket could not be captured. A poller making
-    at most eleven requests per half hour loses nothing by not reusing connections.
+    Why a duplicate and not the socket httpcore hands over (review finding W02-TLS, the reason
+    this class was rewritten): for ``https`` httpcore calls ``ssl_context.wrap_socket(sock)``, and
+    ``SSLSocket`` *detaches* the plain socket — the object recorded at ``connect_tcp`` then has
+    ``fileno() == -1``, ``shutdown`` failed with WinError 10038 / EBADF, the error was swallowed, and
+    both production feeds (both ``https``) had no header-phase bound at all. A descriptor the
+    watchdog duplicated at ``connect_tcp`` stays valid through the wrap and everything after it.
+    (The handshake itself was never the gap: CPython's ``ssl`` applies the socket timeout to
+    ``do_handshake`` as one *total* deadline — measured, a handshake dripped over ~7 s aborts at a
+    1.0 s timeout — and :func:`_bounded_get` caps that timeout at the budget. The gap is after the
+    handshake: every TLS read gets a fresh per-read timeout, so a drip of response headers or of
+    ``1xx`` responses is bounded by nothing but this watchdog.)
+
+    **Never another request's socket.** The duplicates belong to this object and are closed by
+    :meth:`cancel`, under the same lock :meth:`_fire` holds while it shuts them down — so a timer
+    that fires late finds an empty list (and a closed duplicate reports ``fileno() == -1``; it can
+    never come to name a descriptor some later request was given). A trace callback is per
+    request, and requests send ``Connection: close`` so each opens, and so exposes, its own
+    connection; a connection this exchange did not open is never adopted.
+
+    **Bound.** On Linux a blocked read fails as soon as ``shutdown`` runs. On Windows, measured
+    here, it fails when the next byte arrives: a dripping server is ended within one inter-byte
+    gap of the deadline, and a silent one by the per-request timeout, which
+    :func:`_bounded_get` caps at the budget — so at most ``2 x timeout_s`` there. httpx then
+    raises a ``TransportError`` and the caller, seeing :attr:`fired`, reports ``timeout``.
+
+    **No thread outlives the exchange.** :meth:`cancel` (always called in the caller's
+    ``finally``) cancels the timer and joins its thread; the timer thread is a daemon named
+    ``noc-deadline-watchdog`` so a leak would be visible in ``threading.enumerate()``.
     """
+
+    THREAD_NAME = "noc-deadline-watchdog"
+    _EVENTS = frozenset({"connection.connect_tcp.complete", "connection.start_tls.complete"})
 
     def __init__(self, seconds: float) -> None:
         self.fired = False
+        self._closed = False
         self._lock = threading.Lock()
-        self._sockets: list[socket.socket] = []
+        self._handles: list[socket.socket] = []
         self._timer = threading.Timer(max(0.0, seconds), self._fire)
+        self._timer.name = self.THREAD_NAME
         self._timer.daemon = True
         self._timer.start()
 
     def trace(self, event_name: str, info: Mapping[str, Any]) -> None:
-        if event_name != "connection.connect_tcp.complete":
+        if event_name not in self._EVENTS:
             return
         stream = info.get("return_value")
         sock = stream.get_extra_info("socket") if stream is not None else None
-        if sock is None:
+        handle = self._adopt(sock)
+        if handle is None:
             return
         with self._lock:
-            self._sockets.append(sock)
-            fired = self.fired
-        if fired:  # connected after the deadline had already passed
-            self._shutdown(sock)
+            if self._closed:  # the exchange already ended: never keep a handle past cancel()
+                handle.close()
+                return
+            self._handles.append(handle)
+            if self.fired:  # connected (or finished TLS) after the deadline had passed
+                self._shutdown(handle)
+
+    @staticmethod
+    def _adopt(sock: Any) -> socket.socket | None:
+        """A duplicate descriptor of ``sock``'s connection, owned by the watchdog, or ``None``."""
+        try:
+            fd = sock.fileno() if sock is not None else -1
+            if fd < 0:
+                return None
+            return socket.fromfd(fd, sock.family, sock.type)
+        except (OSError, ValueError, AttributeError):
+            return None  # cannot duplicate: the per-chunk check and per-wait cap still bound it
 
     def _fire(self) -> None:
         with self._lock:
+            if self._closed:
+                return
             self.fired = True
-            sockets = list(self._sockets)
-        for sock in sockets:
-            self._shutdown(sock)
+            for handle in self._handles:
+                self._shutdown(handle)
 
     @staticmethod
-    def _shutdown(sock: socket.socket) -> None:
+    def _shutdown(handle: socket.socket) -> None:
         try:
-            socket.socket.shutdown(sock, socket.SHUT_RDWR)
+            handle.shutdown(socket.SHUT_RDWR)
         except OSError:
-            pass  # already closed or never connected: nothing left to interrupt
+            pass  # the connection is already gone: nothing left to interrupt
 
     def cancel(self) -> None:
+        """End the watch: stop the timer, close every handle, and join the timer thread."""
         self._timer.cancel()
+        with self._lock:
+            self._closed = True
+            handles, self._handles = self._handles, []
+        for handle in handles:
+            try:
+                handle.close()
+            except OSError:
+                pass
+        if threading.current_thread() is not self._timer:
+            self._timer.join(timeout=1.0)
 
 
 def _per_wait(client: httpx.Client, timeout_s: float) -> httpx.Timeout:
