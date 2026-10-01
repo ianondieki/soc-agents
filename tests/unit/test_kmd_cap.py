@@ -37,6 +37,7 @@ outage; NEW2 a detached row is never extended; NEW3 punctuation is not a place).
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import re
 import socket
@@ -427,6 +428,11 @@ def parser_mode(request, monkeypatch):
 
 
 def test_this_interpreter_uses_defusedxml_when_it_is_importable():
+    # The adapter keeps defusedxml optional on purpose (its module docstring says why); the dev
+    # extra installs it so CI exercises this path, and an interpreter without it tests the
+    # guarded stdlib path instead of failing here for the want of an optional package.
+    if importlib.util.find_spec("defusedxml") is None:
+        pytest.skip("defusedxml is not installed: this interpreter runs the guarded stdlib path")
     assert XML_PARSER == "defusedxml"
 
 

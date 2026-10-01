@@ -44,6 +44,7 @@ from noc_agents.services.alerts import V1_SMS_MAX_SEGMENTS, build_alert
 from noc_agents.services.composition import compose_sms
 from noc_agents.services.gsm7 import is_gsm7, non_gsm7_chars, sms_cost
 from noc_agents.services.templates import (
+    HITL_NUDGE_TEMPLATE_KEY,
     SENDABLE_STATUSES,
     TemplateNotApproved,
     TemplateRegistry,
@@ -331,6 +332,12 @@ def test_sms_channels_without_a_v2_did_not_need_one(key, channel, block):
         + "; ".join(o.describe() for o in offenders)
     )
     body = _en(block)["body"]
+    if key == HITL_NUDGE_TEMPLATE_KEY:
+        # §6.5's nudge is not an envelope message: its vocabulary is HITL_NUDGE_PARAMS, it may be
+        # about a card with no incident at all, and `subject` already carries the incident number
+        # when there is one. §6.2's incident-number rule is about alerts; the GSM-7 measurement
+        # above is all the nudge owes this file.
+        return
     assert "{{ incident_number }}" in body, "§6.2 requires the incident number in the SMS body"
     assert "{{ priority }}" in body, "§6.2 requires the priority token in the SMS body"
 

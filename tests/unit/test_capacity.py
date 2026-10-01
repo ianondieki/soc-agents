@@ -42,7 +42,7 @@ from fastapi.testclient import TestClient
 
 from noc_agents.api import auth
 from noc_agents.config import get_settings
-from noc_agents.db.models import HitlTaskRow, OutboxRow, new_id
+from noc_agents.db.models import HitlTaskRow, OutboxRow, new_id, utcnow
 from noc_agents.db.models_capacity import (
     ADVISORY_ACKNOWLEDGED,
     ADVISORY_CLOSED,
@@ -635,6 +635,10 @@ def test_only_a_named_human_may_review_an_advisory_and_a_closed_one_stays_closed
 
 def test_the_api_ingests_json_and_serves_the_reading_with_its_verdict(client):
     """§7.5.2's ingest and the site read, over HTTP."""
+    # No ``now`` crosses HTTP, so the live route reads against the wall clock: the samples are
+    # anchored to real time here. Anchored to the fixed NOW they drifted out of the 14-day
+    # lookback on 2026-09-27 and the verdict became INSUFFICIENT_DATA.
+    now = utcnow()
     payload = {
         "observations": [
             {
@@ -642,7 +646,7 @@ def test_the_api_ingests_json_and_serves_the_reading_with_its_verdict(client):
                 "cell_id": CELL,
                 "metric": DEFAULT_METRIC,
                 "value": 84.0,
-                "busy_hour_at": (NOW - timedelta(days=day, hours=24 - hour)).isoformat(),
+                "busy_hour_at": (now - timedelta(days=day, hours=24 - hour)).isoformat(),
                 "source": "MANUAL",
             }
             for day in range(1, 8)

@@ -17,8 +17,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
+import subprocess
 import sys
+from pathlib import Path
 from datetime import datetime, timezone
 
 import pytest
@@ -553,5 +556,20 @@ def test_payload_model_forbids_extras_and_needs_no_addresses(cfg):
 
 
 def test_no_optional_extra_is_imported_at_module_level():
-    assert "noc_agents.services.render" in sys.modules
-    assert "anthropic" not in sys.modules and "mcp" not in sys.modules
+    """Importing noc_agents.services.render must not pull in an optional extra.
+
+    Checked in a fresh interpreter on purpose. Once ``anthropic`` is installed, other tests in
+    the same session import it deliberately (the LLM client and port tests), so ``sys.modules``
+    of THIS process says nothing about what importing the module does; the old in-process
+    assertion only ever passed on a machine without the extra.
+    """
+    code = (
+        "import sys; import noc_agents.services.render; "
+        "assert 'noc_agents.services.render' in sys.modules; "
+        "bad = sorted(m for m in sys.modules if m in ('anthropic', 'mcp') or m.startswith(('anthropic.', 'mcp.'))); "
+        "assert not bad, bad"
+    )
+    root = Path(__file__).resolve().parents[2]
+    env = {**os.environ, "NOC_SKIP_DOTENV": "1", "PYTHONPATH": str(root / "src")}
+    proc = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, env=env, cwd=root)
+    assert proc.returncode == 0, proc.stderr

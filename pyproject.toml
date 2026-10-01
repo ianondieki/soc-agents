@@ -41,7 +41,9 @@ signals  = ["pdfplumber>=0.11", "feedparser>=6.0"]
 calendar = ["icalendar>=7.3"]
 sms      = ["africastalking"]
 rag      = ["sqlite-vec>=0.1.9", "model2vec>=0.9"]
-dev      = ["pytest>=8.3.0", "pytest-asyncio>=0.24.0", "respx>=0.22", "freezegun>=1.5"]
+# defusedxml is optional at runtime (adapters/kmd_cap.py falls back to a guarded stdlib parser);
+# the dev extra installs it so the suite exercises the hardened path.
+dev      = ["pytest>=8.3.0", "pytest-asyncio>=0.24.0", "respx>=0.22", "freezegun>=1.5", "defusedxml>=0.7"]
 
 [project.scripts]
 noc-api = "noc_agents.main:run"
