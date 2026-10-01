@@ -108,18 +108,44 @@ human's decision: export the rows, empty the table, restart.
 
 ON EVERY START, not only when the version moves
 -----------------------------------------------
-The comparison above runs on every start (two ``sqlite_master`` reads), and so does the
-check for a mapped index that is missing from the file. Both used to run only inside the
-version bump -- and that broke the remedy just described: after the first v9 start had
-stamped the file, "empty the table and restart" took the "schema already current" path and
-the old CHECKs stayed for good. So the fast path is no longer purely a version read. When it
-finds nothing (the common case) it is what it was: no backup, no transaction. When it finds a
-drifted EMPTY table it takes a backup first (named ``<db>.9-to-9.<ts>.db``: same version,
-because the version did not move) and recreates the table in a transaction. When it finds
-only a missing index it creates it -- ``CREATE INDEX IF NOT EXISTS`` -- without a backup: an
-index holds no data, and the version bump that used to be the only way to get one to an
-existing file was never worth what a bump costs. The bump to 9 itself stays: it records
-that the refresh exists and puts one backup behind the first start that could act.
+The comparison above runs on every start, and so does the check for a mapped index that is
+missing from the file. Both used to run only inside the version bump -- and that broke the
+remedy just described: after the first v9 start had stamped the file, "empty the table and
+restart" took the "schema already current" path and the old CHECKs stayed for good. So the
+fast path is no longer purely a version read: a start on a current file runs about 45
+catalogue statements (``schema_version``, ``sqlite_master`` for the two tables, and one
+``PRAGMA index_list`` per mapped table), measured at 11-34 ms against a 4-7 s import. When
+it finds nothing (the common case) it is otherwise what it was: no backup, no transaction, no
+write lock. When it finds a drifted EMPTY table it takes a backup first (named
+``<db>.9-to-9.<ts>.db``: same version, because the version did not move) and recreates the
+table in a transaction. When it finds a missing index it creates it -- ``CREATE INDEX IF NOT
+EXISTS`` -- without a backup, an index holding no data; but ONLY while the table is small,
+see the next section. The bump to 9 itself stays: it records that the refresh exists and puts
+one backup behind the first start that could act.
+
+Only a file AT this code's version gets any of that. A file NEWER than this code (a rolled-back
+release) is left exactly as the newer release wrote it: the comparison cannot tell a newer
+definition from a drifted one, and "drifted and empty" would otherwise mean "drop the newer
+table and recreate the older one" -- which a replay caught it doing, silently deleting a
+column the newer release had added. Newer means: warn, and touch nothing.
+
+INDEX BUILDS AND THE WRITE LOCK
+-------------------------------
+``CREATE INDEX`` on a large table holds the write lock for the whole build: two million
+``audit_events`` rows (a keep-forever table) took 75-150 s on the reference machine. Every
+other process writing to the file fails after its 30 s busy timeout, and a second worker
+starting at the same moment crashes instead of "waiting, then finding nothing to do". So a
+missing index is built at startup only while its table is small --
+``INDEX_BUILD_AT_STARTUP_MAX_ROWS`` rows, estimated from ``max(rowid)`` in O(log n) -- and
+otherwise logged, every start, with the command that builds it when the NOC is quiet::
+
+    python -m noc_agents.db.migrate --build-indexes
+
+That command (``build_indexes`` / ``main`` at the bottom of this module) lists what is
+missing with a row estimate, builds one index per transaction, reports each duration, takes a
+backup first only when asked (``--backup``; an index can always be dropped again) and is safe
+to run twice. Until it has run, everything works: an index makes a query faster, never
+possible. The same threshold applies inside a version move, for the same reason.
 
 **What the exception costs the rollback story** -- worked out against the v7 code, not assumed:
 
@@ -152,7 +178,7 @@ disk lives in the ``schema_version`` table (one row per applied version); a file
 without that table is version 1 (every database created before Phase 1); an empty
 file is version 0 and is simply created in full, with no backup.
 
-Two SQLite facts shape the code:
+Two SQLite facts shape the code (and see "INDEX BUILDS AND THE WRITE LOCK" for a third):
 
 * pysqlite opens a transaction implicitly only before INSERT/UPDATE/DELETE, never
   before DDL. To make "everything or nothing" true we issue ``BEGIN IMMEDIATE``
@@ -167,9 +193,12 @@ Two SQLite facts shape the code:
 
 from __future__ import annotations
 
+import argparse
 import logging
 import re
 import sqlite3
+import sys
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -320,11 +349,13 @@ def _one_line(sql: str) -> str:
     return " ".join(sql.split())
 
 
-def _plan(conn: Connection, engine: Engine) -> list[str]:
+def _plan(conn: Connection, engine: Engine, deferrals: list[str] | None = None) -> list[str]:
     """Every statement needed to bring the file up to Base.metadata, in dependency order.
 
     Reads the live catalogue (sqlite_master, PRAGMA table_info/index_list) so the list
-    is exactly what will run -- the report and the startup log show real work only.
+    is exactly what will run -- the report and the startup log show real work only. An index
+    on a large existing table is left out and explained in ``deferrals`` (see
+    ``_missing_index_sql``); the maintenance command builds it later.
     """
     dialect = engine.dialect
     existing = _user_tables(conn)
@@ -339,27 +370,74 @@ def _plan(conn: Connection, engine: Engine) -> list[str]:
         for col in table.columns:
             if col.name not in present_cols:
                 statements.append(_add_column_sql(table, col, engine))
-        statements.extend(_missing_index_sql(conn, engine, table))
+        statements.extend(_missing_index_sql(conn, engine, table, deferrals=deferrals if deferrals is not None else []))
     return statements
 
 
-def _missing_index_sql(conn: Connection, engine: Engine, only: Table | None = None) -> list[str]:
+#: Above this many rows (estimated), a missing index is NOT built at startup but left to the
+#: maintenance command (module docstring, "INDEX BUILDS AND THE WRITE LOCK"). The arithmetic:
+#: 2M audit_events rows took 75-150 s under the write lock on the reference machine, so 100k
+#: rows is roughly 4-8 s -- well inside the 30 s busy timeout every other writer waits, and
+#: short enough that a second worker starting at the same moment waits rather than crashes.
+INDEX_BUILD_AT_STARTUP_MAX_ROWS = 100_000
+#: What the warning tells the operator to run. Spelled once, here.
+BUILD_INDEXES_COMMAND = "python -m noc_agents.db.migrate --build-indexes"
+
+
+def _row_estimate(conn: Connection, table: str) -> int:
+    """An UPPER bound on the row count in O(log n): ``max(rowid)``. Rowids are never reused
+    after a delete, so a pruned table reads larger than it is -- which only ever defers a build
+    that would have been quick, never the other way round. Anything unreadable counts as large."""
+    try:
+        return int(conn.exec_driver_sql(f"SELECT COALESCE(MAX(rowid), 0) FROM {table}").scalar() or 0)
+    except Exception:  # noqa: BLE001 -- a WITHOUT ROWID table, a virtual table: treat as large
+        return sys.maxsize
+
+
+def _missing_index_sql(
+    conn: Connection,
+    engine: Engine,
+    only: Table | None = None,
+    *,
+    threshold: int | None = None,
+    deferrals: list[str] | None = None,
+) -> list[str]:
     """``CREATE INDEX IF NOT EXISTS`` for every mapped index a table on disk does not have.
 
     Part of ``_plan`` -- and, since an index holds no data, also run on EVERY start on its own
     (module docstring, "ON EVERY START"), so an index added to a model reaches existing files
     without a version bump or a backup. Tables not on disk are skipped: ``_plan`` creates them
     whole, indexes included.
+
+    ``threshold`` (default ``INDEX_BUILD_AT_STARTUP_MAX_ROWS``) keeps a build off the startup
+    write lock when the table is large: such an index is left out of the statements and a
+    warning naming it, the table, the estimate and ``BUILD_INDEXES_COMMAND`` is appended to
+    ``deferrals``. ``threshold=None`` -- the maintenance command -- never defers.
     """
+    if threshold is None and deferrals is not None:
+        threshold = INDEX_BUILD_AT_STARTUP_MAX_ROWS
     existing = _user_tables(conn)
     statements: list[str] = []
     for table in Base.metadata.sorted_tables if only is None else [only]:
         if table.name not in existing:
             continue
         present_idx = {r[1] for r in conn.exec_driver_sql(f"PRAGMA index_list({table.name})").fetchall()}
-        for ix in sorted(table.indexes, key=lambda ix: ix.name or ""):
-            if ix.name not in present_idx:
-                statements.append(str(CreateIndex(ix, if_not_exists=True).compile(dialect=engine.dialect)))
+        missing = [ix for ix in sorted(table.indexes, key=lambda ix: ix.name or "") if ix.name not in present_idx]
+        if not missing:
+            continue
+        estimate = _row_estimate(conn, table.name) if threshold is not None else 0
+        for ix in missing:
+            sql = str(CreateIndex(ix, if_not_exists=True).compile(dialect=engine.dialect))
+            if threshold is not None and estimate > threshold:
+                assert deferrals is not None
+                deferrals.append(
+                    f"index {ix.name} on {table.name} is missing and the table is large (~{estimate:,} rows, above "
+                    f"INDEX_BUILD_AT_STARTUP_MAX_ROWS={threshold:,}): not built at startup, where it would hold the "
+                    f"write lock for minutes and fail every other writer. Build it when the NOC is quiet: "
+                    f"{BUILD_INDEXES_COMMAND}"
+                )
+                continue
+            statements.append(sql)
     return statements
 
 
@@ -454,14 +532,28 @@ def _quote_ident(name: str) -> str:
     return '"' + name.replace('"', '""') + '"'
 
 
-# What SQLite says when a view or trigger elsewhere in the schema still refers to a table that
-# a RENAME is about to give a name to: 'error in trigger t_alc: no such table: main.hitl_tasks'.
-_RENAME_BLOCKER = re.compile(r"error in (view|trigger) (.+?): ", re.IGNORECASE)
 _PROBE_SAVEPOINT = "hitl_v8_rename_probe"
 
 
-def _rename_blockers(conn: Connection, engine: Engine) -> list[tuple[str, str]]:
-    """Every view and trigger that would make the rebuild's RENAME fail, decided by SQLite itself.
+def _blocker_named_by(conn: Connection, message: str) -> tuple[str, str, str] | None:
+    """``(kind, name, detail)`` for SQLite's ``error in <view|trigger> <name>: <detail>``.
+
+    The name is resolved against ``sqlite_master``, never split out of the text: a view called
+    ``"odd: name"`` would otherwise be cut at its first ``': '`` and the probe would try to drop
+    a view that does not exist. Every view and trigger whose ``error in <kind> <name>: `` the
+    message starts with is a candidate; the longest name wins.
+    """
+    best: tuple[str, str, str] | None = None
+    for kind, name in conn.exec_driver_sql("SELECT type, name FROM sqlite_master WHERE type IN ('view', 'trigger')").fetchall():
+        prefix = f"error in {kind} {name}: "
+        if message.startswith(prefix) and (best is None or len(name) > len(best[1])):
+            best = (kind, name, message[len(prefix):])
+    return best
+
+
+def _rename_blockers(conn: Connection, engine: Engine) -> list[tuple[str, str, str]]:
+    """Every view and trigger that would make the rebuild's RENAME fail, decided by SQLite itself,
+    as ``(kind, name, what SQLite said about it)``.
 
     Inside a transaction that is always rolled back: CREATE the rebuild table (the exact DDL the
     rebuild uses), DROP ``hitl_tasks``, RENAME. If the RENAME fails naming a view or trigger,
@@ -483,7 +575,7 @@ def _rename_blockers(conn: Connection, engine: Engine) -> list[tuple[str, str]]:
         if inside
         else ("BEGIN IMMEDIATE", "ROLLBACK", None)
     )
-    blockers: list[tuple[str, str]] = []
+    blockers: list[tuple[str, str, str]] = []
     conn.exec_driver_sql(begin)
     try:
         conn.exec_driver_sql(_rebuild_table_ddl(engine))
@@ -493,14 +585,14 @@ def _rename_blockers(conn: Connection, engine: Engine) -> list[tuple[str, str]]:
                 conn.exec_driver_sql(f"ALTER TABLE {_HITL_REBUILD} RENAME TO {_HITL}")
                 break
             except OperationalError as exc:
-                found = _RENAME_BLOCKER.search(str(exc.orig))
+                found = _blocker_named_by(conn, str(exc.orig))
                 if found is None:
                     raise HitlRebuildError(
                         f"SQLite refused the {_HITL} rebuild's RENAME for a reason other than a view or trigger: "
                         f"{exc.orig}. Nothing was changed and no backup was written."
                     ) from exc
-                kind, name = found.group(1).lower(), found.group(2)
-                blockers.append((kind, name))
+                kind, name, _detail = found
+                blockers.append(found)
                 conn.exec_driver_sql(f"DROP {kind.upper()} {_quote_ident(name)}")
         else:
             raise HitlRebuildError(f"more than 500 views/triggers block the {_HITL} rebuild; giving up the count")
@@ -521,11 +613,17 @@ def _refuse_rename_blockers(conn: Connection, engine: Engine) -> None:
     reporting from or patching by hand."""
     blockers = _rename_blockers(conn, engine)
     if blockers:
-        named = ", ".join(f"{kind} {name}" for kind, name in blockers)
+        named = ", ".join(f"{kind} {name}" for kind, name, _detail in blockers)
+        said = "; ".join(f"{kind} {name}: {detail}" for kind, name, detail in blockers)
+        # Worded to be true for every blocker SQLite can name: one that refers to hitl_tasks, and
+        # one that is simply broken (a view over a table dropped long ago) -- the RENAME re-parses
+        # every view and trigger in the schema and fails on either.
         raise HitlRebuildError(
-            f"{named}: reference(s) to {_HITL} from elsewhere in the schema; SQLite cannot rename the rebuilt "
-            f"table underneath them. Drop each one (DROP VIEW / DROP TRIGGER <name>), start again, then recreate "
-            "it against the rebuilt table. Nothing was changed and no backup was written."
+            f"{named}: SQLite cannot re-parse {'it' if len(blockers) == 1 else 'them'} once the rebuilt {_HITL} is "
+            f"renamed into place, so the rebuild would fail on every start -- because of a reference to {_HITL}, "
+            f"or because the object is broken in its own right (SQLite said: {said}). Drop each one "
+            "(DROP VIEW / DROP TRIGGER <name>), start again, then recreate it against the rebuilt table. "
+            "Nothing was changed and no backup was written."
         )
 
 
@@ -882,11 +980,15 @@ class _RoutineWork:
 
 
 def _routine_work(conn: Connection, engine: Engine) -> _RoutineWork:
+    """Only ever called for a file AT this code's version (a newer file gets nothing, see
+    ``migrate_additive``). An index on a large table is not in ``indexes`` but in ``warnings``."""
+    deferred: list[str] = []
+    indexes = _missing_index_sql(conn, engine, deferrals=deferred)
     drifted = _check_drift(conn, engine)
     return _RoutineWork(
-        indexes=_missing_index_sql(conn, engine),
+        indexes=indexes,
         refresh=any(rows == 0 for _t, _l, _c, rows in drifted.values()),
-        warnings=[_drift_warning(name, live, compiled, rows) for name, (_t, live, compiled, rows) in drifted.items() if rows],
+        warnings=[_drift_warning(name, live, compiled, rows) for name, (_t, live, compiled, rows) in drifted.items() if rows] + deferred,
     )
 
 
@@ -929,14 +1031,27 @@ def migrate_additive(engine: Engine, *, backup_dir: Path) -> MigrationReport:
             # that would make the hitl_tasks rebuild fail on every start is refused here, so a
             # refused start does not write a backup per attempt.
             _hitl_rebuild_preflight(conn, engine)
-        else:
+        elif stored == SCHEMA_VERSION:
             # Every start after the first: the two things that must not wait for a version bump
             # (module docstring, "ON EVERY START"), found with a few catalogue reads.
             routine = _routine_work(conn, engine)
 
+    if stored > SCHEMA_VERSION:
+        # Rolled-back code on a newer file. Nothing is compared, created or changed: this code
+        # cannot tell a definition the newer release added from one that drifted, and "empty and
+        # different" would mean dropping the newer table for the older one (module docstring).
+        # Older code keeps running against a newer file because the schema is additive; that
+        # promise is kept by doing nothing at all here.
+        log.warning(
+            "database schema_version %s is NEWER than this code (%s): a rolled-back release. The file is left "
+            "exactly as the newer release wrote it -- no index, no CHECK refresh, no backup",
+            stored, SCHEMA_VERSION,
+        )
+        _enable_wal(engine)
+        LAST_REPORT = MigrationReport(stored, SCHEMA_VERSION, None, note="schema newer than this code; left as it is")
+        return LAST_REPORT
+
     if routine is not None:
-        if stored > SCHEMA_VERSION:
-            log.info("database schema_version %s is newer than this code (%s); additive schema, carrying on", stored, SCHEMA_VERSION)
         if not routine.indexes and not routine.refresh:
             # The common case -- no backup, no transaction. A populated, drifted table is
             # named every start; the refresh below would say it too, so it is said here only
@@ -984,9 +1099,13 @@ def migrate_additive(engine: Engine, *, backup_dir: Path) -> MigrationReport:
                     conn.rollback()
                     LAST_REPORT = MigrationReport(stored, SCHEMA_VERSION, backup_path, note="migrated by another process")
                     return LAST_REPORT
-                for sql in _plan(conn, engine):
+                deferred: list[str] = []
+                for sql in _plan(conn, engine, deferred):
                     conn.exec_driver_sql(sql)
                     applied.append(sql)
+                for warning in deferred:  # an index on a large table: built by the command, not here
+                    log.warning(warning)
+                note = "; ".join(part for part in (note, *deferred) if part)
                 # The one non-additive step. After the additive pass on purpose (the old table has
                 # every column by now), inside the same transaction on purpose (a failure in it, or
                 # after it, undoes it). Returns [] on every file that does not need it.
@@ -994,9 +1113,13 @@ def migrate_additive(engine: Engine, *, backup_dir: Path) -> MigrationReport:
             else:
                 # A current file with work left over: indexes the model has and the file lacks.
                 # Re-derived under the write lock; another process may have got here first.
-                for sql in _missing_index_sql(conn, engine):
+                deferred = []
+                for sql in _missing_index_sql(conn, engine, deferrals=deferred):
                     conn.exec_driver_sql(sql)
                     applied.append(sql)
+                for warning in deferred:
+                    log.warning(warning)
+                note = "; ".join(part for part in (note, *deferred) if part)
             # The second exception: CHECKs the additive path can never deliver. Destructive only
             # on an EMPTY table; a populated one is warned about, and the warning rides on the
             # report. Re-derives the drift itself, so a file another process already refreshed
@@ -1026,3 +1149,66 @@ def migrate_additive(engine: Engine, *, backup_dir: Path) -> MigrationReport:
         log.log(level, "  %s", sql)
     LAST_REPORT = MigrationReport(stored, SCHEMA_VERSION, backup_path, applied, note)
     return LAST_REPORT
+
+
+# ------------------------------------------------------- the maintenance command: build-indexes
+
+
+def build_indexes(engine: Engine, *, take_backup: bool = False, backup_dir: Path | None = None, echo=print) -> list[str]:
+    """Build every mapped index the file lacks, however large the table -- one index per
+    transaction, each duration reported, a backup first only when asked. Safe to run twice:
+    the second run finds nothing. This is what the startup warning points at (module
+    docstring, "INDEX BUILDS AND THE WRITE LOCK"); it is never run by startup itself."""
+    from noc_agents.db import models_all  # noqa: F401  every model module's indexes, like init_db
+
+    with engine.connect() as conn:
+        pending = _missing_index_sql(conn, engine, threshold=None)
+        estimates = {t.name: _row_estimate(conn, t.name) for t in Base.metadata.sorted_tables if t.name in _user_tables(conn)}
+    if not pending:
+        echo("nothing to build: every mapped index exists")
+        return []
+    if take_backup:
+        db_file = sqlite_file(engine)
+        if db_file is not None:
+            target = _backup(engine, db_file, backup_dir or default_backup_dir(engine), SCHEMA_VERSION, SCHEMA_VERSION)
+            echo(f"backup written to {target}")
+    built: list[str] = []
+    for sql in pending:
+        table = sql.split(" ON ", 1)[1].split(" ", 1)[0]
+        echo(f"building: {sql}  (~{estimates.get(table, 0):,} rows) ...")
+        started = time.perf_counter()
+        with engine.connect() as conn:
+            conn.exec_driver_sql("BEGIN IMMEDIATE")
+            conn.exec_driver_sql(sql)
+            conn.commit()
+        echo(f"  done in {time.perf_counter() - started:.1f}s")
+        built.append(sql)
+    echo(f"built {len(built)} index(es)")
+    return built
+
+
+def main(argv: list[str] | None = None) -> int:
+    """``python -m noc_agents.db.migrate --build-indexes [--database-url URL] [--backup [--backup-dir DIR]]``"""
+    parser = argparse.ArgumentParser(prog="python -m noc_agents.db.migrate", description=build_indexes.__doc__)
+    parser.add_argument("--build-indexes", action="store_true", help="build every mapped index the database lacks")
+    parser.add_argument("--database-url", help="defaults to DATABASE_URL / config, as the app resolves it")
+    parser.add_argument("--backup", action="store_true", help="copy the database file first (an index can always be dropped; off by default)")
+    parser.add_argument("--backup-dir", type=Path, help="where that copy goes; default <database folder>/backups")
+    args = parser.parse_args(argv)
+    if not args.build_indexes:
+        parser.error("nothing to do: pass --build-indexes")
+    from sqlalchemy import create_engine
+
+    from noc_agents.config import get_settings
+
+    url = args.database_url or get_settings().database_url
+    engine = create_engine(url, future=True, connect_args={"check_same_thread": False, "timeout": 30} if url.startswith("sqlite") else {})
+    try:
+        build_indexes(engine, take_backup=args.backup, backup_dir=args.backup_dir)
+    finally:
+        engine.dispose()
+    return 0
+
+
+if __name__ == "__main__":  # pragma: no cover -- exercised through a subprocess in tests/unit/test_audit_index.py
+    sys.exit(main())

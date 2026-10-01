@@ -165,6 +165,13 @@ def outbox_dispatch_job(session: Session, settings: AppSettings) -> JobResult:
     )
 
 
+def _hitl_escalation_job() -> JobCard:
+    """The §6.5 escalation ladder's card, imported lazily for the same reason as the weather one."""
+    from noc_agents.services.hitl_escalation import HITL_ESCALATION_JOB
+
+    return HITL_ESCALATION_JOB
+
+
 def _weather_job() -> JobCard:
     """The Phase 3 weather poller's card, imported lazily to avoid an import cycle."""
     from noc_agents.pollers.weather import WEATHER_JOB
@@ -252,6 +259,13 @@ def _housekeeping_job() -> JobCard:
 SCHEDULED_JOBS: tuple[JobCard, ...] = (
     JobCard("outbox_dispatch", 5, outbox_dispatch_job, "OUTBOX_DISPATCH_ENABLED", "BroadcastCommsAgent", "outbox", max_seconds=30),
     JobCard("monitor_tick", 60, tick_job, "SCHEDULER_MONITOR_ENABLED", "WorklogMonitorAgent", "monitor"),
+    # Phase 2 HITL escalation ladder (§6.5, CONFORMANCE B-01): a P1/P2 approval card sitting
+    # PENDING and unclaimed nudges the on-duty supervisor at T+5, the duty manager (+
+    # hitl.escalated) at T+15 and goes red on the Wallboard at T+30. Its only writes are
+    # HITL_NUDGE outbox rows under deterministic keys, the mark on the card and audit rows;
+    # it can never release, approve, reject or claim (D1). HITL_ESCALATION_ENABLED defaults
+    # OFF, the card carries default_enabled=False and the job re-checks the flag itself.
+    _hitl_escalation_job(),
     # Phase 3 weather lane (§7.3). Gated by WEATHER_ENABLED, which defaults OFF — the card
     # carries default_enabled=False so an unset flag reads as off in /scheduler/status too,
     # and the poller re-checks the flag itself. Imported lazily: pollers.weather imports the

@@ -778,6 +778,94 @@ export type FailureView = {
 export type FailureWhere = "list" | "detail" | "action" | "compute";
 
 /**
+ * A 409 from the scorecard routes has several causes, and the page must not name the wrong one.
+ * `api/routers/scorecards.py` maps three different failures to 409: a service refusal
+ * (`ScorecardStateError`, including the gate), a mapper-guard refusal (`ScorecardEvidenceError`)
+ * and a write the table itself rejected (`IntegrityError` -> "the card could not be written: ...").
+ *
+ * Each rule matches a SHORT, stable fragment of the server's sentence -- the part that states the
+ * rule, not the names, ids or counts around it -- and says only what that sentence says. An
+ * unmatched 409 gets a headline that asserts nothing, and the page prints the server's sentence
+ * underneath either way. A new or reworded backend message therefore degrades to "the server
+ * refused; here is what it said", never to a confident wrong cause.
+ */
+const CONFLICT_RULES: { match: RegExp; title: string; body: string }[] = [
+  {
+    // services/scorecard.compute_scorecard, on a PUBLISHED/FINAL card
+    match: /cannot be recomputed/i,
+    title: "Already released",
+    body: "A card for that period is PUBLISHED or FINAL, so it is not recomputed. A correction goes through a dispute or a correction period (§7.6.6).",
+  },
+  {
+    // the router's IntegrityError branch: a CHECK or UNIQUE refused the row
+    match: /could not be written/i,
+    title: "The table refused the write",
+    body: "A database constraint rejected the card, so nothing was saved and the transaction was rolled back. The constraint is named below; a recompute fails the same way until the cause is fixed.",
+  },
+  {
+    // db/models_scorecards: evidence written outside compute_scorecard's scope
+    match: /outside a computation/i,
+    title: "Refused by a write guard",
+    body: "A card's figures are written by a computation and by nothing else, so the write was refused and nothing changed. Recompute the card.",
+  },
+  {
+    match: /evidence is frozen|published figure is frozen|cannot change on a card that is/i,
+    title: "Released evidence is frozen",
+    body: "The figures on a released card cannot change. Nothing was changed; a correction goes through a dispute (§7.6.6).",
+  },
+  {
+    match: /contradicts the table|disagrees with the table|no earlier released card exists/i,
+    title: "The card disagrees with the table",
+    body: "The card's shadow-review flag does not match what the table says about earlier periods, so the server refused. Recompute the card.",
+  },
+  {
+    match: /is not a scorecard run|cannot be inserted as|never deleted|only move from there/i,
+    title: "Refused by a write guard",
+    body: "A guard refused this change to the card's lifecycle, and nothing was changed. The server's sentence below says which rule.",
+  },
+  {
+    // services/scorecard.publish_scorecard, ScorecardGateError
+    match: /^WITHHELD|data-quality gate/i,
+    title: "Withheld by the data-quality gate",
+    body: "The card cannot be released while the gate fails. A supervisor records the real restore times, then the period is recomputed.",
+  },
+  {
+    match: /must record a shadow review|first period for this vendor/i,
+    title: "Shadow review required",
+    body: "A first period under these terms needs a named human to record a shadow review before it can be published.",
+  },
+  {
+    match: /only a SHADOW card takes a shadow review|already shadow-reviewed/i,
+    title: "Not open for review",
+    body: "This card is not a SHADOW card awaiting its first review.",
+  },
+  { match: /scorecard is already/i, title: "Already released", body: "This card has already been released." },
+  {
+    match: /only a PUBLISHED card can be finalised/i,
+    title: "Not PUBLISHED",
+    body: "Only a PUBLISHED card can be finalised.",
+  },
+  {
+    match: /dispute window is still open/i,
+    title: "The dispute window is still open",
+    body: "A card is finalised only after its dispute window has closed.",
+  },
+  {
+    match: /OPEN dispute/i,
+    title: "A dispute is still open",
+    body: "A line on this card has an OPEN dispute. It is adjudicated before the card can be finalised.",
+  },
+];
+
+/** The rule whose fragment the server's sentence contains, or `null` when none does. */
+export function conflictRule(detail: string): { title: string; body: string } | null {
+  const text = (detail || "").trim();
+  if (!text) return null;
+  for (const rule of CONFLICT_RULES) if (rule.match.test(text)) return { title: rule.title, body: rule.body };
+  return null;
+}
+
+/**
  * An HTTP status, read for this surface. The server's own words are always shown beside it;
  * this supplies the headline. A 403 or 404 is never shown as a crash or a blank page.
  *
@@ -788,10 +876,15 @@ export type FailureWhere = "list" | "detail" | "action" | "compute";
  * - `compute`: `POST /scorecards/compute`. No card is involved, so a 404 means no vendor with
  *   terms in force for that month (or the lane is off), never "no such scorecard".
  *
- * `detail` is the server's sentence (`lib/apiError.detailOf`). It is read in one case only: a
- * 503 is headlined "Terms unavailable" only when compute's own terms check produced it
- * (`sla_terms unavailable: ...`). Any other 503, such as sign-in on with no
- * `NOC_SESSION_SECRET`, gets a neutral headline, and the server's sentence names the cause.
+ * `detail` is the server's sentence (`lib/apiError.detailOf`), and it decides two headlines:
+ * - a 503 is "Terms unavailable" only when compute's own terms check produced it
+ *   (`sla_terms unavailable: ...`); any other 503, such as sign-in on with no
+ *   `NOC_SESSION_SECRET`, gets a neutral headline;
+ * - a 409 is classified by `conflictRule`, because the routes map a service refusal, a
+ *   write-guard refusal and a rejected write all to 409.
+ *
+ * When the sentence matches no rule, the headline asserts no cause. The caller prints the
+ * server's sentence beside whatever this returns.
  */
 export function failureView(status: number | null, where: FailureWhere, detail = ""): FailureView {
   const compute = where === "compute";
@@ -828,14 +921,17 @@ export function failureView(status: number | null, where: FailureWhere, detail =
         "No such scorecard, or none your role may see. The server answers 404, never 403, for another operator's card and for an unreleased card this role may not see, so it never confirms that a card exists.",
     };
   }
-  if (status === 409)
+  if (status === 409) {
+    const known = conflictRule(detail);
+    if (known) return { kind: "state", ...known };
     return {
       kind: "state",
-      title: "Refused in this state",
-      body: compute
-        ? "A card for that period is already PUBLISHED or FINAL. A released card is not recomputed; a correction goes through a dispute or a correction period (§7.6.6)."
-        : "The card's current state does not allow this.",
+      title: "Refused",
+      body: detail
+        ? "The server refused this. Its own sentence below says why."
+        : "The server refused this and gave no reason.",
     };
+  }
   if (status === 400 || status === 422)
     return {
       kind: "input",

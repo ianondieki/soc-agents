@@ -12,6 +12,8 @@ jobs registered today, and proves nothing moves:
 * ``weather_regions`` -- the catalogue's region centroids, with a fake provider standing in
   for the network (it records any call, so a regression cannot reach the internet);
 * ``pir_autoopen`` -- a P2 restored an hour ago with no review;
+* ``hitl_escalation`` -- the seeded P1/P2 approval card, still PENDING and unclaimed, backdated
+  past the first rung (T+5) of the §6.5 ladder;
 * ``regulatory_sweep`` -- a DRAFT notice one hour from its deadline;
 * ``complaints_followup`` -- a complaint past its follow-up date;
 * ``maintenance_plan_due`` -- a monthly plan written 40 days ago, never completed;
@@ -35,10 +37,10 @@ import json
 from datetime import timedelta
 
 import pytest
-from sqlalchemy import func, inspect, select, text
+from sqlalchemy import func, inspect, select, text, update
 
 from noc_agents.adapters.weather import WeatherError
-from noc_agents.db.models import IncidentRow, OutboxRow, WorkNoteRow, get_session, new_id, utcnow
+from noc_agents.db.models import HitlTaskRow, IncidentRow, OutboxRow, WorkNoteRow, get_session, new_id, utcnow
 from noc_agents.db.models_capacity import DEFAULT_METRIC, CapacityObservationRow
 from noc_agents.db.models_complaints import RelationshipComplaintRow
 from noc_agents.db.models_maintenance import MaintenancePlanRow, MaintenanceWindowRow
@@ -101,6 +103,14 @@ def _seed_lane_work(session, settings, anchor_incident_id: str) -> None:
     """
     now = utcnow()
     op = settings.operator.operator_id
+    # hitl_escalation: the anchor incident's own APPROVE_BROADCAST card (P1/P2 at L2_GUARDED),
+    # still PENDING and unclaimed, backdated six minutes so the ladder's first rung (T+5) is
+    # due. Only created_at moves; the card itself is exactly what the pipeline raised.
+    session.execute(
+        update(HitlTaskRow)
+        .where(HitlTaskRow.incident_id == anchor_incident_id, HitlTaskRow.status == "PENDING")
+        .values(created_at=now - timedelta(minutes=6))
+    )
     # pir_autoopen: a P2 restored an hour ago and no review yet. P1/P2 is the first
     # spec 5.3.18 trigger rule, so no other fact is needed for it to qualify.
     session.add(
@@ -355,6 +365,7 @@ def test_outbox_and_monitor_still_run_when_the_flag_is_unset_or_true(tmp_db, mon
 #: moved" into "nothing to move", and this is what catches that.
 LANE_WRITES = {
     "weather_regions": "external_signals",  # failure markers from the fake provider
+    "hitl_escalation": "outbox",  # the T+5 HITL_NUDGE rows (SMS suppressed for want of a recipient, in-app queued)
     "pir_autoopen": "post_incident_reviews",
     "regulatory_sweep": "regulatory_notifications",  # countdown thresholds marked fired
     "complaints_followup": "outbox",  # the manager reminder

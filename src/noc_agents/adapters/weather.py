@@ -31,6 +31,14 @@ The parsed result is a :class:`ForecastSnapshot` of :class:`HourlyPoint` rows (n
 95/96/99) are the spec's **UNVERIFIED operational starting values**, not meteorological
 standards; they are tuned from the §10.6 backtest, never hard-coded into a rule elsewhere.
 
+Bounded in time
+---------------
+Every fetch carries a total deadline (``timeout_s``, 10 s — spec §9), not merely a per-read one:
+name resolution is bounded by :func:`resolve_within_deadline` and the exchange by
+:class:`DeadlineWatchdog`, which shuts the connection when the deadline passes. Both are shared
+with ``adapters/kmd_cap.py`` and ``adapters/flood.py`` and defined here, because those two import
+this module (CONFORMANCE A-18: this adapter had the per-read-only timeout the other two had).
+
 Failure handling
 ----------------
 Every failure surfaces as one :class:`WeatherError` with a ``kind`` the poller can record:
@@ -51,16 +59,20 @@ suite passes one built on ``httpx.MockTransport`` with recorded fixtures (see
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import logging
 import math
 import os
+import socket
 import ssl
+import threading
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from email.utils import format_datetime, parsedate_to_datetime
 from typing import Any, Mapping, Protocol
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit, urlunsplit
 
 import httpx
 
@@ -68,6 +80,8 @@ log = logging.getLogger("noc_agents.adapters.weather")
 
 __all__ = [
     "DEFAULT_MET_NORWAY_BASE",
+    "DeadlineWatchdog",
+    "DnsTimeout",
     "DEFAULT_OPEN_METEO_BASE",
     "DEFAULT_TIMEOUT_S",
     "ForecastSnapshot",
@@ -305,6 +319,195 @@ def default_client(timeout_s: float = DEFAULT_TIMEOUT_S, *, user_agent: str | No
     return httpx.Client(timeout=httpx.Timeout(timeout_s), headers=headers, follow_redirects=False)
 
 
+#: The clock the total fetch deadline is measured on. Indirected so a test can advance it.
+_clock = time.monotonic
+
+
+class DnsTimeout(Exception):
+    """Name resolution did not finish inside the caller's total deadline."""
+
+
+def resolve_within_deadline(url: str, timeout_s: float) -> None:
+    """Make sure ``url``'s host can be resolved inside ``timeout_s``, or raise :class:`DnsTimeout`.
+
+    Why this exists (review finding DNS, pre-existing): resolution happens *before* any socket
+    exists, so :class:`DeadlineWatchdog` has nothing to shut down, and httpx's connect timeout
+    does not cover ``getaddrinfo`` either. A stalled resolver ran 3.35 s against a 0.5 s budget,
+    and both production feeds use hostnames.
+
+    So the lookup runs in a worker thread and is waited for only as long as the budget allows.
+    Past that the caller is told and the exchange ends without ever connecting. ``getaddrinfo``
+    cannot be cancelled, so the worker is left to finish on its own: it is a daemon, it holds
+    nothing, and the next poll starts a new one.
+
+    **Why this does not hand httpx an address to connect to.** Pinning the address we resolved
+    would make the bound airtight — no second lookup could stall — and SNI and certificate
+    verification could be preserved through ``sni_hostname`` and the ``Host`` header. It would
+    also throw away something worth more: ``socket.create_connection`` tries *every* address a
+    host resolves to, in order, and gives up only when all fail. A host whose first address is an
+    unreachable AAAA (measured here: ``localhost`` resolves to ``::1`` first) would start failing
+    where httpx would quietly have fallen back to IPv4. So the lookup is bounded and the
+    connection is left to httpx, whose own lookup is then answered from the resolver cache.
+
+    What that costs, stated plainly: if the cache does not keep the answer (TTL 0, no caching
+    resolver) a second lookup could stall, so the worst case is the budget for the lookup plus
+    the budget for the exchange, rather than one budget. That is the same order as the Windows
+    ``shutdown`` caveat in :class:`DeadlineWatchdog`, and it replaces an unbounded stall.
+
+    A host that is already an IP address is left alone: there is nothing to resolve.
+    """
+    host = urlsplit(url).hostname
+    if not host:
+        return
+    try:
+        ipaddress.ip_address(host)
+        return  # already an address
+    except ValueError:
+        pass
+
+    done = threading.Event()
+
+    def lookup() -> None:
+        try:
+            socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)
+        except BaseException:  # noqa: BLE001 — including a test's blocked-socket guard
+            pass  # any failure is httpx's to meet and classify, exactly as before
+        finally:
+            done.set()
+
+    threading.Thread(target=lookup, name="noc-dns-lookup", daemon=True).start()
+    if not done.wait(timeout=max(0.0, timeout_s)):
+        raise DnsTimeout(f"name resolution for {host!r} did not finish within the {timeout_s:g} s total deadline")
+
+
+class DeadlineWatchdog:
+    """A total deadline on one HTTP exchange, enforced below httpx (review findings W02, W02-TLS).
+
+    Shared by all three early-warning adapters: this one, ``adapters/kmd_cap.py`` and
+    ``adapters/flood.py`` (CONFORMANCE A-18). It lives here because the other two already import
+    this module, and the reverse would be a cycle.
+
+    Why this and not a timeout setting: httpx (and httpcore beneath it) apply ``timeout`` to each
+    individual socket operation. No per-request value bounds a server that answers every read
+    promptly with one byte — in the body, in the response headers, or as an endless series of
+    ``100 Continue`` interim responses, all confirmed over a real socket to run 8-11 s against a
+    1 s budget. The only thing that ends such an exchange at a fixed time is shutting the
+    connection down at that time.
+
+    **The watchdog owns its own handle on the connection.** :meth:`trace` is passed as httpx's
+    documented ``trace`` request extension. On ``connection.connect_tcp.complete`` (and again on
+    ``connection.start_tls.complete``) it takes a *duplicate descriptor* of the connection's
+    socket (``socket.fromfd``), which this object owns. At the deadline a ``threading.Timer``
+    calls ``shutdown(SHUT_RDWR)`` on those duplicates. ``shutdown`` acts on the connection, not on
+    one descriptor, so every reader of that connection — plain or TLS, in the handshake, the
+    headers or the body — is cut off.
+
+    Why a duplicate and not the socket httpcore hands over (review finding W02-TLS, the reason
+    this class was rewritten): for ``https`` httpcore calls ``ssl_context.wrap_socket(sock)``, and
+    ``SSLSocket`` *detaches* the plain socket — the object recorded at ``connect_tcp`` then has
+    ``fileno() == -1``, ``shutdown`` failed with WinError 10038 / EBADF, the error was swallowed, and
+    both production feeds (both ``https``) had no header-phase bound at all. A descriptor the
+    watchdog duplicated at ``connect_tcp`` stays valid through the wrap and everything after it.
+    (The handshake itself was never the gap: CPython's ``ssl`` applies the socket timeout to
+    ``do_handshake`` as one *total* deadline — measured, a handshake dripped over ~7 s aborts at a
+    1.0 s timeout — and :func:`_bounded_get` caps that timeout at the budget. The gap is after the
+    handshake: every TLS read gets a fresh per-read timeout, so a drip of response headers or of
+    ``1xx`` responses is bounded by nothing but this watchdog.)
+
+    **Never another request's socket.** The duplicates belong to this object and are closed by
+    :meth:`cancel`, under the same lock :meth:`_fire` holds while it shuts them down — so a timer
+    that fires late finds an empty list (and a closed duplicate reports ``fileno() == -1``; it can
+    never come to name a descriptor some later request was given). A trace callback is per
+    request, and requests send ``Connection: close`` so each opens, and so exposes, its own
+    connection; a connection this exchange did not open is never adopted.
+
+    **Bound.** On Linux a blocked read fails as soon as ``shutdown`` runs. On Windows, measured
+    here, it fails when the next byte arrives: a dripping server is ended within one inter-byte
+    gap of the deadline, and a silent one by the per-request timeout, which
+    :func:`_bounded_get` caps at the budget — so at most ``2 x timeout_s`` there. httpx then
+    raises a ``TransportError`` and the caller, seeing :attr:`fired`, reports ``timeout``.
+
+    **No thread outlives the exchange.** :meth:`cancel` (always called in the caller's
+    ``finally``) cancels the timer and joins its thread; the timer thread is a daemon named
+    ``noc-deadline-watchdog`` so a leak would be visible in ``threading.enumerate()``.
+    """
+
+    THREAD_NAME = "noc-deadline-watchdog"
+    _EVENTS = frozenset({"connection.connect_tcp.complete", "connection.start_tls.complete"})
+
+    def __init__(self, seconds: float) -> None:
+        self.fired = False
+        self._closed = False
+        self._lock = threading.Lock()
+        self._handles: list[socket.socket] = []
+        self._timer = threading.Timer(max(0.0, seconds), self._fire)
+        self._timer.name = self.THREAD_NAME
+        self._timer.daemon = True
+        self._timer.start()
+
+    def trace(self, event_name: str, info: Mapping[str, Any]) -> None:
+        if event_name not in self._EVENTS:
+            return
+        stream = info.get("return_value")
+        sock = stream.get_extra_info("socket") if stream is not None else None
+        handle = self._adopt(sock)
+        if handle is None:
+            return
+        with self._lock:
+            if self._closed:  # the exchange already ended: never keep a handle past cancel()
+                handle.close()
+                return
+            self._handles.append(handle)
+            if self.fired:  # connected (or finished TLS) after the deadline had passed
+                self._shutdown(handle)
+
+    @staticmethod
+    def _adopt(sock: Any) -> socket.socket | None:
+        """A duplicate descriptor of ``sock``'s connection, owned by the watchdog, or ``None``."""
+        try:
+            fd = sock.fileno() if sock is not None else -1
+            if fd < 0:
+                return None
+            return socket.fromfd(fd, sock.family, sock.type)
+        except (OSError, ValueError, AttributeError):
+            return None  # cannot duplicate: the per-chunk check and per-wait cap still bound it
+
+    def _fire(self) -> None:
+        with self._lock:
+            if self._closed:
+                return
+            self.fired = True
+            for handle in self._handles:
+                self._shutdown(handle)
+
+    @staticmethod
+    def _shutdown(handle: socket.socket) -> None:
+        try:
+            handle.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass  # the connection is already gone: nothing left to interrupt
+
+    def cancel(self) -> None:
+        """End the watch: stop the timer, close every handle, and join the timer thread."""
+        self._timer.cancel()
+        with self._lock:
+            self._closed = True
+            handles, self._handles = self._handles, []
+        for handle in handles:
+            try:
+                handle.close()
+            except OSError:
+                pass
+        if threading.current_thread() is not self._timer:
+            self._timer.join(timeout=1.0)
+
+
+def _per_wait(client: httpx.Client, timeout_s: float) -> httpx.Timeout:
+    """A per-request httpx timeout no longer than the total budget, nor than the client's own."""
+    own = getattr(getattr(client, "timeout", None), "read", None)
+    return httpx.Timeout(min(timeout_s, own) if own else timeout_s)
+
+
 def _is_tls_failure(exc: BaseException) -> bool:
     cur: BaseException | None = exc
     while cur is not None:
@@ -324,11 +527,37 @@ def _get_json(client: httpx.Client, url: str, *, headers: Mapping[str, str] | No
     with the provider's own reason when the body carries one (Open-Meteo: ``{"error": true,
     "reason": ...}``); an unparseable body is ``malformed``.
     """
+    timeout_s = getattr(getattr(client, "timeout", None), "read", None) or DEFAULT_TIMEOUT_S
+    watchdog = DeadlineWatchdog(timeout_s)
+    per_wait = _per_wait(client, timeout_s)
     try:
-        response = client.get(url, headers=dict(headers or {}))
-    except httpx.TimeoutException as exc:
-        raise WeatherError("timeout", f"{source} did not answer within the timeout ({exc.__class__.__name__})", source=source) from exc
-    except httpx.TransportError as exc:
+        # The same two bounds the CAP and flood adapters use (CONFORMANCE A-18): resolution inside
+        # the budget, then a watchdog that shuts the connection at the deadline. httpx's timeout is
+        # per socket read, so without them a server dripping one byte per read — or a stalled
+        # resolver — holds the forecast poll open indefinitely.
+        try:
+            resolve_within_deadline(url, timeout_s)
+        except DnsTimeout as exc:
+            raise WeatherError("timeout", f"{source}: {exc}", source=source) from exc
+        response = client.get(
+            url,
+            headers={"Connection": "close", **dict(headers or {})},
+            timeout=per_wait,
+            extensions={"trace": watchdog.trace},
+        )
+    except WeatherError:
+        raise
+    except (httpx.TransportError, OSError) as exc:
+        if watchdog.fired:  # the watchdog shut the connection: the deadline, not a network fault
+            raise WeatherError(
+                "timeout",
+                f"{source} did not finish within the {timeout_s:g} s total deadline; connection closed",
+                source=source,
+            ) from exc
+        # A plain read timeout keeps its own wording. It is already bounded by the budget
+        # (``per_wait``), and this adapter's failure messages are pinned by existing tests.
+        if isinstance(exc, httpx.TimeoutException):
+            raise WeatherError("timeout", f"{source} did not answer within the timeout ({exc.__class__.__name__})", source=source) from exc
         if _is_tls_failure(exc):
             raise WeatherError(
                 "tls",
@@ -337,8 +566,8 @@ def _get_json(client: httpx.Client, url: str, *, headers: Mapping[str, str] | No
                 source=source,
             ) from exc
         raise WeatherError("network", f"{source} unreachable ({exc.__class__.__name__}: {exc})", source=source) from exc
-    except ssl.SSLError as exc:  # pragma: no cover - httpx wraps these, but be explicit
-        raise WeatherError("tls", f"{source} TLS verification failed ({exc}); see docs/RUNBOOK.md §3", source=source) from exc
+    finally:
+        watchdog.cancel()
 
     status = response.status_code
     if status == 304:

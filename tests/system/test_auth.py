@@ -232,8 +232,10 @@ SPA_OPEN: list[tuple[str, str, str]] = [
     ("GET", "/", "/"),
     ("GET", "/{full_path:path}", "/incidents/a-deep-link"),
 ]
-#: Decided, recorded at the route, and still open: api/auth.py has no socket seam yet.
-KNOWN_GAPS: set[tuple[str, str]] = {("WS", "/ws/ops")}
+#: Gated, but not by a dependency: no ``require_role`` can bind on a WebSocket handshake, so
+#: the ops feed is gated inside the handler by ``auth.authorise_socket`` (A-14). It is a
+#: decision like every row above, recorded here because the route table cannot show it.
+SOCKET_GATED: set[tuple[str, str]] = {("WS", "/ws/ops")}
 
 
 def _rid(route: Gated) -> str:
@@ -366,7 +368,7 @@ def test_every_route_main_declares_has_a_recorded_decision(api):
         for method in sorted(set(methods) - {"HEAD"}) if methods else ["WS"]:
             declared.add((method, route.path))
 
-    decided = {(g.method, g.path) for g in GATED} | {(m, p) for m, p, _ in OPEN} | KNOWN_GAPS
+    decided = {(g.method, g.path) for g in GATED} | {(m, p) for m, p, _ in OPEN} | SOCKET_GATED
     if FRONTEND_DIST.exists():
         decided |= {(m, p) for m, p, _ in SPA_OPEN}
 
@@ -671,23 +673,41 @@ def test_the_role_switcher_grants_nothing_once_auth_is_on(enforced):
     assert client.post("/api/v1/email/test").status_code == 401
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason=(
-        "A-04 follow-up: api/auth.py has no socket seam, so /ws/ops still accepts an "
-        "anonymous socket with auth enforced (the reason is recorded above ws_ops in main.py). "
-        "When auth.py grows one, this XPASSes and strict=True fails it: delete this marker."
-    ),
-)
 def test_the_ops_socket_refuses_an_anonymous_connection(enforced):
+    """A-14, closed. This was a strict xfail while api/auth.py had no socket seam: the feed
+    carries incident numbers, sites, run and HITL events, and answered anyone who could reach
+    the port. ``auth.authorise_socket`` now refuses the handshake with 1008 -- a close before
+    the accept, so the replay is never written -- and a row-1 reader still gets through.
+    """
     client, _ = enforced
-    try:
+    client.cookies.clear()
+    with pytest.raises(WebSocketDisconnect) as refused:
         with client.websocket_connect(f"/ws/ops?since={hub.last_seq}"):
-            accepted = True
-    except WebSocketDisconnect:
-        accepted = False
-    assert not accepted, "an anonymous socket was accepted on /ws/ops with AUTH_DISABLED=false"
+            pass
+    assert refused.value.code == 1008
+
+
+def test_the_ops_socket_admits_a_row_one_reader_and_refuses_a_vendor_role(enforced):
+    client, _ = enforced
+    _as(client, "legal")  # R on row 1, and the narrowest reader there is
+    with client.websocket_connect(f"/ws/ops?since={hub.last_seq}"):
+        pass  # the handshake completed
+    _as(client, "msp_coordinator")  # "notes only": no row-1 read, socket included
+    with pytest.raises(WebSocketDisconnect) as refused:
+        with client.websocket_connect(f"/ws/ops?since={hub.last_seq}"):
+            pass
+    assert refused.value.code == 1008
+
+
+def test_the_socket_is_inert_in_the_demo(api):
+    """AUTH_DISABLED=true: no identity, no refusal -- the demo and every WS test that runs
+    under it (tests/system/test_contracts.py, tests/integration/test_ws_since.py) are
+    untouched by the seam.
+    """
+    client, _ = api
+    client.cookies.clear()
+    with client.websocket_connect(f"/ws/ops?since={hub.last_seq}"):
+        pass
 
 
 # --------------------------------------------------- A-05: the contracts production guard

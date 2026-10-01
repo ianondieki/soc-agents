@@ -31,6 +31,7 @@ import json
 import sqlite3
 import sys
 import types
+from dataclasses import replace
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -755,6 +756,142 @@ def test_the_marker_lives_in_a_table_retention_never_deletes(tmp_db):
     assert policy.classes[entry.class_name].action == hk.KEEP
 
 
+# ------------------------------------------------- vendor contacts (conformance A-08)
+
+
+VENDOR_CONTACTS = {"noc": "ops@egypro.co.ke", "escalation": "gm@egypro.co.ke", "phone": "+254 712 345 678"}
+
+
+def seed_vendor(session, *, operator_id: str, code: str, active_to, contacts: dict | None = None) -> str:
+    """One contracted party. ``active_to`` is a ``date`` or ``None`` (still engaged)."""
+    from noc_agents.db.models_vendors import VendorRow
+
+    row = VendorRow(
+        operator_id=operator_id,
+        code=code,
+        display_name=f"{code} Ltd",
+        type="MSP",
+        contract_ref=f"CT-{code}",
+        active_from=(NOW - timedelta(days=2000)).date(),
+        active_to=active_to,
+        contacts_json=json.dumps(contacts if contacts is not None else VENDOR_CONTACTS, sort_keys=True),
+    )
+    session.add(row)
+    session.flush()
+    return row.id
+
+
+def vendor_contacts(session, vendor_id: str) -> str:
+    from noc_agents.db.models_vendors import VendorRow
+
+    session.expire_all()
+    return session.get(VendorRow, vendor_id).contacts_json
+
+
+def test_the_contacts_of_a_long_ended_vendor_engagement_are_pseudonymised(tmp_db):
+    """Conformance A-08. The `vendors` entry had no `timestamp_column`, so this rule had never
+    run: every MSP contact e-mail and phone this system has ever held was kept for ever.
+
+    Age is measured from the END of the engagement (`active_to`), never from `active_from`,
+    and the commercial facts beside the contacts survive — what goes is the way to reach a
+    person at a vendor the operator stopped working with more than the class's days ago.
+    """
+    settings, session = tmp_db
+    op = settings.operator.operator_id
+    ended = seed_vendor(session, operator_id=op, code="OLDCO", active_to=(NOW - timedelta(days=500)).date())
+    session.commit()
+
+    report = hk.pseudonymise_personal_fields(session, settings, hk.load_policy(), now=NOW, apply=True)
+    session.commit()
+
+    outcome = next(t for t in report.tables if t.table == "vendors")
+    assert outcome.skipped == "", f"the vendors rule is still not running: {outcome.skipped!r}"
+    assert (outcome.matched, outcome.changed) == (1, 1)
+    contacts = vendor_contacts(session, ended)
+    assert "egypro.co.ke" not in contacts and "712" not in contacts, contacts
+    assert "<EMAIL>" in contacts and "<PHONE>" in contacts
+    from noc_agents.db.models_vendors import VendorRow
+
+    row = session.get(VendorRow, ended)
+    assert (row.code, row.type, row.contract_ref) == ("OLDCO", "MSP", "CT-OLDCO"), "commercial facts must survive"
+    assert row.active_to == (NOW - timedelta(days=500)).date()
+    assert hk.is_marked_pseudonymised(session, "vendors", ended, operator_id=op), "no durable marker"
+
+
+@pytest.mark.parametrize(
+    "label, active_to",
+    [
+        ("still engaged (NULL)", None),
+        ("engagement ends in the future", (NOW + timedelta(days=30)).date()),
+        ("ended exactly on the cutoff day", (NOW - timedelta(days=400)).date()),
+        ("ended inside the window", (NOW - timedelta(days=399)).date()),
+    ],
+)
+def test_an_active_or_recently_ended_vendors_contacts_are_never_touched(tmp_db, label, active_to):
+    """The half that matters operationally. These contacts are how the NOC reaches the MSP at
+    02:00; scrubbing them would be an outage, not a retention control.
+
+    The boundary case is deliberate: ``active_to`` is a DATE and the cutoff a 03:30 datetime,
+    so comparing the two directly would read an engagement that ended ON the cutoff day as
+    older than the cutoff. The rule is "ended MORE than N days ago".
+    """
+    settings, session = tmp_db
+    op = settings.operator.operator_id
+    vendor = seed_vendor(session, operator_id=op, code="LIVECO", active_to=active_to)
+    session.commit()
+    before = vendor_contacts(session, vendor)
+
+    report = hk.pseudonymise_personal_fields(session, settings, hk.load_policy(), now=NOW, apply=True)
+    session.commit()
+
+    outcome = next(t for t in report.tables if t.table == "vendors")
+    assert (outcome.matched, outcome.changed) == (0, 0), label
+    assert vendor_contacts(session, vendor) == before, f"{label}: an active vendor's contacts were scrubbed"
+    assert not hk.is_marked_pseudonymised(session, "vendors", vendor, operator_id=op), label
+
+
+def test_a_dry_run_reports_the_vendor_work_without_doing_it(tmp_db):
+    settings, session = tmp_db
+    op = settings.operator.operator_id
+    ended = seed_vendor(session, operator_id=op, code="OLDCO", active_to=(NOW - timedelta(days=500)).date())
+    session.commit()
+    before = vendor_contacts(session, ended)
+
+    report = hk.pseudonymise_personal_fields(session, settings, hk.load_policy(), now=NOW, apply=False)
+    session.commit()
+
+    outcome = next(t for t in report.tables if t.table == "vendors")
+    assert (outcome.matched, outcome.changed) == (1, 0)
+    assert vendor_contacts(session, ended) == before
+    assert not hk.is_marked_pseudonymised(session, "vendors", ended, operator_id=op)
+
+
+def test_vendor_pseudonymisation_never_reaches_another_operators_vendors(tmp_db):
+    settings, session = tmp_db
+    op = settings.operator.operator_id
+    mine = seed_vendor(session, operator_id=op, code="OLDCO", active_to=(NOW - timedelta(days=500)).date())
+    theirs = seed_vendor(session, operator_id=OTHER_OPERATOR, code="OLDCO", active_to=(NOW - timedelta(days=900)).date())
+    session.commit()
+    before = vendor_contacts(session, theirs)
+
+    hk.pseudonymise_personal_fields(session, settings, hk.load_policy(), now=NOW, apply=True)
+    session.commit()
+
+    assert "<EMAIL>" in vendor_contacts(session, mine)
+    assert vendor_contacts(session, theirs) == before
+
+
+def test_an_unknown_timestamp_meaning_refuses_the_whole_policy(tmp_db):
+    """A meaning the engine does not know must not be guessed at: the policy is refused whole,
+    exactly as an unknown action is, rather than quietly falling back to row age."""
+    policy = hk.load_policy()
+    entry = policy.tables["vendors"]
+    broken = dict(policy.tables)
+    broken["vendors"] = replace(entry, timestamp_meaning="whenever")
+    problems = hk.validate_policy(replace(policy, tables=broken))
+    assert any("timestamp_meaning" in p and "vendors" in p for p in problems), problems
+
+
 # ------------------------------------------------------------------------- outbox sweep
 
 
@@ -839,6 +976,67 @@ def test_a_row_retried_between_the_sweeps_select_and_update_is_not_archived(tmp_
     assert row.status == "PENDING"
     assert row.payload_json == original_payload, "a queued row lost its message to the archive"
     assert json.loads(session.get(OutboxRow, control).payload_json).get(hk.ARCHIVED_KEY) is True
+
+
+def test_a_row_a_concurrent_sweep_already_archived_is_not_archived_twice(tmp_db, monkeypatch):
+    """Round 5. The other half of the archive re-check: ``updated_at < cutoff``.
+
+    Two housekeeping processes (two workers, or a manual run beside the nightly one) can both
+    SELECT the same terminal row. The first archives it, which stamps ``updated_at = now``.
+    The second's UPDATE must then match nothing: the row is STILL ``SENT``, so re-checking the
+    status alone does not save it, and a second archive would summarise the summary and count
+    a payload that was already gone. Only the cutoff half of the re-check catches this, which
+    is why it is pinned separately from the retry race.
+
+    The concurrent sweep is a second session committing in the window between this sweep's
+    SELECT and its UPDATE, and it leaves a sentinel in the payload so a second archive would
+    be visible.
+    """
+    from sqlalchemy import update
+
+    from noc_agents.db.models import get_session
+
+    settings, session = tmp_db
+    op = settings.operator.operator_id
+    racing = seed_outbox(
+        session, operator_id=op, status="SENT", age_days=100, key="race-archived",
+        payload={"operator_id": op, "incident_number": "INC000103", "message": "Site down at Machakos"},
+    )
+    control = seed_outbox(
+        session, operator_id=op, status="SENT", age_days=100, key="race-control-2",
+        payload={"operator_id": op, "incident_number": "INC000104", "message": "Site up at Machakos"},
+    )
+    session.commit()
+    other_summary = json.dumps({hk.ARCHIVED_KEY: True, "note": "archived by the other sweep"})
+
+    real = hk._archive_summary
+    swept: list[str] = []
+
+    def archive_elsewhere_first(row, payload, now):
+        if row["id"] == racing and not swept:
+            other = get_session()
+            try:
+                other.execute(
+                    update(OutboxRow)
+                    .where(OutboxRow.id == racing)
+                    .values(payload_json=other_summary, envelope_json=None, updated_at=NOW)
+                )
+                other.commit()
+            finally:
+                other.close()
+            swept.append(racing)
+        return real(row, payload, now)
+
+    monkeypatch.setattr(hk, "_archive_summary", archive_elsewhere_first)
+    report = hk.sweep_outbox(session, settings, hk.load_policy(), now=NOW, apply=True)
+    session.commit()
+
+    assert swept == [racing], "precondition: the other sweep archived it inside the window"
+    assert report.archived == 1, "the already-archived row was archived a second time"
+    assert report.archivable == 1, "archivable must agree with archived in APPLY posture"
+    session.expire_all()
+    assert session.get(OutboxRow, racing).payload_json == other_summary, "the summary was re-summarised"
+    assert json.loads(session.get(OutboxRow, control).payload_json)[hk.ARCHIVED_KEY] is True
 
 
 def test_a_terminal_row_inside_the_ninety_day_window_keeps_its_payload(tmp_db):

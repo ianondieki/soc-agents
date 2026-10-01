@@ -453,6 +453,14 @@ def store_alert(
     tomb_end = _parse_z((tomb_block.get("ended_by") or {}).get("sent"))
     if tomb_end is not None:
         valid_until = min(valid_until, tomb_end)
+        if alert.effective is not None and valid_until < alert.effective:
+            # Never before the span's own start (``row.valid_from`` below): a window that ends
+            # before it begins covers no instant, yet reads it as a live claim (review finding
+            # CANCEL-INVERSION). Ending it at its start says the same thing honestly. The end may
+            # still fall before ``fetched_at`` — an alert already cancelled when we first saw it —
+            # and that is not an inversion: it is a true statement about a span nobody could act
+            # on, which the backtest declines to count as an episode.
+            valid_until = alert.effective
     payload = _dumps({"format": "application/cap+xml", "source_url": alert.source_url, "xml": alert.raw_xml})
     said = alert.as_payload()
 
@@ -548,8 +556,17 @@ def _end_referenced(
     for ref in alert.references:
         rows = [r for r in _alert_rows(session, operator_id, ref) if not r.external_id.startswith("tombstone:")]
         for row in rows:
-            if row.valid_until is None or row.valid_until > alert.sent:
-                row.valid_until = alert.sent
+            # Never earlier than the row's own start: a Cancel sent at 13:00 that is only fetched
+            # after a 13:30 re-attach would otherwise leave the span (13:30 .. 13:00), an inverted
+            # window that can cover no incident yet counts as a resolved, never-hit episode — a
+            # guaranteed false alarm in CAP precision (review finding CANCEL-INVERSION). Ending it
+            # at its own start says the same thing honestly: this span was never in force.
+            # The start is ``valid_from``, not ``fetched_at``: an alert whose Cancel we read after
+            # its sent time — the ordinary case — still ends when KMD said it ended (F07).
+            start_at = row.valid_from or row.fetched_at
+            end_at = max(alert.sent, start_at) if start_at is not None else alert.sent
+            if row.valid_until is None or row.valid_until > end_at:
+                row.valid_until = end_at
                 ended += 1
             block = _loads(row.derived_json)
             block["ended_by"] = ending
@@ -674,7 +691,12 @@ def reattribute_live(
             new.county = ", ".join(cs) if cs else None
             new.site_id = None
             new.fetched_at = now
-            new.valid_from = template.valid_from
+            # A span's window starts when this region was attributed, never at the alert's
+            # effective time: the row did not exist before, and anything reading
+            # valid_from <= t <= valid_until — the PIR timeline does — would otherwise place
+            # this span hours before it began, listing one alert twice and crediting the
+            # region through the gap NEW4 exists to stop crediting (review finding PIR-SPAN).
+            new.valid_from = max(template.valid_from, now) if template.valid_from else now
             new.valid_until = template.valid_until
             new.stale = template.stale
             new.confidence = template.confidence

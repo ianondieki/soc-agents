@@ -34,6 +34,8 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from starlette.routing import Host, Mount
+from starlette.websockets import WebSocketDisconnect
 
 from noc_agents.api import auth
 from noc_agents.domain.enums import HitlTaskType
@@ -164,6 +166,11 @@ PERM: dict[str, frozenset[str]] = {
     "pir.read": _roles("pir", lambda c: c != "—"),
     "pir.edit": _roles("pir", lambda c: c in ("edit", "✓")),
     "pir.publish": _roles("pir", lambda c: c in ("publish", "✓")),
+    # PATCH /pir/{id} carries the narrative AND the status. Both cells reach it: the editors
+    # write content, the publishers move the review between states (sending a draft back is
+    # the reviewer's other half). A publisher's content change is refused in the handler,
+    # which test_a_publisher_may_send_a_review_back_but_not_rewrite_it checks.
+    "pir.review": _roles("pir", lambda c: c in ("edit", "publish", "✓")),
     # Row 9. Listing and searching contracts are the asker's view, so they take "ask".
     "contracts.ask": _roles("contracts", lambda c: c in ("ask", "all")),
     "contracts.all": _roles("contracts", lambda c: c == "all"),
@@ -260,6 +267,9 @@ ROUTE_MAP: dict[tuple[str, str], str] = {
     (G, "/api/v1/sites"): "ops.read",
     (G, "/api/v1/signals/weather/regions"): "ops.read",
     (G, "/api/v1/stream/events"): "ops.read",
+    # The socket twin of the SSE stream: the same envelopes, so the same row. Its gate is in
+    # the handler (auth.authorise_socket), because no HTTP dependency can bind on a handshake.
+    ("WS", "/ws/ops"): "ops.read",
     (P, "/api/v1/incidents/{incident_id}/notes"): "ops.notes",
     (P, "/api/v1/incidents/{incident_id}/close"): "ops.write",
     (P, "/api/v1/incidents/{incident_id}/restore"): "ops.write",
@@ -308,7 +318,7 @@ ROUTE_MAP: dict[tuple[str, str], str] = {
     (G, "/api/v1/pir/awaiting-review"): "pir.read",
     (G, "/api/v1/pir/{pir_id}"): "pir.read",
     (G, "/api/v1/pir/{pir_id}/actions"): "pir.read",
-    (PA, "/api/v1/pir/{pir_id}"): "pir.edit",
+    (PA, "/api/v1/pir/{pir_id}"): "pir.review",
     (P, "/api/v1/pir/{pir_id}/actions"): "pir.edit",
     (PA, "/api/v1/pir/{pir_id}/actions/{action_id}"): "pir.edit",
     (P, "/api/v1/pir/{pir_id}/draft/llm"): "pir.edit",
@@ -376,7 +386,8 @@ ROUTE_MAP: dict[tuple[str, str], str] = {
     (P, "/api/v1/vendors/backfill"): "vendors.backfill",
 }
 
-#: Open on purpose, each with its reason. /ws/ops is a known gap, not a decision to keep it open.
+#: Open on purpose, each with its reason. The ops socket is no longer here: since A-14 it is
+#: gated in ROUTE_MAP like the rest of row 1.
 EXEMPT: dict[tuple[str, str], str] = {
     (G, "/health"): "the load balancer's liveness probe; answers before anyone logs in",
     (G, "/api/v1/profile"): "the login screen names the operator before anyone has a role",
@@ -384,14 +395,21 @@ EXEMPT: dict[tuple[str, str], str] = {
     (P, "/api/v1/session"): "the demo role switcher; with auth on it grants nothing",
     (G, "/api/v1/shifts/current"): "the same shift values /api/v1/profile already serves",
     (G, "/api/v1/metrics/summary"): "aggregate counts only; pinned open by test_auth_skeleton",
-    ("WS", "/ws/ops"): "KNOWN GAP: require_role cannot gate a socket; api/auth.py needs a socket "
-                       "seam (strict xfail in tests/system/test_auth.py)",
     (G, "/openapi.json"): "FastAPI's schema: route shapes, no operator data -- serving it in "
                           "production is an open decision (RBAC review round 4, item 6)",
     (G, "/docs"): "FastAPI's Swagger UI over /openapi.json (same open decision)",
     (G, "/docs/oauth2-redirect"): "part of FastAPI's Swagger UI (same open decision)",
     (G, "/redoc"): "FastAPI's ReDoc over /openapi.json (same open decision)",
 }
+#: Mounted sub-applications, which are not routes and carry no ``require_role``: whatever the
+#: mounted app serves is served on its own terms. Each one needs a reason here, or the
+#: classification test fails -- an ungated Starlette app mounted on a lane router would
+#: otherwise pass every other test in this file (RBAC review round 5).
+MOUNT_EXEMPT: dict[str, str] = {
+    "/assets": "the built SPA's static bundle (js/css): the same public shell as GET /, "
+               "mounted only when frontend/dist/assets exists",
+}
+
 #: The built SPA shell: registered only when frontend/dist exists; the login screen lives here.
 SPA_EXEMPT: dict[tuple[str, str], str] = {
     (G, "/"): "the SPA shell: the login screen is served from here",
@@ -400,12 +418,26 @@ SPA_EXEMPT: dict[tuple[str, str], str] = {
 
 
 def _flat(routes):
-    """Every route, walking into included routers (FastAPI keeps them as ``_IncludedRouter``)."""
+    """Every route, walking into included routers (FastAPI keeps them as ``_IncludedRouter``).
+
+    A Mount is yielded as itself and never descended into: what a mounted app serves is the
+    mounted app's business, which is exactly why every mount needs an entry in MOUNT_EXEMPT.
+    """
     for route in routes:
         if hasattr(route, "original_router"):
             yield from _flat(route.original_router.routes)
         else:
             yield route
+
+
+def _mounts(routes) -> dict[str, str]:
+    """Every mounted sub-application, by path -- including ones a lane router mounts."""
+    found: dict[str, str] = {}
+    for route in _flat(routes):
+        if isinstance(route, (Mount, Host)):
+            key = getattr(route, "path", None) or f"host:{getattr(route, 'host', '?')}"
+            found[key] = type(getattr(route, "app", route)).__name__
+    return found
 
 
 def _registered(app) -> dict[tuple[str, str], object]:
@@ -514,6 +546,7 @@ def test_the_derived_permissions_say_what_the_report_says():
     assert PERM["ops.notes"] == {NOC, SS, DM, ADMIN, MSP, FE}
     assert PERM["hitl.any"] == {SS, DM, MGMT, PLAN, ADMIN}  # noc_analyst "—"
     assert PERM["pir.edit"] == {NOC, ADMIN} and PERM["pir.publish"] == {SS, DM, ADMIN}
+    assert PERM["pir.review"] == {NOC, SS, DM, ADMIN}
     assert PERM["contracts.ask"] == {NOC, SS, DM, PLAN, LEGAL, ADMIN} and PERM["contracts.all"] == {LEGAL, ADMIN}
     assert PERM["complaints.assign"] == {SS, ADMIN}
     assert PERM["memory.read"] == {NOC, SS, DM, MGMT, PLAN, LEGAL, ADMIN}
@@ -530,6 +563,10 @@ def test_every_registered_route_is_classified(app_client):
     assert sorted((set(ROUTE_MAP) | set(exempt)) - registered) == [], "the matrix names routes that do not exist"
     assert all(key in EXPECTED for key in ROUTE_MAP.values())
     assert all(reason.strip() for reason in exempt.values())
+    # Mounted sub-apps are not routes and have no gate of ours: each needs a written reason.
+    mounts = _mounts(main.app.routes)
+    assert sorted(set(mounts) - set(MOUNT_EXEMPT)) == [], f"unclassified mounts: {mounts}"
+    assert all(reason.strip() for reason in MOUNT_EXEMPT.values())
 
 
 def test_every_exempt_route_really_is_open(app_client):
@@ -552,9 +589,14 @@ def test_every_hitl_card_type_has_a_row():
     assert frozenset(deps.HITL_ROLES) == PERM["hitl.any"]
 
 
-@pytest.mark.parametrize("key", sorted(ROUTE_MAP), ids=lambda k: f"{k[0]} {k[1]}")
+@pytest.mark.parametrize("key", sorted(k for k in ROUTE_MAP if k[0] != "WS"),
+                         ids=lambda k: f"{k[0]} {k[1]}")
 def test_the_gate_on_the_route_is_the_matrix(app_client, key):
-    """Static: the allow-list read off the route equals the matrix, role for role."""
+    """Static: the allow-list read off the route equals the matrix, role for role.
+
+    The socket is excluded here and only here: no ``require_role`` can sit on a handshake, so
+    its gate is inside the handler and is checked live, connection by connection, below.
+    """
     main, _ = app_client
     route = _registered(main.app)[key]
     expected = EXPECTED[ROUTE_MAP[key]]
@@ -584,7 +626,8 @@ def _ended_stream(*_args, **_kwargs):
     return q
 
 
-@pytest.mark.parametrize("key", sorted(ROUTE_MAP), ids=lambda k: f"{k[0]} {k[1]}")
+@pytest.mark.parametrize("key", sorted(k for k in ROUTE_MAP if k[0] != "WS"),
+                         ids=lambda k: f"{k[0]} {k[1]}")
 def test_the_gate_answers_the_matrix_for_every_caller(enforced, monkeypatch, key):
     """Live, with auth enforced: no cookie -> 401; every role outside -> 403; every role inside
     -> neither (the handler may still say 404/422 for the made-up ids and empty bodies)."""
@@ -599,6 +642,46 @@ def test_the_gate_answers_the_matrix_for_every_caller(enforced, monkeypatch, key
         got[role] = _request(client, key).status_code
     wrong = {r: c for r, c in got.items() if (c == 403) == (r in expected) or c in (401, 503)}
     assert not wrong, f"{key} ({ROUTE_MAP[key]}): expected {sorted(expected)}, got {got}"
+
+
+def test_the_ops_socket_is_gated_like_the_rest_of_row_one(enforced):
+    """A-14: the handshake needs a signed session and a row-1 read role, and a refusal is a
+    close (1008) BEFORE the accept -- so a refused caller is never sent the replay.
+    """
+    _, client = enforced
+    client.cookies.clear()
+    with pytest.raises(WebSocketDisconnect) as anonymous:
+        with client.websocket_connect("/ws/ops"):
+            pass
+    assert anonymous.value.code == 1008
+    for role in ROLES:
+        _as(client, role)
+        if role in PERM["ops.read"]:
+            with client.websocket_connect(f"/ws/ops?since={hub.last_seq}"):
+                pass  # accepted: the handshake completed
+        else:
+            with pytest.raises(WebSocketDisconnect) as refused:
+                with client.websocket_connect("/ws/ops"):
+                    pass
+            assert refused.value.code == 1008, role
+
+
+def test_a_publisher_may_send_a_review_back_but_not_rewrite_it(enforced):
+    """§9.3 row 8 split, as the gate now draws it: the supervisors move a review between
+    states (the send-back a reviewer needs), the analyst writes its content.
+    """
+    _, client = enforced
+    pir_id = "does-not-exist"  # the gate and the content check both run before the lookup
+    for role in sorted(PERM["pir.publish"] - PERM["pir.edit"]):  # shift_supervisor, duty_manager
+        _as(client, role)
+        sent_back = client.patch(f"/api/v1/pir/{pir_id}", json={"status": "DRAFT"})
+        assert sent_back.status_code == 404, (role, sent_back.text)  # through the gate
+        rewrite = client.patch(f"/api/v1/pir/{pir_id}", json={"summary": "my words"})
+        assert rewrite.status_code == 403, (role, rewrite.text)
+        assert "content" in rewrite.json()["detail"], role
+    for role in sorted(PERM["pir.edit"]):  # noc_analyst, admin: content is theirs
+        _as(client, role)
+        assert client.patch(f"/api/v1/pir/{pir_id}", json={"summary": "my words"}).status_code == 404, role
 
 
 # ------------------------------------------------------------------ HITL, by card type

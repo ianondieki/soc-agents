@@ -342,6 +342,32 @@ notification_recipients:
   # of the failure, and is why REGULATORY_ENABLED + EMAIL_ENABLED can now both be
   # switched on without a regulator notice reaching the demo inbox.
   regulatory.recipients.CA: []
+  # §6.5 escalation ladder (services/hitl_escalation.py): who is fetched when a P1/P2
+  # approval sits unclaimed. The SMS half of a nudge resolves these at dispatch; the
+  # in-app half goes to the NOC_SHIFT glass and needs no address.
+  #
+  # EMPTY ON PURPOSE, for the same reason as the CA mailbox above: the on-duty
+  # supervisor's and the duty manager's numbers are the operator's own roster, not
+  # public configuration. Until they are filled in, the ladder still runs -- it
+  # records every SMS nudge it could not send as SUPPRESSED with the reason, keeps
+  # the in-app nudge, the hitl.escalated event and the Wallboard red state -- and
+  # never invents a number.
+  hitl.recipients.supervisor: []
+  hitl.recipients.duty_manager: []
+
+# §6.5 escalation ladder when a P1/P2 task sits unapproved (spec default values;
+# config.py:HitlEscalationConfig types and validates this block). Minutes are
+# measured from the card's created_at while it is PENDING and unclaimed; a claim
+# stops the ladder. Nothing here can release the external broadcast (D1).
+hitl:
+  escalation:
+    supervisor_minutes: 5        # T+5: nudge the on-duty supervisor (SMS + in-app)
+    duty_manager_minutes: 15     # T+15: nudge the duty manager and publish hitl.escalated
+    wallboard_minutes: 30        # T+30: red on the Wallboard; regulatory_sweep notes it on the CA 24-h card
+    priorities: [P1, P2]
+    channels: [SMS, INAPP]       # internal channels only; EMAIL/WHATSAPP are refused by the validator
+    supervisor_recipients_ref: hitl.recipients.supervisor
+    duty_manager_recipients_ref: hitl.recipients.duty_manager
 
 recurrence:
   threshold_count: 3

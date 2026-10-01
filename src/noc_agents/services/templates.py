@@ -86,6 +86,8 @@ __all__ = [
     "ALLOWED_PARAMS",
     "APPROVAL_STATUSES",
     "DEFAULT_LANGUAGE",
+    "HITL_NUDGE_PARAMS",
+    "HITL_NUDGE_TEMPLATE_KEY",
     "REVIEWED_LANGUAGES",
     "SENDABLE_STATUSES",
     "SEED_DIR",
@@ -107,6 +109,7 @@ __all__ = [
     "is_sendable",
     "load_seed_templates",
     "params_schema",
+    "params_vocabulary",
     "render_body",
     "row_fingerprint",
     "seed_roots",
@@ -121,8 +124,10 @@ SEED_DIR = CONFIG_DIR / "templates"
 #: §6.3's channel vocabulary. LEDGER/ICS/STATUSPAGE are not templated messages.
 TEMPLATE_CHANNELS: tuple[str, ...] = ("EMAIL", "SMS", "WHATSAPP", "INAPP")
 
-#: §6.3's ``template_key`` vocabulary, verbatim. Seeding a key outside it is a seed error:
-#: a typo'd key silently produces a template nothing will ever resolve.
+#: §6.3's ``template_key`` vocabulary, verbatim, plus the one key §6.5 names outside that
+#: list: ``hitl_nudge``, the escalation ladder's internal "a decision is waiting" text.
+#: Seeding a key outside this tuple is a seed error: a typo'd key silently produces a
+#: template nothing will ever resolve.
 TEMPLATE_KEYS: tuple[str, ...] = (
     "site_down_alert",
     "incident_update",
@@ -134,7 +139,13 @@ TEMPLATE_KEYS: tuple[str, ...] = (
     "regulatory_ca_24h",
     "maintenance_invite",
     "complaint_followup",
+    "hitl_nudge",
 )
+
+#: The key whose variables are NOT envelope fields (§6.5). An unclaimed approval card may
+#: have no envelope at all -- a task raised without an incident -- and the nudge must carry
+#: no incident narrative, so its vocabulary is the card's, not the alert's.
+HITL_NUDGE_TEMPLATE_KEY = "hitl_nudge"
 
 #: §6.3, mirroring Meta's own template states so a WhatsApp row needs no second vocabulary.
 APPROVAL_STATUSES: tuple[str, ...] = ("DRAFT", "SUBMITTED", "APPROVED", "REJECTED", "PAUSED")
@@ -289,6 +300,24 @@ ALLOWED_PARAMS: tuple[str, ...] = (
     # the precomputed v1 email subject (cfg.display_name is not an envelope field)
     "email_subject",
 )
+
+#: What a ``hitl_nudge`` template may name -- exactly the keys
+#: ``services/hitl_escalation.nudge_context`` produces. Deliberately small and deliberately
+#: free of narrative: the card's type, the priority, what the card is about (an incident
+#: number, or ``<entity_type> <entity_id>`` for a card with no incident), how long it has
+#: waited and who is being fetched. No headline, no body, no site, no person's name.
+HITL_NUDGE_PARAMS: tuple[str, ...] = (
+    "priority",
+    "task_type",
+    "subject",
+    "unclaimed_minutes",
+    "escalation_target",
+)
+
+
+def params_vocabulary(template_key: str) -> tuple[str, ...]:
+    """The variables a seeded template with this key may declare (§6.3 seed-time contract)."""
+    return HITL_NUDGE_PARAMS if template_key == HITL_NUDGE_TEMPLATE_KEY else ALLOWED_PARAMS
 
 
 def context_from_alert(alert: NocAlert, language: str = DEFAULT_LANGUAGE) -> dict[str, object]:
@@ -683,12 +712,14 @@ def _load_params(path: Path, key: str, channel: str, raw: object) -> tuple[tuple
     if not isinstance(raw, dict) or not raw:
         raise TemplateSeedError(f"{path}: {channel}/{key} declares no params")
     out: list[tuple[str, str]] = []
+    allowed = params_vocabulary(key)
     for name_raw, type_raw in raw.items():
         name, type_name = str(name_raw), str(type_raw).lower()
-        if name not in ALLOWED_PARAMS:
+        if name not in allowed:
+            source = "the nudge context (services/hitl_escalation.nudge_context)" if key == HITL_NUDGE_TEMPLATE_KEY else "the envelope"
             raise TemplateSeedError(
-                f"{path}: {channel}/{key} declares param {name!r}, which the envelope cannot supply "
-                f"(§6.3: allowed variables are validated against the envelope). Known: {sorted(ALLOWED_PARAMS)}"
+                f"{path}: {channel}/{key} declares param {name!r}, which {source} cannot supply "
+                f"(§6.3: allowed variables are validated against what the caller can supply). Known: {sorted(allowed)}"
             )
         if type_name not in _JSON_TYPES:
             raise TemplateSeedError(f"{path}: {channel}/{key} param {name!r} has type {type_raw!r}; use one of {sorted(_JSON_TYPES)}")
@@ -992,6 +1023,37 @@ class TemplateRegistry:
         row = resolution.row
         assert row is not None  # both branches above raise when it is None
         context = context_from_alert(alert, resolution.language)
+        return self._rendered(row, resolution, context)
+
+    def render_context(
+        self,
+        channel: str,
+        template_key: str,
+        context: Mapping[str, object],
+        *,
+        language: str = DEFAULT_LANGUAGE,
+        version: int | None = None,
+        allow_unapproved: bool = False,
+    ) -> RenderedMessage:
+        """Render one channel of one template from a caller-supplied context.
+
+        For the templates whose variables are not envelope fields (``hitl_nudge``): the
+        caller builds the context, and the seed-time check already proved the body names
+        only what :func:`params_vocabulary` allows for that key. Same approval rule as
+        :meth:`render`: ``allow_unapproved`` is an explicit preview switch, never a fallback.
+        """
+        if allow_unapproved:
+            resolution = self.resolve(channel, template_key, language, version=version, require_approved=False)
+            if resolution.row is None:
+                raise TemplateNotFound(resolution.reason or f"no {channel}/{template_key} template")
+        else:
+            resolution = self.for_send(channel, template_key, language, version=version)
+        row = resolution.row
+        assert row is not None
+        return self._rendered(row, resolution, context)
+
+    @staticmethod
+    def _rendered(row: MessageTemplateRow, resolution: TemplateResolution, context: Mapping[str, object]) -> RenderedMessage:
         return RenderedMessage(
             channel=row.channel,
             template_key=row.template_key,

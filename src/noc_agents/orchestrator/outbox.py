@@ -126,6 +126,12 @@ EMAIL, SMS, WHATSAPP, ICS_INVITE, EXCEL_ROW = "EMAIL", "SMS", "WHATSAPP", "ICS_I
 # the HITL approval gate below does not apply to it — the human gate on this lane is that a
 # named reviewer publishes the review, never that a draft was requested.
 LLM_CALL = "LLM_CALL"
+# The §6.5 escalation ladder's internal nudge (services/hitl_escalation.py). NOT a channel kind
+# either: it is pre-approved by policy (approved_by="policy:hitl_escalation" is stamped on every
+# row, requires_hitl=0), it goes only to the operator's own supervisor / duty manager / shift
+# glass, and nothing external is ever released by it (D1). One row per task per rung per
+# channel under a deterministic key, so a restart cannot double-nudge.
+HITL_NUDGE = "HITL_NUDGE"
 CHANNEL_KINDS = frozenset({EMAIL, SMS, WHATSAPP, ICS_INVITE})  # the kinds an approval gates
 
 # statuses
@@ -629,12 +635,62 @@ def _transmit_llm_call(row: OutboxRow) -> DispatchResult:
         session.close()
 
 
+# --- HITL_NUDGE: the escalation ladder's internal nudge (§6.5) --------------------------------
+
+NUDGE_INAPP_PROVIDER = "inapp"
+
+
+def _transmit_hitl_nudge(row: OutboxRow) -> DispatchResult:
+    """One nudge row: the SMS half through the existing mock SMS path, the in-app half to the
+    shift's glass. Nothing external, ever.
+
+    **It asks first whether anyone should still be nudged.** A row can be dispatched long
+    after the ladder queued it -- a freeze, a scheduler that was off, a dead-letter retry --
+    and if the card has been decided or claimed meanwhile, "a decision is waiting" is false.
+    ``services/hitl_escalation.nudge_still_wanted`` reads the card in its own short session
+    (the drain holds no transaction while a transmitter runs, exactly as ``_transmit_llm_call``
+    argues) and a stale nudge is recorded SENT with ``provider="none"`` and the reason, the same
+    "finished, not retried, no alarm" convention as an LLM_CALL with the layer off.
+
+    The in-app rendering's *delivery* is the ``hitl.nudge`` realtime event, built by
+    ``_finalize`` -> ``record_nudge_outcome`` inside the outcome transaction and published
+    after its commit, like every other channel's events: the glass is never told about a
+    nudge the database did not keep.
+    """
+    from noc_agents.services import hitl_escalation  # lazy: services.hitl_escalation imports this module
+
+    payload = _payload(row)
+    channel = str(payload.get("channel") or "").upper()
+    wanted, why = hitl_escalation.nudge_still_wanted(row.hitl_task_id or payload.get("task_id"), operator_id=row.operator_id)
+    if not wanted:
+        return DispatchResult(
+            SENT,
+            last_error=f"no nudge: {why}",
+            provider=hitl_escalation.NUDGE_INERT_PROVIDER,
+            delivery={"mode": "inert", "to": [], "detail": f"{channel} nudge not delivered: {why}"},
+        )
+    if channel == SMS:
+        return _transmit_sms(row)  # the existing mock path: nothing leaves until the P3 adapter exists
+    if channel == "INAPP":
+        return DispatchResult(
+            SENT,
+            provider=NUDGE_INAPP_PROVIDER,
+            delivery={
+                "mode": NUDGE_INAPP_PROVIDER,
+                "to": [str(payload.get("audience") or hitl_escalation.NUDGE_AUDIENCE)],
+                "detail": f"in-app nudge for {payload.get('task_type')} published to the {payload.get('audience')} glass (hitl.nudge)",
+            },
+        )
+    return DispatchResult(DEAD, last_error=f"HITL_NUDGE row names channel {channel!r}; expected SMS or INAPP")
+
+
 _TRANSMITTERS: dict[str, Callable[[OutboxRow], DispatchResult]] = {
     EMAIL: _transmit_email,
     SMS: _transmit_sms,
     EXCEL_ROW: _transmit_excel_row,
     ICS_INVITE: _transmit_ics_invite,
     LLM_CALL: _transmit_llm_call,
+    HITL_NUDGE: _transmit_hitl_nudge,
 }
 
 
@@ -758,7 +814,8 @@ def transfer_plan(job: OutboxRow) -> TransferPlan | None:
     """The register entry for a row, or ``None`` when nothing crosses a boundary.
 
     ``EXCEL_ROW`` writes a local workbook; ``SMS`` has no adapter until P3 and is a mock; a
-    mock EMAIL transmits nothing. None of those are transfers, so none of them get a row.
+    mock EMAIL transmits nothing; ``HITL_NUDGE`` is internal (the mock SMS path and the
+    shift's own glass). None of those are transfers, so none of them get a row.
     ``LLM_CALL`` genuinely is one, but writes its own record inside ``_transmit_llm_call``
     (it needs the audit row's id for ``llm_calls.audit_id``) — see the module docstring.
     """
@@ -1053,8 +1110,18 @@ def _finalize(session: Session, job: OutboxRow, result: DispatchResult, final: s
         events = notify.record_email_outcome(session, job, final_status=final, delivery=delivery, now=now)
     elif job.kind == SMS:
         events = notify.record_sms_outcome(session, job, final_status=final, now=now)
+    elif job.kind == HITL_NUDGE:
+        events = _nudge_outcome(session, job, result, final, now)
     _producer_outcome(session, job, result, final, now)
     return events
+
+
+def _nudge_outcome(session: Session, job: OutboxRow, result: DispatchResult, final: str, now: datetime) -> list[RealtimeEvent]:
+    """The ladder learns what became of its nudge: an audit row, and the ``hitl.nudge`` event
+    that is the in-app rendering's delivery (§6.5)."""
+    from noc_agents.services import hitl_escalation  # lazy: services.hitl_escalation imports this module
+
+    return hitl_escalation.record_nudge_outcome(session, job, result=result, final_status=final, now=now)
 
 
 def _regulatory_outcome(

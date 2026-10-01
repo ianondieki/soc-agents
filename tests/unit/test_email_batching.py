@@ -677,6 +677,26 @@ def test_a_p1_bigger_than_the_whole_cap_is_sent_with_the_override_note(
     assert not any(e["type"] == "outbox.failed" for e in hub._history)
 
 
+def test_a_p1_that_takes_a_partly_used_window_over_says_that(tmp_db, smtp_on, transfers, clean_hub, monkeypatch):
+    """Round-5: cap 10 with 3 sent and a P1 needing 8 is neither "cap reached" (the window had
+    room) nor "bigger than the cap" (8 fits in 10) — this send is the one that goes over."""
+    _settings, session = tmp_db
+    monkeypatch.setenv("EMAIL_DAILY_CAP", "10")
+    monkeypatch.setattr(notify, "get_settings", lambda *_a, **_k: _settings_with({REF: _addresses(701)}))
+    _seed_sent(session, 3, at=NOW - timedelta(hours=1))
+    inc = _incident(session, priority="P1")
+    row = _queue(session, inc, "EMAIL:p1-over:1", ref=REF)
+    report = drain_once(session, now=NOW)
+    assert (report.sent, report.dead, report.deferred) == (1, 0, 0) and _get(session, row.id).status == SENT
+    assert len(smtp_on.sent) == 8
+    (note,) = [n for n in _notes(session, inc) if "EMAIL_DAILY_CAP" in n]
+    assert note == (
+        "[BroadcastCommsAgent] This P1 notice takes the window over EMAIL_DAILY_CAP=10 "
+        "(3 sent in the last 24 h + 8 message(s)); it was SENT anyway because the volume cap never holds a P1."
+    )
+    assert "reached" not in note and "alone needs" not in note
+
+
 def test_an_unapproved_row_is_still_rejected_not_deferred(tmp_db, smtp_on, transfers, clean_hub, monkeypatch):
     """The approval gate outranks the cap: a cap decision must never turn a refusal into PENDING."""
     _settings, session = tmp_db

@@ -131,6 +131,13 @@ PIR_READERS: tuple[str, ...] = OPERATIONS + ("management", "planning", "legal")
 #: listed for the owner (a publisher who cannot fix a typo sends the draft back).
 PIR_EDITORS: tuple[str, ...] = ("noc_analyst", "admin")
 PIR_PUBLISHERS: tuple[str, ...] = ("shift_supervisor", "duty_manager", "admin")
+#: Who may move a review BETWEEN states -- editors, plus the publishers who review them.
+#: PATCH /pir/{id} carries both the narrative and the status, and "publish" cannot mean
+#: "publish or leave it": sending a draft back (IN_REVIEW -> DRAFT) is the reviewer's other
+#: half, and NOT_REQUIRED is a reviewer's verdict too. The route admits this tuple and then
+#: refuses a publisher's CONTENT change (api/routers/pir.py), so the row's split holds:
+#: the analyst writes the review, the supervisor decides what happens to it.
+PIR_REVIEWERS: tuple[str, ...] = tuple(dict.fromkeys(PIR_EDITORS + PIR_PUBLISHERS))
 
 #: §9.3's contracts row, "Contracts ingest / ask / FAQ": ask for noc_analyst, shift_supervisor,
 #: duty_manager and planning; "all" for legal and admin; "—" for management, msp_coordinator

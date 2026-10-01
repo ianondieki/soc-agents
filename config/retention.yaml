@@ -252,18 +252,25 @@ tables:
 
   vendors:
     class: personal_staff_vendor
-    # KNOWN GAP, recorded rather than papered over. This entry has no `timestamp_column`, so
-    # the generic pass skips it and vendor contact pseudonymisation does not currently run.
-    # It cannot simply be filled in: §7.6.1's `vendors` table carries no record-creation
-    # timestamp at all -- only `active_from`/`active_to`, which are the CONTRACT window, not
-    # the age of the row. Measuring from `active_from` would scrub the contacts of a vendor
-    # who is currently engaged, which is an outage waiting to happen (those contacts are how
-    # the NOC reaches the MSP at 02:00). Measuring from `active_to` is the right semantics --
-    # scrub once the engagement has ended -- but `active_to` is NULL for every active vendor
-    # and the engine has no "NULL means never expire" rule today.
-    # Fix properly by adding `active_to`-based handling with an explicit NULL guard, or by
-    # giving `vendors` a real `created_at`. Do NOT just name a column here to make the skip
-    # go away. Found by the Phase 5 complaints lane while fixing the same bug on its own row.
+    # §7.6.1's `vendors` table has no record-creation timestamp at all -- only
+    # `active_from`/`active_to`, which are the CONTRACT window, not the age of the row. So the
+    # age of a vendor row is measured from the END of the engagement, which `timestamp_meaning`
+    # states and `housekeeping._older_than` implements:
+    #   * `active_to` NULL  -> the engagement has not ended: an ACTIVE vendor, never expired.
+    #     Those contacts are how the NOC reaches the MSP at 02:00; scrubbing them would be an
+    #     outage, not a retention control. The predicate says `active_to IS NOT NULL` out loud
+    #     rather than relying on SQL dropping NULL comparisons.
+    #   * `active_to` in the future -> same: the engagement has not ended yet.
+    #   * `active_to` more than `days` ago -> the engagement ended long enough ago that the
+    #     contacts are no longer needed; they become <EMAIL>/<PHONE> and the row keeps its
+    #     commercial facts (code, type, contract_ref, the window itself).
+    # `active_to` is a DATE, so the cutoff is compared as a date: a vendor whose engagement
+    # ended exactly ON the cutoff day is NOT touched ("more than N days ago", not "N or more").
+    # Dry run and HOUSEKEEPING_APPLY still govern, and each pseudonymised vendor row gets the
+    # same durable marker as an incident. (Conformance A-08; was a KNOWN GAP with no
+    # timestamp_column, so this rule had never run.)
+    timestamp_column: active_to
+    timestamp_meaning: engagement_end
     personal:
       class: personal_staff_vendor
       role_tokens: {}

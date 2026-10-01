@@ -47,6 +47,7 @@ import tracemalloc
 import xml.etree.ElementTree as ET
 from dataclasses import replace
 from datetime import datetime, timedelta
+from functools import lru_cache
 from pathlib import Path
 
 import httpx
@@ -123,14 +124,19 @@ def no_sockets(monkeypatch):
     monkeypatch.setattr(socket, "getaddrinfo", boom)
 
 
+#: Hosts the loopback-only guard admits. A DNS test adds its own fake name, which its fake
+#: resolver maps to 127.0.0.1 — otherwise the guard, not the stall, would end the test.
+_LOOPBACK_HOSTS = {"127.0.0.1", "localhost"}
+
+
 @pytest.fixture()
 def loopback_only(monkeypatch):
-    """Re-admit connections to 127.0.0.1 only. The W02 header-phase deadline cannot be tested
-    through MockTransport — the bug lived below httpx, in socket reads — so these tests run a
-    real server on the loopback interface. Any other host still fails exactly as before."""
+    """Re-admit connections to the loopback interface only. The W02 header-phase deadline cannot
+    be tested through MockTransport — the bug lived below httpx, in socket reads — so these tests
+    run a real server on 127.0.0.1. Any other host still fails exactly as before."""
 
     def loopback(host) -> bool:
-        return str(host) in {"127.0.0.1", "localhost"}
+        return str(host) in _LOOPBACK_HOSTS
 
     def connect(self, address):
         if not loopback(address[0]):
@@ -697,6 +703,56 @@ def test_w02_every_request_opens_its_own_connection_and_is_traced():
 _CRLF = bytes([13, 10])
 
 
+@lru_cache(maxsize=1)
+def _loopback_tls_is_intercepted() -> bool:
+    """True when this machine re-signs loopback TLS, as an antivirus "web shield" does.
+
+    The test server offers a self-signed certificate, so the certificate the client receives must
+    be its own issuer. When a local interceptor sits in the path the client is handed a re-issued
+    copy instead (seen here: "Avast Web/Mail Shield Self-signed Root"), which no cafile of ours
+    can verify — and the response is then paced by the interceptor's buffer rather than by the
+    server, so what these tests measure is not there to measure. They skip, rather than trust an
+    interceptor or drop verification to stay green.
+    """
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(str(TLS_CERT), str(TLS_KEY))
+
+    def run():
+        conn = None
+        try:
+            raw, _ = listener.accept()
+            conn = context.wrap_socket(raw, server_side=True)
+            conn.recv(64)
+        except (OSError, ssl.SSLError):
+            pass
+        finally:
+            if conn is not None:
+                conn.close()
+            listener.close()
+
+    threading.Thread(target=run, daemon=True).start()
+    probe = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    probe.check_hostname = False
+    probe.verify_mode = ssl.CERT_NONE
+    try:
+        with probe.wrap_socket(socket.create_connection(("127.0.0.1", listener.getsockname()[1]), timeout=5)) as sock:
+            served = sock.getpeercert(binary_form=True)  # parsed form is empty without verification
+            sock.send(bytes([120]))
+    except (OSError, ssl.SSLError):
+        return False  # the probe says nothing; let the test itself report what it finds
+    return bool(served) and served != ssl.PEM_cert_to_DER_cert(TLS_CERT.read_text())
+
+
+def _skip_if_tls_is_intercepted() -> None:
+    if _loopback_tls_is_intercepted():
+        pytest.skip("a local TLS interceptor re-signs loopback connections on this machine: it, "
+                    "not the test server, would be pacing the bytes")
+
+
+
 def _tls_server(payload: bytes, gap: float, *, silent: bool = False) -> int:
     """A one-shot loopback HTTPS server using the committed TEST-ONLY certificate. It completes
     the handshake, reads the request, then drips ``payload`` a byte every ``gap`` seconds (or,
@@ -799,6 +855,7 @@ def test_w02_tls_the_total_deadline_holds_over_https(loopback_only, label):
     socket the watchdog had recorded; at the deadline shutdown hit fileno -1, the error was
     swallowed, and both production feeds (both https) had no header-phase bound at all. The
     watchdog now owns a duplicate descriptor of the connection, which survives the wrap."""
+    _skip_if_tls_is_intercepted()
     make_server, per_read = TLS_CASES[label]
     port = make_server()
     client = _tls_client(per_read)
@@ -814,6 +871,7 @@ def test_w02_tls_the_total_deadline_holds_over_https(loopback_only, label):
 def test_w02_tls_a_normal_https_fetch_still_works_and_verifies_the_certificate(loopback_only):
     """The watchdog must not disturb a healthy exchange, and verification is really on: the same
     server is refused by a client that does not trust the test certificate."""
+    _skip_if_tls_is_intercepted()
     body = _read("kmd_rss.xml")
     ok = b"HTTP/1.1 200 OK" + _CRLF + b"Content-Length: " + str(len(body)).encode() + _CRLF + _CRLF + body
     port = _tls_server(ok, 0.0)
@@ -880,6 +938,56 @@ def test_w02_a_late_fire_never_touches_a_connection_after_cancel(loopback_only):
     finally:
         a.close()
         b.close()
+
+
+
+def _slow_dns(monkeypatch, host: str, seconds: float) -> None:
+    """Make one hostname take ``seconds`` to resolve. No real DNS is queried: every other name
+    goes to the real resolver, which the loopback-only guard still limits to 127.0.0.1."""
+    real = socket.getaddrinfo
+
+    def resolver(name, *args, **kwargs):
+        if name == host:
+            time.sleep(seconds)
+            return real("127.0.0.1", *args, **kwargs)
+        return real(name, *args, **kwargs)
+
+    monkeypatch.setattr(socket, "getaddrinfo", resolver)
+
+
+def _quiet_server() -> int:
+    """A loopback listener that accepts and says nothing: the test must never get this far."""
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    threading.Thread(target=lambda: (listener.accept(), time.sleep(5)), daemon=True).start()
+    return listener.getsockname()[1]
+
+
+def test_dns_the_total_deadline_covers_name_resolution(loopback_only, monkeypatch):
+    """Review finding DNS: resolution happens before any socket exists, so the watchdog has
+    nothing to shut down and httpx's connect timeout does not cover getaddrinfo. A stalled
+    resolver ran 3.35 s against a 0.5 s budget; both production feeds use hostnames."""
+    _slow_dns(monkeypatch, "feed.invalid", 5.0)
+    monkeypatch.setitem(globals(), "_LOOPBACK_HOSTS", _LOOPBACK_HOSTS | {"feed.invalid"})
+    port = _quiet_server()
+    provider = KmdCapProvider(f"http://feed.invalid:{port}/rss.xml", client=httpx.Client(timeout=5.0), timeout_s=0.6)
+    started = time.monotonic()
+    with pytest.raises(CapError) as err:
+        provider.fetch_feed()
+    elapsed = time.monotonic() - started
+    assert elapsed < 2.5, f"{elapsed:.2f}s against a 0.6 s budget"
+    assert err.value.kind == "timeout" and "name resolution" in str(err.value)
+
+
+def test_dns_an_address_is_never_looked_up(loopback_only, monkeypatch):
+    """A URL that already carries an address must not spawn a lookup at all."""
+    monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **k: (_ for _ in ()).throw(AssertionError("looked up an address")))
+    server = Server()
+    poll  # noqa: B018 — the provider below is what matters; poll is imported at module level
+    feed = KmdCapProvider("http://127.0.0.1:1/rss.xml", client=httpx.Client(transport=httpx.MockTransport(server.handler)))
+    with pytest.raises(CapError):
+        feed.fetch_feed()  # 404 from the mock server: it got past resolution, which is the point
 
 
 def test_new1_a_304_to_an_unconditional_request_is_refused_not_read_as_unchanged():
@@ -1546,6 +1654,61 @@ def test_new4_re_attaching_a_county_opens_a_new_span_and_the_gap_is_never_credit
     assert cst == [(T0, T0 + timedelta(minutes=30)), (T0 + timedelta(minutes=150), datetime(2026, 5, 7, 18, 0))]
     score = backtest.score_region(session, "safaricom", "CST", family="cap", since=T0 - timedelta(hours=1), until=end, now=end)
     assert (score.incidents, score.incidents_warned) == (1, 0)  # 13:30 fell in the unmapped gap
+
+
+def test_pir_span_a_re_attached_span_starts_when_it_is_attributed(tmp_db, monkeypatch):
+    """Review finding PIR-SPAN: a span copied the alert's effective time into valid_from, so
+    anything selecting on valid_from <= t <= valid_until placed it hours before it existed."""
+    settings, session = tmp_db
+    _enable(monkeypatch)
+    server = Server()
+    _serve(server, {"https://x.test/s.xml": _cap(
+        "span-1", sent="2026-05-07T11:55:00+03:00", expires="2026-05-07T21:00:00+03:00", areas=("Kwale",))})
+    mapped = _with_regions(settings, CST=["Mombasa", "Kwale"], WNY=["Kisumu"])
+    moved = _with_regions(settings, CST=["Mombasa"], WNY=["Kisumu", "Kwale"])
+    poll(session, mapped, provider=server.provider(), now=T0)
+    poll(session, moved, provider=server.provider(), now=T0 + timedelta(minutes=30))
+    poll(session, mapped, provider=server.provider(), now=T0 + timedelta(minutes=150))
+
+    rows = _by_eid(session)
+    first, span = rows["span-1#CST"], rows["span-1#CST@20260507T143000Z"]
+    assert first.valid_from == datetime(2026, 5, 7, 8, 55)  # the alert's own effective time
+    assert span.valid_from == span.fetched_at == T0 + timedelta(minutes=150)
+    # The WNY span, opened for a region the map reached later, starts when it was attributed too.
+    assert rows["span-1#WNY"].valid_from == T0 + timedelta(minutes=30)
+
+
+def test_cancel_after_a_re_attach_never_leaves_an_inverted_span(tmp_db, monkeypatch):
+    """Review finding CANCEL-INVERSION: a Cancel sent at 13:00 but fetched after a 13:30
+    re-attach set the span's valid_until to 13:00, leaving (13:30 .. 13:00) — a window that can
+    cover no incident yet counted as a resolved, never-hit episode."""
+    from noc_agents.services import backtest
+
+    settings, session = tmp_db
+    _enable(monkeypatch)
+    server = Server()
+    original = _cap("inv-1", sent="2026-05-07T14:55:00+03:00", expires="2026-05-07T21:00:00+03:00", areas=("Kwale",))
+    mapped = _with_regions(settings, CST=["Mombasa", "Kwale"], WNY=["Kisumu"])
+    moved = _with_regions(settings, CST=["Mombasa"], WNY=["Kisumu", "Kwale"])
+    _serve(server, {"https://x.test/o.xml": original})
+    poll(session, mapped, provider=server.provider(), now=T0)
+    poll(session, moved, provider=server.provider(), now=T0 + timedelta(minutes=30))
+    poll(session, mapped, provider=server.provider(), now=T0 + timedelta(minutes=90))  # re-attach at 13:30
+
+    cancel = _cap("inv-cancel", msg_type="Cancel", sent="2026-05-07T16:00:00+03:00",
+                  references="kmd,inv-1,2026-05-07T14:55:00+03:00")
+    _serve(server, {"https://x.test/o.xml": original, "https://x.test/c.xml": cancel})
+    poll(session, mapped, provider=server.provider(), now=T0 + timedelta(minutes=120))
+
+    span = _by_eid(session)["inv-1#CST@20260507T133000Z"]
+    assert span.fetched_at == T0 + timedelta(minutes=90)
+    assert span.valid_until == span.fetched_at  # ended at its own start, never before it
+    end = T0 + timedelta(hours=12)
+    episodes = backtest.build_episodes(
+        backtest._family_rows(session, "safaricom", family="cap", since=T0 - timedelta(days=1), until=end, now=end),
+        family="cap")
+    assert [(e.region_code, e.start, e.end) for e in episodes if e.region_code == "CST"] == [
+        ("CST", T0, T0 + timedelta(minutes=30))]  # the zero-length span is no episode
 
 
 def test_new2_a_detached_held_row_is_never_extended_or_re_detached(tmp_db, monkeypatch):

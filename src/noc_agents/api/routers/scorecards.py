@@ -64,10 +64,13 @@ from noc_agents.db.models_scorecards import RELEASED_STATUSES, SCORECARD_STATUSE
 from noc_agents.db.models_vendors import VendorRow
 from noc_agents.services.scorecard import (
     PUBLISHER_ROLES,
+    REFUSAL_GUARD,
+    REFUSAL_TABLE,
     REVIEWER_ROLES,
     ScorecardPermissionError,
     ScorecardStateError,
     compute_on_request,
+    failure_reason,
     finalise_scorecard,
     last_ended_period,
     lines_of,
@@ -228,9 +231,13 @@ def compute_scorecards(
     """Compute (or recompute) a period: every vendor with incidents, or just ``vendor``.
 
     ``period`` defaults to the last month that has ended. 400 for a malformed or unfinished
-    period, 404 for an unknown vendor, 409 for a card that is already PUBLISHED or FINAL
-    (§7.6.6), 503 when the terms file is missing or unversioned -- a card is never computed
-    on air. Whatever it computes is DRAFT, SHADOW or WITHHELD; this route cannot publish.
+    period, 404 for an unknown vendor, 503 when the terms file is missing or unversioned -- a
+    card is never computed on air. Three distinct 409s, each detail starting with its stable
+    prefix (``services.scorecard.REFUSAL_*``): ``cannot recompute a released card: ...``
+    (PUBLISHED/FINAL, §7.6.6), ``evidence guard refused the write: ...`` (a mapper guard) and
+    ``the card could not be written: <constraint clause>`` (the table; the clause names the
+    constraint or its columns and never a value). Whatever it computes is DRAFT, SHADOW or
+    WITHHELD; this route cannot publish.
 
     The response carries COUNTS for everyone the route admits; the per-vendor statuses and
     the card ids are added only for ``INTERNAL_READERS`` -- a shift supervisor may trigger the
@@ -247,12 +254,15 @@ def compute_scorecards(
         label = period or last_ended_period(tz_name=s.operator.timezone)
         try:
             report, run_id = compute_on_request(session, s, label, vendor_code=vendor, actor=_actor(principal, None))
-        except (ScorecardStateError, ScorecardEvidenceError) as exc:  # a guard refused: the card's state, not the input
+        except ScorecardStateError as exc:  # "cannot recompute a released card: ..." -- the service's own prefix
             session.rollback()
             raise HTTPException(409, str(exc)) from exc
-        except IntegrityError as exc:  # the table refused the write (a CHECK, a UNIQUE): the failure is on record, the session clean
+        except ScorecardEvidenceError as exc:  # a mapper guard refused: card id and column names, never values
             session.rollback()
-            raise HTTPException(409, f"the card could not be written: {exc.orig}") from exc
+            raise HTTPException(409, f"{REFUSAL_GUARD}: {exc}") from exc
+        except IntegrityError as exc:  # the table refused the write: the constraint clause only, never the statement or its values
+            session.rollback()
+            raise HTTPException(409, f"{REFUSAL_TABLE}: {failure_reason(exc).partition(': ')[2] or 'constraint failed'}") from exc
         except LookupError as exc:
             session.rollback()
             raise HTTPException(404, str(exc)) from exc

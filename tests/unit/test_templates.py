@@ -55,6 +55,7 @@ from noc_agents.services.templates import (
     content_fingerprint,
     context_from_alert,
     load_seed_templates,
+    params_vocabulary,
     row_fingerprint,
 )
 
@@ -814,4 +815,6 @@ def test_the_stored_params_schema_is_real_json_schema(registry):
         schema = json.loads(row.params_schema_json)
         assert schema["type"] == "object" and schema["additionalProperties"] is False
         assert set(schema["required"]) == set(schema["properties"])
-        assert set(schema["properties"]) <= set(ALLOWED_PARAMS)
+        # The envelope vocabulary for every §6.3 key; the card vocabulary for §6.5's hitl_nudge,
+        # whose variables are deliberately not envelope fields (templates.params_vocabulary).
+        assert set(schema["properties"]) <= set(params_vocabulary(row.template_key))

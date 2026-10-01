@@ -11,7 +11,10 @@ Three things live here and nothing else:
    existing role switcher (``/api/v1/session``) and **never rejects**: the whole
    demo, and the whole test suite, runs under that flag, so every gate added
    here must be completely inert until someone sets ``AUTH_DISABLED=false``.
-3. **The per-client role switcher store** — what used to be one global
+3. **``authorise_socket(ws, *allowed)``** — the same decision for a WebSocket
+   handshake, which no HTTP dependency can make: it closes with 1008 before
+   ``accept()`` instead of raising, and is inert under ``AUTH_DISABLED=true``.
+4. **The per-client role switcher store** — what used to be one global
    ``_SESSIONS["default"]`` dict in ``main.py``, keyed per client instead, so
    two browsers pointed at the same demo do not overwrite each other's role.
 
@@ -44,7 +47,8 @@ from dataclasses import dataclass
 from typing import Any, Callable, Literal, get_args
 from uuid import uuid4
 
-from fastapi import HTTPException, Request, Response
+from fastapi import HTTPException, Request, Response, WebSocket
+from starlette.requests import HTTPConnection
 
 log = logging.getLogger("noc_agents.auth")
 
@@ -290,7 +294,7 @@ class Principal:
     subject: str | None = None
 
 
-def _role_switcher_principal(request: Request) -> Principal:
+def _role_switcher_principal(request: HTTPConnection) -> Principal:
     data = get_client_session(request)
     role = str(data.get("role") or DEFAULT_ROLE)
     return Principal(
@@ -301,11 +305,15 @@ def _role_switcher_principal(request: Request) -> Principal:
     )
 
 
-def current_principal(request: Request) -> Principal | None:
+def current_principal(request: HTTPConnection) -> Principal | None:
     """The caller, or ``None`` when auth is on and the cookie is missing/bad.
 
     With ``AUTH_DISABLED=true`` this is always a principal (the role switcher).
     This is the seam a real identity provider replaces (spec §13, D15).
+
+    Takes an ``HTTPConnection``, which is the parent of both ``Request`` and
+    ``WebSocket``: it needs the cookies, the headers and the scope, and a socket
+    handshake carries all three (:func:`authorise_socket` is the socket's caller).
     """
     if auth_disabled():
         return _role_switcher_principal(request)
@@ -354,6 +362,64 @@ def require_role(*allowed: Role) -> Callable[[Request], Principal]:
 
     dependency.__name__ = "require_role_" + ("_".join(allowed) if allowed else "any")
     return dependency
+
+
+# --------------------------------------------------------------------------
+# WebSocket handshakes (spec §7.0.5; docs/CONFORMANCE.md A-14)
+# --------------------------------------------------------------------------
+
+#: RFC 6455 policy violation. The close code for "you may not have this stream":
+#: 1008 is the protocol's 403, and a browser surfaces it on the failed handshake.
+SOCKET_POLICY_VIOLATION = 1008
+
+
+async def authorise_socket(ws: WebSocket, *allowed: Role) -> Principal | None:
+    """Authorise a socket handshake, or close it and return ``None``.
+
+    ``require_role`` cannot do this job: it is an HTTP dependency whose ``Request``
+    parameter FastAPI never binds on a WebSocket connection (declaring it on a socket
+    route kills the handshake with a TypeError, auth on or off), and a socket's answer to
+    "no" is a close frame rather than a status code. So this is the socket's own seam,
+    reading exactly the same signed session as the HTTP one:
+
+    * ``AUTH_DISABLED=true`` (the demo default) -- the role-switcher principal, never
+      refused, so the demo and the whole suite are unchanged;
+    * ``AUTH_DISABLED=false`` -- a valid signed cookie whose role is in ``allowed``, or
+      the handshake is closed with 1008 and this returns ``None``.
+
+    **Closed BEFORE ``accept()``**, which is the point: a refusal has to be a rejected
+    handshake, not an accepted socket that is dropped a moment later, or the replay the
+    caller asked for has already been written to a caller who was never authorised.
+    The caller therefore returns immediately on ``None`` and accepts nothing.
+
+    A missing ``NOC_SESSION_SECRET`` is refused too. The HTTP seam answers 503 there --
+    "the server is misconfigured", not "you are not allowed" -- but a handshake has no
+    such code, and serving the ops feed to everyone because the operator forgot a secret
+    is the one outcome worth ruling out. The reason string says which it was.
+    """
+    unknown = [r for r in allowed if r not in ROLES]
+    if unknown:  # a typo fails at import, not at 3am
+        raise ValueError(f"unknown role(s) {unknown}; expected any of {list(ROLES)}")
+    if auth_disabled():
+        return _role_switcher_principal(ws)
+    if not session_secret():
+        await ws.close(
+            code=SOCKET_POLICY_VIOLATION,
+            reason="auth is enabled but NOC_SESSION_SECRET is not configured",
+        )
+        return None
+    principal = current_principal(ws)
+    if principal is None:
+        await ws.close(code=SOCKET_POLICY_VIOLATION, reason="authentication required")
+        return None
+    allowed_set = frozenset(allowed) if allowed else frozenset(ROLES)
+    if principal.role not in allowed_set:
+        await ws.close(
+            code=SOCKET_POLICY_VIOLATION,
+            reason=f"role '{principal.role}' may not read this stream",
+        )
+        return None
+    return principal
 
 
 # --------------------------------------------------------------------------

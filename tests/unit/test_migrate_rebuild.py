@@ -685,7 +685,7 @@ def test_a_real_reference_in_any_spelling_is_still_refused_before_the_backup(tmp
     db = _build_v7(tmp_path, extra_sql=(A_REFERENCE[case],))
     before, table_sql, attached = _snapshot(db), _table_sql(db), _attached(db)
 
-    with pytest.raises(HitlRebuildError, match=r"reference\(s\) to hitl_tasks.*no backup was written"):
+    with pytest.raises(HitlRebuildError, match=r"cannot re-parse.*no such table: main\.[Hh][Ii][Tt][Ll]_[Tt][Aa][Ss][Kk][Ss].*no backup was written"):
         init_db(_url(db), backup_dir=tmp_path / "backups")
     models._engine.dispose()
     _assert_untouched(db, before, table_sql, attached)
@@ -694,6 +694,69 @@ def test_a_real_reference_in_any_spelling_is_still_refused_before_the_backup(tmp
 
 def _sha(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+# Names SQLite reports as 'error in view <name>: <detail>' -- with ': ' INSIDE the name. Round 4
+# split the message at its first ': ', tried to DROP VIEW "odd", and startup failed with
+# 'no such view: odd' instead of the refusal. The name is now resolved against sqlite_master.
+ODD_NAMES = {
+    "view_colon_space": ('CREATE VIEW "odd: name" AS SELECT id FROM hitl_tasks',),
+    "trigger_colon_space": ('CREATE TRIGGER "t: x" AFTER INSERT ON incidents BEGIN UPDATE hitl_tasks SET status = status WHERE 0; END',),
+    "two_blockers_one_odd": ("CREATE VIEW v_plain AS SELECT id FROM hitl_tasks", 'CREATE VIEW "a: b: c" AS SELECT id FROM hitl_tasks'),
+    "prefix_of_another": ('CREATE VIEW "a" AS SELECT id FROM hitl_tasks', 'CREATE VIEW "a: longer" AS SELECT id FROM hitl_tasks'),
+}
+ODD_EXPECTED = {
+    "view_colon_space": ["view odd: name"],
+    "trigger_colon_space": ["trigger t: x"],
+    "two_blockers_one_odd": ["view a: b: c", "view v_plain"],
+    "prefix_of_another": ["view a", "view a: longer"],
+}
+
+
+@pytest.mark.parametrize("case", sorted(ODD_NAMES))
+def test_a_blocker_whose_name_contains_colon_space_is_named_correctly(tmp_path, restore_db_globals, case):
+    db = _build_v7(tmp_path, extra_sql=ODD_NAMES[case])
+    before, table_sql, attached = _snapshot(db), _table_sql(db), _attached(db)
+
+    with pytest.raises(HitlRebuildError) as refused:
+        init_db(_url(db), backup_dir=tmp_path / "backups")
+    models._engine.dispose()
+    message = str(refused.value)
+    for named in ODD_EXPECTED[case]:
+        assert named in message, message
+    assert "DROP VIEW / DROP TRIGGER <name>" in message and "no backup was written" in message
+    _assert_untouched(db, before, table_sql, attached)
+    assert not (tmp_path / "backups").exists()
+    assert _sql(db, "SELECT COUNT(*) FROM sqlite_master WHERE type IN ('view','trigger')") == [(len(ODD_NAMES[case]),)]
+
+
+def test_an_unrelated_broken_view_is_refused_in_words_that_are_true_for_it(tmp_path, restore_db_globals):
+    """The RENAME re-parses every view and trigger in the schema, so a view over a table dropped
+    long ago blocks the rebuild although it never mentions hitl_tasks. Round 4 called that a
+    'reference to hitl_tasks'. The refusal now says what SQLite said, and offers both causes."""
+    db = _build_v7(tmp_path, extra_sql=(
+        "CREATE TABLE gone (id TEXT)", "CREATE VIEW v_orphan AS SELECT id FROM gone", "DROP TABLE gone",
+    ))
+    before, table_sql, attached = _snapshot(db), _table_sql(db), _attached(db)
+
+    with pytest.raises(HitlRebuildError) as refused:
+        init_db(_url(db), backup_dir=tmp_path / "backups")
+    models._engine.dispose()
+    message = str(refused.value)
+    assert message.startswith("view v_orphan: SQLite cannot re-parse it once the rebuilt hitl_tasks is renamed into place")
+    assert "broken in its own right" in message
+    assert "view v_orphan: no such table: main.gone" in message, "SQLite's own reason is quoted, not a guess"
+    assert "reference(s) to hitl_tasks" not in message
+    _assert_untouched(db, before, table_sql, attached)
+    assert not (tmp_path / "backups").exists()
+
+    # Following the message is enough.
+    con = sqlite3.connect(db)
+    con.execute("DROP VIEW v_orphan")
+    con.commit()
+    con.close()
+    init_db(_url(db), backup_dir=tmp_path / "backups").dispose()
+    assert _snapshot(db) == before and _notnull(db, "incident_id") == 0
 
 
 @pytest.mark.parametrize("journal", ["wal", "delete"])
@@ -720,7 +783,8 @@ def test_the_rename_probe_leaves_the_file_byte_identical(tmp_path, restore_db_gl
     finally:
         engine.dispose()
 
-    assert blockers == ([("view", "v_adq"), ("trigger", "t_sqi")] if blocked else [])
+    assert [(kind, name) for kind, name, _said in blockers] == ([("view", "v_adq"), ("trigger", "t_sqi")] if blocked else [])
+    assert all(said == "no such table: main.hitl_tasks" for _k, _n, said in blockers)
     assert _sha(db) == before_bytes, "the probe changed the database file"
     assert (_snapshot(db), _attached(db)) == (before_rows, before_attached)
     assert _notnull(db, "incident_id") == 1 and _scalar(db, "PRAGMA integrity_check") == "ok"

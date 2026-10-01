@@ -482,6 +482,33 @@ def test_the_dashboard_publishes_the_measured_precision_beside_the_storm_flag(se
     assert regions["CST"]["signals"]["weather"]["precision_30d"] is None
 
 
+def test_a_span_that_claims_no_time_is_not_an_episode(seed):
+    """Review finding CANCEL-INVERSION: a row whose claim ends at or before it began covers no
+    instant, so counting it as a resolved episode adds a guaranteed false alarm to CAP precision.
+    The degenerate rows sit in their own region here, because a healthy overlapping episode would
+    simply absorb them and hide the defect."""
+    now = NOW
+    rows = (
+        ("live#CST", "CST", now - timedelta(hours=3), now + timedelta(hours=3)),
+        ("zero#WNY", REGION, now - timedelta(hours=2), now - timedelta(hours=2)),      # ended at its own start
+        ("inverted#WNY", REGION, now - timedelta(hours=1), now - timedelta(hours=2)),  # ended before it began
+    )
+    for eid, region, fetched, until in rows:
+        seed.session.add(ExternalSignalRow(
+            id=new_id(), operator_id="safaricom", source="KMD_CAP", source_url="m://", region_code=region,
+            fetched_at=fetched, valid_from=fetched, valid_until=until, stale=0, confidence=1.0,
+            storm_flag=1, flood_flag=0, planned_power=0, access_risk=0, payload_json="{}",
+            derived_json=json.dumps({"kind": "cap_alert", "identifier": eid}, separators=(",", ":")),
+            external_id=eid, created_at=fetched))
+    seed.commit()
+    episodes = backtest.build_episodes(
+        backtest._family_rows(seed.session, "safaricom", family="cap", since=now - timedelta(days=1), until=now, now=now),
+        family="cap")
+    assert [(e.region_code, e.start, e.end) for e in episodes] == [("CST", now - timedelta(hours=3), now + timedelta(hours=3))]
+    score = backtest.score_region(seed.session, "safaricom", REGION, family="cap", since=now - timedelta(days=1), now=now)
+    assert (score.episodes, score.episodes_resolved) == (0, 0)  # neither is a false alarm against CAP precision
+
+
 # ------------------------------------------------------------------------------ the dashboard hook
 
 

@@ -435,6 +435,17 @@ def test_with_scheduler_disabled_nothing_starts(make_client, monkeypatch):
                 "circuit_open": False,
             },
             {
+                # Phase 2 HITL escalation ladder (§6.5). HITL_ESCALATION_ENABLED, OFF: the card
+                # carries default_enabled=False like every feature lane below.
+                "name": "hitl_escalation",
+                "interval_s": 60,
+                "enabled": False,
+                "last_started_at": None,
+                "last_status": None,
+                "consecutive_failures": 0,
+                "circuit_open": False,
+            },
+            {
                 # Phase 3 weather lane. "enabled": False with WEATHER_ENABLED unset, unlike
                 # the two jobs above: its card sets default_enabled=False, so the status
                 # surface never claims a feature lane is on while its flag is absent.
@@ -563,7 +574,7 @@ def test_with_scheduler_disabled_nothing_starts(make_client, monkeypatch):
         ],
     }
     assert [c.name for c in SCHEDULED_JOBS] == [
-        "outbox_dispatch", "monitor_tick", "weather_regions", "kmd_cap", "flood_daily",
+        "outbox_dispatch", "monitor_tick", "hitl_escalation", "weather_regions", "kmd_cap", "flood_daily",
         "pir_autoopen", "regulatory_sweep", "scorecard_close", "memory_consolidate",
         "complaints_followup", "maintenance_plan_due", "maintenance_window_sweep",
         "capacity_scan", "housekeeping",

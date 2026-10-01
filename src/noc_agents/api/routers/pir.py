@@ -42,6 +42,7 @@ from noc_agents.api.deps import (
     PIR_EDITORS,
     PIR_PUBLISHERS,
     PIR_READERS,
+    PIR_REVIEWERS,
     _actor,
     _get_owned,
     _owned,
@@ -320,9 +321,29 @@ def list_actions(pir_id: str) -> list[dict]:
 
 
 @router.patch("/pir/{pir_id}", dependencies=[_ENABLED])
-def patch_pir(pir_id: str, body: PirPatchIn, principal: auth.Principal = Depends(require_role(*PIR_EDITORS))) -> dict:
-    """Edit the narrative. The blameless validator gates ``root_causes``/``contributing_factors``."""
+def patch_pir(pir_id: str, body: PirPatchIn, principal: auth.Principal = Depends(require_role(*PIR_REVIEWERS))) -> dict:
+    """Edit the narrative, or move the review between states.
+
+    The blameless validator gates ``root_causes``/``contributing_factors``.
+
+    §9.3 row 8 splits this route in two, so the gate does as well. ``edit`` is the analyst's
+    cell: the narrative. ``publish`` is the supervisors', and a publisher who could only
+    publish or walk away would have no way to send a draft back -- the one thing a reviewer
+    does most. So the route admits both (PIR_REVIEWERS) and refuses a publisher's CONTENT
+    change here, by name, leaving them every state transition this route allows
+    (IN_REVIEW -> DRAFT, DRAFT -> IN_REVIEW, either -> NOT_REQUIRED; PUBLISHED is refused
+    below for everyone, because publishing records a named reviewer).
+
+    Inert with AUTH_DISABLED=true: no identity, no check, exactly like every gate.
+    """
     values = body.model_dump(exclude_unset=True)
+    if principal.authenticated and principal.role not in PIR_EDITORS:
+        content = sorted(set(values) - {"status"})
+        if content:
+            raise HTTPException(
+                403,
+                f"role '{principal.role}' may change a review's status, not its content: {content}",
+            )
     session = get_session()
     try:
         pir = _get_owned(session, PostIncidentReviewRow, pir_id, what="PIR")

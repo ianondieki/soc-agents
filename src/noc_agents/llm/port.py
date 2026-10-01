@@ -152,8 +152,14 @@ def record_llm_call(
 
     No prompt or output text ever reaches this row — ``rec.error`` is already reduced to a
     class name plus a content-free hint by ``structured.describe_error``.
+
+    Every row also gets one ``gen_ai.*`` log line (spec §10.4, ``llm/otel.py``). This is the
+    single place that happens: writing the row IS the event every path has in common, so no
+    caller has to remember to emit it and no path can be observable in the register but not in
+    the trace attributes. The line carries no message content — see ``otel.error_type``.
     """
     from noc_agents.db.models import LlmCallRow, new_id, utcnow
+    from noc_agents.llm import otel
     from noc_agents.llm.client import estimate_cost_usd
 
     model_used = rec.model_used or None
@@ -187,4 +193,5 @@ def record_llm_call(
         audit_id=audit_id,
     )
     session.add(row)
+    otel.log_gen_ai_call(otel.call_attributes(rec, provider=provider, agent=agent, purpose=purpose, row=row))
     return row

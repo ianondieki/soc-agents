@@ -32,6 +32,9 @@ from sqlalchemy.exc import IntegrityError
 from noc_agents.api import auth
 from noc_agents.db.models import AgentRunRow, AgentRunStepRow, AuditRow, BroadcastRow, IncidentRow, OutboxRow
 from noc_agents.db.models_scorecards import (
+    CARD_EVIDENCE_COLUMNS,
+    CARD_NARRATIVE_COLUMNS,
+    CARD_RELEASE_COLUMNS,
     COMPUTATION_SCOPE_KEY,
     CREDIT_NONE,
     CREDIT_PROPOSED,
@@ -562,9 +565,8 @@ def test_a_missing_terms_file_stops_the_job_loudly(tmp_db, monkeypatch, tmp_path
     monkeypatch.setenv(FLAG, "true")
     monkeypatch.setenv("SLA_TERMS_PATH", str(tmp_path / "missing.yaml"))
     monkeypatch.setattr(sc, "utcnow", lambda: datetime(2026, 9, 21, 6, 0))
-    with pytest.raises(FileNotFoundError):
+    with pytest.raises(sc.ScorecardJobError, match="FileNotFoundError"):  # the class, never the path or the text
         sc.close_periods(session, settings)
-    session.rollback()
     assert session.scalars(select(VendorScorecardRow)).all() == []
 
 
@@ -1357,9 +1359,10 @@ def test_a_failed_compute_on_request_rolls_back_records_a_failed_run_and_raises_
         sc.compute_on_request(session, settings, PERIOD, vendor_code="TETRANET", actor="Grace Mwangi", now=NOW)
     # the session is usable, and the failure is on record
     failed = session.scalars(select(AgentRunRow).where(AgentRunRow.graph_name == sc.GRAPH_NAME, AgentRunRow.status == "FAILED")).all()
-    assert len(failed) == 1 and failed[0].trigger == "REQUEST" and "IntegrityError" in failed[0].error_summary
+    assert len(failed) == 1 and failed[0].trigger == "REQUEST"
+    assert failed[0].error_summary == "IntegrityError: UNIQUE constraint failed: vendor_scorecard_lines.id"  # the class and the constraint: nothing else
     steps = session.scalars(select(AgentRunStepRow).where(AgentRunStepRow.run_id == failed[0].id)).all()
-    assert len(steps) == 1 and steps[0].status == "FAILED" and "IntegrityError" in steps[0].rationale
+    assert len(steps) == 1 and steps[0].status == "FAILED" and steps[0].rationale == failed[0].error_summary
     assert session.scalars(select(VendorScorecardRow)).all() == []  # nothing half-written survived the rollback
     # a plain input error takes the same path: ValueError out, FAILED run recorded, no poisoned session
     with pytest.raises(ValueError, match="has not ended"):
@@ -1496,3 +1499,202 @@ def test_the_audit_exists_predicate_is_sargable_on_entity_type_and_entity_id(tmp
         assert "INDEX ix_audit_events_entity_action (entity_type=? AND entity_id=?" in plan, plan
         assert "SCAN a" not in plan, plan
     assert earlier_released_card_exists(session, operator_id="safaricom", vendor_id=card.vendor_id, period="2026-09", sla_terms_version=card.sla_terms_version) is False
+
+
+# --------------------------------------------------------------------------
+# Round 5: no line value in a failed run; primary keys and released cards are default-deny
+# --------------------------------------------------------------------------
+
+LEAK_NEEDLES = ("[parameters:", "[SQL:", "INSERT INTO", "N-TETRA", "evidence_json", "median(", "SHADOW", "WITHHELD", "DRAFT", "PROPOSED")
+
+
+def test_failure_reason_is_the_class_and_at_most_a_constraint_clause():
+    from sqlalchemy.exc import IntegrityError as SAIntegrityError
+
+    fake_orig = Exception("UNIQUE constraint failed: vendor_scorecard_lines.scorecard_id, vendor_scorecard_lines.kpi, vendor_scorecard_lines.priority")
+    exc = SAIntegrityError("INSERT INTO vendor_scorecard_lines (...) VALUES (?, ?)", [("id", "N-TETRA secret value 29.0")], fake_orig)
+    assert "[parameters" in str(exc) and "N-TETRA" in str(exc)  # what str(exc) would have leaked
+    assert sc.failure_reason(exc) == "IntegrityError: UNIQUE constraint failed: vendor_scorecard_lines.scorecard_id, vendor_scorecard_lines.kpi, vendor_scorecard_lines.priority"
+    check = SAIntegrityError("UPDATE ...", {"x": "value"}, Exception("CHECK constraint failed: ck_vendor_scorecards_gate"))
+    assert sc.failure_reason(check) == "IntegrityError: CHECK constraint failed: ck_vendor_scorecards_gate"
+    odd = SAIntegrityError("UPDATE ...", {"x": "value"}, Exception("something else entirely: value"))
+    assert sc.failure_reason(odd) == "IntegrityError: constraint failed"
+    assert sc.failure_reason(ValueError("period 2026-09 has not ended")) == "ValueError"
+    assert sc.failure_reason(sc.ScorecardStateError("cannot recompute a released card: EGYPRO is PUBLISHED")) == "ScorecardStateError"
+    assert sc.failure_reason(FileNotFoundError("/secret/path/terms.yaml")) == "FileNotFoundError"
+
+
+def test_a_refused_compute_leaks_no_line_value_into_runs_for_any_reader(client, monkeypatch):
+    """S08 regression (round 5, item 1). The failure path persisted ``str(exc)`` -- for an
+    IntegrityError the INSERT with the bound values of an unreleased card's lines -- into the
+    FAILED run's error_summary and step, which GET /api/v1/runs serves to noc_analyst and
+    planning although GET /scorecards would 404 them on that card. Both the request path and the
+    scheduled twin (``run_job(SCORECARD_JOB)``, whose runner persists ``str(exc)`` of whatever
+    the job raises) must record the class and the constraint clause only."""
+    from noc_agents.db.models import get_session
+    from noc_agents.scheduler.loop import run_job
+
+    _seed(monkeypatch)
+    _as(client, "duty_manager", "Grace Mwangi")
+    real_line_id = sc._line_id
+    monkeypatch.setattr(sc, "_line_id", lambda card_id, kpi, priority: "same-id-for-every-line")
+    r = client.post("/api/v1/scorecards/compute?period=2026-08&vendor=TETRANET")
+    assert r.status_code == 409 and r.json()["detail"] == "the card could not be written: UNIQUE constraint failed: vendor_scorecard_lines.id"
+    assert not [n for n in LEAK_NEEDLES if n in r.text], r.text
+    monkeypatch.setenv(FLAG, "true")
+    outcome = run_job(sc.SCORECARD_JOB, __import__("noc_agents.config", fromlist=["get_settings"]).get_settings(), session_factory=get_session)
+    assert outcome.status == "FAILED" and outcome.error == "ScorecardJobError: IntegrityError: UNIQUE constraint failed: vendor_scorecard_lines.id (period 2026-08; the full error is in the application log)"
+    monkeypatch.setattr(sc, "_line_id", real_line_id)
+    # with auth ENFORCED, a noc_analyst (who may not see an unreleased card) reads /runs
+    monkeypatch.setenv("AUTH_DISABLED", "false")
+    monkeypatch.setenv("NOC_SESSION_SECRET", AUTH_SECRET)
+    try:
+        client.cookies.clear()
+        client.cookies.set(auth.SESSION_COOKIE, auth.sign_session({"sub": "u-noc", "role": "noc_analyst", "name": "Analyst"}, AUTH_SECRET))
+        runs = client.get("/api/v1/runs?graph_name=scorecard")
+        assert runs.status_code == 200
+        failed = [run for run in runs.json() if run["status"] == "FAILED"]
+        assert {run["trigger"] for run in failed} == {"REQUEST", "SCHEDULE"}
+        for run in failed:
+            texts = [run.get("error_summary") or ""] + [f"{st.get('rationale')} {st.get('output_summary')} {st.get('input_summary')} {st.get('tools_called')}" for st in run["steps"]]
+            for chunk in texts:
+                assert not [n for n in LEAK_NEEDLES if n in chunk], chunk
+            assert "UNIQUE constraint failed: vendor_scorecard_lines.id" in run["error_summary"]
+        assert not [n for n in LEAK_NEEDLES if n in runs.text], runs.text[:300]
+    finally:
+        client.cookies.clear()
+        monkeypatch.setenv("AUTH_DISABLED", "true")
+    # the realtime history carried nothing either
+    assert not [e for e in list(hub._history) if "[parameters:" in str(getattr(e, "payload", e))]
+    # the DB rows themselves, not only the serialisation
+    session = get_session()
+    try:
+        for run in session.scalars(select(AgentRunRow).where(AgentRunRow.status == "FAILED")):
+            assert not [n for n in LEAK_NEEDLES if n in (run.error_summary or "")]
+        for step in session.scalars(select(AgentRunStepRow).where(AgentRunStepRow.status == "FAILED")):
+            assert not [n for n in LEAK_NEEDLES if n in f"{step.rationale} {step.output_summary} {step.tools_called_json}"]
+    finally:
+        session.close()
+
+
+def test_the_three_compute_409_details_are_distinct_and_stable(client, monkeypatch):
+    """For the frontend: each 409 from POST /scorecards/compute starts with one of three fixed
+    prefixes, so the page can say which it was instead of "already PUBLISHED or FINAL" for all."""
+    _seed(monkeypatch)
+    _as(client, "duty_manager", "Grace Mwangi")
+    body = client.post("/api/v1/scorecards/compute?period=2026-08&vendor=EGYPRO").json()
+    card_id = body["scorecard_ids"][0]
+    assert client.post(f"/api/v1/scorecards/{card_id}/shadow-review", json={"rationale": "looked"}).status_code == 200
+    assert client.post(f"/api/v1/scorecards/{card_id}/publish", json={"reason": "go"}).status_code == 200
+    r = client.post("/api/v1/scorecards/compute?period=2026-08&vendor=EGYPRO")
+    assert r.status_code == 409 and r.json()["detail"].startswith(sc.REFUSAL_RELEASED + ": ") and "PUBLISHED" in r.json()["detail"]
+    real_line_id = sc._line_id
+    monkeypatch.setattr(sc, "_line_id", lambda card_id, kpi, priority: "same-id-for-every-line")
+    r = client.post("/api/v1/scorecards/compute?period=2026-08&vendor=TETRANET")
+    assert r.status_code == 409 and r.json()["detail"] == sc.REFUSAL_TABLE + ": UNIQUE constraint failed: vendor_scorecard_lines.id"
+    monkeypatch.setattr(sc, "_line_id", real_line_id)
+    # a guard refusal from inside the computation: the run of the request is replaced by one of another lane
+    from noc_agents.db.models import get_session
+
+    def not_a_scorecard_run(session, settings, period, *, vendor_code=None, actor, now=None):
+        from noc_agents.db.models import AgentRunRow as Run
+
+        run = Run(operator_id=settings.operator.operator_id, graph_name="monitor", trigger="REQUEST", status="RUNNING")
+        session.add(run)
+        session.flush()
+        return sc.compute_period(session, settings.operator, period, run_id=run.id, vendor_code=vendor_code, now=now, actor=actor), run.id
+
+    monkeypatch.setattr("noc_agents.api.routers.scorecards.compute_on_request", not_a_scorecard_run)
+    r = client.post("/api/v1/scorecards/compute?period=2026-08&vendor=TETRANET")
+    assert r.status_code == 409 and r.json()["detail"].startswith(sc.REFUSAL_GUARD + ": ") and "not a scorecard run" in r.json()["detail"]
+    assert not [n for n in LEAK_NEEDLES if n in r.text]
+    assert len({sc.REFUSAL_RELEASED, sc.REFUSAL_GUARD, sc.REFUSAL_TABLE}) == 3
+    get_session().close()
+
+
+def test_primary_keys_are_immutable_through_the_orm_at_every_status(tmp_db):
+    """Round 5, item 2. Renaming a PUBLISHED card's id orphaned its 22 lines and dropped its audit
+    link, so the S02 predecessor evidence silently disappeared; a line's id could be renamed on
+    any card. The primary keys of both tables never change through the ORM -- released or not,
+    inside a forced computation scope or not."""
+    settings, session = tmp_db
+    build_fixture(session)
+    terms = _terms(settings.operator)
+    report = sc.compute_period(session, settings.operator, PERIOD, run_id=_run(session), terms=terms, now=NOW)
+    session.commit()
+    pub_id, shadow_id = report.card_ids
+    pub = session.get(VendorScorecardRow, pub_id)
+    vendor_id, version = pub.vendor_id, pub.sla_terms_version
+    sc.record_shadow_review(session, pub, **REVIEW)
+    sc.publish_scorecard(session, pub, terms=terms, cfg=settings.operator, **DM)
+    session.commit()
+    assert earlier_released_card_exists(session, operator_id="safaricom", vendor_id=vendor_id, period="2026-09", sla_terms_version=version)
+    for card_id in (shadow_id, pub_id):
+        exc = _refused(session, lambda: setattr(session.get(VendorScorecardRow, card_id), "id", f"renamed-{card_id[:4]}"))
+        assert isinstance(exc, ScorecardEvidenceError) and "primary key is immutable" in str(exc), card_id
+        line_id = sc.lines_of(session, card_id)[0].id
+        exc = _refused(session, lambda: setattr(session.get(VendorScorecardLineRow, line_id), "id", "renamed-line"))
+        assert isinstance(exc, ScorecardEvidenceError) and "id is immutable" in str(exc), card_id
+        other = pub_id if card_id == shadow_id else shadow_id
+        exc = _refused(session, lambda: setattr(session.get(VendorScorecardLineRow, line_id), "scorecard_id", other))
+        assert isinstance(exc, ScorecardEvidenceError) and "scorecard_id is immutable" in str(exc), card_id
+        with sc._computation_scope(session, card_id):  # even the computation may not
+            exc = _refused(session, lambda: setattr(session.get(VendorScorecardRow, card_id), "id", "renamed-in-scope"))
+            assert isinstance(exc, ScorecardEvidenceError) and "primary key is immutable" in str(exc)
+            exc = _refused(session, lambda: setattr(session.get(VendorScorecardLineRow, line_id), "id", "renamed-line-in-scope"))
+            assert isinstance(exc, ScorecardEvidenceError) and "id is immutable" in str(exc)
+    session.expire_all()
+    assert session.get(VendorScorecardRow, pub_id).status == STATUS_PUBLISHED and len(sc.lines_of(session, pub_id)) == 22
+    assert earlier_released_card_exists(session, operator_id="safaricom", vendor_id=vendor_id, period="2026-09", sla_terms_version=version)
+
+
+def test_every_scorecard_column_is_classified_so_nothing_is_writable_by_omission():
+    cards = {c.name for c in VendorScorecardRow.__table__.columns}
+    lines = {c.name for c in VendorScorecardLineRow.__table__.columns}
+    assert cards == {"id", *CARD_EVIDENCE_COLUMNS, *CARD_RELEASE_COLUMNS, *CARD_NARRATIVE_COLUMNS}
+    assert lines == {"id", *LINE_EVIDENCE_COLUMNS, *LINE_DISPUTE_COLUMNS}
+    assert not set(CARD_EVIDENCE_COLUMNS) & set(CARD_RELEASE_COLUMNS) and not set(CARD_RELEASE_COLUMNS) & set(CARD_NARRATIVE_COLUMNS)
+    assert set(CARD_RELEASE_COLUMNS) == {"status", "published_at", "dispute_window_ends_at", "finalised_at"}
+
+
+@pytest.mark.parametrize("released", [STATUS_PUBLISHED, STATUS_FINAL])
+def test_a_released_card_is_default_deny_column_by_column(tmp_db, released):
+    """Every column of a released card except the narrative is refused by name outside its own
+    transition: the release stamps cannot be moved after the fact, the status cannot go
+    anywhere but PUBLISHED -> FINAL (through finalise), and a stamp outside its transition
+    (finalised_at on a PUBLISHED card; published_at on any released card) is refused too."""
+    settings, session = tmp_db
+    build_fixture(session)
+    terms = _terms(settings.operator)
+    card = _compute(session, settings)
+    card_id = card.id
+    sc.record_shadow_review(session, card, **REVIEW)
+    sc.publish_scorecard(session, card, terms=terms, cfg=settings.operator, now=datetime(2026, 9, 18, 9), **DM)
+    if released == STATUS_FINAL:
+        sc.finalise_scorecard(session, card, actor="Grace Mwangi", actor_role="duty_manager", now=datetime(2026, 10, 2, 21))
+    session.commit()
+    columns = [c.name for c in VendorScorecardRow.__table__.columns]
+    for column in columns:
+        if column in CARD_NARRATIVE_COLUMNS:
+            continue
+        fresh = session.get(VendorScorecardRow, card_id)
+        current = getattr(fresh, column)
+        if column == "status":
+            value = STATUS_DRAFT
+        elif isinstance(current, datetime) or column.endswith("_at"):
+            value = datetime(2020, 1, 1)
+        elif isinstance(current, (int, float)) and not isinstance(current, bool):
+            value = (current or 0) + 1
+        else:
+            value = "tampered"
+        exc = _refused(session, lambda fresh=fresh, column=column, value=value: setattr(fresh, column, value))
+        assert isinstance(exc, ScorecardEvidenceError), (released, column)
+        assert column in str(exc) or "primary key" in str(exc) or "only move" in str(exc), (released, column, str(exc))
+    fresh = session.get(VendorScorecardRow, card_id)
+    fresh.narrative, fresh.narrative_ai_assisted = "QBR narrative after release", 1  # the one thing a human may add
+    session.flush()
+    session.commit()
+    assert session.get(VendorScorecardRow, card_id).status == released
+    if released == STATUS_PUBLISHED:  # and the sanctioned finalise still goes through the same guard
+        sc.finalise_scorecard(session, session.get(VendorScorecardRow, card_id), actor="Grace Mwangi", actor_role="duty_manager", now=datetime(2026, 10, 2, 21))
+        assert session.get(VendorScorecardRow, card_id).status == STATUS_FINAL

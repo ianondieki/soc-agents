@@ -743,8 +743,11 @@ SessionLocal = None
 def init_db(database_url: str, *, backup_dir: Path | None = None):
     """Open the database, bring its schema up to date and bind the session factory.
 
-    Runs on every process start and in every test, so the usual case (schema already
-    current) is one version read and one PRAGMA: no backup, no transaction.
+    Runs on every process start and in every test. The usual case (schema already current)
+    is a few dozen catalogue reads -- the version, the two scorecard tables' definitions, one
+    ``PRAGMA index_list`` per mapped table, about 45 statements, 11-34 ms measured -- and
+    then no backup, no transaction, no write lock (db/migrate.py, "ON EVERY START"). A file
+    NEWER than this code is only read and warned about.
 
     ``backup_dir`` is where the pre-migration copy goes when a migration is due; the
     default is ``<database file's folder>/backups`` (``data/backups`` for the shipped DB).

@@ -237,7 +237,8 @@ def build_episodes(
 ) -> list[Episode]:
     """Merge flagged rows into episodes per region (idea 1). Rows need not be sorted.
 
-    ``rows`` may include **calm** readings (flag 0, with a derived block). They are never
+    A row whose claim ends at or before it began is skipped: it claims no time (see the guard
+    below). ``rows`` may include **calm** readings (flag 0, with a derived block). They are never
     episodes themselves; they *cut* claims. For the forecast families (``storm``, ``flood``) a
     flagged row claims its horizon only until the next calm reading of the same stream — the
     forecast was withdrawn, and from then on the floor saw calm (review finding F14: without
@@ -267,6 +268,12 @@ def build_episodes(
                 cut = next((t for t in calm_times if t > row.fetched_at), None)
                 if cut is not None and cut < end:
                     end = cut
+            if end <= row.fetched_at:
+                # The row claims no time at all: a span ended at or before it began (a Cancel that
+                # arrived after the re-attach it cancels, in data written before that was fixed).
+                # It can cover no incident, so counting it as a resolved episode would be a
+                # guaranteed false alarm (review finding CANCEL-INVERSION).
+                continue
             spans_by_region.setdefault(region, []).append((row.fetched_at, end, row.source))
 
     episodes: list[Episode] = []

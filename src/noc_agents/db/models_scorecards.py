@@ -375,11 +375,18 @@ COMPUTED_EVIDENCE_COLUMNS: tuple[str, ...] = (
 #: What a named human recorded before release. Writable while the card is unreleased (that is
 #: what a shadow review is), frozen from the moment of release.
 REVIEW_COLUMNS: tuple[str, ...] = ("shadow_reviewed_by", "shadow_reviewed_at")
-#: Everything frozen at and after release. Not in the list, on purpose: ``status`` (PUBLISHED
-#: -> FINAL is a legal move, checked separately), ``published_at`` / ``dispute_window_ends_at``
-#: (written BY the publish), ``finalised_at``, and ``narrative`` / ``narrative_ai_assisted``
-#: (the QBR narrative is written after release).
+#: Everything frozen at and after release: the computed evidence, the review, the run.
 CARD_EVIDENCE_COLUMNS: tuple[str, ...] = (*COMPUTED_EVIDENCE_COLUMNS, *REVIEW_COLUMNS, "computed_by_run_id")
+#: Written by the RELEASE transitions and by nothing else: ``publish_scorecard`` sets
+#: ``status`` / ``published_at`` / ``dispute_window_ends_at`` in one write, ``finalise_scorecard``
+#: sets ``status`` / ``finalised_at`` in one write. Outside those two writes they are frozen.
+CARD_RELEASE_COLUMNS: tuple[str, ...] = ("status", "published_at", "dispute_window_ends_at", "finalised_at")
+#: The QBR narrative, written by a human after the numbers and allowed at any status.
+CARD_NARRATIVE_COLUMNS: tuple[str, ...] = ("narrative", "narrative_ai_assisted")
+#: What a PUBLISH may change, what a FINALISE may change, what a released card may change at rest.
+_PUBLISH_WRITE: frozenset[str] = frozenset({"status", "published_at", "dispute_window_ends_at", *CARD_NARRATIVE_COLUMNS})
+_FINALISE_WRITE: frozenset[str] = frozenset({"status", "finalised_at", *CARD_NARRATIVE_COLUMNS})
+_RELEASED_AT_REST: frozenset[str] = frozenset(CARD_NARRATIVE_COLUMNS)
 
 #: The DISPUTE SEAM: the only line columns a writer other than the computation may touch, on
 #: an unreleased card and on a released one alike. They are what a human decides ABOUT a
@@ -546,14 +553,20 @@ def _freeze_released_card(mapper, connection, target: VendorScorecardRow) -> Non
     and the operand it keys on together (``shadow_required = 0`` with ``status = 'PUBLISHED'``,
     or ``dq_gate_threshold_pct = 99`` on a WITHHELD card on its way to DRAFT). This guard has
     what the CHECK has not -- the row's history -- so that write is refused, and so is every
-    later edit to the numbers a vendor was shown. Before release, evidence and status may
-    change only inside ``compute_scorecard``'s computation scope, citing a run that exists
-    (a recomputation); the review columns take a visible human name; at and after release
-    nothing but ``status`` (PUBLISHED -> FINAL), the publish/finalise timestamps and the
-    narrative may change. Mapper-level, so it covers every ORM unit-of-work writer; not Core
-    ``update()``, ``query.update()`` or raw SQL (see the module docstring for what that
-    leaves).
+    later edit to the numbers a vendor was shown. The primary key never changes. Before
+    release, evidence and status may change only inside ``compute_scorecard``'s computation
+    scope, citing a run that exists (a recomputation); the review columns take a visible human
+    name. At and after release the rule is DEFAULT DENY: a publish may write ``status`` +
+    ``published_at`` + ``dispute_window_ends_at``, a finalise ``status`` + ``finalised_at``,
+    and the narrative may be written at any time; nothing else, by name. Mapper-level, so it
+    covers every ORM unit-of-work writer; not Core ``update()``, ``query.update()`` or raw SQL
+    (see the module docstring for what that leaves).
     """
+    if _changed(target, "id"):
+        # The primary key is the card's identity for its lines (FK), its audit rows (the S02
+        # predecessor evidence) and every dispute task that will point at it. Renaming it orphans
+        # all three at once. Immutable through the ORM at every status, scope or no scope.
+        raise ScorecardEvidenceError(f"scorecard {_previous(target, 'id')}: the primary key is immutable (attempted rename to {target.id!r})")
     old_status, new_status = _previous(target, "status"), target.status
     releasing = new_status in RELEASED_STATUSES
     if old_status in RELEASED_STATUSES and new_status != old_status and (old_status, new_status) != (STATUS_PUBLISHED, STATUS_FINAL):
@@ -575,11 +588,21 @@ def _freeze_released_card(mapper, connection, target: VendorScorecardRow) -> Non
                     "a computation names the run that did it; recompute the card"
                 )
         return
-    frozen = [c for c in CARD_EVIDENCE_COLUMNS if _changed(target, c)]
-    if frozen:
+    # Released, or becoming released: DEFAULT DENY. The only writes are the publish (status +
+    # the two window stamps), the finalise (status + its stamp) and the narrative at rest;
+    # every other changed column -- evidence, review, run, a stamp outside its transition -- is
+    # refused by name.
+    if releasing and old_status not in RELEASED_STATUSES:
+        allowed = _PUBLISH_WRITE
+    elif (old_status, new_status) == (STATUS_PUBLISHED, STATUS_FINAL):
+        allowed = _FINALISE_WRITE
+    else:
+        allowed = _RELEASED_AT_REST
+    refused = [c.key for c in mapper.column_attrs if c.key not in allowed and _changed(target, c.key)]
+    if refused:
         raise ScorecardEvidenceError(
-            f"scorecard {target.id}: {', '.join(frozen)} cannot change on a card that is {new_status} -- "
-            "a released card's evidence is frozen; recompute a DRAFT/SHADOW/WITHHELD card or open a dispute"
+            f"scorecard {target.id}: {', '.join(refused)} cannot change on a card that is {new_status} -- "
+            "a released card is frozen except for its release stamps and the narrative; recompute a DRAFT/SHADOW/WITHHELD card or open a dispute"
         )
     if releasing and old_status not in RELEASED_STATUSES:
         # The moment of release: the shadow rule is re-derived from the table, so a column that
@@ -593,6 +616,22 @@ def _freeze_released_card(mapper, connection, target: VendorScorecardRow) -> Non
             raise ScorecardEvidenceError(
                 f"scorecard {target.id}: a first period cannot become {new_status} without a named shadow reviewer"
             )
+
+
+# DEFAULT-DENY BY CONSTRUCTION. The guards below decide column by column from these lists, so a
+# column that is in none of them would be writable by omission. That is refused at import: a new
+# column has to be placed -- evidence, review, release, narrative, key; evidence or dispute --
+# before the process starts. (``test_every_scorecard_column_is_classified`` states it again.)
+_CARD_CLASSIFIED: frozenset[str] = frozenset({"id", *CARD_EVIDENCE_COLUMNS, *CARD_RELEASE_COLUMNS, *CARD_NARRATIVE_COLUMNS})
+_LINE_CLASSIFIED: frozenset[str] = frozenset({"id", *LINE_EVIDENCE_COLUMNS, *LINE_DISPUTE_COLUMNS})
+_unplaced_card = {c.name for c in VendorScorecardRow.__table__.columns} - _CARD_CLASSIFIED
+_unplaced_line = {c.name for c in VendorScorecardLineRow.__table__.columns} - _LINE_CLASSIFIED
+if _unplaced_card or _unplaced_line:  # pragma: no cover -- an import-time refusal, not a runtime branch
+    raise RuntimeError(
+        f"models_scorecards: columns not placed in any guard list -- vendor_scorecards {sorted(_unplaced_card)}, "
+        f"vendor_scorecard_lines {sorted(_unplaced_line)}; classify them before this module can be imported"
+    )
+assert not (set(LINE_EVIDENCE_COLUMNS) & set(LINE_DISPUTE_COLUMNS)), "a line column cannot be both evidence and the dispute seam"
 
 
 def _card_in_scope(session, card_id: str) -> bool:
@@ -632,7 +671,12 @@ def _line_born_of_computation(mapper, connection, target: VendorScorecardLineRow
 @event.listens_for(VendorScorecardLineRow, "before_update")
 def _line_written_by_computation(mapper, connection, target: VendorScorecardLineRow) -> None:
     """Evidence columns change only inside the parent card's computation scope, and never once
-    the card is released. The dispute seam (``LINE_DISPUTE_COLUMNS``) is free either way."""
+    the card is released. The dispute seam (``LINE_DISPUTE_COLUMNS``) is free either way. The
+    line's identity -- its ``id`` and the card it belongs to -- never changes at all: a renamed
+    line is unreachable from its card and from the dispute task that cites it."""
+    for key in ("id", "scorecard_id"):
+        if _changed(target, key):
+            raise ScorecardEvidenceError(f"scorecard line {_previous(target, 'id')}: {key} is immutable (attempted change to {getattr(target, key)!r})")
     changed = [c for c in LINE_EVIDENCE_COLUMNS if _changed(target, c)]
     if changed:
         _line_evidence_write(mapper, connection, target, "evidence changed", changed)

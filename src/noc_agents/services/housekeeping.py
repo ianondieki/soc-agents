@@ -83,7 +83,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, NoReturn
 
 import yaml
-from sqlalchemy import delete, func, inspect, select, update
+from sqlalchemy import Date, DateTime, delete, func, inspect, select, update
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 from sqlalchemy.schema import Table
@@ -258,6 +258,21 @@ _KNOWN_ACTIONS = frozenset({KEEP, DELETE, PSEUDONYMISE, ARCHIVE_PAYLOAD, ROTATE,
 #: seam; `keep`/`manual` are the do-nothing defaults.
 _ROW_ACTIONS = frozenset({DELETE, PSEUDONYMISE, ARCHIVE_PAYLOAD})
 
+#: What a table's ``timestamp_column`` MEANS, and therefore how a NULL in it reads.
+#:
+#: ``row_age`` (the default, and every other table): the column is when the record came into
+#: being, so age is ``now - column``.
+#:
+#: ``engagement_end`` (``vendors``, conformance A-08): the column is when the relationship
+#: ENDED — ``vendors.active_to``. §7.6.1's table has no record-creation timestamp at all, and
+#: measuring from ``active_from`` would scrub the contacts of a vendor who is currently
+#: engaged: those contacts are how the NOC reaches the MSP at 02:00, so that is an outage, not
+#: a retention control. A NULL here means the engagement has NOT ended — an active vendor —
+#: and is therefore NEVER expired, which the predicate says out loud rather than leaving to
+#: SQL's three-valued logic.
+ROW_AGE, ENGAGEMENT_END = "row_age", "engagement_end"
+_KNOWN_TIMESTAMP_MEANINGS = frozenset({ROW_AGE, ENGAGEMENT_END})
+
 DEFAULT_POLICY_FILENAME = "retention.yaml"
 POLICY_PATH_ENV = "RETENTION_POLICY_PATH"  # tests and operators may point elsewhere
 
@@ -344,6 +359,8 @@ class TableRule:
     table: str
     class_name: str
     timestamp_column: str | None = None
+    #: How to read ``timestamp_column`` — see :data:`ROW_AGE` / :data:`ENGAGEMENT_END`.
+    timestamp_meaning: str = ROW_AGE
     statuses: tuple[str, ...] = ()
     personal_class: str | None = None
     role_tokens: Mapping[str, str] = field(default_factory=dict)
@@ -459,6 +476,7 @@ def load_policy(path: Path | str | None = None) -> RetentionPolicy:
             table=str(name),
             class_name=str(body.get("class") or ""),
             timestamp_column=(str(body["timestamp_column"]) if body.get("timestamp_column") else None),
+            timestamp_meaning=str(body.get("timestamp_meaning") or ROW_AGE).strip(),
             statuses=tuple(str(s) for s in (body.get("statuses") or ())),
             personal_class=(str(personal.get("class")) if personal.get("class") else None),
             role_tokens={str(k): str(v) for k, v in (personal.get("role_tokens") or {}).items()},
@@ -527,11 +545,43 @@ def validate_policy(policy: RetentionPolicy) -> list[str]:
             continue
         if rule.action in (DELETE, ARCHIVE_PAYLOAD) and not entry.timestamp_column:
             problems.append(f"table {entry.table!r}: action {rule.action!r} needs a `timestamp_column`")
+        if entry.timestamp_meaning not in _KNOWN_TIMESTAMP_MEANINGS:
+            problems.append(
+                f"table {entry.table!r}: unknown timestamp_meaning {entry.timestamp_meaning!r} "
+                f"(known: {sorted(_KNOWN_TIMESTAMP_MEANINGS)})"
+            )
+        if entry.timestamp_meaning != ROW_AGE and not entry.timestamp_column:
+            problems.append(
+                f"table {entry.table!r}: timestamp_meaning {entry.timestamp_meaning!r} needs a `timestamp_column`"
+            )
         if entry.personal_class and entry.personal_class not in policy.classes:
             problems.append(f"table {entry.table!r}: personal class {entry.personal_class!r} is not defined")
         if entry.has_personal_block and not entry.personal_class:
             problems.append(f"table {entry.table!r}: has a personal block but no personal class")
     return problems
+
+
+def _older_than(ts_col: Any, cutoff: datetime, meaning: str = ROW_AGE) -> list[Any]:
+    """The "this row is past its cutoff" clauses for one table, given what its column means.
+
+    Two things this gets right that ``ts_col < cutoff`` alone does not:
+
+    * **A NULL is never expired**, stated explicitly. SQL already drops NULL rows from
+      ``ts_col < cutoff`` (the comparison is NULL, not TRUE), but for :data:`ENGAGEMENT_END`
+      that is the difference between leaving an active MSP's contacts alone and scrubbing
+      them, so it is written down instead of inherited from three-valued logic.
+    * **A DATE column is compared against a DATE.** ``vendors.active_to`` is a ``Date``;
+      comparing it with a ``datetime`` cutoff of 03:30 makes an engagement that ended ON the
+      cutoff day read as older than the cutoff (SQLite compares the stored strings, and
+      ``'2026-08-15' < '2026-08-15 03:30:00'``). The rule is "ended MORE than N days ago", so
+      the boundary day itself must not be touched.
+    """
+    boundary: Any = cutoff
+    if isinstance(ts_col.type, Date) and not isinstance(ts_col.type, DateTime):
+        boundary = cutoff.date()
+    if meaning == ENGAGEMENT_END:
+        return [ts_col.isnot(None), ts_col < boundary]
+    return [ts_col < boundary]
 
 
 # --------------------------------------------------------------------------- schema access
@@ -944,7 +994,7 @@ def purge_expired(
             outcome.skipped = f"timestamp column {entry.timestamp_column!r} is not on this table"
             report.tables.append(outcome)
             continue
-        where = [ts_col < cutoff, *_scope(table, operator_id)]
+        where = [*_older_than(ts_col, cutoff, entry.timestamp_meaning), *_scope(table, operator_id)]
         if entry.statuses and "status" in table.c:
             where.append(table.c.status.in_(entry.statuses))
         outcome.matched = int(session.scalar(select(func.count()).select_from(table).where(*where)) or 0)
@@ -1033,7 +1083,7 @@ def pseudonymise_personal_fields(
             continue
         cutoff = before or (now - timedelta(days=personal.days if personal.days is not None else 400))
         outcome.cutoff = cutoff.isoformat()
-        where = [ts_col < cutoff, *_scope(table, operator_id)]
+        where = [*_older_than(ts_col, cutoff, entry.timestamp_meaning), *_scope(table, operator_id)]
         rows = session.execute(select(table).where(*where)).mappings().all()
         for row in rows:
             changes, _ = _pseudonymise_row(row, entry, table)
@@ -1165,8 +1215,6 @@ def sweep_outbox(
             payload = {}
         if _is_archived(payload):
             continue  # already swept: idempotent
-        report.archivable += 1
-        report.by_kind[str(row["kind"])] = report.by_kind.get(str(row["kind"]), 0) + 1
         if do_apply and pk is not None:
             archived = session.execute(
                 update(table)
@@ -1181,7 +1229,17 @@ def sweep_outbox(
                 # values() and must never be — see the docstring.
                 .values(payload_json=_archive_summary(row, payload, now), envelope_json=None, updated_at=now)
             ).rowcount
-            report.archived += int(archived or 0)
+            if not archived:
+                # The row moved between the SELECT and this UPDATE — retried back to PENDING,
+                # or archived by a concurrent sweep, which stamps `updated_at = now` and so
+                # fails the cutoff half of the re-check. It is not archived, and it is not
+                # counted as archivable either: the two figures must agree in APPLY posture,
+                # or "would archive 2, archived 1" reads as a failure that did not happen.
+                log.info("housekeeping: outbox row %s moved during the sweep; not archived", row[pk.name])
+                continue
+            report.archived += int(archived)
+        report.archivable += 1
+        report.by_kind[str(row["kind"])] = report.by_kind.get(str(row["kind"]), 0) + 1
 
     report.failed_rows = int(
         session.scalar(select(func.count()).select_from(table).where(table.c.status == outbox_mod.FAILED, *scope)) or 0

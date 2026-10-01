@@ -1,0 +1,40 @@
+/* §6.5 escalation ladder, the T+30 rung: a P1/P2 approval that has sat unclaimed past the
+ * Wallboard rung is shown in red. Owned by pages/Wallboard.tsx; it reuses the tokens and the
+ * `pulse` keyframes styles.css already defines, so quiet mode has one more rule to silence
+ * and nothing new to learn. */
+
+.wb-card.escalated {
+  border-color: #ff3b5c;
+  box-shadow:
+    0 0 0 2px rgba(255, 59, 92, 0.35),
+    0 0 42px rgba(255, 59, 92, 0.55);
+  animation: pulse 1.4s infinite;
+}
+.wb-card.escalated .wb-escalated-line {
+  margin-top: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: #ffb4c0;
+}
+
+/* Red cards that have no P1/P2 incident tile on the grid (an incident-less card a producer
+ * put on the ladder, or an incident that has since left the P1/P2 filter). */
+.wb-escalation-strip {
+  margin: 0 0 1rem;
+  padding: 0.9rem 1.1rem;
+  border-radius: 14px;
+  border: 2px solid #ff3b5c;
+  background: rgba(255, 59, 92, 0.12);
+  color: #ffb4c0;
+  font-weight: 700;
+  animation: pulse 1.4s infinite;
+}
+.wb-escalation-strip .muted {
+  color: #f1c1cb;
+  font-weight: 500;
+}
+
+:root[data-quiet="on"] .wb-card.escalated,
+:root[data-quiet="on"] .wb-escalation-strip {
+  animation: none !important;
+}

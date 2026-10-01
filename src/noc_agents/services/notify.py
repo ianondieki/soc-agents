@@ -709,18 +709,24 @@ def email_cap_decision(session: Session, row: OutboxRow, *, now: datetime) -> Em
     # out. Such a P1 goes with the override note, like a P1 in a full window; the note names the
     # message count, so an audience too big for the relay is visible to whoever fixes the config.
     if priority in EMAIL_CAP_OVERRIDE_PRIORITIES:
-        if budget.requested > budget.cap:
-            # Round-4 NEW:email:1 — say what happened. This P1 is bigger than the cap on its own;
-            # the window may be empty, so "cap reached" would be false.
+        # Three different things put a P1 here, and the note says which (rounds 4 and 5). Only the
+        # first is "cap reached": in the other two the window still had room when this row was read.
+        if budget.requested > budget.cap:  # bigger than a whole day's allowance on its own
             note = (
                 f"[{EMAIL_NOTE_AUTHOR}] This {priority} notice alone needs {budget.requested} messages, more than "
                 f"{EMAIL_DAILY_CAP_ENV}={budget.cap} allows in a day ({budget.sent} already sent in the last 24 h); "
                 f"it was SENT anyway because the volume cap never holds a {priority}."
             )
-        else:
+        elif budget.sent >= budget.cap:  # the window was already full before this row
             note = (
                 f"[{EMAIL_NOTE_AUTHOR}] {state}; this {priority} notice was SENT anyway "
                 f"({budget.requested} message(s)): the volume cap never holds a {priority}."
+            )
+        else:  # it is THIS send that crosses the cap
+            note = (
+                f"[{EMAIL_NOTE_AUTHOR}] This {priority} notice takes the window over {EMAIL_DAILY_CAP_ENV}="
+                f"{budget.cap} ({budget.sent} sent in the last 24 h + {budget.requested} message(s)); "
+                f"it was SENT anyway because the volume cap never holds a {priority}."
             )
         return EmailCapDecision(CAP_OVERRIDE, budget, priority=priority, note=note)
     if budget.requested > budget.cap:

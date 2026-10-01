@@ -128,6 +128,21 @@ notification_recipients:
   # Communications Authority of Kenya. EMPTY ON PURPOSE: the notification mailbox
   # is this operator's own licence correspondence, not public configuration.
   regulatory.recipients.CA: []
+  # §6.5 escalation ladder recipients. EMPTY ON PURPOSE (see safaricom.yaml): the
+  # ladder records an SMS nudge it cannot address as SUPPRESSED, never invents one.
+  hitl.recipients.supervisor: []
+  hitl.recipients.duty_manager: []
+
+# §6.5 escalation ladder, spec defaults (config.py:HitlEscalationConfig).
+hitl:
+  escalation:
+    supervisor_minutes: 5
+    duty_manager_minutes: 15
+    wallboard_minutes: 30
+    priorities: [P1, P2]
+    channels: [SMS, INAPP]
+    supervisor_recipients_ref: hitl.recipients.supervisor
+    duty_manager_recipients_ref: hitl.recipients.duty_manager
 
 recurrence:
   threshold_count: 3

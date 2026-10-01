@@ -12,9 +12,9 @@ cheap, and that is what this module pins:
 * with the LLM layer off it exits 3 ("skipped") instead of silently grading the template and
   reporting a green nightly;
 * it refuses (exit 2) to open anything under the repository's ``data`` folder;
-* it refuses to plan more model calls than its cap, before it builds a single database -- the
-  on-demand assist path writes no ``llm_calls`` row, so ``LLM_MONTHLY_BUDGET_USD`` never sees
-  these calls and the cap is the only brake.
+* it refuses to plan more model calls than its cap, before it builds a single database. Since
+  A-15 the assist path does write an ``llm_calls`` row, so ``LLM_MONTHLY_BUDGET_USD`` sees
+  these calls as well; the cap is what stops a run BEFORE it spends, rather than the only brake.
 """
 
 from __future__ import annotations

@@ -71,11 +71,14 @@ regression those tests fail on is also a golden diff. The fifth test in that fil
 200- and 300-character strings; it replays no alarm, so it has no fixture, and the 120/160
 caps themselves are only exercised by it (real step summaries are shorter than the caps).
 
-**Where the fixture is stricter than the test.** Some recorded values are not pinned by any
-literal in the golden test: they are taken from the current code, as the documented golden
-state, and were not checked against an independent literal. Each fixture lists them under
-``not_pinned_by_the_golden_test`` (see ``NOT_PINNED``), so a reviewer knows which lines of a
-diff contradict the test and which only contradict the last ``--update``.
+**Where the fixture is stricter than the test.** Some recorded values are pinned by no literal
+in the golden test and by no consistency rule of the fixture itself: they are taken from the
+current code, as the documented golden state, and were not checked against an independent
+literal. Each fixture lists them under ``not_pinned_by_the_golden_test`` (see ``NOT_PINNED``)
+as ``{leaf path -> why}``, so a reviewer knows which lines of a diff contradict the test and
+which only contradict the last ``--update``. ``tests/unit/test_golden_fixtures_match.py``
+enforces the register in both directions, leaf by leaf: an unlisted leaf must be noticed when
+it changes, and a listed leaf must really be unnoticed.
 
 **Masking.** Values that change on every run are masked, in the order ``MASKS`` lists them:
 uuids, timestamps, dates, the ledger file name's date and shift (the shift is DAY or NIGHT by
@@ -161,53 +164,66 @@ SCENARIOS: tuple[Scenario, ...] = (
     Scenario("cascade_child_short_circuit", "test_golden_cascade_child_short_circuit", ("PARENT_HUB_EVENT",), "CHILD_EVENT"),
 )
 
-# Recorded values no literal in the scenario's golden test pins: taken from the current code as
-# the golden state and NOT checked against an independent literal. Written into each fixture.
-_ALL_SCENARIOS_NOT_PINNED = (
-    "run.graph_name",
-    "payload_run_id_mismatches (the test never compares a payload's run_id with its envelope's)",
-)
-_SHORT_CIRCUIT_NOT_PINNED = (
-    "step_events input/output/rationale and step_event_mirror_mismatches (this test does not call "
-    "_check_steps_against_events)",
-    "event_payloads agent.run.finished (only its shape is pinned)",
-    "global_history and global_events beyond the run-scoped events (the test filters by run_id)",
-    "broadcasts, hitl_tasks, row_counts (rows left by the setup alarm; this test does not read them)",
-    "announced_before_durable (the R5 spy runs only in test_golden_full_lifecycle_with_hitl)",
-    "steps[INGEST] output_summary/rationale/tools_called and every step's confidence (the test reads "
-    "only the CORRELATE row's text and tools)",
-)
-NOT_PINNED: dict[str, tuple[str, ...]] = {
-    "full_lifecycle_hitl": _ALL_SCENARIOS_NOT_PINNED
-    + (
-        "announced_before_durable for events other than agent.* and incident.created (the test's spy "
-        "decides only those types)",
-        "steps[ENRICH|SEVERITY|ASSIGN].rationale beyond the prefix the test checks with startswith",
-        "step_events rationale of those three steps beyond the same prefixes",
-        "incident.incidents_in_db, incident.child_sites_down",
-        "global_history and global_events beyond the run-scoped events (the test filters by run_id)",
-        "work_notes author_role, and work_notes[0] body beyond 'Monitoring started. SLA ack due '",
-        "durable_after_run.new_notes_visible, durable_after_run.child_sites_down_in_second_session",
-    ),
-    "full_lifecycle_auto_broadcast": _ALL_SCENARIOS_NOT_PINNED
-    + (
-        "steps output_summary/rationale of every node except HITL and BROADCAST (the test pins "
-        "those two, plus every input_summary, tool list and confidence)",
-        "step_events output/rationale of the same nodes, except through the mirror check",
-        "event_payloads agent.run.finished",
-        "incident.incidents_in_db, incident.child_sites_down",
-        "work_notes author_role and bodies",
-        "global_history order beyond email.sent following agent.run.finished",
-        "row_counts, ledger_file_written",
-        "announced_before_durable (the R5 spy runs only in test_golden_full_lifecycle_with_hitl)",
-        "durable_after_run (this test opens no second Session)",
-    ),
-    "merge_short_circuit": _ALL_SCENARIOS_NOT_PINNED
-    + _SHORT_CIRCUIT_NOT_PINNED
-    + ("durable_after_run.returned_incident_visible, durable_after_run.child_sites_down_in_second_session",),
-    "cascade_child_short_circuit": _ALL_SCENARIOS_NOT_PINNED
-    + _SHORT_CIRCUIT_NOT_PINNED
-    + ("durable_after_run.returned_incident_visible, durable_after_run.new_notes_visible",),
+# Leaves nothing pins: neither a literal in the scenario's golden test nor one of the fixture's own
+# consistency rules (the same value recorded twice must agree -- see tests/unit/test_golden_fixtures_match.py)
+# would notice a change to them. They are recorded from the current code as the documented golden
+# state and were NOT checked against an independent literal. Written into each fixture under
+# ``not_pinned_by_the_golden_test`` as {leaf path -> why}, where a path is the JSON path with "/"
+# between the steps and ``*`` standing for exactly one step (a list index or a key).
+#
+# The register is exact in both directions, and the meta-test enforces both: a leaf that is not
+# listed must be noticed when it changes, and a listed leaf must really be unnoticed -- so an
+# over-broad entry here cannot quietly hide a value the golden test does pin.
+_UNREAD_BY_EVERY_TEST = {
+    "run/graph_name": "the test takes the newest run row and never reads its graph_name",
+    "payload_run_id_mismatches": "golden_diff's own relation: the test never compares a payload's run_id with its envelope's",
+}
+_SHORT_CIRCUIT_UNREAD = {
+    "run/error_summary": "this test asserts only (status, current_node, incident_id) on the run row",
+    "step_event_mirror_mismatches": "this test does not call _check_steps_against_events",
+    "announced_before_durable": "the R5 spy runs only in test_golden_full_lifecycle_with_hitl",
+    "broadcasts/*/*": "drafts left by the setup alarm; this test never reads the broadcast rows",
+    "hitl_tasks/*/*": "the task left by the setup alarm; this test never reads the HITL tasks",
+    "row_counts/*": "brief and ledger rows left by the setup alarm; this test never counts them",
+    "steps/0/confidence": "this test reads the CORRELATE row's text and tools, and no confidence",
+    "steps/1/confidence": "this test reads the CORRELATE row's text and tools, and no confidence",
+    "steps/0/tools_called/*/*": "this test pins the CORRELATE tool list only",
+    "event_payloads/0/payload/error": "this test pins the shape of agent.run.finished, not its error field",
+}
+NOT_PINNED: dict[str, dict[str, str]] = {
+    "full_lifecycle_hitl": {
+        **_UNREAD_BY_EVERY_TEST,
+        "incident/incidents_in_db": "this test never counts the incident rows",
+        "incident/child_sites_down": "this test never reads the returned incident's child count",
+        "work_notes/*/1": "the test pins each note's (author, source) and not its author_role",
+        "work_notes/0/3": "pinned only by its prefix 'Monitoring started. SLA ack due '",
+        "durable_after_run/new_notes_visible": "this test's second Session reads the incident, not the notes",
+        "durable_after_run/child_sites_down_in_second_session": "this test's second Session reads the incident's existence only",
+    },
+    "full_lifecycle_auto_broadcast": {
+        **_UNREAD_BY_EVERY_TEST,
+        "incident/incidents_in_db": "this test never counts the incident rows",
+        "incident/child_sites_down": "this test never reads the returned incident's child count",
+        "work_notes/*/1": "the test pins the note order as (author, source) and not author_role",
+        "work_notes/*/3": "this test reads no note body",
+        "row_counts/*": "this test counts neither the brief nor the ledger rows",
+        "ledger_file_written": "only test_golden_full_lifecycle_with_hitl looks for the xlsx on disk",
+        "announced_before_durable": "the R5 spy runs only in test_golden_full_lifecycle_with_hitl",
+        "durable_after_run/*": "this test opens no second Session",
+        "event_payloads/0/payload/error": "this test pins the shape of agent.run.finished, not its error field",
+    },
+    "merge_short_circuit": {
+        **_UNREAD_BY_EVERY_TEST,
+        **_SHORT_CIRCUIT_UNREAD,
+        "durable_after_run/returned_incident_visible": "this test's second Session reads the new work note",
+        "durable_after_run/child_sites_down_in_second_session": "this test's second Session reads the new work note",
+    },
+    "cascade_child_short_circuit": {
+        **_UNREAD_BY_EVERY_TEST,
+        **_SHORT_CIRCUIT_UNREAD,
+        "durable_after_run/returned_incident_visible": "this test's second Session reads the parent's child count",
+        "durable_after_run/new_notes_visible": "this test's second Session reads the parent's child count",
+    },
 }
 
 
@@ -473,7 +489,7 @@ def capture(scenario: Scenario, golden: ModuleType, workdir: Path) -> dict[str, 
             "scenario": scenario.name,
             "test": f"{GOLDEN_TEST_ID}::{scenario.test}",
             "masks": [f"{label} -> {replacement}" for label, _pattern, replacement in MASKS],
-            "not_pinned_by_the_golden_test": list(NOT_PINNED[scenario.name]),
+            "not_pinned_by_the_golden_test": dict(NOT_PINNED[scenario.name]),
             "input_events": [getattr(golden, name) for name in (*scenario.setup, scenario.measured)],
             "runs_created": len(new_runs),
             "run": {

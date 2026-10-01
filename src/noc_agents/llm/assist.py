@@ -7,8 +7,29 @@ tens of seconds and must never hold the write lock):
    deterministic template answer). The session is rolled back afterwards.
 2. ``call(job, llm)``: network only, never sees the session. The template fallback
    happens INSIDE ``call``, so a model failure needs no DB cleanup.
-3. One write transaction: the tracked ``llm_assist`` run, its step, and an audit row per
-   LLM attempt (DPA reg 41(2): date/time, recipient, justification, data description).
+3. One write transaction: the tracked ``llm_assist`` run, its step, an audit row per LLM
+   attempt (DPA reg 41(2): date/time, recipient, justification, data description) and —
+   since CONFORMANCE A-15 — the ``llm_calls`` row for that attempt.
+
+CONFORMANCE A-15: this path used to write the audit row and nothing else, so the tokens,
+the cost and the fallback outcome of the two routes most likely to be pressed repeatedly
+were invisible. ``llm.client.spend_gate`` sums ``llm_calls.est_cost_usd``, so a path that
+writes no row can consult the ceiling but can never move it: ``LLM_MONTHLY_BUDGET_USD``
+was unenforceable here, and M11's template-fallback rate (``llm_calls.fallback_reason``)
+had no denominator either. Phase 3 now writes exactly one ``llm_calls`` row per hosted
+call attempt, through the same ``llm/port.record_llm_call`` the outbox ``LLM_CALL``
+transmitter and ``services/contracts`` use — one writer, one shape, one price table. It is
+in the SAME transaction as the audit row because the two are halves of one engineering
+record: a register that says a call happened and a spend table that does not, or the
+reverse, is worse than neither. The reg 41(2) transfer record is not in this transaction —
+it was committed before the bytes left (see ``_record_hosted_transfer``).
+
+No call means no row, exactly as in the other two writers: a run turned away by the spend
+gate, the paperwork gate, a saturated slot or ``LLM_ENABLED=false`` sent nothing, so it
+must not appear in the spend table or in M11's denominator. ``rec is not None`` is that
+condition and nothing else writes a row here, so nothing is counted twice — note that one
+``parse_structured`` call covering two model attempts (fable, then the opus fallback)
+yields ONE record and therefore ONE row, with ``fallback_used=1``.
 
 Between 1 and 2 sits the one exception to "no DB work in the middle": when the call is
 really going to a hosted provider, the reg 41(2) transfer record (spec §2 G8, §9.2,
@@ -41,6 +62,7 @@ from noc_agents.db.models import AgentRunRow, AuditRow, IncidentRow, new_id, utc
 from noc_agents.graph.instrumentation import RunTracker
 from noc_agents.llm.client import MODEL_DRAFTING, MODEL_REASONING, get_llm, reasoning_timeout_s, spend_gate
 from noc_agents.llm.outputs import ExecBriefDraft, Hypothesis, RootCauseAnalysis
+from noc_agents.llm.port import PROVIDER_ANTHROPIC, record_llm_call
 from noc_agents.llm.redaction import redact_incident, restore_names
 from noc_agents.llm.structured import LlmCallRecord, parse_structured
 from noc_agents.orchestrator.contract import FAILED, SUCCEEDED, StepResult
@@ -55,6 +77,25 @@ ANALYSIS_NODE = "RCA"
 ANALYSIS_AGENT = "TicketingAgent"
 BRIEF_NODE = "BRIEF_DRAFT"
 BRIEF_AGENT = "ExecutiveBriefingAgent"
+
+# ``llm_calls.purpose``. M11 is measured "per assist function", so the two routes must be
+# distinguishable by a GROUP BY without joining anything.
+ANALYSIS_PURPOSE = "incident_analysis"
+BRIEF_PURPOSE = "exec_brief_draft"
+
+# ``llm_calls.fallback_reason`` for a call that WAS made and whose answer was not used. A
+# closed vocabulary on purpose: M11 is a rate, so the column has to group. The detail (which
+# validator, which exception) is already in the ``llm.call`` audit row's payload, which is the
+# right place for it — ``rec.error`` may carry an SDK message and must not be copied into a
+# column the spend/fallback reports read (§9.5).
+FALLBACK_REASON_OUTPUT_INVALID = "output_invalid"  # the call answered; our validators rejected it (M11)
+FALLBACK_REASON_MODEL_REFUSED = "model_refused"  # stop_reason=refusal on every model tried
+FALLBACK_REASON_NO_OUTPUT = "no_usable_output"  # error/timeout/no parse: the call produced nothing
+
+# Shared between the message ``_mark_unusable`` records and the classifier that maps it to a
+# fallback reason, so the two can never drift apart.
+VALIDATION_FAILED = "output failed validation"
+VALIDATION_CRASHED = "validation crashed"
 
 MAX_BRIEF_CHARS = 2000
 MAX_SUMMARY_CHARS = 2000
@@ -186,7 +227,7 @@ def _validated_or_none(validate: Callable[[], Any], rec: LlmCallRecord) -> Any:
     try:
         return validate()
     except Exception as exc:  # noqa: BLE001 — never lose the audit row over a validation bug
-        _mark_unusable(rec, f"validation crashed: {type(exc).__name__}")  # class only: no model text in the audit row
+        _mark_unusable(rec, f"{VALIDATION_CRASHED}: {type(exc).__name__}")  # class only: no model text in the audit row
         return None
 
 
@@ -196,6 +237,25 @@ def _mark_unusable(rec: LlmCallRecord, reason: str) -> str:
     rec.ok = False
     rec.error = rec.error or reason
     return rec.error
+
+
+def fallback_reason(rec: LlmCallRecord, *, used: bool) -> str | None:
+    """``llm_calls.fallback_reason`` for one attempted assist call; ``None`` when the draft was used.
+
+    M11 counts "LLM-assisted drafts rejected by validators / attempted", so a draft our
+    validators threw away is its own code and is never mixed with a call that came back empty:
+    the first says the model answered and the answer was wrong, the second says there was no
+    answer to judge. ``_mark_unusable`` keeps an EARLIER error, so a timeout followed by a
+    validation miss still reads as ``no_usable_output`` — which is the truth about that call.
+    """
+    if used:
+        return None
+    if rec.refused:
+        return FALLBACK_REASON_MODEL_REFUSED
+    error = rec.error or ""
+    if error.startswith(VALIDATION_FAILED) or error.startswith(VALIDATION_CRASHED):
+        return FALLBACK_REASON_OUTPUT_INVALID
+    return FALLBACK_REASON_NO_OUTPUT
 
 
 def _record_hosted_transfer(
@@ -291,6 +351,7 @@ def run_assist(
     incident_number: str,
     input_summary: str,
     justification: str,
+    purpose: str,
     prepare: Callable[[Session], AssistJob],
     call: Callable[[AssistJob, Any], tuple[dict[str, Any], StepResult, LlmCallRecord | None]],
     empty_answer: dict[str, Any],
@@ -299,7 +360,7 @@ def run_assist(
 
     ``empty_answer`` is the route's answer key with a minimal safe value, built from plain
     fields only; it is used when ``prepare`` itself fails so the caller still gets the
-    documented shape.
+    documented shape. ``purpose`` is the ``llm_calls.purpose`` for this route (A-15/M11).
     """
     t_start = utcnow()
     job: AssistJob | None = None
@@ -372,7 +433,33 @@ def run_assist(
             confidence=result.confidence,
         )
         if rec is not None:
-            session.add(_audit_row(settings, agent_name, incident_id, rec, justification, transfer_id))
+            # A record means a hosted call was really attempted (``send`` is the client only
+            # when a slot was free, the spend gate said nothing and the transfer record was
+            # committed), so exactly these runs owe both an audit row and an ``llm_calls`` row.
+            audit = _audit_row(settings, agent_name, incident_id, rec, justification, transfer_id)
+            session.add(audit)
+            session.flush()  # give the audit row its id: it is the fallback citation below
+            used_llm = response.get("source") == "llm"  # the model's answer survived validation
+            record_llm_call(
+                session,
+                operator_id=settings.operator.operator_id,
+                agent=agent_name,
+                purpose=purpose,
+                # ``get_llm`` builds the raw Anthropic client and nothing else; a local
+                # openai-compatible endpoint never reaches this function (no client, no call).
+                provider=PROVIDER_ANTHROPIC,
+                rec=rec,
+                # The reg 41(2) transfer record, as in ``services/contracts`` and the outbox
+                # LLM_CALL transmitter, so one join answers "what left the country and what did
+                # it cost" whichever path made the call. ``transfer_id`` is never None while
+                # ``rec`` is not None; the audit row's own id is a belt-and-braces citation so a
+                # NOT NULL column can never be the reason a spend row is lost.
+                audit_id=transfer_id or audit.id,
+                run_id=run.id,
+                incident_id=incident_id,
+                fallback_reason=fallback_reason(rec, used=used_llm),
+                validated=used_llm,
+            )
         failed = result.status == FAILED
         tracker.finish_run(FAILED if failed else SUCCEEDED, error=result.rationale if failed else None)
         session.commit()
@@ -452,7 +539,7 @@ def analyse_incident(session: Session, settings: AppSettings, inc: IncidentRow) 
         )
         analysis = _validated_or_none(lambda: _validated_analysis(parsed, job.mapping), rec)
         if analysis is None:
-            reason = _mark_unusable(rec, "output failed validation (empty summary / too long / no usable hypothesis)")
+            reason = _mark_unusable(rec, f"{VALIDATION_FAILED} (empty summary / too long / no usable hypothesis)")
             return job.template_response(), _llm_step(rec, "analysis (template fallback)", f"LLM unusable ({reason}); template used"), rec
         response = {"incident_id": job.incident_id, "source": "llm", "model": rec.model_used, "analysis": analysis.model_dump()}
         return response, _llm_step(rec, f"analysis ({rec.model_used})", "Draft analysis for analyst review; nothing changed on the ticket"), rec
@@ -466,6 +553,7 @@ def analyse_incident(session: Session, settings: AppSettings, inc: IncidentRow) 
         incident_number=inc.incident_number,
         input_summary=f"{inc.incident_number} {inc.failure_domain}/{inc.alarm_code}",
         justification="root-cause analysis draft to speed restoration",
+        purpose=ANALYSIS_PURPOSE,
         prepare=prepare,
         call=call,
         empty_answer={
@@ -523,7 +611,7 @@ def draft_exec_brief(session: Session, settings: AppSettings, inc: IncidentRow) 
         )
         body = _validated_or_none(lambda: _validated_brief(parsed, job.mapping, job.incident_number, job.priority), rec)
         if body is None:
-            reason = _mark_unusable(rec, "output failed validation (length / INC number / priority)")
+            reason = _mark_unusable(rec, f"{VALIDATION_FAILED} (length / INC number / priority)")
             return job.template_response(), _llm_step(rec, "brief draft (template fallback)", f"LLM unusable ({reason}); template used"), rec
         response = {"incident_id": job.incident_id, "source": "llm", "model": rec.model_used, "body": body}
         return response, _llm_step(rec, f"brief draft ({rec.model_used})", "Draft brief for review; not published"), rec
@@ -537,6 +625,7 @@ def draft_exec_brief(session: Session, settings: AppSettings, inc: IncidentRow) 
         incident_number=inc.incident_number,
         input_summary=f"{inc.incident_number} {inc.priority}",
         justification="executive brief draft to reduce calls into the NOC",
+        purpose=BRIEF_PURPOSE,
         prepare=prepare,
         call=call,
         empty_answer={

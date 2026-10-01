@@ -1637,22 +1637,14 @@ async def sse_events():
     return StreamingResponse(gen(), media_type="text/event-stream")
 
 
-# Left OPEN, and not because nobody decided. require_role() cannot gate a socket: it is an
-# HTTP dependency whose ``request: Request`` parameter FastAPI never binds on a WebSocket
-# connection, so declaring it in ``dependencies=`` here kills the handshake with a
-# TypeError whether auth is on or off (verified, both directions) — it would break the demo
-# rather than protect it. And a 401/403 is not the right answer on a socket anyway; the
-# protocol's answer is a close frame (1008) before the accept.
-#
-# api/auth.py has no socket seam today, so the mechanism is a change THERE, not a
-# workaround here: ``current_principal`` already works unchanged on a WebSocket (Starlette's
-# WebSocket is an HTTPConnection with ``.cookies``/``.headers``/``.scope``; checked with
-# auth on and off) — what is missing is a ``require_socket_role(*allowed)`` that closes
-# with 1008 instead of raising. Until that lands this feed is readable by anyone who can
-# reach the port with auth enforced. That is pinned, not forgotten: tests/system/test_auth.py
-# states the requirement as a strict xfail, which starts failing the day the seam lands and
-# someone forgets to remove the marker. The SSE twin above IS gated, so this socket is the
-# only unauthenticated path to the envelopes.
+# Gated, through the socket's own seam (A-14). require_role() cannot do it: it is an HTTP
+# dependency whose ``request: Request`` parameter FastAPI never binds on a WebSocket, so
+# declaring it in ``dependencies=`` here kills the handshake with a TypeError, auth on or
+# off. ``auth.authorise_socket`` is the socket's answer -- the same signed session, closed
+# with 1008 before the accept instead of raising 401/403 -- and INCIDENT_READERS is the
+# tuple because this feed carries incident numbers, sites, run and HITL events: §9.3 row 1
+# read, the same as the SSE twin above. Inert with AUTH_DISABLED=true, so the demo and
+# test_contracts.py's frozen frame contract are untouched.
 @app.websocket("/ws/ops")
 async def ws_ops(ws: WebSocket, since: int | None = None):
     """Ops feed. ``?since=N`` replays only the records newer than seq N (spec §7.0.4), each as
@@ -1661,6 +1653,9 @@ async def ws_ops(ws: WebSocket, since: int | None = None):
     (``tests/system/test_contracts.py::test_ws_ops_replays_recent_and_delivers_live_events``)
     pins that shape, so the §7.0.4 live-path wrapper waits for that contract to be re-cut
     (``hub.subscribe(with_seq=True)`` is the one-line switch)."""
+    # Before accept() and before any replay: a refused caller must never be sent a frame.
+    if await auth.authorise_socket(ws, *INCIDENT_READERS) is None:
+        return  # closed with 1008; auth.authorise_socket said why in the close reason
     await ws.accept()
     q = hub.subscribe()
     try:

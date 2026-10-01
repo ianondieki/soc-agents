@@ -28,6 +28,8 @@ from __future__ import annotations
 
 import json
 import socket
+import threading
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -164,6 +166,132 @@ def test_no_module_level_anthropic_or_mcp_imports():
         for line in (root / rel).read_text(encoding="utf-8").splitlines():
             stripped = line.strip()
             assert not stripped.startswith(("import anthropic", "from anthropic", "import mcp", "from mcp")), (rel, line)
+
+
+# ------------------------------------------------------------------------------ A-18: a total deadline
+#
+# CONFORMANCE A-18: this adapter had only httpx's per-read timeout, so a server that answered
+# every read promptly with one byte — or a stalled resolver — could hold the forecast poll open
+# far past its budget. It now uses the same DeadlineWatchdog and the same bounded lookup as the
+# CAP and flood adapters (both defined in this module; they import it, so it cannot import them).
+# These tests use a REAL loopback socket, because the gap was below httpx.
+
+_REAL_CONNECT = socket.socket.connect
+_REAL_CREATE_CONNECTION = socket.create_connection
+_REAL_GETADDRINFO = socket.getaddrinfo
+
+
+#: Hosts the loopback-only guard admits. A DNS test adds its own fake name, which its fake
+#: resolver maps to 127.0.0.1 — otherwise the guard, not the stall, would end the test.
+_LOOPBACK_HOSTS = {"127.0.0.1", "localhost"}
+
+
+@pytest.fixture()
+def loopback_only(monkeypatch):
+    """Re-admit the loopback interface only; every other host still fails as the autouse guard
+    makes it."""
+
+    def check(host):
+        if str(host) not in _LOOPBACK_HOSTS:
+            raise AssertionError(f"a weather test tried to reach {host!r}")
+
+    def connect(self, address):
+        check(address[0])
+        return _REAL_CONNECT(self, address)
+
+    def create_connection(address, *args, **kwargs):
+        check(address[0])
+        return _REAL_CREATE_CONNECTION(address, *args, **kwargs)
+
+    def getaddrinfo(host, *args, **kwargs):
+        check(host)
+        return _REAL_GETADDRINFO(host, *args, **kwargs)
+
+    monkeypatch.setattr(socket.socket, "connect", connect)
+    monkeypatch.setattr(socket, "create_connection", create_connection)
+    monkeypatch.setattr(socket, "getaddrinfo", getaddrinfo)
+
+
+def _drip_server(response: bytes, gap: float) -> int:
+    """A loopback server that sends ``response`` one byte every ``gap`` seconds."""
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+
+    def run():
+        conn = None
+        try:
+            conn, _ = listener.accept()
+            data = b""
+            while bytes([13, 10, 13, 10]) not in data:
+                chunk = conn.recv(4096)
+                if not chunk:
+                    return
+                data += chunk
+            for byte in response:
+                conn.sendall(bytes([byte]))
+                time.sleep(gap)
+        except OSError:
+            pass  # the watchdog shut the connection: what is being tested
+        finally:
+            if conn is not None:
+                conn.close()
+            listener.close()
+
+    threading.Thread(target=run, daemon=True).start()
+    return listener.getsockname()[1]
+
+
+def test_a18_the_forecast_fetch_has_a_total_deadline_not_only_a_per_read_one(loopback_only):
+    crlf = bytes([13, 10])
+    headers = b"HTTP/1.1 200 OK" + crlf + b"X-Pad: " + b"z" * 80 + crlf + b"Content-Length: 2" + crlf + crlf + b"{}"
+    port = _drip_server(headers, 0.05)  # ~5 s of dripped headers
+    provider = OpenMeteoProvider(f"http://127.0.0.1:{port}", client=httpx.Client(timeout=httpx.Timeout(0.6)))
+    started = time.monotonic()
+    with pytest.raises(WeatherError) as err:
+        provider.forecast(-1.27, 36.81)
+    elapsed = time.monotonic() - started
+    assert err.value.kind == "timeout" and "total deadline" in str(err.value)
+    assert elapsed < 2.5, f"{elapsed:.2f}s against a 0.6 s budget"
+    from noc_agents.adapters.weather import DeadlineWatchdog  # local: absent before A-18
+
+    assert [t for t in threading.enumerate() if t.name == DeadlineWatchdog.THREAD_NAME and t.is_alive()] == []
+
+
+def test_a18_name_resolution_is_bounded_by_the_same_deadline(loopback_only, monkeypatch):
+    """A stalled resolver runs before any socket exists, so the watchdog cannot see it."""
+    real = socket.getaddrinfo
+
+    def resolver(host, *args, **kwargs):
+        if host == "forecast.invalid":
+            time.sleep(5.0)
+            return real("127.0.0.1", *args, **kwargs)
+        return real(host, *args, **kwargs)
+
+    monkeypatch.setattr(socket, "getaddrinfo", resolver)
+    monkeypatch.setitem(globals(), "_LOOPBACK_HOSTS", _LOOPBACK_HOSTS | {"forecast.invalid"})
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    provider = OpenMeteoProvider(f"http://forecast.invalid:{listener.getsockname()[1]}",
+                                 client=httpx.Client(timeout=httpx.Timeout(0.6)))
+    started = time.monotonic()
+    with pytest.raises(WeatherError) as err:
+        provider.forecast(-1.27, 36.81)
+    elapsed = time.monotonic() - started
+    listener.close()
+    assert elapsed < 2.5, f"{elapsed:.2f}s against a 0.6 s budget"
+    assert err.value.kind == "timeout" and "name resolution" in str(err.value)
+
+
+def test_a18_the_watchdog_is_the_one_the_other_adapters_use():
+    """Shared, not copied: one implementation for all three early-warning adapters."""
+    from noc_agents.adapters import flood as flood_adapter
+    from noc_agents.adapters import kmd_cap as cap_adapter
+    from noc_agents.adapters.weather import DeadlineWatchdog
+
+    assert cap_adapter.DeadlineWatchdog is DeadlineWatchdog is flood_adapter.DeadlineWatchdog
+    assert DeadlineWatchdog.__module__ == "noc_agents.adapters.weather"
 
 
 # ------------------------------------------------------------------------------ parsing: Open-Meteo

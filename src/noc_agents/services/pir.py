@@ -432,6 +432,22 @@ def _regulatory_entries(session: Session, inc: IncidentRow) -> list[dict]:
     return [e for e in entries if e]
 
 
+def _cap_identifier(row: ExternalSignalRow) -> str | None:
+    """The CAP ``identifier`` a signal row carries, or ``None`` for anything that is not a CAP
+    alert. One alert can hold several rows — one per region, and one per attribution span — and
+    the PIR timeline counts them as the single alert KMD issued (review finding PIR-SPAN)."""
+    if row.source != "KMD_CAP" or not row.derived_json:
+        return None
+    try:
+        block = json.loads(row.derived_json)
+    except ValueError:
+        return None
+    if not isinstance(block, dict) or block.get("kind") != "cap_alert":
+        return None
+    identifier = block.get("identifier")
+    return str(identifier) if identifier else None
+
+
 def assemble_timeline(session: Session, inc: IncidentRow) -> list[dict]:
     """``[{ts, kind, title, detail, actor_role}]`` for one incident, oldest first (§7.7.3).
 
@@ -492,9 +508,17 @@ def assemble_timeline(session: Session, inc: IncidentRow) -> list[dict]:
 
     at = inc.failure_time or inc.outage_start_at or inc.created_at
     if at is not None:
+        # "Active at failure time" means the row's OWN span covered that instant. A row is never
+        # evidence before it was fetched, and a KMD alert re-attributed to a region opens a new
+        # span rather than reviving the old one (pollers/kmd_cap.reattribute_live), so a span
+        # stored at 14:30 must not appear on a 12:15 timeline — it did, listing one alert twice
+        # and saying the region was warned through the very gap in which it was not mapped to the
+        # county (review finding PIR-SPAN). ``fetched_at <= at`` is the general form of that:
+        # every source writes ``fetched_at`` when it learned the thing.
         signals = session.scalars(
             select(ExternalSignalRow).where(
                 ExternalSignalRow.operator_id == inc.operator_id,
+                ExternalSignalRow.fetched_at <= at,
                 ExternalSignalRow.valid_until >= at,
                 or_(ExternalSignalRow.valid_from.is_(None), ExternalSignalRow.valid_from <= at),
                 or_(
@@ -502,17 +526,26 @@ def assemble_timeline(session: Session, inc: IncidentRow) -> list[dict]:
                     ExternalSignalRow.site_id == inc.site_id,
                 ),
             )
+            .order_by(ExternalSignalRow.fetched_at)
         ).all()
-        entries.extend(
-            _entry(
-                s.fetched_at,
-                "signal",
-                f"{s.source} signal active at failure time",
-                s.derived_json or s.last_error,
-                "EXTERNAL",
+        # One alert is one entry however many spans it has: the identifier is what KMD issued,
+        # and a reader should see "KMD warned about this", not one line per attribution.
+        seen_alerts: set[str] = set()
+        for row in signals:
+            identifier = _cap_identifier(row)
+            if identifier is not None:
+                if identifier in seen_alerts:
+                    continue
+                seen_alerts.add(identifier)
+            entries.append(
+                _entry(
+                    row.fetched_at,
+                    "signal",
+                    f"{row.source} signal active at failure time",
+                    row.derived_json or row.last_error,
+                    "EXTERNAL",
+                )
             )
-            for s in signals
-        )
 
     entries.extend(_clock_event_entries(session, inc))
     entries.extend(_regulatory_entries(session, inc))

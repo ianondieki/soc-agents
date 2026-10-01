@@ -67,9 +67,11 @@ it is 100 % by definition and is not an alarm.
   plus ``NOC_ENV=demo`` or the DPIA/TIA references the §7.0.10 transfer gate asks for, then
   ``C:\\Python313\\python.exe tests\\eval\\draft_eval.py [--trials 2] [--json report.json]``.
   Every draft is one model call -- 36 incidents x k trials with today's fixture -- and nothing
-  in the app budgets them (the on-demand assist path writes no ``llm_calls`` row, which is what
-  ``LLM_MONTHLY_BUDGET_USD`` sums), so the run refuses to plan more than ``--max-model-calls``
-  (default 100; k=3 needs it raised).
+  every eval run spends the SAME monthly budget the app spends: since A-15 the assist path
+  writes an ``llm_calls`` row per hosted call, so ``LLM_MONTHLY_BUDGET_USD`` counts these too
+  and ``spend_gate`` will refuse mid-run once the month's ceiling is reached. The run also
+  refuses to plan more than ``--max-model-calls`` (default 100; k=3 needs it raised), which
+  bounds the spend BEFORE a database is built rather than part-way through.
 * ``--template-only`` runs the same harness on the deterministic path with the LLM off.
 
 Exit codes (command line):  0 = graded, all passed   1 = graded, something failed (or the
@@ -719,8 +721,8 @@ def run_suite(
     if llm_on and planned > max_model_calls:
         raise Refused(
             f"{planned} model calls planned ({planned // trials} incidents x {trials} trials); the limit is {max_model_calls} "
-            f"(--max-model-calls / {MAX_CALLS_ENV}). The on-demand assist path writes no llm_calls row, so "
-            "LLM_MONTHLY_BUDGET_USD does not see these calls."
+            f"(--max-model-calls / {MAX_CALLS_ENV}). Each planned call spends the same "
+            "LLM_MONTHLY_BUDGET_USD the app spends; this cap stops the run before it starts."
         )
     if is_under(workdir, DATA_DIR):
         raise Refused(f"work folder {workdir} is under the repository's data folder")

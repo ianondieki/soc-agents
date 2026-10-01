@@ -108,6 +108,33 @@ const PRESETS = [
   },
 ];
 
+/**
+ * The nine roles `api/auth.py` defines (`Role`, and `ROLES` derived from it). The switcher
+ * offered three names that do not exist there -- `rnio`, `msp_viewer`, `automation_admin` -- and
+ * omitted `management`, `msp_coordinator` and `admin`, so the demo could not reach the roles the
+ * §9.3 matrix gates on: nothing could be viewed as management, and no unreleased scorecard could
+ * be read at all (CONFORMANCE C-32). The backend does not validate what this switcher stores, so
+ * an unknown name is accepted and then matches no allow-list.
+ *
+ * The labels say what the role is for on this demo, not what it is allowed: with
+ * `AUTH_DISABLED=true` (the demo default) `require_role` is inert and the switcher grants
+ * nothing. It decides which name is RECORDED as the actor, and what the role-aware pages say.
+ */
+const ROLES: { value: string; label: string }[] = [
+  { value: "noc_analyst", label: "the floor: incidents, notes, timeline" },
+  { value: "shift_supervisor", label: "closes and reverses stop clocks, computes scorecards" },
+  { value: "duty_manager", label: "approves, publishes and finalises" },
+  { value: "management", label: "reads everything, including unreleased scorecards" },
+  { value: "msp_coordinator", label: "vendor side: its own vendor's released cards" },
+  { value: "field_engineer", label: "field notes from site" },
+  { value: "planning", label: "maintenance windows and capacity" },
+  { value: "legal", label: "contracts, audit, released scorecards" },
+  { value: "admin", label: "everything, including platform actions" },
+];
+
+/** `api/auth.DEFAULT_ROLE`: what a client that never touched this switcher already is. */
+const DEFAULT_ROLE = "noc_analyst";
+
 export default function Settings({
   session,
   onSession,
@@ -120,7 +147,7 @@ export default function Settings({
   onInjected: () => void;
 }) {
   const [name, setName] = useState(session?.display_name || "NOC Analyst");
-  const [role, setRole] = useState(session?.role || "noc_analyst");
+  const [role, setRole] = useState(session?.role || DEFAULT_ROLE);
   const [sites, setSites] = useState<any[]>([]);
   const [last, setLast] = useState("");
   const [emailSt, setEmailSt] = useState<any>(null);
@@ -142,12 +169,16 @@ export default function Settings({
         <div className="form-row">
           <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Display name" />
           <select value={role} onChange={(e) => setRole(e.target.value)}>
-            <option value="noc_analyst">noc_analyst</option>
-            <option value="shift_supervisor">shift_supervisor</option>
-            <option value="duty_manager">duty_manager</option>
-            <option value="rnio">rnio</option>
-            <option value="msp_viewer">msp_viewer</option>
-            <option value="automation_admin">automation_admin</option>
+            {ROLES.map((r) => (
+              <option key={r.value} value={r.value}>
+                {r.value} — {r.label}
+              </option>
+            ))}
+            {/* A role stored before this list was corrected would otherwise leave the select
+                blank, with no way to see what it is set to. */}
+            {role && !ROLES.some((r) => r.value === role) && (
+              <option value={role}>{role} — not a role this backend knows</option>
+            )}
           </select>
           <button
             className="btn primary"
@@ -158,6 +189,11 @@ export default function Settings({
           >
             Save session
           </button>
+        </div>
+        <div className="muted">
+          These are the nine roles the API defines. The switcher is a demo affordance, not a sign-in: with{" "}
+          <code>AUTH_DISABLED=true</code> it grants nothing, and it decides which name is recorded as the actor and what
+          the role-aware screens say. With sign-in on, the signed-in user decides instead.
         </div>
       </div>
 

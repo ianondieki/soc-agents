@@ -40,6 +40,7 @@ from sqlalchemy import event, select
 
 from noc_agents.api import auth
 from noc_agents.db.models import (
+    ExternalSignalRow,
     AgentRunRow,
     AgentRunStepRow,
     BroadcastRow,
@@ -48,6 +49,7 @@ from noc_agents.db.models import (
     OutboxRow,
     ProblemRow,
     WorkNoteRow,
+    new_id,
 )
 from noc_agents.db.models_pir import PirActionItemRow, PostIncidentReviewRow
 from noc_agents.realtime.commit_hook import pending_events
@@ -551,6 +553,71 @@ def test_a_clean_msp_root_cause_is_prefilled(tmp_db, on):
     pir, _ = pir_service.open_pir(session, inc, reason=pir_service.REASON_P1_P2)
     session.commit()
     assert pir.root_causes == "Generator fuel line blocked by sediment"
+
+
+def _cap_row(session, *, external_id: str, identifier: str, fetched_at, valid_from, valid_until, region="NBI"):
+    """One ``external_signals`` row shaped as ``pollers/kmd_cap.py`` writes a CAP alert."""
+    session.add(
+        ExternalSignalRow(
+            id=new_id(), operator_id="safaricom", source="KMD_CAP", source_url="https://meteo.go.ke/x.xml",
+            region_code=region, fetched_at=fetched_at, valid_from=valid_from, valid_until=valid_until,
+            stale=0, confidence=1.0, storm_flag=1, flood_flag=0, planned_power=0, access_risk=0,
+            payload_json="{}",
+            derived_json=json.dumps({"kind": "cap_alert", "identifier": identifier}, separators=(",", ":")),
+            external_id=external_id, created_at=fetched_at,
+        )
+    )
+
+
+def test_the_timeline_lists_one_cap_alert_once_and_never_before_its_span_began(tmp_db, on):
+    """A KMD alert re-attributed to a region opens a NEW row from the moment of attribution
+    (pollers/kmd_cap.reattribute_live), so one alert can hold several rows. The timeline selected
+    on valid_from alone, so a row stored two hours AFTER the failure was listed as "active at
+    failure time" — the same alert twice, and the region shown as warned during exactly the window
+    in which its county was mapped elsewhere (review finding PIR-SPAN).
+
+    The rows here carry the ``valid_from`` the writer used to copy from the alert (its effective
+    time), because that is what a database written before the writer was fixed still holds: the
+    reader has to be right about those too."""
+    _settings, session = tmp_db
+    inc = _incident(session)
+    at = inc.failure_time
+    effective = at - timedelta(minutes=25)
+    # In force at the failure, and known then.
+    _cap_row(session, external_id="a1#NBI", identifier="a1", fetched_at=at - timedelta(minutes=20),
+             valid_from=effective, valid_until=at + timedelta(hours=2))
+    # A second span of the SAME alert, also known before the failure: one alert, one entry.
+    _cap_row(session, external_id="a1#NBI@20260916T005500Z", identifier="a1", fetched_at=at - timedelta(minutes=5),
+             valid_from=effective, valid_until=at + timedelta(hours=6))
+    # A span attributed two hours AFTER the failure, carrying the alert's effective time: not
+    # evidence at failure time, however early its valid_from claims to start.
+    _cap_row(session, external_id="a1#NBI@20260916T030000Z", identifier="a1", fetched_at=at + timedelta(hours=2),
+             valid_from=effective, valid_until=at + timedelta(hours=6))
+    # A different alert, in force and known at the failure: its own entry.
+    _cap_row(session, external_id="b1#NBI", identifier="b1", fetched_at=at - timedelta(minutes=10),
+             valid_from=at - timedelta(minutes=10), valid_until=at + timedelta(hours=1))
+    session.commit()
+
+    timeline = pir_service.assemble_timeline(session, inc)
+    cap_entries = [e for e in timeline if e["kind"] == "signal" and "KMD_CAP" in e["title"]]
+    assert [e["ts"] for e in cap_entries] == [
+        (at - timedelta(minutes=20)).replace(microsecond=0).isoformat() + "Z",
+        (at - timedelta(minutes=10)).replace(microsecond=0).isoformat() + "Z",
+    ]
+    assert {json.loads(e["detail"])["identifier"] for e in cap_entries} == {"a1", "b1"}
+
+
+def test_the_timeline_says_nothing_of_an_alert_attributed_only_after_the_failure(tmp_db, on):
+    """The gap case: while the county belonged to another region, this region was not warned —
+    even though the span the poller later opened carries the alert's earlier effective time."""
+    _settings, session = tmp_db
+    inc = _incident(session)
+    at = inc.failure_time
+    _cap_row(session, external_id="a1#NBI@20260916T030000Z", identifier="a1", fetched_at=at + timedelta(hours=2),
+             valid_from=at - timedelta(minutes=25), valid_until=at + timedelta(hours=6))
+    session.commit()
+    timeline = pir_service.assemble_timeline(session, inc)
+    assert [e for e in timeline if e["kind"] == "signal"] == []
 
 
 def test_the_vendors_own_words_stay_on_the_timeline_even_when_they_name_someone(tmp_db, on):

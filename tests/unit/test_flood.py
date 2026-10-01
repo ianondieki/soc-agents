@@ -35,6 +35,7 @@ import threading
 import time
 from dataclasses import replace
 from datetime import date, datetime, timedelta
+from functools import lru_cache
 from pathlib import Path
 
 import httpx
@@ -487,13 +488,18 @@ def test_f09_a_region_is_fresh_if_any_site_is_and_flags_only_on_fresh_readings(t
     assert (cst["available"], cst["stale"], cst["flag"]) == (True, True, None)
 
 
+#: Hosts the loopback-only guard admits. A DNS test adds its own fake name, which its fake
+#: resolver maps to 127.0.0.1 — otherwise the guard, not the stall, would end the test.
+_LOOPBACK_HOSTS = {"127.0.0.1", "localhost"}
+
+
 @pytest.fixture()
 def loopback_only(monkeypatch):
-    """Re-admit 127.0.0.1 only, for the W02 test: the header-phase deadline lives below httpx,
-    in socket reads, so MockTransport cannot exercise it. Every other host still fails."""
+    """Re-admit the loopback interface only, for the W02 test: the header-phase deadline lives
+    below httpx, in socket reads, so MockTransport cannot exercise it. Every other host fails."""
 
     def check(host):
-        if str(host) not in {"127.0.0.1", "localhost"}:
+        if str(host) not in _LOOPBACK_HOSTS:
             raise AssertionError(f"a flood test tried to reach {host!r}")
 
     def connect(self, address):
@@ -559,6 +565,56 @@ def test_w02_the_flood_deadline_covers_the_header_phase_over_a_real_socket(loopb
 TLS_CERT = Path(__file__).resolve().parents[1] / "fixtures" / "tls" / "test_only_cert.pem"
 TLS_KEY = Path(__file__).resolve().parents[1] / "fixtures" / "tls" / "test_only_key.pem"
 _CRLF = bytes([13, 10])
+
+
+@lru_cache(maxsize=1)
+def _loopback_tls_is_intercepted() -> bool:
+    """True when this machine re-signs loopback TLS, as an antivirus "web shield" does.
+
+    The test server offers a self-signed certificate, so the certificate the client receives must
+    be its own issuer. When a local interceptor sits in the path the client is handed a re-issued
+    copy instead (seen here: "Avast Web/Mail Shield Self-signed Root"), which no cafile of ours
+    can verify — and the response is then paced by the interceptor's buffer rather than by the
+    server, so what these tests measure is not there to measure. They skip, rather than trust an
+    interceptor or drop verification to stay green.
+    """
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(str(TLS_CERT), str(TLS_KEY))
+
+    def run():
+        conn = None
+        try:
+            raw, _ = listener.accept()
+            conn = context.wrap_socket(raw, server_side=True)
+            conn.recv(64)
+        except (OSError, ssl.SSLError):
+            pass
+        finally:
+            if conn is not None:
+                conn.close()
+            listener.close()
+
+    threading.Thread(target=run, daemon=True).start()
+    probe = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    probe.check_hostname = False
+    probe.verify_mode = ssl.CERT_NONE
+    try:
+        with probe.wrap_socket(socket.create_connection(("127.0.0.1", listener.getsockname()[1]), timeout=5)) as sock:
+            served = sock.getpeercert(binary_form=True)  # parsed form is empty without verification
+            sock.send(bytes([120]))
+    except (OSError, ssl.SSLError):
+        return False  # the probe says nothing; let the test itself report what it finds
+    return bool(served) and served != ssl.PEM_cert_to_DER_cert(TLS_CERT.read_text())
+
+
+def _skip_if_tls_is_intercepted() -> None:
+    if _loopback_tls_is_intercepted():
+        pytest.skip("a local TLS interceptor re-signs loopback connections on this machine: it, "
+                    "not the test server, would be pacing the bytes")
+
 
 
 def _tls_server(payload: bytes, gap: float, *, silent: bool = False) -> int:
@@ -647,6 +703,7 @@ TLS_CASES = {
 def test_w02_tls_the_flood_deadline_holds_over_https(loopback_only, label):
     """W02-TLS for the flood adapter: the production host (DEFAULT_FLOOD_BASE) is https, and the
     watchdog's recorded plain socket was detached by the TLS wrap, so nothing bounded the drip."""
+    _skip_if_tls_is_intercepted()
     make_server, per_read = TLS_CASES[label]
     port = make_server()
     client = httpx.Client(timeout=httpx.Timeout(per_read), verify=ssl.create_default_context(cafile=str(TLS_CERT)))
@@ -659,6 +716,7 @@ def test_w02_tls_the_flood_deadline_holds_over_https(loopback_only, label):
 
 
 def test_w02_tls_a_normal_https_flood_fetch_still_works(loopback_only):
+    _skip_if_tls_is_intercepted()
     body = FIXTURE.read_bytes()
     ok = b"HTTP/1.1 200 OK" + _CRLF + b"Content-Length: " + str(len(body)).encode() + _CRLF + _CRLF + body
     port = _tls_server(ok, 0.0)
@@ -667,6 +725,43 @@ def test_w02_tls_a_normal_https_flood_fetch_still_works(loopback_only):
     assert len(snapshot.days) == 7
     alive = [t for t in threading.enumerate() if t.name == "noc-deadline-watchdog" and t.is_alive()]
     assert alive == []  # the watchdog's timer thread was joined when the exchange ended
+
+
+
+def _slow_dns(monkeypatch, host: str, seconds: float) -> None:
+    """Make one hostname take ``seconds`` to resolve. No real DNS is queried: every other name
+    goes to the real resolver, which the loopback-only guard still limits to 127.0.0.1."""
+    real = socket.getaddrinfo
+
+    def resolver(name, *args, **kwargs):
+        if name == host:
+            time.sleep(seconds)
+            return real("127.0.0.1", *args, **kwargs)
+        return real(name, *args, **kwargs)
+
+    monkeypatch.setattr(socket, "getaddrinfo", resolver)
+
+
+def _quiet_server() -> int:
+    """A loopback listener that accepts and says nothing: the test must never get this far."""
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    threading.Thread(target=lambda: (listener.accept(), time.sleep(5)), daemon=True).start()
+    return listener.getsockname()[1]
+
+
+def test_dns_the_flood_deadline_covers_name_resolution(loopback_only, monkeypatch):
+    """Review finding DNS: the flood host is a name too (DEFAULT_FLOOD_BASE)."""
+    _slow_dns(monkeypatch, "flood.invalid", 5.0)
+    monkeypatch.setitem(globals(), "_LOOPBACK_HOSTS", _LOOPBACK_HOSTS | {"flood.invalid"})
+    port = _quiet_server()
+    started = time.monotonic()
+    with pytest.raises(FloodError) as err:
+        adapter._get_json(httpx.Client(timeout=5.0), f"http://flood.invalid:{port}/v1/flood", timeout_s=0.6)
+    elapsed = time.monotonic() - started
+    assert elapsed < 2.5, f"{elapsed:.2f}s against a 0.6 s budget"
+    assert err.value.kind == "timeout" and "name resolution" in str(err.value)
 
 
 def test_w02_flood_requests_open_their_own_traced_connection():

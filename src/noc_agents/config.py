@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -82,6 +82,58 @@ class ShiftConfig(BaseModel):
     distribution_list: list[str] = Field(default_factory=list)
 
 
+class HitlEscalationConfig(BaseModel):
+    """``hitl.escalation`` (spec §6.5): what happens when a P1/P2 approval sits unclaimed.
+
+    The defaults ARE the spec's defaults -- T+5 min the on-duty supervisor is nudged, T+15
+    the duty manager is nudged and ``hitl.escalated`` is published, T+30 the Wallboard shows
+    the card in red and the regulatory sweep notes it on the CA 24-h card -- so a profile
+    that says nothing behaves exactly as §6.5 says. A profile block moves the minutes, the
+    priorities on the ladder, the channels a nudge uses and the recipient refs; it cannot
+    make the ladder release anything, because there is no such knob (D1: external release is
+    never automatic). Read by ``services/hitl_escalation.py``.
+
+    Recipient refs are config PATHS into ``notification_recipients``, never addresses. Both
+    ship as empty lists in every profile on purpose (the same posture as
+    ``regulatory.recipients.CA``): an unfilled ref means the SMS half of a nudge is recorded
+    as undeliverable, not sent to an invented number.
+    """
+
+    supervisor_minutes: int = Field(default=5, gt=0)
+    duty_manager_minutes: int = Field(default=15, gt=0)
+    wallboard_minutes: int = Field(default=30, gt=0)
+    priorities: list[str] = Field(default_factory=lambda: ["P1", "P2"])
+    channels: list[str] = Field(default_factory=lambda: ["SMS", "INAPP"])
+    supervisor_recipients_ref: str = "hitl.recipients.supervisor"
+    duty_manager_recipients_ref: str = "hitl.recipients.duty_manager"
+
+    @model_validator(mode="after")
+    def _rungs_ascend(self) -> "HitlEscalationConfig":
+        if not self.supervisor_minutes < self.duty_manager_minutes < self.wallboard_minutes:
+            raise ValueError(
+                "hitl.escalation rungs must ascend: supervisor_minutes < duty_manager_minutes < wallboard_minutes "
+                f"(got {self.supervisor_minutes}, {self.duty_manager_minutes}, {self.wallboard_minutes})"
+            )
+        self.priorities = [str(p).upper() for p in self.priorities]
+        bad = [p for p in self.priorities if p not in ("P1", "P2", "P3", "P4")]
+        if bad:
+            raise ValueError(f"hitl.escalation.priorities must be P1..P4, got {bad}")
+        self.channels = [str(c).upper() for c in self.channels]
+        unknown = [c for c in self.channels if c not in ("SMS", "INAPP")]
+        if unknown:
+            raise ValueError(f"hitl.escalation.channels may name SMS and INAPP only (internal, §6.5), got {unknown}")
+        if not self.channels:
+            raise ValueError("hitl.escalation.channels must name at least one of SMS, INAPP")
+        return self
+
+
+class HitlConfig(BaseModel):
+    """The ``hitl:`` block of an operator profile. Typed so pydantic's ``extra="ignore"`` does
+    not silently drop it (CONFORMANCE B-13); every field has a spec default."""
+
+    escalation: HitlEscalationConfig = Field(default_factory=HitlEscalationConfig)
+
+
 class OperatorConfig(BaseModel):
     operator_id: str
     display_name: str
@@ -112,6 +164,9 @@ class OperatorConfig(BaseModel):
     # names no recipients still loads, it simply cannot send to a named ref — and a ref that
     # is missing or empty REFUSES the dispatch instead of falling back to DEMO_EMAIL_TO.
     notification_recipients: dict[str, list[str]] = Field(default_factory=dict)
+    # §6.5 escalation ladder. Typed (not ``dict[str, Any]``) so the YAML is validated when the
+    # profile loads and a profile with no ``hitl:`` block gets the spec's own defaults.
+    hitl: HitlConfig = Field(default_factory=HitlConfig)
     recurrence: dict[str, Any] = Field(default_factory=dict)
     broadcast: dict[str, Any] = Field(default_factory=dict)
     mpesa_risk: MpesaRiskConfig = Field(default_factory=MpesaRiskConfig)

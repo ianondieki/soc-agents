@@ -99,6 +99,7 @@ from noc_agents.scheduler import JobCard, JobResult
 from noc_agents.services.clock import fmt_eat, z_utc
 from noc_agents.services.evidence import get_or_build_pack
 from noc_agents.services.hitl import compose_alert, envelope_payload, is_raiser
+from noc_agents.services.hitl_escalation import escalation_state, unclaimed_minutes, wallboard_red_tasks
 
 if TYPE_CHECKING:  # typing only — keeps the import graph of a flag-off process unchanged
     from noc_agents.config import AppSettings
@@ -111,6 +112,7 @@ __all__ = [
     "DEFAULT_DEADLINE_HOURS",
     "DEFAULT_SIGNIFICANCE",
     "DISPATCH_KEY",
+    "HITL_ESCALATION_KEY",
     "REGULATORY_ENABLED_ENV",
     "REGULATORY_JOB",
     "REGULATORY_RAISER",
@@ -130,6 +132,7 @@ __all__ = [
     "evaluate_and_open",
     "evaluate_significance",
     "incident_notifications",
+    "note_hitl_escalations",
     "notice_text",
     "record_dispatch_outcome",
     "regulatory_enabled",
@@ -195,6 +198,11 @@ COUNTDOWN_THRESHOLDS_H: tuple[int, ...] = (12, 2)
 COUNTDOWN_FIRED_KEY = "countdown_fired"
 REASON_FOR_DELAY_KEY = "reason_for_delay"
 RELEASE_KEY = "release"
+#: §6.5, the ladder's last rung: a P1/P2 approval on this incident has sat unclaimed past the
+#: Wallboard rung (T+30), and the sweep noted it on the CA 24-h card. Written once per
+#: (notice, task) by :func:`note_hitl_escalations`; read back by :func:`countdown`. A note, not a
+#: send: the notice's status, its draft and its outbox rows are untouched.
+HITL_ESCALATION_KEY = "hitl_escalation"
 #: The terminal outcome of the outbox row, written by :func:`record_dispatch_outcome`.
 DISPATCH_KEY = "dispatch"
 
@@ -468,6 +476,9 @@ def countdown(notice: RegulatoryNotificationRow, *, now: datetime | None = None)
         "thresholds_fired": fired,
         "next_threshold_hours": min(pending) if pending else None,
         "hitl_task_id": notice.hitl_task_id,
+        # §6.5 T+30: the unclaimed approval the escalation ladder flagged on this incident, as
+        # the sweep noted it (None until it has). Additive; every reader ignores it today.
+        HITL_ESCALATION_KEY: notice.significance.get(HITL_ESCALATION_KEY),
     }
 
 
@@ -1162,9 +1173,13 @@ class SweepReport:
     fired: list[dict[str, Any]] = field(default_factory=list)  # {notification_id, threshold_hours}
     overdue: int = 0
     enabled: bool = True
+    hitl_noted: list[dict[str, Any]] = field(default_factory=list)  # {notification_id, task_id} (§6.5 T+30)
 
     def __str__(self) -> str:
-        return f"regulatory sweep: checked={self.checked} fired={len(self.fired)} overdue={self.overdue}"
+        return (
+            f"regulatory sweep: checked={self.checked} fired={len(self.fired)} overdue={self.overdue} "
+            f"hitl_noted={len(self.hitl_noted)}"
+        )
 
 
 def _mark_countdown_fired(session: Session, notice: RegulatoryNotificationRow, thresholds: list[int]) -> bool:
@@ -1271,7 +1286,97 @@ def sweep_deadlines(session: Session, cfg: OperatorConfig, *, now: datetime | No
         threshold = min(crossed)
         buffer_event(session, _deadline_event(notice, inc, threshold, now=now))
         report.fired.append({"notification_id": notice.id, "kind": notice.kind, "threshold_hours": threshold})
+    report.hitl_noted = note_hitl_escalations(session, cfg, now=now)
     return report
+
+
+# ------------------------------------------------------------- the §6.5 T+30 note on the card
+
+
+def _note_hitl_escalation(session: Session, notice: RegulatoryNotificationRow, note: dict[str, Any]) -> bool:
+    """Compare-and-set ``significance_json.hitl_escalation``. True when THIS call won.
+
+    The same discipline as :func:`_mark_countdown_fired`, for the same two reasons: two tickers
+    racing and a crash between the write and the commit. The loser writes nothing; a rollback
+    discards the note and the audit row together, and the next sweep tries again.
+    """
+    before = notice.significance_json or "{}"
+    data = json.loads(before)
+    data[HITL_ESCALATION_KEY] = note
+    after = json.dumps(data, sort_keys=True, default=str)
+    changed = session.execute(
+        update(RegulatoryNotificationRow)
+        .where(RegulatoryNotificationRow.id == notice.id, RegulatoryNotificationRow.significance_json == before)
+        .values(significance_json=after)
+    ).rowcount
+    if changed == 1:
+        session.refresh(notice)
+    return changed == 1
+
+
+def note_hitl_escalations(session: Session, cfg: OperatorConfig, *, now: datetime | None = None) -> list[dict[str, Any]]:
+    """§6.5, the ladder's last rung: note a red (T+30, still unclaimed) P1/P2 approval on the
+    incident's open CA 24-h card. Draft-only; sends nothing; touches no status.
+
+    Only open ``CA_OUTAGE_24H`` cards (DRAFT / PENDING_APPROVAL) -- the spec names that card,
+    and a notice already released or not required has nothing left for a reader to act on.
+    One note per (notice, task): the first red card on the incident is what the officer sees,
+    with the minutes it had waited when noted; the ladder's own mark on the task carries the
+    live figure. A card that has since been claimed or decided is not red any more
+    (``wallboard_red_tasks`` re-checks), so a stale note is never written.
+    """
+    now = now or utcnow()
+    noted: list[dict[str, Any]] = []
+    notices = session.scalars(
+        _owned(RegulatoryNotificationRow)
+        .where(
+            RegulatoryNotificationRow.operator_id == cfg.operator_id,
+            RegulatoryNotificationRow.kind == "CA_OUTAGE_24H",
+            RegulatoryNotificationRow.status.in_((DRAFT, PENDING_APPROVAL)),
+        )
+        .order_by(RegulatoryNotificationRow.due_at.asc())
+    ).all()
+    for notice in notices:
+        red = wallboard_red_tasks(session, operator_id=cfg.operator_id, incident_id=notice.incident_id)
+        if not red:
+            continue
+        task = red[0]
+        already = notice.significance.get(HITL_ESCALATION_KEY) or {}
+        if already.get("task_id") == task.id:
+            continue
+        inc = session.get(IncidentRow, notice.incident_id)
+        if inc is None:
+            continue
+        state = escalation_state(task)
+        note = {
+            "task_id": task.id,
+            "task_type": task.task_type,
+            "priority": inc.priority,
+            "unclaimed_minutes": unclaimed_minutes(task, now),
+            "level_minutes": state.get("level_minutes"),
+            "red_since": state.get("red_since"),
+            "red_since_eat": state.get("red_since_eat"),
+            "noted_at": now.isoformat(),
+            "noted_at_eat": fmt_eat(now, "%Y-%m-%d %H:%M"),
+            "note": (
+                f"{inc.priority} {task.task_type} for {inc.incident_number} has sat unclaimed for "
+                f"{unclaimed_minutes(task, now)} min (§6.5 escalation ladder, T+{state.get('level_minutes')}); "
+                "the outage notification may be waiting on a decision nobody has taken"
+            ),
+        }
+        if not _note_hitl_escalation(session, notice, note):
+            continue
+        _audit(
+            session,
+            inc,
+            actor=REGULATORY_RAISER,
+            action="regulatory.hitl_escalation_noted",
+            entity_id=notice.id,
+            rationale=note["note"] + "; noted on the CA 24-h card only, nothing sent",
+            payload={"task_id": task.id, "task_type": task.task_type, "unclaimed_minutes": note["unclaimed_minutes"], "status": notice.status},
+        )
+        noted.append({"notification_id": notice.id, "task_id": task.id})
+    return noted
 
 
 # ------------------------------------------------------------------------------- the job card
@@ -1298,6 +1403,7 @@ def regulatory_sweep_job(session: Session, settings: "AppSettings") -> JobResult
                 "checked": report.checked,
                 "fired": len(report.fired),
                 "overdue": report.overdue,
+                "hitl_noted": len(report.hitl_noted),
             },
         ),
     )

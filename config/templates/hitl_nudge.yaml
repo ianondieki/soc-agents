@@ -1,0 +1,93 @@
+# OWNER DECISION D4 (2026-09-17): message language is ENGLISH ONLY.
+# Kiswahili is out of scope -- the translations_pending blocks below are permanent,
+# not a to-do, and no reviewer is being sought. See docs/DECISIONS.md.
+# =============================================================================
+# hitl_nudge -- the INTERNAL "a decision is waiting" message of the §6.5 escalation
+# ladder (services/hitl_escalation.py). Sent to the on-duty supervisor at T+5 min
+# and to the duty manager at T+15 min when a P1/P2 approval card sits unclaimed.
+#
+# WHAT IT IS NOT. It is not a broadcast and it carries no incident narrative: no
+# headline, no body, no site name, no owner, no person's name. It names the card
+# (task type, incident number or entity), the priority, how long it has waited and
+# who is being fetched. That is the whole point of the spec's "deterministic text,
+# no incident narrative": the nudge exists to send a human to the inbox, not to
+# leak the draft it is guarding onto a phone.
+#
+# PRE-APPROVED BY POLICY. §6.5 calls this an "INTERNAL, pre-approved-by-policy
+# SMS/in-app nudge", so both channels seed APPROVED with the same policy-shaped
+# approver convention site_down_alert@1 uses. A named human can still PAUSE it
+# through PUT /api/v1/templates/{id}/status, and the ladder then records every
+# nudge it could not send as SUPPRESSED with the reason instead of inventing text.
+#
+# VARIABLES. This is the one template_key whose params are NOT envelope fields: an
+# unclaimed card may have no envelope at all (a task raised without an incident).
+# services/templates.py:HITL_NUDGE_PARAMS is its vocabulary, validated at seed
+# time exactly as ALLOWED_PARAMS is for the envelope templates.
+# =============================================================================
+template_key: hitl_nudge
+title: "HITL escalation nudge (internal; a decision is waiting)"
+notes: >
+  Queued as outbox kind HITL_NUDGE, one row per task per rung per channel under a
+  deterministic idempotency key, so a restart never nudges twice. Audience is
+  always NOC_SHIFT. Nothing here can release, approve, reject or claim a card.
+
+channels:
+
+  # ---------------------------------------------------------------------------
+  SMS:
+    version: 1
+    encoding: GSM7
+    params:
+      priority: string
+      task_type: string
+      subject: string
+      unclaimed_minutes: integer
+      escalation_target: string
+    languages:
+      en:
+        # One GSM-7 segment for every realistic value (measured by the seeder: the
+        # literal text is GSM-7; the variables are short tokens). No em dash, no
+        # smart quotes: an internal nudge must not cost a UCS-2 segment.
+        body: |-
+          NOC HITL: {{ priority }} {{ task_type }} for {{ subject }} unclaimed {{ unclaimed_minutes }} min. A decision is waiting in the HITL inbox ({{ escalation_target }}).
+        approval:
+          status: APPROVED
+          # Policy, not a person, on purpose (§6.5: "pre-approved-by-policy"). The
+          # same convention as site_down_alert@1's policy:v1_fidelity. A named human
+          # who takes ownership of NOC wording replaces this through set_status.
+          approved_by: "policy:hitl_escalation"
+          approved_at: 2026-09-22T00:00:00Z
+          note: >
+            Internal text with no incident narrative and no personal data; §6.5
+            makes it pre-approved by policy so the ladder can run when nobody is
+            looking at the card.
+    translations_pending:
+      sw:
+        reason: >
+          Internal NOC register ("HITL", "unclaimed"); English only under D4. The
+          nudge fetches an English-working supervisor to an English inbox.
+
+  # ---------------------------------------------------------------------------
+  INAPP:
+    version: 1
+    params:
+      priority: string
+      task_type: string
+      subject: string
+      unclaimed_minutes: integer
+      escalation_target: string
+    languages:
+      en:
+        body: |-
+          Decision waiting: {{ priority }} {{ task_type }} for {{ subject }} has been unclaimed for {{ unclaimed_minutes }} min. Escalated to {{ escalation_target }}. Open the HITL inbox to claim it.
+        approval:
+          status: APPROVED
+          approved_by: "policy:hitl_escalation"
+          approved_at: 2026-09-22T00:00:00Z
+          note: >
+            Same text policy as the SMS; delivered to the NOC_SHIFT glass through
+            the realtime hub (hitl.nudge) once the outbox row is dispatched.
+    translations_pending:
+      sw:
+        reason: >
+          Same register as the SMS; English only under D4.

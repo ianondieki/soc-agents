@@ -68,8 +68,15 @@ from urllib.parse import urlencode
 
 import httpx
 
-from noc_agents.adapters.kmd_cap import DeadlineWatchdog, _per_wait
-from noc_agents.adapters.weather import DEFAULT_TIMEOUT_S, WeatherError, default_client
+from noc_agents.adapters.weather import (
+    DEFAULT_TIMEOUT_S,
+    DeadlineWatchdog,
+    DnsTimeout,
+    WeatherError,
+    _per_wait,
+    default_client,
+    resolve_within_deadline,
+)
 
 log = logging.getLogger("noc_agents.adapters.flood")
 
@@ -183,6 +190,11 @@ def _get_json(client: httpx.Client, url: str, *, timeout_s: float | None = None)
     headers = {"Accept": "application/json", "Accept-Encoding": "identity", "Connection": "close"}
     per_wait = _per_wait(client, timeout_s)
     try:
+        # Resolution is outside the watchdog's reach, so it gets the same budget (finding DNS).
+        try:
+            resolve_within_deadline(url, timeout_s)
+        except DnsTimeout as exc:
+            raise FloodError("timeout", f"flood API: {exc}") from exc
         with client.stream(
             "GET", url, headers=headers, timeout=per_wait, extensions={"trace": watchdog.trace}
         ) as response:

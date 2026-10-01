@@ -43,6 +43,9 @@ os.environ["REGULATORY_ENABLED"] = "false"
 os.environ["HOUSEKEEPING_ENABLED"] = "false"
 os.environ["HOUSEKEEPING_APPLY"] = "false"
 os.environ["MEMORY_ENABLED"] = "false"
+# Phase 2 escalation ladder (§6.5), same reasoning: a shell that has it exported would
+# queue nudge rows under the suite's HITL tests.
+os.environ["HITL_ESCALATION_ENABLED"] = "false"
 # Phase 5 lanes, same reasoning.
 os.environ["MAINTENANCE_ENABLED"] = "false"
 os.environ["CONTRACTS_ENABLED"] = "false"

@@ -158,6 +158,7 @@ from typing import Any, Callable, Iterable, Sequence
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from noc_agents.agents.recurrence import problem_signature
@@ -233,7 +234,11 @@ __all__ = [
     "Period",
     "PeriodReport",
     "ScorecardComputation",
+    "REFUSAL_GUARD",
+    "REFUSAL_RELEASED",
+    "REFUSAL_TABLE",
     "ScorecardGateError",
+    "ScorecardJobError",
     "ScorecardPermissionError",
     "ScorecardStateError",
     "SiteUnavailability",
@@ -248,6 +253,7 @@ __all__ = [
     "compute_vendor_period",
     "data_quality_gate",
     "dispute_window_end",
+    "failure_reason",
     "finalise_scorecard",
     "gate_passes",
     "gather_facts",
@@ -364,6 +370,46 @@ class ScorecardGateError(ScorecardStateError):
 
 class ScorecardPermissionError(PermissionError):
     """The acting role may not do this to a scorecard (route: 403)."""
+
+
+class ScorecardJobError(RuntimeError):
+    """What ``close_periods`` raises in place of the exception that stopped it. Its message is
+    ``failure_reason(original)`` -- the class name and, for an IntegrityError, the constraint
+    clause -- because the scheduler runner persists ``str(exc)`` of whatever a job raises into
+    ``agent_runs.error_summary``, which ``GET /api/v1/runs`` serves to every reader role."""
+
+
+#: The three refusals ``POST /scorecards/compute`` answers with a 409. Each detail STARTS with
+#: exactly one of these, so a page can tell them apart without parsing the rest; the rest is
+#: free text that may change. (The transition routes' 409s are the service's own fixed
+#: messages: "WITHHELD: ...", "first period ... shadow review ...", "already ...", "only a
+#: SHADOW card ...", "the dispute window is still open", "a line has an OPEN dispute ...".)
+REFUSAL_RELEASED = "cannot recompute a released card"
+REFUSAL_GUARD = "evidence guard refused the write"
+REFUSAL_TABLE = "the card could not be written"
+
+#: What a SQLite constraint failure looks like in ``exc.orig``: the keyword, then the
+#: constraint name or the column list -- never a value. Anything else in an error text (the
+#: statement, the bound parameters SQLAlchemy appends to ``str(exc)``) is exactly what must not
+#: be recorded, so the clause is CUT OUT of ``exc.orig`` rather than the rest cut off.
+_CONSTRAINT_CLAUSE = re.compile(r"((?:CHECK|UNIQUE|NOT NULL|FOREIGN KEY|PRIMARY KEY) constraint failed(?::\s*[\w.]+(?:,\s*[\w.]+)*)?)")
+
+
+def failure_reason(exc: BaseException) -> str:
+    """A fixed, non-sensitive description of why a computation stopped (reading 15, S08).
+
+    The exception CLASS, and for an ``IntegrityError`` the constraint clause only
+    (``UNIQUE constraint failed: vendor_scorecard_lines.id``). Never ``str(exc)``: for a
+    database error that text carries the statement and its bound parameters -- an unreleased
+    card's line values -- and it would be persisted into ``agent_runs`` / ``agent_run_steps``,
+    which ``GET /api/v1/runs`` serves to roles that may not see a SHADOW or WITHHELD card.
+    """
+    name = type(exc).__name__
+    if isinstance(exc, IntegrityError):
+        origin = str(exc.orig) if exc.orig is not None else ""
+        match = _CONSTRAINT_CLAUSE.search(origin)
+        return f"{name}: {match.group(1)}" if match else f"{name}: constraint failed"
+    return name
 
 
 # ------------------------------------------------------------------------------------ periods
@@ -1776,8 +1822,8 @@ def compute_scorecard(
     card = _existing_card(session, vendor, bounds.label)
     if card is not None and card.status not in RECOMPUTABLE_STATUSES:
         raise ScorecardStateError(
-            f"scorecard {bounds.label} for {vendor.code} is {card.status}: it cannot be recomputed. "
-            "Correct a published line through a dispute, or create a correction period (§7.6.6)."
+            f"{REFUSAL_RELEASED}: scorecard {bounds.label} for {vendor.code} is {card.status} -- "
+            "correct a published line through a dispute, or create a correction period (§7.6.6)"
         )
 
     comp = compute_vendor_period(session, cfg, vendor, bounds, terms=terms)
@@ -2110,6 +2156,7 @@ def compute_on_request(
         # own committed run -- the only commit this function makes, and it persists nothing but
         # that record -- and re-raise the ORIGINAL exception for the caller to map (400/404/409).
         session.rollback()
+        log.warning("scorecard: compute %s failed (%s)", input_summary, failure_reason(exc), exc_info=exc)  # the log, not the run row
         _record_failed_run(session, cfg.operator_id, run.id, input_summary, exc)
         raise
     tracker.complete_step(step, status=SUCCEEDED, output_summary=report.summary(), rationale="arithmetic only; nothing published, nothing sent; per-vendor detail in audit_events", confidence=None)
@@ -2119,8 +2166,11 @@ def compute_on_request(
 
 def _record_failed_run(session: Session, operator_id: str, run_id: str, input_summary: str, exc: BaseException) -> None:
     """After a rollback: a FAILED ``agent_runs`` row (same id, so the caller's ``run_id`` stays
-    true) with one FAILED step naming the error, committed on its own. Best effort -- a second
-    failure here must not mask the first, so it is logged and swallowed."""
+    true) with one FAILED step naming the error by ``failure_reason`` -- the class and, for an
+    IntegrityError, the constraint clause; never ``str(exc)``, which for a database error
+    carries the bound parameters of an unreleased card's lines into a READERS surface --
+    committed on its own. Best effort: a second failure here must not mask the first, so it is
+    logged and swallowed."""
     from noc_agents.graph.instrumentation import RunTracker
 
     try:
@@ -2130,8 +2180,9 @@ def _record_failed_run(session: Session, operator_id: str, run_id: str, input_su
         session.flush()
         tracker = RunTracker(session, run)
         step = tracker.start_step(JOB_NAME, AGENT, input_summary)
-        tracker.complete_step(step, status=FAILED, output_summary="", rationale=f"{type(exc).__name__}: {exc}"[:2000], confidence=None)
-        tracker.finish_run(FAILED, error=str(exc)[:2000])
+        reason = failure_reason(exc)
+        tracker.complete_step(step, status=FAILED, output_summary="", rationale=reason, confidence=None)
+        tracker.finish_run(FAILED, error=reason)
         session.commit()
     except Exception:  # noqa: BLE001 -- the original error is the one the caller must see
         log.exception("scorecard: could not record the failed run %s", run_id)
@@ -2156,8 +2207,9 @@ def close_periods(session: Session, settings: AppSettings) -> JobResult:
     because ``POST /scheduler/run/{job}`` runs a job whatever its card says. When it does
     run it computes the last ENDED period for each vendor that has no card for it yet, and
     stops: it never recomputes, never publishes, never finalises and never sends. A missing
-    or unversioned terms file raises, so the runner records a FAILED run -- a scorecard job
-    "must stop, not compute on air" (``services.vendors.load_sla_terms``).
+    or unversioned terms file, or a write the table refuses, raises ``ScorecardJobError`` --
+    carrying ``failure_reason`` of the cause, never its text -- so the runner records a FAILED
+    run: a scorecard job "must stop, not compute on air" (``services.vendors.load_sla_terms``).
     """
     if not lane_enabled():
         return JobResult(summary=f"{FLAG} is off: nothing computed", rationale="lane disabled; the job is inert")
@@ -2173,7 +2225,17 @@ def close_periods(session: Session, settings: AppSettings) -> JobResult:
         session.add(own_run)
         session.flush()
         run_id = own_run.id
-    report = compute_period(session, cfg, period, run_id=run_id, only_missing=True)
+    try:
+        report = compute_period(session, cfg, period, run_id=run_id, only_missing=True)
+    except Exception as exc:
+        # ``scheduler.loop.run_job`` records ``f"{type(exc).__name__}: {exc}"`` of whatever a
+        # job raises -- into agent_runs.error_summary, the step and the agent.run.finished
+        # event -- and for a database error that text carries an unreleased card's line values.
+        # So the job never lets the original out: it rolls back and raises a ScorecardJobError
+        # whose message is the safe reason. The full exception goes to the log only.
+        session.rollback()
+        log.warning("scorecard: %s failed for period %s (%s)", JOB_NAME, period, failure_reason(exc), exc_info=exc)
+        raise ScorecardJobError(f"{failure_reason(exc)} (period {period}; the full error is in the application log)") from None
     if own_run is not None:
         own_run.status, own_run.finished_at = SUCCEEDED, utcnow()
     session.commit()
