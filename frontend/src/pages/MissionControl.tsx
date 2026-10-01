@@ -1,14 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { api, runLiveRainStorm } from "../api";
+import { api } from "../api";
+import { AUTO_STORM_KEY } from "../App";
+import LiveRunPanel from "../components/LiveRunPanel";
 import { fmtTime } from "../lib/time";
 // One run-status palette and one error line for both run lists (A-13), so the two pages
 // cannot drift apart again.
 import { RunError, runChip } from "./Agents";
 import { describeEvent, type NocEvent } from "../realtime/renderers";
 import { hitlSubject } from "../lib/hitlSubject";
-
-const AUTO_KEY = "noc_auto_storm_v1";
 
 export default function MissionControl({
   metrics,
@@ -18,6 +18,11 @@ export default function MissionControl({
   runsRev,
   quietMode = false,
   suppressed = 0,
+  storming,
+  stormProg,
+  stormErr,
+  onLaunchStorm,
+  onOpenGuide,
   onOpen,
   onRefresh,
 }: {
@@ -29,6 +34,12 @@ export default function MissionControl({
   runsRev: number;
   quietMode?: boolean;
   suppressed?: number;
+  /** The live storm is owned by App so the guided demo can start it from any page. */
+  storming: boolean;
+  stormProg: string;
+  stormErr: string;
+  onLaunchStorm: (reason: string) => Promise<void> | void;
+  onOpenGuide: () => void;
   onOpen: (id: string) => void;
   onRefresh?: () => void;
 }) {
@@ -36,9 +47,8 @@ export default function MissionControl({
   const [incidents, setIncidents] = useState<any[]>([]);
   const [hitl, setHitl] = useState<any[]>([]);
   const [runs, setRuns] = useState<any[]>([]);
-  const [storming, setStorming] = useState(false);
-  const [stormProg, setStormProg] = useState("");
   const [err, setErr] = useState("");
+  const [chase, setChase] = useState("");
   const autoStarted = useRef(false);
 
   const loadIncidents = () => api.incidents().then(setIncidents).catch((e) => setErr(String(e)));
@@ -67,38 +77,6 @@ export default function MissionControl({
   const open = incidents.filter((i) => !["CLOSED", "CANCELLED"].includes(i.status));
   const maxRegion = Math.max(1, ...Object.values(metrics?.by_region || { x: 1 }).map(Number));
 
-  const launchStorm = async (reason: string) => {
-    if (storming) return;
-    setStorming(true);
-    setStormProg(`${reason} — contacting agents…`);
-    setErr("");
-    try {
-      const result = await runLiveRainStorm((i, total, inc) => {
-        setStormProg(
-          `LIVE ${i}/${total} · ${inc.incident_number} · ${inc.region_code} · ${inc.site_id} · ` +
-            `${inc.failure_domain} → ${inc.responsible_msp || inc.msp_name || inc.assignee_name}`
-        );
-        loadLists();
-        onRefresh?.();
-      }, 1500);
-      setStormProg(
-        `Storm complete — ${result.count} events. HUBs major; child sites cascaded under parents. Check HITL for P2s.`
-      );
-      loadLists();
-      onRefresh?.();
-      try {
-        sessionStorage.setItem(AUTO_KEY, "1");
-      } catch {
-        /* ignore */
-      }
-    } catch (e: any) {
-      setErr(e?.message || String(e));
-      setStormProg("");
-    } finally {
-      setStorming(false);
-    }
-  };
-
   // Auto-run storm once when board is empty so first visit always has live demo data
   useEffect(() => {
     if (autoStarted.current) return;
@@ -106,7 +84,7 @@ export default function MissionControl({
     if ((metrics.open_total ?? 0) > 0) return;
     let skipped = false;
     try {
-      skipped = sessionStorage.getItem(AUTO_KEY) === "1";
+      skipped = sessionStorage.getItem(AUTO_STORM_KEY) === "1";
     } catch {
       skipped = false;
     }
@@ -115,11 +93,13 @@ export default function MissionControl({
     autoStarted.current = true;
     // small delay so WS can connect
     const t = window.setTimeout(() => {
-      launchStorm("Auto demo — empty board");
+      onLaunchStorm("Auto demo on an empty board");
     }, 900);
     return () => window.clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [metrics?.open_total]);
+
+  const banner = err || stormErr || chase || stormProg;
 
   return (
     <div>
@@ -127,25 +107,28 @@ export default function MissionControl({
         <div>
           <h1>Mission Control</h1>
           <p className="lead">
-            Live multi-agent NOC for Safaricom-scale ops (~7,000 sites). Agent steps stream here as they
-            run. Heavy rains hit Rift, Mt Kenya and Nairobi East — microwave hops fail, child sites
-            cascade under HUB majors.
+            Live multi-agent NOC for Safaricom-scale ops (~7,000 sites). Every alarm runs the twelve agents below;
+            the rail shows the newest one hop by hop. Heavy rain in Rift, Mt Kenya and Nairobi East takes microwave
+            hops down and cascades child sites under their HUB majors.
           </p>
         </div>
         <div className="hero-actions">
-          <button
-            className="btn storm"
-            disabled={storming}
-            onClick={() => launchStorm("Manual storm launch")}
-          >
-            {storming ? "Storm in progress…" : "Launch heavy-rain MW storm (LIVE)"}
+          <button className="btn storm" disabled={storming} onClick={() => onLaunchStorm("Manual storm launch")}>
+            {storming ? "Storm in progress…" : "Launch heavy-rain storm (live)"}
+          </button>
+          <button className="btn" onClick={onOpenGuide} title="Five steps for presenting the prototype">
+            Guided demo
           </button>
           <button
             className="btn"
             disabled={storming}
             onClick={async () => {
-              const r = await api.monitorTick();
-              setStormProg(`WorklogMonitor chased ${r.chased} ticket(s)`);
+              try {
+                const r = await api.monitorTick();
+                setChase(`Worklog monitor chased ${r.chased} ticket${r.chased === 1 ? "" : "s"} for silence.`);
+              } catch (e: any) {
+                setChase(`SLA chase failed: ${e?.message || e}`);
+              }
               onRefresh?.();
               loadLists();
             }}
@@ -155,12 +138,12 @@ export default function MissionControl({
         </div>
       </div>
 
-      {(stormProg || err) && (
+      {banner && (
         <div className="storm-banner">
           <div>
             {storming && <span className="live-dot" />}
             <strong>{storming ? "Live scenario executing" : "Scenario status"}</strong>
-            <div className="storm-progress">{err || stormProg}</div>
+            <div className="storm-progress">{err || stormErr || chase || stormProg}</div>
           </div>
           {storming && <span className="chip accent">AGENTS EXECUTING</span>}
         </div>
@@ -207,6 +190,10 @@ export default function MissionControl({
         </div>
       </div>
 
+      <div style={{ marginBottom: "1rem" }}>
+        <LiveRunPanel events={events} runsRev={runsRev} onOpen={onOpen} />
+      </div>
+
       <div className="grid-3">
         <div className="panel">
           <div className="panel-head">
@@ -216,8 +203,8 @@ export default function MissionControl({
           <div className="list">
             {open.length === 0 && !storming && (
               <div className="empty">
-                No open incidents yet. Auto-demo will start, or click{" "}
-                <strong>Launch heavy-rain MW storm (LIVE)</strong>.
+                No open incidents yet. The demo starts on its own, or click{" "}
+                <strong>Launch heavy-rain storm (live)</strong>.
               </div>
             )}
             {open.length === 0 && storming && (

@@ -1,8 +1,9 @@
 import { NavLink, Route, Routes, useLocation, useNavigate } from "react-router-dom";
-import { useCallback, useEffect, useState } from "react";
-import { api } from "./api";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { api, runLiveRainStorm } from "./api";
 import { useRealtime } from "./realtime/useRealtime";
 import { RealtimeProvider } from "./realtime/RealtimeContext";
+import DemoGuide from "./components/DemoGuide";
 import MissionControl from "./pages/MissionControl";
 import IncidentBoard from "./pages/IncidentBoard";
 import IncidentWorkspace from "./pages/IncidentWorkspace";
@@ -19,6 +20,50 @@ import WorkflowMap from "./pages/WorkflowMap";
 import Contracts from "./pages/Contracts";
 import Pirs from "./pages/Pirs";
 import Scorecards from "./pages/Scorecards";
+import Showcase from "./pages/Showcase";
+
+/** Mission Control auto-runs the storm once per browser session when the board is empty. */
+export const AUTO_STORM_KEY = "noc_auto_storm_v1";
+
+/** The sidebar, grouped by who reaches for it: the shift, the agent story, quality, platform. */
+const NAV_GROUPS: { title: string; links: { to: string; label: string; end?: boolean }[] }[] = [
+  {
+    title: "Operate",
+    links: [
+      { to: "/", label: "Mission Control", end: true },
+      { to: "/incidents", label: "Incident Board" },
+      { to: "/hitl", label: "HITL Inbox" },
+      { to: "/shift", label: "Shift Desk" },
+      { to: "/wallboard", label: "Wallboard" },
+    ],
+  },
+  {
+    title: "Agents",
+    links: [
+      { to: "/showcase", label: "Showcase" },
+      { to: "/agents", label: "Agent Observatory" },
+      { to: "/workflow", label: "Workflow Map" },
+    ],
+  },
+  {
+    title: "Quality",
+    links: [
+      { to: "/problems", label: "Problems" },
+      { to: "/regions", label: "Regions" },
+      { to: "/maintenance", label: "Maintenance" },
+      { to: "/pirs", label: "PIRs" },
+      { to: "/scorecards", label: "Vendor Scorecards" },
+      { to: "/contracts", label: "Contracts" },
+    ],
+  },
+  {
+    title: "Platform",
+    links: [
+      { to: "/audit", label: "Audit" },
+      { to: "/settings", label: "Settings / Inject" },
+    ],
+  },
+];
 
 export default function App() {
   const [profile, setProfile] = useState<any>(null);
@@ -26,6 +71,8 @@ export default function App() {
   const [session, setSession] = useState<any>({ display_name: "NOC Analyst", role: "noc_analyst" });
   const [apiOk, setApiOk] = useState(true);
   const [manualTick, setManualTick] = useState(0);
+  const [navOpen, setNavOpen] = useState(false);
+  const [guideOpen, setGuideOpen] = useState(false);
   const nav = useNavigate();
   const loc = useLocation();
 
@@ -71,6 +118,56 @@ export default function App() {
     }
   }, [quietMode]);
 
+  // The phone menu closes on every route change.
+  useEffect(() => {
+    setNavOpen(false);
+  }, [loc.pathname]);
+
+  // --- the live storm, owned here so the guided demo can start it from any page ------
+  const stormingRef = useRef(false);
+  const [storming, setStorming] = useState(false);
+  const [stormProg, setStormProg] = useState("");
+  const [stormErr, setStormErr] = useState("");
+  const [firstStormIncident, setFirstStormIncident] = useState<string | null>(null);
+
+  const launchStorm = useCallback(
+    async (reason: string) => {
+      if (stormingRef.current) return;
+      stormingRef.current = true;
+      setStorming(true);
+      setStormProg(`${reason}: contacting the agents…`);
+      setStormErr("");
+      try {
+        const result = await runLiveRainStorm((i, total, inc) => {
+          setStormProg(
+            `Alarm ${i} of ${total} · ${inc.incident_number} · ${inc.region_code} · ${inc.site_id} · ` +
+              `${inc.failure_domain} → ${inc.responsible_msp || inc.msp_name || inc.assignee_name}`
+          );
+          if (i === 1 && inc?.id) setFirstStormIncident(inc.id);
+          refresh();
+          setManualTick((t) => t + 1);
+        }, 1500);
+        setStormProg(
+          `Storm complete: ${result.count} alarms. HUB majors opened; child sites folded under their parents. P2 broadcasts wait in the HITL inbox.`
+        );
+        refresh();
+        setManualTick((t) => t + 1);
+        try {
+          sessionStorage.setItem(AUTO_STORM_KEY, "1");
+        } catch {
+          /* ignore */
+        }
+      } catch (e: any) {
+        setStormErr(e?.message || String(e));
+        setStormProg("");
+      } finally {
+        stormingRef.current = false;
+        setStorming(false);
+      }
+    },
+    [refresh]
+  );
+
   const isWall = loc.pathname.startsWith("/wallboard");
 
   if (isWall) {
@@ -95,35 +192,43 @@ export default function App() {
   return (
     <RealtimeProvider value={realtime}>
       <div className="app">
-        <nav className="nav">
-          <div className="brand">
-            Kenya NOC
-            <div className="muted">Mission Control · Safaricom</div>
+        <nav className={"nav" + (navOpen ? " open" : "")} aria-label="Main">
+          <div className="nav-brand-row">
+            <div className="brand">
+              Kenya NOC
+              <div className="muted">Mission Control · Safaricom</div>
+            </div>
+            <button
+              type="button"
+              className="btn nav-toggle"
+              aria-expanded={navOpen}
+              aria-controls="nav-links"
+              onClick={() => setNavOpen((o) => !o)}
+            >
+              {navOpen ? "Close" : "Menu"}
+            </button>
           </div>
-          <NavLink to="/" end>
-            Mission Control
-          </NavLink>
-          <NavLink to="/incidents">Incident Board</NavLink>
-          <NavLink to="/hitl">HITL Inbox</NavLink>
-          <NavLink to="/shift">Shift Desk</NavLink>
-          <NavLink to="/agents">Agent Observatory</NavLink>
-          <NavLink to="/workflow">Workflow Map</NavLink>
-          <NavLink to="/problems">Problems</NavLink>
-          <NavLink to="/regions">Regions</NavLink>
-          <NavLink to="/maintenance">Maintenance</NavLink>
-          <NavLink to="/audit">Audit</NavLink>
-          <NavLink to="/contracts">Contracts</NavLink>
-          <NavLink to="/pirs">PIRs</NavLink>
-          <NavLink to="/scorecards">Vendor Scorecards</NavLink>
-          <NavLink to="/wallboard">Wallboard</NavLink>
-          <NavLink to="/settings">Settings / Inject</NavLink>
+          <div className="nav-links" id="nav-links">
+            {NAV_GROUPS.map((g) => (
+              <div key={g.title} className="nav-group">
+                <div className="nav-group-title">{g.title}</div>
+                <div className="nav-group-links">
+                  {g.links.map((l) => (
+                    <NavLink key={l.to} to={l.to} end={l.end}>
+                      {l.label}
+                    </NavLink>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
         </nav>
         <div className="main">
           <header className="topbar">
             <div className="chips">
               <span className="chip accent">{profile?.display_name || "Connecting…"}</span>
               <span className="chip">{profile?.autonomy_level || "L2"}</span>
-              <span className="chip">
+              <span className="chip chip-wide">
                 {(profile?.shift ? String(profile.shift).toUpperCase() : "DAY") + " SHIFT"}
               </span>
               <span className={"chip " + (connected ? "ok" : "bad")}>
@@ -131,9 +236,9 @@ export default function App() {
               </span>
               <span className={"chip " + (apiOk ? "ok" : "bad")}>{apiOk ? "API OK" : "API DOWN"}</span>
               <span className="chip hitl">HITL {metrics?.hitl_pending ?? 0}</span>
-              <span className="chip">Open {metrics?.open_total ?? 0}</span>
-              <span className="chip">P1 {metrics?.by_priority?.P1 ?? 0}</span>
-              <span className="chip">P2 {metrics?.by_priority?.P2 ?? 0}</span>
+              <span className="chip chip-wide">Open {metrics?.open_total ?? 0}</span>
+              <span className="chip chip-wide">P1 {metrics?.by_priority?.P1 ?? 0}</span>
+              <span className="chip chip-wide">P2 {metrics?.by_priority?.P2 ?? 0}</span>
               {quietMode && suppressed > 0 && (
                 <span className="chip" title="Non-critical ticker lines held back by quiet mode">
                   QUIET · {suppressed} held
@@ -144,6 +249,14 @@ export default function App() {
               <span className="chip">
                 {session.display_name} · {session.role}
               </span>
+              <button
+                className={"btn" + (guideOpen ? " good" : "")}
+                onClick={() => setGuideOpen((o) => !o)}
+                aria-pressed={guideOpen}
+                title="A five-step walkthrough for presenting the prototype"
+              >
+                Guided demo
+              </button>
               <button
                 className={"btn" + (quietMode ? " good" : "")}
                 onClick={() => setQuietMode(!quietMode)}
@@ -184,10 +297,19 @@ export default function App() {
                     runsRev={revisions.runs + manualTick}
                     quietMode={quietMode}
                     suppressed={suppressed}
+                    storming={storming}
+                    stormProg={stormProg}
+                    stormErr={stormErr}
+                    onLaunchStorm={launchStorm}
+                    onOpenGuide={() => setGuideOpen(true)}
                     onOpen={(id) => nav(`/incidents/${id}`)}
                     onRefresh={refresh}
                   />
                 }
+              />
+              <Route
+                path="/showcase"
+                element={<Showcase profile={profile} metrics={metrics} events={events} runsRev={revisions.runs + manualTick} />}
               />
               <Route
                 path="/incidents"
@@ -235,6 +357,16 @@ export default function App() {
             </Routes>
           </div>
         </div>
+        <DemoGuide
+          open={guideOpen}
+          onClose={() => setGuideOpen(false)}
+          storming={storming}
+          firstIncidentId={firstStormIncident}
+          onRunStorm={() => {
+            nav("/");
+            return launchStorm("Guided demo");
+          }}
+        />
       </div>
     </RealtimeProvider>
   );
