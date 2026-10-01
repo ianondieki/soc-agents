@@ -18,6 +18,13 @@ PY="${PYTHON:-}"
 if [ -z "$PY" ]; then
   if [ -x ".venv/bin/python" ]; then PY=".venv/bin/python"; else PY="python3"; fi
 fi
+if ! "$PY" -c "import fastapi, noc_agents" 2>/dev/null; then
+  echo "This Python does not have the NOC project installed: $PY" >&2
+  echo "Install it there:   $PY -m pip install -e \".[dev]\"" >&2
+  echo "Or point at another: PYTHON=/path/to/python bash scripts/run_all.sh" >&2
+  exit 1
+fi
+echo "Python: $PY"
 
 if [ "${NO_BUILD:-0}" != "1" ]; then
   echo "== Building UI =="

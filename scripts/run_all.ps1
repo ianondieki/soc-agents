@@ -1,14 +1,36 @@
 # Full demo stack: rebuild UI, start API + UI on one port with the live agent delay on.
 # Usage:  powershell -ExecutionPolicy Bypass -File .\scripts\run_all.ps1            # http://127.0.0.1:8000
 #         powershell -ExecutionPolicy Bypass -File .\scripts\run_all.ps1 -Port 8010 # another port
+#         ... -Python C:\Python313\python.exe                                        # a specific interpreter
 #         ... -NoBuild                                                               # skip the UI build
+#
+# Which Python: -Python, else $env:PYTHON, else this repo's own .venv\Scripts\python.exe,
+# else whatever `python` is on PATH. A bare `python` is often another project's virtualenv
+# (docs/RUNBOOK.md), so the chosen interpreter is checked for this project before anything
+# starts and the exact pip command is printed when it is missing.
 param(
   [int]$Port = 8000,
+  [string]$Python = "",
   [switch]$NoBuild
 )
 
 $Root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 Set-Location $Root
+
+if (-not $Python) { $Python = $env:PYTHON }
+if (-not $Python -and (Test-Path (Join-Path $Root ".venv\Scripts\python.exe"))) {
+  $Python = Join-Path $Root ".venv\Scripts\python.exe"
+}
+if (-not $Python) { $Python = "python" }
+
+& $Python -c "import fastapi, noc_agents" 2>$null
+if ($LASTEXITCODE -ne 0) {
+  Write-Host "This Python does not have the NOC project installed: $Python" -ForegroundColor Red
+  Write-Host "Install it there:   $Python -m pip install -e `".[dev]`"" -ForegroundColor Yellow
+  Write-Host "Or point at another: .\scripts\run_all.ps1 -Python C:\Python313\python.exe" -ForegroundColor Yellow
+  exit 1
+}
+Write-Host "Python: $Python" -ForegroundColor DarkGray
 
 # Another program on the port answers in its own words and never shows the NOC UI. The
 # second-brain Bridge API (docker compose) publishes 127.0.0.1:8000, and its 404 reads
@@ -41,4 +63,4 @@ Write-Host "Mission Control auto-runs the rain storm on an empty board; or click
 Write-Host "Managers: open http://127.0.0.1:$Port/showcase  -  Presenters: press 'Guided demo' in the top bar." -ForegroundColor Yellow
 Write-Host ""
 
-python -m uvicorn noc_agents.main:app --app-dir src --host 127.0.0.1 --port $Port
+& $Python -m uvicorn noc_agents.main:app --app-dir src --host 127.0.0.1 --port $Port

@@ -140,6 +140,11 @@ honest list.
   (`docker compose -f infra/docker-compose.dev.yml down` in that repo) or start the NOC on another
   port: `PORT=8010 bash scripts/run_all.sh`, or `scripts\run_all.ps1 -Port 8010` on Windows, then
   open http://127.0.0.1:8010. Both scripts now refuse to start on a busy port and say so.
+- *`ModuleNotFoundError: No module named 'fastapi'` on start*: the `python` on your PATH is another
+  project's virtualenv (the prompt says `(.venv)` but it is not this repo's). Both run scripts now
+  check the interpreter first and print the fix; pass the right one explicitly:
+  `scripts\run_all.ps1 -Python C:\Python313\python.exe` or `PYTHON=/path/to/python bash scripts/run_all.sh`,
+  or install the project into that interpreter with `python -m pip install -e ".[dev]"`.
 - *The browser shows `{"detail":"Not Found"}` or a page saying the UI is not built*: the API is
   up but `frontend/dist` is missing. Run `cd frontend && npm install && npm run build`, then
   restart, or use the Vite dev server (`npm run dev`, http://127.0.0.1:5173) while the API runs.
