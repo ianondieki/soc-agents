@@ -134,6 +134,15 @@ honest list.
 
 ## If something goes wrong
 
+- *The browser shows `{"detail":{"code":"not_found","message":"Not found."}}`*: that is not this
+  app. Another program owns the port, most often the `second-brain` Bridge API, whose Docker stack
+  publishes 127.0.0.1:8000 and answers 404s in exactly those words. Stop it
+  (`docker compose -f infra/docker-compose.dev.yml down` in that repo) or start the NOC on another
+  port: `PORT=8010 bash scripts/run_all.sh`, or `scripts\run_all.ps1 -Port 8010` on Windows, then
+  open http://127.0.0.1:8010. Both scripts now refuse to start on a busy port and say so.
+- *The browser shows `{"detail":"Not Found"}` or a page saying the UI is not built*: the API is
+  up but `frontend/dist` is missing. Run `cd frontend && npm install && npm run build`, then
+  restart, or use the Vite dev server (`npm run dev`, http://127.0.0.1:5173) while the API runs.
 - *Rail does not animate*: the WebSocket chip in the top bar should read LIVE WS. If not,
   refresh; the page polls as a fallback and the numbers stay right.
 - *Nothing happens on the storm button*: check the API chip; the server log is in the

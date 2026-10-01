@@ -416,6 +416,10 @@ SPA_EXEMPT: dict[tuple[str, str], str] = {
     (G, "/"): "the SPA shell: the login screen is served from here",
     (G, "/{full_path:path}"): "the SPA's deep links: same shell, same reason",
 }
+#: Without a build, GET / is a static page saying how to build the UI: no operator data.
+NO_BUILD_EXEMPT: dict[tuple[str, str], str] = {
+    (G, "/"): "the 'UI not built' page: static instructions, no operator data",
+}
 
 
 def _flat(routes):
@@ -558,7 +562,7 @@ def test_every_registered_route_is_classified(app_client):
     a route in neither is a route nobody decided, and this is where it stops."""
     main, _ = app_client
     registered = set(_registered(main.app))
-    exempt = {**EXEMPT, **(SPA_EXEMPT if FRONTEND_DIST.exists() else {})}
+    exempt = {**EXEMPT, **(SPA_EXEMPT if FRONTEND_DIST.exists() else NO_BUILD_EXEMPT)}
     assert not set(ROUTE_MAP) & set(exempt), "a route is both mapped and exempt"
     assert sorted(registered - set(ROUTE_MAP) - set(exempt)) == [], "unclassified routes"
     assert sorted((set(ROUTE_MAP) | set(exempt)) - registered) == [], "the matrix names routes that do not exist"

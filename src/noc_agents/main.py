@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import re
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
@@ -11,7 +12,7 @@ from typing import Any, AsyncIterator
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse, FileResponse
+from fastapi.responses import HTMLResponse, StreamingResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from openpyxl import Workbook
 from sqlalchemy import func, select
@@ -116,7 +117,38 @@ from noc_agents.services.worklog_monitor import chase_silent_incidents
 import time
 
 ROOT = Path(__file__).resolve().parents[2]
-FRONTEND_DIST = ROOT / "frontend" / "dist"
+# NOC_FRONTEND_DIST: where the built SPA lives (default frontend/dist). A deployment that
+# builds elsewhere points here; the tests point it at an empty folder to exercise the
+# "UI not built" page below.
+FRONTEND_DIST = Path(os.getenv("NOC_FRONTEND_DIST") or (ROOT / "frontend" / "dist"))
+
+#: What GET / answers when there is no build to serve. A presenter who opens the port and
+#: sees a bare 404 JSON starts debugging the wrong thing; this says what is missing and how
+#: to get it. Static text, no operator data, so it is as open as the shell it stands in for.
+NO_BUILD_PAGE = """<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kenya NOC: UI not built</title>
+<style>
+  body{margin:0;background:#0a1220;color:#f0f6ff;font:16px/1.5 system-ui,sans-serif}
+  main{max-width:60ch;margin:12vh auto;padding:0 1.25rem}
+  h1{font-size:1.5rem;margin:0 0 .5rem}p{color:#a8bdd6}
+  pre{background:#050a14;border:1px solid #2a3f5f;border-radius:10px;padding:.9rem 1rem;overflow:auto;color:#3ecbff}
+  a{color:#3ecbff}
+</style></head><body><main>
+<h1>The NOC API is running, but the web UI has not been built.</h1>
+<p>This port answers the API (<a href="/health">/health</a>, <a href="/docs">/docs</a>). Mission Control is the
+React app under <code>frontend/</code>; build it once, then start the server again:</p>
+<pre>cd frontend
+npm install
+npm run build</pre>
+<p>Or run the development server beside the API while you work on it, and open
+<a href="http://127.0.0.1:5173">http://127.0.0.1:5173</a>:</p>
+<pre>cd frontend
+npm run dev</pre>
+<p>One command for both on Linux and macOS: <code>bash scripts/run_all.sh</code>; on Windows:
+<code>scripts\\run_all.ps1</code>.</p>
+</main></body></html>
+"""
 
 
 _boot = _settings()
@@ -1721,6 +1753,13 @@ if FRONTEND_DIST.exists():
         if candidate.exists() and candidate.is_file():
             return FileResponse(candidate)
         return FileResponse(FRONTEND_DIST / "index.html", headers={"Cache-Control": "no-cache"})
+
+else:
+    # No build to serve: say so at the door. 503, because the thing this port is asked for is
+    # not ready; the API routes above are unaffected and /health still answers 200.
+    @app.get("/", response_class=HTMLResponse, include_in_schema=False)
+    def ui_not_built() -> HTMLResponse:
+        return HTMLResponse(NO_BUILD_PAGE, status_code=503, headers={"Cache-Control": "no-cache"})
 
 
 def run() -> None:

@@ -232,6 +232,8 @@ SPA_OPEN: list[tuple[str, str, str]] = [
     ("GET", "/", "/"),
     ("GET", "/{full_path:path}", "/incidents/a-deep-link"),
 ]
+#: Without a build, GET / is the "UI not built" page instead: static instructions, no data.
+NO_BUILD_OPEN: list[tuple[str, str, str]] = [("GET", "/", "/")]
 #: Gated, but not by a dependency: no ``require_role`` can bind on a WebSocket handshake, so
 #: the ops feed is gated inside the handler by ``auth.authorise_socket`` (A-14). It is a
 #: decision like every row above, recorded here because the route table cannot show it.
@@ -369,8 +371,7 @@ def test_every_route_main_declares_has_a_recorded_decision(api):
             declared.add((method, route.path))
 
     decided = {(g.method, g.path) for g in GATED} | {(m, p) for m, p, _ in OPEN} | SOCKET_GATED
-    if FRONTEND_DIST.exists():
-        decided |= {(m, p) for m, p, _ in SPA_OPEN}
+    decided |= {(m, p) for m, p, _ in (SPA_OPEN if FRONTEND_DIST.exists() else NO_BUILD_OPEN)}
 
     assert sorted(declared - decided) == [], "routes in main.py with no recorded decision"
     assert sorted(decided - declared) == [], "this matrix names routes main.py no longer declares"
