@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import AgentRail from "./AgentRail";
-import { fmtMs, sumDurations, type RailStep } from "../lib/agents";
+import { fmtMs, isLifecycleNode, runChipClass, runStatusWord, sumDurations, type RailStep } from "../lib/agents";
 import { fmtTime } from "../lib/time";
 import type { NocEvent } from "../realtime/renderers";
 
@@ -26,8 +26,12 @@ interface EventRun {
 }
 
 function fromEvents(events: NocEvent[]): EventRun | null {
-  // Newest first on the wire; find the newest step frame, then replay its run oldest-first.
-  const newest = events.find((e) => e.type === "agent.step.started" || e.type === "agent.step.completed");
+  // Newest first on the wire; find the newest LIFECYCLE step frame (a scheduler job or an
+  // assist run records steps through the same tracker under other node names, and must not
+  // take over the rail), then replay its run oldest-first.
+  const isStep = (e: NocEvent) =>
+    (e.type === "agent.step.started" || e.type === "agent.step.completed") && isLifecycleNode(e.payload?.node);
+  const newest = events.find(isStep);
   if (!newest) return null;
   const runId = newest.runId || newest.payload?.run_id;
   if (!runId) return null;
@@ -42,10 +46,10 @@ function fromEvents(events: NocEvent[]): EventRun | null {
     const p = e.payload || {};
     if (p.incident_number) incidentNumber = String(p.incident_number);
     if (e.incidentId) incidentId = e.incidentId;
-    if (e.type === "agent.step.started" && p.node) {
+    if (e.type === "agent.step.started" && isLifecycleNode(p.node)) {
       if (!steps[p.node]) order.push(p.node);
       steps[p.node] = { node_name: p.node, agent_name: p.agent, status: "STARTED", input_summary: p.input, seq: p.seq };
-    } else if (e.type === "agent.step.completed" && p.node) {
+    } else if (e.type === "agent.step.completed" && isLifecycleNode(p.node)) {
       if (!steps[p.node]) order.push(p.node);
       steps[p.node] = {
         ...(steps[p.node] || { node_name: p.node, agent_name: p.agent }),
@@ -128,7 +132,7 @@ export default function LiveRunPanel({
         </h3>
         <div className="chips">
           {incidentNumber && <span className="chip accent">{incidentNumber}</span>}
-          {status && <span className={"chip " + (status === "FAILED" ? "danger" : status === "WAITING_HITL" ? "hitl" : status === "RUNNING" ? "accent" : "ok")}>{status === "WAITING_HITL" ? "waiting for a human" : status.toLowerCase()}</span>}
+          {status && <span className={runChipClass(status)}>{runStatusWord(status)}</span>}
           {steps.length > 0 && <span className="chip">{steps.length} of 12 hops · {fmtMs(elapsed)}</span>}
           {!useLive && stored?.started_at && <span className="chip">{fmtTime(stored.started_at)} EAT</span>}
           {incidentId && onOpen && (

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
 import { api } from "../api";
 import AgentRail from "../components/AgentRail";
-import { countAbsorbed, fmtMs, pickCreatingRun, sumDurations } from "../lib/agents";
+import { countAbsorbed, fmtMs, pickCreatingRun, runChipClass, runStatusWord, sumDurations } from "../lib/agents";
 import EarlierAtThisSite from "../components/EarlierAtThisSite";
 import ContractsDrawer from "../components/ContractsDrawer";
 import RegulatoryCountdown from "../components/RegulatoryCountdown";
@@ -183,7 +183,7 @@ export default function IncidentWorkspace({ session }: { session: any }) {
           <h3>How the agents handled this alarm</h3>
           <div className="chips">
             {railSteps.length > 0 && <span className="chip">{railSteps.length} hops · {fmtMs(elapsed)}</span>}
-            {creating?.status && <span className={"chip " + (creating.status === "WAITING_HITL" ? "hitl" : creating.status === "FAILED" ? "danger" : "ok")}>{creating.status === "WAITING_HITL" ? "waiting for a human" : String(creating.status).toLowerCase()}</span>}
+            {creating?.status && <span className={runChipClass(creating.status)}>{runStatusWord(creating.status)}</span>}
             {absorbed > 0 && (
               <span className="chip accent" title="Later alarms the correlation step folded into this ticket instead of opening a duplicate">
                 {absorbed} later alarm{absorbed === 1 ? "" : "s"} folded in

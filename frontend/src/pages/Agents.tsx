@@ -48,17 +48,32 @@ export default function Agents({ tick = 0 }: { tick?: number }) {
 
   useEffect(() => {
     api.agents().then(setAgents).catch(console.error);
+  }, []);
+
+  // Per-agent throughput from the productivity rollup (everything on record): steps,
+  // failures, timings. Advisory for the roster; a failure here leaves the cards static.
+  // Debounced on the runs revision so a storm costs one rollup per alarm, not per frame.
+  useEffect(() => {
+    let cancelled = false;
+    const t = window.setTimeout(() => {
+      api
+        .productivity(0)
+        .then((p) => {
+          if (cancelled) return;
+          const map: Record<string, any> = {};
+          for (const a of p?.agents || []) if (a?.name) map[a.name] = a;
+          setStats(map);
+        })
+        .catch(() => undefined);
+    }, 600);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(t);
+    };
+  }, [tick]);
+
+  useEffect(() => {
     api.runs().then(setRuns).catch(console.error);
-    // Per-agent throughput from the productivity rollup (everything on record): steps,
-    // failures, timings. Advisory for the roster; a failure here leaves the cards static.
-    api
-      .productivity(0)
-      .then((p) => {
-        const map: Record<string, any> = {};
-        for (const a of p?.agents || []) if (a?.name) map[a.name] = a;
-        setStats(map);
-      })
-      .catch(() => undefined);
     const id = window.setInterval(() => {
       api.runs().then(setRuns).catch(() => undefined);
     }, 4000);

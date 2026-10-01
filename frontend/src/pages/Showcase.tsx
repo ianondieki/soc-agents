@@ -56,19 +56,23 @@ export default function Showcase({
   const [err, setErr] = useState("");
 
   useEffect(() => {
+    // `runsRev` moves with every processed alarm (and again from the storm's own tick), so the
+    // fetch trails the burst by a moment and a storm costs one rollup per alarm, not several.
     let cancelled = false;
-    api
-      .productivity(windowHours)
-      .then((d) => {
-        if (cancelled) return;
-        setP(d);
-        setErr("");
-      })
-      .catch((e) => !cancelled && setErr(String(e?.message || e)));
+    const t = window.setTimeout(() => {
+      api
+        .productivity(windowHours)
+        .then((d) => {
+          if (cancelled) return;
+          setP(d);
+          setErr("");
+        })
+        .catch((e) => !cancelled && setErr(String(e?.message || e)));
+    }, 600);
     return () => {
       cancelled = true;
+      window.clearTimeout(t);
     };
-    // `runsRev` moves once per processed alarm, so the numbers follow the storm.
   }, [windowHours, runsRev]);
 
   useEffect(() => {

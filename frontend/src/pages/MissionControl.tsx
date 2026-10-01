@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api";
-import { AUTO_STORM_KEY } from "../App";
+import { AUTO_STORM_KEY } from "../lib/demo";
 import LiveRunPanel from "../components/LiveRunPanel";
 import { fmtTime } from "../lib/time";
 // One run-status palette and one error line for both run lists (A-13), so the two pages
@@ -99,7 +99,15 @@ export default function MissionControl({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [metrics?.open_total]);
 
-  const banner = err || stormErr || chase || stormProg;
+  // A storm start retires whatever the banner was saying (an SLA chase result, a stale list
+  // error): while it runs the per-alarm progress line is the only thing worth reading.
+  useEffect(() => {
+    if (storming) {
+      setChase("");
+      setErr("");
+    }
+  }, [storming]);
+  const bannerText = storming ? stormProg : err || stormErr || chase || stormProg;
 
   return (
     <div>
@@ -138,12 +146,12 @@ export default function MissionControl({
         </div>
       </div>
 
-      {banner && (
+      {bannerText && (
         <div className="storm-banner">
           <div>
             {storming && <span className="live-dot" />}
             <strong>{storming ? "Live scenario executing" : "Scenario status"}</strong>
-            <div className="storm-progress">{err || stormErr || chase || stormProg}</div>
+            <div className="storm-progress">{bannerText}</div>
           </div>
           {storming && <span className="chip accent">AGENTS EXECUTING</span>}
         </div>

@@ -147,3 +147,16 @@ def z_utc(dt: datetime | None) -> datetime | None:
         tzinfo=UTC,
         fold=aware.fold,
     )
+
+
+def iso_z(dt: datetime | None) -> str | None:
+    """Naive-UTC storage value → ``"2026-09-18T12:00:00Z"`` as a STRING. ``None`` passes through.
+
+    Seconds precision, for payloads that are built by hand rather than by a serializer (the
+    regions dashboard, the productivity rollup): a dashboard never needs microseconds, and
+    trimming them keeps a contract test's expected strings readable. ``z_utc`` is the datetime
+    form for the pydantic serializers; this is the string form for dict payloads.
+    """
+    if dt is None:
+        return None
+    return dt.replace(microsecond=0).isoformat() + "Z"

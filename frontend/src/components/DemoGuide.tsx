@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { GUIDE_STEP_KEY } from "../lib/demo";
 
 /**
  * A five-step walkthrough for presenting the prototype. It does not automate anything the
@@ -7,7 +8,6 @@ import { useNavigate } from "react-router-dom";
  * one button that takes the presenter there. The step survives a page change for the
  * session so the panel follows the presenter around.
  */
-const KEY = "noc_guide_v1";
 
 export interface GuideStep {
   title: string;
@@ -31,14 +31,14 @@ export default function DemoGuide({
   const nav = useNavigate();
   const [step, setStep] = useState<number>(() => {
     try {
-      return Number(sessionStorage.getItem(KEY) || 0) || 0;
+      return Number(sessionStorage.getItem(GUIDE_STEP_KEY) || 0) || 0;
     } catch {
       return 0;
     }
   });
   useEffect(() => {
     try {
-      sessionStorage.setItem(KEY, String(step));
+      sessionStorage.setItem(GUIDE_STEP_KEY, String(step));
     } catch {
       /* storage blocked: the step simply does not persist */
     }

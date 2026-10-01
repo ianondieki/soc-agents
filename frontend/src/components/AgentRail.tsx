@@ -56,7 +56,9 @@ export default function AgentRail({
       if (step) return normaliseStatus(step.status);
       return normaliseStatus(n.status);
     });
-    if (live) {
+    // A STARTED frame already marks its hop running; only when no hop is, the next pending one
+    // after the last finished hop is drawn running so the eye has somewhere to rest.
+    if (live && !out.includes("running")) {
       const lastDone = out.reduce((acc, s, i) => (s !== "pending" ? i : acc), -1);
       if (lastDone + 1 < out.length && out[lastDone + 1] === "pending") out[lastDone + 1] = "running";
     }

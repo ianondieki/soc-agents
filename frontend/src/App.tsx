@@ -4,6 +4,7 @@ import { api, runLiveRainStorm } from "./api";
 import { useRealtime } from "./realtime/useRealtime";
 import { RealtimeProvider } from "./realtime/RealtimeContext";
 import DemoGuide from "./components/DemoGuide";
+import { AUTO_STORM_KEY } from "./lib/demo";
 import MissionControl from "./pages/MissionControl";
 import IncidentBoard from "./pages/IncidentBoard";
 import IncidentWorkspace from "./pages/IncidentWorkspace";
@@ -21,9 +22,6 @@ import Contracts from "./pages/Contracts";
 import Pirs from "./pages/Pirs";
 import Scorecards from "./pages/Scorecards";
 import Showcase from "./pages/Showcase";
-
-/** Mission Control auto-runs the storm once per browser session when the board is empty. */
-export const AUTO_STORM_KEY = "noc_auto_storm_v1";
 
 /** The sidebar, grouped by who reaches for it: the shift, the agent story, quality, platform. */
 const NAV_GROUPS: { title: string; links: { to: string; label: string; end?: boolean }[] }[] = [

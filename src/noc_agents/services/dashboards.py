@@ -70,6 +70,7 @@ from sqlalchemy.orm import Session
 from noc_agents.api.deps import _operator_scoped, _owned, _settings
 from noc_agents.db.models import ExternalSignalRow, IncidentRow, ProblemRow, utcnow
 from noc_agents.services.backtest import signal_precision_30d
+from noc_agents.services.clock import iso_z
 from noc_agents.services.signals import cap_feed_health, cap_severe_in_force, flood_region_state
 from noc_agents.pollers.weather import (
     is_stale,
@@ -138,9 +139,7 @@ def _z(dt: datetime | None) -> str | None:
     Seconds precision: a dashboard never needs microseconds, and trimming them makes
     the contract test's expected strings readable by a human reviewing a diff.
     """
-    if dt is None:
-        return None
-    return dt.replace(microsecond=0).isoformat() + "Z"
+    return iso_z(dt)
 
 
 # ------------------------------------------------------------- CA QoS baseline seed

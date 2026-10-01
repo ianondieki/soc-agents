@@ -27,6 +27,34 @@ export const LIFECYCLE_NODES: readonly { id: string; label: string; agent: strin
   { id: "MONITOR", label: "Monitor", agent: "WorklogMonitorAgent" },
 ];
 
+export const LIFECYCLE_NODE_IDS: ReadonlySet<string> = new Set(LIFECYCLE_NODES.map((n) => n.id));
+
+/** Only the twelve lifecycle nodes belong on the rail: a scheduler job or an assist run
+ *  records steps through the same tracker under its own node names. */
+export function isLifecycleNode(id: unknown): boolean {
+  return typeof id === "string" && LIFECYCLE_NODE_IDS.has(id);
+}
+
+/** Run statuses that mean the run has decided what it was going to decide. */
+export const FINISHED_RUN_STATUSES: ReadonlySet<string> = new Set(["SUCCEEDED", "WAITING_HITL"]);
+
+/** Chip class for a run status. CANCELLED (a rejected gate) and PENDING are neutral, never green. */
+export function runChipClass(status: unknown): string {
+  const s = String(status ?? "").toUpperCase();
+  if (s === "RUNNING") return "chip accent";
+  if (s === "WAITING_HITL") return "chip hitl";
+  if (s === "SUCCEEDED") return "chip ok";
+  if (s === "FAILED") return "chip danger";
+  return "chip";
+}
+
+/** The run status as a person reads it. */
+export function runStatusWord(status: unknown): string {
+  const s = String(status ?? "").toUpperCase();
+  if (s === "WAITING_HITL") return "waiting for a human";
+  return s ? s.toLowerCase() : "";
+}
+
 export type NodeStatus = "pending" | "running" | "succeeded" | "waiting_hitl" | "failed" | "skipped";
 
 export interface RailStep {
@@ -88,9 +116,12 @@ export function pickCreatingRun<T extends { steps?: RailStep[]; graph_name?: str
   return lifecycle.reduce((best, r) => ((r.steps?.length ?? 0) > (best.steps?.length ?? 0) ? r : best), lifecycle[0]);
 }
 
-/** Runs that ended early because the alarm folded into an open ticket (merge or cascade). */
+/** Runs that FINISHED early because the alarm folded into an open ticket (merge or cascade).
+ *  A run still executing has decided nothing yet and is not counted. */
 export function countAbsorbed<T extends { steps?: RailStep[]; status?: string }>(runs: T[] | undefined | null): number {
-  return (runs || []).filter((r) => r.status !== "FAILED" && !(r.steps || []).some((s) => s.node_name === "TICKET")).length;
+  return (runs || []).filter(
+    (r) => FINISHED_RUN_STATUSES.has(String(r.status || "")) && !(r.steps || []).some((s) => s.node_name === "TICKET")
+  ).length;
 }
 
 /** Whole-run elapsed time from its step durations, when the run row has no finished_at yet. */

@@ -72,7 +72,7 @@ TOP_KEYS = {
     "generated_at", "operator_id", "window_hours", "since", "alarms", "incidents", "steps",
     "pipeline_ms", "hitl", "broadcasts", "ticket_fields", "records", "toil", "agents",
 }
-ALARM_KEYS = {"processed", "incidents_created", "absorbed", "failed_runs", "noise_reduction_pct"}
+ALARM_KEYS = {"processed", "incidents_created", "absorbed", "in_flight", "failed_runs", "noise_reduction_pct"}
 INCIDENT_KEYS = {"created", "open", "closed", "by_priority"}
 STEP_KEYS = {"total", "succeeded", "waiting_hitl", "failed", "by_node"}
 NODE_KEYS = {"node", "label", "agent", "steps", "succeeded", "waiting_hitl", "failed", "avg_ms", "toil_minutes_each", "minutes_saved"}
@@ -120,7 +120,8 @@ def test_response_shape_is_pinned(tmp_db):
     assert set(out["ticket_fields"]) == FIELD_KEYS
     assert set(out["records"]) == RECORD_KEYS
     assert set(out["toil"]) == TOIL_KEYS
-    assert set(out["toil"]["assumptions"]) == {"toil_minutes", "human_minutes", "note"}
+    assert set(out["toil"]["assumptions"]) == {"toil_minutes", "human_minutes", "ignored_keys", "note"}
+    assert out["toil"]["assumptions"]["ignored_keys"] == {"toil_minutes": [], "human_minutes": []}
     for node in out["steps"]["by_node"]:
         assert set(node) == NODE_KEYS
     for agent in out["agents"]:
@@ -140,7 +141,7 @@ def test_response_shape_is_pinned(tmp_db):
 def test_an_empty_database_answers_with_zeros_not_errors(tmp_db):
     settings, session = tmp_db
     out = svc.productivity(session, settings.operator)
-    assert out["alarms"] == {"processed": 0, "incidents_created": 0, "absorbed": 0, "failed_runs": 0, "noise_reduction_pct": None}
+    assert out["alarms"] == {"processed": 0, "incidents_created": 0, "absorbed": 0, "in_flight": 0, "failed_runs": 0, "noise_reduction_pct": None}
     assert out["steps"]["total"] == 0 and all(n["steps"] == 0 for n in out["steps"]["by_node"])
     assert out["pipeline_ms"] == {"runs_measured": 0, "median": None, "p95": None, "max": None}
     assert out["toil"]["minutes_saved"] == 0.0 and out["toil"]["minutes_saved_per_alarm"] is None
@@ -158,7 +159,7 @@ def test_counts_are_what_three_alarms_wrote(tmp_db):
     hub_inc, cell_inc = _seed(session, settings)
     out = svc.productivity(session, settings.operator)
 
-    assert out["alarms"] == {"processed": 3, "incidents_created": 2, "absorbed": 1, "failed_runs": 0, "noise_reduction_pct": 33.3}
+    assert out["alarms"] == {"processed": 3, "incidents_created": 2, "absorbed": 1, "in_flight": 0, "failed_runs": 0, "noise_reduction_pct": 33.3}
     assert out["incidents"]["created"] == 2 and out["incidents"]["open"] == 2 and out["incidents"]["closed"] == 0
     assert out["incidents"]["by_priority"] == {"P1": 0, "P2": 1, "P3": 0, "P4": 1}
 
@@ -181,9 +182,10 @@ def test_counts_are_what_three_alarms_wrote(tmp_db):
     assert out["broadcasts"]["sent"] >= 1, "the P4's e-mail leaves (mock) under L2_GUARDED"
     assert out["broadcasts"]["drafted"] == sum(out["broadcasts"]["by_channel"].values())
 
-    expected_fields = sum(
-        1 for inc in (hub_inc, cell_inc) for f in svc.AGENT_FILLED_FIELDS if svc._filled(getattr(inc, f))
-    )
+    def filled(value) -> bool:  # the rule the SQL expression implements: a value a person would have typed
+        return value is not None and (not isinstance(value, str) or value.strip() != "")
+
+    expected_fields = sum(1 for inc in (hub_inc, cell_inc) for f in svc.AGENT_FILLED_FIELDS if filled(getattr(inc, f)))
     assert out["ticket_fields"]["auto_filled"] == expected_fields
     assert out["ticket_fields"]["per_incident"] >= 20, "the agents fill the ticket, not a stub of it"
     assert out["records"] == {"ledger_rows": 2, "exec_briefs": 2, "problems_opened": 0}
@@ -233,6 +235,7 @@ def test_the_profile_overrides_the_model_key_by_key(tmp_db):
     assert out["toil"]["assumptions"]["toil_minutes"]["TICKET"] == 20.0
     assert out["toil"]["assumptions"]["toil_minutes"]["ENRICH"] == svc.DEFAULT_TOIL_MINUTES["ENRICH"]
     assert out["toil"]["assumptions"]["human_minutes"] == {"hitl_decision": 5.0}
+    assert out["toil"]["assumptions"]["ignored_keys"] == {"toil_minutes": [], "human_minutes": []}
     assert out["toil"]["minutes_saved"] == pytest.approx(2 * (MODEL_SUM - svc.DEFAULT_TOIL_MINUTES["TICKET"] + 20) + MERGE_SUM)
 
 
@@ -277,6 +280,55 @@ def test_a_failed_run_is_counted_and_credited_nothing(tmp_db):
     assert out["steps"]["failed"] == 1
     assert out["toil"]["minutes_saved"] == before["toil"]["minutes_saved"]
     assert {a["name"]: a["failed"] for a in out["agents"]}["EnrichmentAgent"] == 1
+
+
+def test_an_unknown_profile_key_is_reported_not_silently_dropped(tmp_db, caplog):
+    settings, session = tmp_db
+    _seed(session, settings)
+    cfg = settings.operator.model_copy(deep=True)
+    cfg.productivity.toil_minutes = {"EXEC_BRIEFING": 15}  # a typo for EXEC_BRIEF
+    cfg.productivity.human_minutes = {"approval": 9}  # not an action the model knows
+
+    with caplog.at_level("WARNING", logger="noc_agents.services.productivity"):
+        out = svc.productivity(session, cfg)
+    assert out["toil"]["assumptions"]["ignored_keys"] == {"toil_minutes": ["EXEC_BRIEFING"], "human_minutes": ["approval"]}
+    assert out["toil"]["assumptions"]["toil_minutes"]["EXEC_BRIEF"] == svc.DEFAULT_TOIL_MINUTES["EXEC_BRIEF"]
+    assert out["toil"]["minutes_saved"] == pytest.approx(2 * MODEL_SUM + MERGE_SUM)
+    assert any("unknown keys" in r.getMessage() for r in caplog.records)
+
+
+def test_a_run_still_in_flight_is_neither_a_ticket_nor_a_duplicate(tmp_db):
+    settings, session = tmp_db
+    _seed(session, settings)
+    before = svc.productivity(session, settings.operator)
+    run = AgentRunRow(
+        id=new_id(), operator_id="safaricom", graph_name=svc.LIFECYCLE_GRAPH, trigger="EVENT",
+        status="RUNNING", started_at=utcnow(), current_node="ENRICH",
+    )
+    session.add(run)
+    session.flush()
+    for seq, (node, agent, status) in enumerate(
+        [("INGEST", "IngestCorrelationAgent", "SUCCEEDED"), ("CORRELATE", "IngestCorrelationAgent", "SUCCEEDED"),
+         ("ENRICH", "EnrichmentAgent", "STARTED")],
+        start=1,
+    ):
+        session.add(AgentRunStepRow(
+            id=new_id(), run_id=run.id, seq=seq, node_name=node, agent_name=agent, status=status,
+            started_at=utcnow(), finished_at=utcnow() if status != "STARTED" else None,
+            duration_ms=1 if status != "STARTED" else None, input_summary="", output_summary="", rationale="",
+            tools_called=[], confidence=0.9,
+        ))
+    session.commit()
+
+    out = svc.productivity(session, settings.operator)
+    assert out["alarms"]["processed"] == 4 and out["alarms"]["in_flight"] == 1
+    assert out["alarms"]["absorbed"] == 1 and out["alarms"]["incidents_created"] == 2
+    assert out["alarms"]["noise_reduction_pct"] == 33.3, "an undecided run must not move the duplicate share"
+    # Per alarm that has run: its two finished hops count, and so does the alarm itself.
+    assert out["toil"]["minutes_saved_per_alarm"] == pytest.approx(round((before["toil"]["minutes_saved"] + MERGE_SUM) / 4, 1))
+    assert out["steps"]["total"] == before["steps"]["total"] + 3
+    # Its two finished hops are work done; its started hop is not.
+    assert out["toil"]["minutes_saved"] == pytest.approx(before["toil"]["minutes_saved"] + MERGE_SUM)
 
 
 # ======================================================================================
