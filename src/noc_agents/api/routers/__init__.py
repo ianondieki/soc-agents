@@ -28,6 +28,7 @@ from noc_agents.api.routers import (
     memory,
     outbox_admin,
     pir,
+    productivity,
     regulatory,
     scorecards,
     signals,
@@ -53,6 +54,8 @@ ROUTERS: tuple[APIRouter, ...] = (
     outbox_admin.router,
     signals.router,
     admin.router,
+    # Showcase: agent throughput and the toil-minutes model
+    productivity.router,
 )
 
 __all__ = ["ROUTERS"]

@@ -287,6 +287,7 @@ ROUTE_MAP: dict[tuple[str, str], str] = {
     (G, "/api/v1/shifts/ledger/{shift_id:path}.xlsx"): "ledger",
     (P, "/api/v1/shifts/handover"): "handover.run",
     (G, "/api/v1/agents"): "platform.read",
+    (G, "/api/v1/metrics/productivity"): "platform.read",
     (G, "/api/v1/agents/{name}"): "platform.read",
     (G, "/api/v1/llm/status"): "platform.read",
     (G, "/api/v1/email/status"): "platform.read",

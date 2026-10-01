@@ -423,3 +423,28 @@ user_estimate_defaults:
   GNODEB: 15000
   TX: 50000
   DEFAULT: 5000
+
+# ---------------------------------------------------------------------------
+# Productivity model — GET /api/v1/metrics/productivity (services/productivity.py).
+# ESTIMATES, not measurements: the minutes a NOC analyst spends doing each
+# lifecycle step by hand, per alarm, as the floor describes it today. The
+# endpoint multiplies them by the steps the agents completed and reports these
+# inputs next to every number it derives. Correct them WITH the floor; a key
+# left out keeps the service default (which is the value shown here).
+# ---------------------------------------------------------------------------
+productivity:
+  toil_minutes:
+    INGEST: 1        # read the alarm; work out the site, the domain and the technology
+    CORRELATE: 3     # look for an open ticket or a parent HUB before raising a duplicate
+    ENRICH: 4        # CMDB lookup, region and RNIO, estimate the subscribers affected
+    SEVERITY: 2      # apply the P1–P4 thresholds and the HUB/CORE floors
+    TICKET: 8        # allocate the number; fill the TT fields and narrative in the ticket UI
+    ASSIGN: 3        # region × domain MSP matrix, the FE on call, the escalation stamp
+    HITL: 0          # the decision stays human: charged back below, never counted as saved
+    BROADCAST: 6     # draft and address the RNIO / FE / MSP SMS and e-mail
+    EXEC_BRIEF: 10   # write the status brief that stops the phone calls into the NOC
+    LEDGER: 3        # the Excel shift ledger row
+    RECURRENCE: 5    # check the site's history; open or update a problem record
+    MONITOR: 2       # set the note-chase and SLA reminders
+  human_minutes:
+    hitl_decision: 2 # read both renderings and the facts on an approval card, then decide

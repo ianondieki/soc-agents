@@ -134,6 +134,20 @@ class HitlConfig(BaseModel):
     escalation: HitlEscalationConfig = Field(default_factory=HitlEscalationConfig)
 
 
+class ProductivityConfig(BaseModel):
+    """The ``productivity:`` block of an operator profile (``services/productivity.py``).
+
+    ``toil_minutes`` is how long a NOC analyst spends doing each lifecycle node by hand
+    (``INGEST`` .. ``MONITOR``); ``human_minutes`` what a human still spends per action the
+    agents hand back (``hitl_decision``). Both override the service's defaults key by key, so a
+    profile that says nothing gets the defaults and a profile can correct one number without
+    restating the rest. Typed so pydantic's ``extra="ignore"`` cannot drop the block silently.
+    """
+
+    toil_minutes: dict[str, float] = Field(default_factory=dict)
+    human_minutes: dict[str, float] = Field(default_factory=dict)
+
+
 class OperatorConfig(BaseModel):
     operator_id: str
     display_name: str
@@ -167,6 +181,8 @@ class OperatorConfig(BaseModel):
     # §6.5 escalation ladder. Typed (not ``dict[str, Any]``) so the YAML is validated when the
     # profile loads and a profile with no ``hitl:`` block gets the spec's own defaults.
     hitl: HitlConfig = Field(default_factory=HitlConfig)
+    # Productivity model for GET /api/v1/metrics/productivity; defaults apply when absent.
+    productivity: ProductivityConfig = Field(default_factory=ProductivityConfig)
     recurrence: dict[str, Any] = Field(default_factory=dict)
     broadcast: dict[str, Any] = Field(default_factory=dict)
     mpesa_risk: MpesaRiskConfig = Field(default_factory=MpesaRiskConfig)

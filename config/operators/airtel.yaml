@@ -171,3 +171,22 @@ user_estimate_defaults:
   GNODEB: 8000
   TX: 25000
   DEFAULT: 3000
+
+# Productivity model (GET /api/v1/metrics/productivity); same estimates as the
+# Safaricom profile until the Airtel floor corrects them. See safaricom.yaml.
+productivity:
+  toil_minutes:
+    INGEST: 1
+    CORRELATE: 3
+    ENRICH: 4
+    SEVERITY: 2
+    TICKET: 8
+    ASSIGN: 3
+    HITL: 0
+    BROADCAST: 6
+    EXEC_BRIEF: 10
+    LEDGER: 3
+    RECURRENCE: 5
+    MONITOR: 2
+  human_minutes:
+    hitl_decision: 2
