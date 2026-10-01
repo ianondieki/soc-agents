@@ -12,12 +12,13 @@
 |------|--------|--------|----------------|
 | 1 | Both | Open Mission Control | Empty or prior state; LIVE WS chip green |
 | 2 | Analyst | Settings → Inject **Westlands HUB power** | Ticker fires; KPI open/P2/P1 bump |
-| 3 | Both | Open the new `SFC-INC-…` | Workflow nodes green; click Severity → rationale + M-PESA |
+| 3 | Both | Open the new `INC…` | The rail: twelve hops with ms under each; click Severity → rationale + M-PESA; HITL Gate and Broadcast lavender (waiting for a human) |
 | 4 | Supervisor | HITL Inbox → Claim → Approve | Broadcasts released; HITL count drops |
 | 5 | Analyst | Inject Mombasa fibre + Kitui BTS | Regional diversity NBI/CST/EST |
 | 6 | Supervisor | Shift Desk → Generate handover | Owners + priorities for night shift |
 | 7 | Both | Wallboard | Large P1/P2 cards for room TV |
-| 8 | Analyst | Inject same Westlands event again | Idempotent merge — no duplicate major |
+| 8 | Analyst | Inject same Westlands event again | Idempotent merge — no duplicate major; the ticket's rail shows "1 later alarm folded in" |
+| 9 | Both | Showcase | The numbers for managers: hours of toil, alarms absorbed, decisions kept human |
 
 ## Trust questions the UI must answer
 

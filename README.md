@@ -61,16 +61,25 @@ flowchart LR
 
 ## Quick start (live Mission Control)
 
-```powershell
-# from soc-agents/
-python -m pip install -e ".[dev]"
-python -m pytest -q
-
-# One-command: rebuild UI + start API (recommended)
-powershell -ExecutionPolicy Bypass -File .\scripts\run_all.ps1
-# open http://127.0.0.1:8000
-# Empty board auto-starts heavy-rain MW storm; or click the blue storm button
+```bash
+# from soc-agents/ — Linux / macOS
+python3 -m venv .venv && .venv/bin/python -m pip install -e ".[dev]"
+(cd frontend && npm install)
+bash scripts/run_all.sh            # or: make demo-up
+# open http://127.0.0.1:8000  — an empty board auto-runs the heavy-rain storm
 ```
+
+```powershell
+# Windows
+python -m pip install -e ".[dev]"
+cd frontend; npm install; cd ..
+powershell -ExecutionPolicy Bypass -File .\scripts\run_all.ps1
+```
+
+**Showing it to managers:** press **Guided demo** in the top bar (five steps: storm, ticket,
+approval, handover, numbers) and finish on **/showcase**, the page that reads the live
+productivity numbers. Script and talking points: `docs/MANAGER_DEMO.md`. Where the project
+stands: `docs/STATUS.md`.
 
 Or two terminals (best live WebSocket during dev):
 
@@ -95,18 +104,26 @@ cd frontend; npm run dev
 | System | `tests/system/` — FastAPI health, ingest, workflow, HITL, metrics |
 
 ```bash
-python -m pytest -q
+python -m pytest -q                 # 3,206 tests, about seven minutes, no network
+cd frontend && npm run build        # TypeScript + Vite bundle
+python scripts/screenshots.py out/  # every route at 375 and 1440 px against a running stack
 ```
+
+`GET /api/v1/metrics/productivity` is the rollup behind `/showcase`: what the agents did, and
+what the operator profile's `productivity.toil_minutes` says it would have cost by hand.
 
 ## UI map
 
 | Route | Purpose |
 |-------|---------|
-| `/` | Mission Control KPIs + live incidents + agent ticker |
-| `/incidents/:id` | Workspace + **live agent workflow graph** |
+| `/` | Mission Control: KPIs, the **agent rail** following the newest alarm live, incidents, ticker, HITL |
+| `/showcase` | For managers: live numbers, the twelve steps before/after, platform diagram, autonomy ladder, toil model |
+| `/incidents/:id` | Workspace: agent-filled ticket fields + the rail of the run that opened the ticket |
 | `/hitl` | Shared claim/approve/reject queue |
 | `/shift` | Ledger + handover |
 | `/wallboard` | TV-friendly P1/P2 |
+| `/agents` | Agent Observatory: roster with real throughput per agent, recent runs |
+| `/workflow` | Workflow Map: the twelve hops, what each does, minutes by hand |
 | `/settings` | Role + **demo inject** (Westlands HUB, Coast, Nyanza, NEA, …) |
 
 ## Config
@@ -123,6 +140,8 @@ set OPERATOR_PROFILE=airtel   # Windows PowerShell: $env:OPERATOR_PROFILE="airte
 
 - `SUPER_PROMPT_NOC_MULTI_AGENT.md` — generation prompt  
 - `RESEARCH_NOC_MULTI_AGENT.md` — industry research  
+- **`docs/STATUS.md`** — where the project is, in plain language  
+- **`docs/MANAGER_DEMO.md`** — the ten-minute manager demo script and the questions you will get  
 - `docs/UI_WALKTHROUGH.md` — 5-minute team demo script  
 - **`docs/GAP_ANALYSIS_AND_ROADMAP.md`** — flaws found + hardening log + Phase B/C roadmap  
 

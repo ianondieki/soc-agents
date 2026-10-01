@@ -1,0 +1,143 @@
+# The ten-minute demo for managers
+
+What to show, in what order, and what to say. The product does the work; this script keeps the
+presenter from narrating code.
+
+## Before the room fills (5 minutes)
+
+1. Start the stack: `bash scripts/run_all.sh` (Windows: `scripts\run_all.ps1`). It builds the
+   UI and serves everything on <http://127.0.0.1:8000>.
+2. Open two browser windows side by side: one on Mission Control (`/`), one on the HITL inbox
+   (`/hitl`). Two windows make the "a person approves it" moment visible.
+3. If the board is not empty, go to Settings and note the storm button on Mission Control will
+   add to it; a clean start is `rm data/noc_agents.db` before step 1.
+4. Press **Guided demo** in the top bar. The panel follows you from page to page.
+5. Internet is optional. Without it the UI falls back to the system font; nothing else changes.
+
+## The story in one sentence
+
+A NOC analyst used to spend about forty-five minutes per service-affecting alarm on typing,
+matrix lookups and chasing; the agents now do that in under a second, record why, and hand the
+decisions that matter to a person.
+
+## Step 1 — Start the storm (2 minutes)
+
+Press **Launch the storm** in the guide (or the storm button in the hero).
+
+Say: *Heavy rain hits Rift, Mt Kenya and Nairobi East. Eleven alarms arrive in twenty seconds —
+microwave hops fail and child sites drop under their HUBs. Watch the rail under the KPIs: every
+hop is one agent finishing its part of the job.*
+
+Point at:
+
+- the rail lighting up hop by hop with milliseconds under each;
+- the live incidents list filling with `INC000001` upwards;
+- the ticker on the right streaming each agent's reasoning;
+- the HITL count rising to four: those are the P2 broadcasts waiting for a person.
+
+The storm absorbs six of the eleven alarms into their parent HUB tickets. That is the
+correlation agent refusing to open duplicates.
+
+## Step 2 — Read what the agents decided (2 minutes)
+
+Open the first ticket (the guide's button, or click the row).
+
+Say: *Every field an analyst used to type is already filled: category, technology, outage
+start, the responsible MSP, the field engineer, the expected resolution. Two lines explain the
+priority and the assignment in the floor's own words.*
+
+Click **Severity** on the rail: the reasoning reads `users=280000→P2; site_type=HUB floor=P2;
+mpesa_risk=true`. Click **Assign**: `region=RFT; lane=tx_mw; pool=['TETRANET', 'FIELD_ENGINEER']`.
+Point at the lavender **HITL Gate** and **Broadcast** hops: *these are waiting for a human*.
+Point at "2 later alarms folded in": the duplicates the HUB absorbed.
+
+## Step 3 — Approve what matters (2 minutes)
+
+In the second window, the HITL inbox.
+
+Say: *A P2 broadcast never leaves without a named person. The card shows the SMS and the e-mail
+exactly as they will be sent, with the facts beside them. One person claims it so two
+supervisors cannot both act; a reason is required and lands on the audit row.*
+
+Claim, type a reason, approve. Back on Mission Control the HITL count drops and the ticket's
+run flips from "waiting for a human" to done. With a Gmail app password configured the e-mail
+really arrives; without one it is stored and marked mock.
+
+## Step 4 — Hand the shift over (1 minute)
+
+Open the Shift Desk.
+
+Say: *The Excel ledger was written as each ticket opened. The handover lists every open ticket
+with its owner, priority and last vendor note. It is generated, reviewed, and only then sent.*
+
+Press **Generate / send handover preview**.
+
+## Step 5 — Show the numbers (3 minutes)
+
+Open `/showcase`.
+
+Say: *Everything on this page is read from the running system.* Then walk down:
+
+- **The three numbers.** Hours of floor toil taken over; alarms into tickets with the share
+  absorbed; decisions asked of a person. Switch between *Last 24 h* and *All time*.
+- **What changed for the floor.** The twelve steps, before and after, with the minutes a person
+  spends on each by hand.
+- **How it sits on what you already run.** Nothing is replaced: the NMS feed, the ticket
+  system, the CMDB, the mail and SMS gateways and the Excel ledger stay. The agents read and
+  write through adapters. Twenty-nine tool connections across twenty systems are already
+  declared, each read-only or behind a named approval, none switched on here.
+- **People keep the decisions.** The autonomy level is one setting; this deployment runs at
+  L2. The list of what is never automated.
+- **Where the minutes go** and **each agent by the numbers**: the toil bars and the per-agent
+  throughput.
+- **Adding the next agent**: one module, one registry card, tests.
+
+## Where the numbers come from (say this if asked, and before anyone asks about "AI magic")
+
+- Counts are rows the system already writes: runs, steps, incidents, approvals, broadcasts,
+  ledger rows, briefs. `GET /api/v1/metrics/productivity` adds them up; nothing is estimated
+  there.
+- Minutes are a **model**: `productivity.toil_minutes` in `config/operators/safaricom.yaml`
+  says how long an analyst spends on each step by hand (1 min ingest … 8 min ticket … 10 min
+  exec brief; 47 min for a full alarm, 4 min for a duplicate). The page shows those inputs and
+  multiplies them by completed steps. Decided approvals are charged back at 2 min each.
+  Change the YAML and the page recalculates. A stopwatch study replaces the guesses.
+- Timings in milliseconds are measured, per step, from the step rows.
+
+## Questions you will get
+
+**Is a language model deciding priorities?** No. The twelve-step path is deterministic code
+driven by the operator's YAML; it runs with no model, no network and no credentials, and the
+suite proves that on every run. A model is optional (`LLM_ENABLED`), only drafts text after
+the ticket is committed, is fed redacted data, has a monthly spend cap, and every draft is
+validated or replaced by the template.
+
+**How does it plug into our systems?** Through adapter interfaces — alarm source, ticket
+system, CMDB, e-mail, SMS, ledger. The demo ships mocks behind the same interfaces; a real
+adapter is a module behind a flag. Writes into another system are never made by a model; the
+orchestrator makes them after a person approves the matching card.
+
+**What stays human?** P1 and P2 wording, priority overrides, reassignment disputes, the
+handover send, anything that changes a live network element (there is no such tool), and
+every write into another system.
+
+**What about personal data and Kenyan law?** Names, numbers and addresses are redacted before
+any external call; each transfer outside Kenya is recorded; the design notes in
+`docs/COMPLIANCE.md` cover the Data Protection Act posture. The demo data is fictional.
+
+**What does it cost to run?** The demo costs nothing. The spec's pilot estimate (section 11)
+is roughly USD 150–300 a month, most of it the hosted model and SMS, and both are optional.
+
+**What would it take to go live?** A shadow shift signed by the floor (`docs/SIGNOFF.md`),
+one real adapter, and the owner decisions in `docs/DECISIONS.md`. `docs/STATUS.md` has the
+honest list.
+
+## If something goes wrong
+
+- *Rail does not animate*: the WebSocket chip in the top bar should read LIVE WS. If not,
+  refresh; the page polls as a fallback and the numbers stay right.
+- *Nothing happens on the storm button*: check the API chip; the server log is in the
+  terminal running `run_all.sh`.
+- *Mission Control already has tickets*: that is fine; the numbers accumulate. For a clean
+  board stop the server, delete `data/noc_agents.db`, start again.
+- *Quiet mode is on* (button in the top bar): animations are off by design for night shifts.

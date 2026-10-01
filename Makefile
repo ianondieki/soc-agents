@@ -1,4 +1,4 @@
-.PHONY: install test demo run run-ui build-ui
+.PHONY: install test demo run run-ui build-ui demo-up screenshots
 
 install:
 	python -m pip install -e ".[dev]"
@@ -18,3 +18,13 @@ run-ui:
 
 build-ui:
 	cd frontend && npm run build
+
+# One command for a showcase: build the UI and serve API + UI on :8000 with the live agent
+# delay on (Linux/macOS; on Windows use scripts/run_all.ps1).
+demo-up:
+	bash scripts/run_all.sh
+
+# Every route at 375 and 1440 px against a running stack (default http://127.0.0.1:8000),
+# with a storm seeded first. Needs the playwright extra: pip install playwright
+screenshots:
+	python scripts/screenshots.py docs/screenshots
