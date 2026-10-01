@@ -105,7 +105,7 @@ export default function Maintenance({ tick }: { tick: number }) {
   if (off) {
     return (
       <div>
-        <h2 style={{ marginTop: 0 }}>Planned Maintenance</h2>
+        <h1 className="page-title">Planned Maintenance</h1>
         <div className="panel">
           <div className="empty">
             Planned maintenance is not enabled on this deployment. Set{" "}
@@ -118,7 +118,7 @@ export default function Maintenance({ tick }: { tick: number }) {
 
   return (
     <div>
-      <h2 style={{ marginTop: 0 }}>Planned Maintenance</h2>
+      <h1 className="page-title">Planned Maintenance</h1>
       <p className="muted">
         Windows take live customers off air on purpose, so two separate people sign off: the
         programme (<code>APPROVE_SCHEDULE</code>, per task) and the night itself (

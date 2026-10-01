@@ -5,6 +5,7 @@ import { useRealtime } from "./realtime/useRealtime";
 import { RealtimeProvider } from "./realtime/RealtimeContext";
 import DemoGuide from "./components/DemoGuide";
 import { AUTO_STORM_KEY } from "./lib/demo";
+import { humanAutonomy } from "./lib/agents";
 import MissionControl from "./pages/MissionControl";
 import IncidentBoard from "./pages/IncidentBoard";
 import IncidentWorkspace from "./pages/IncidentWorkspace";
@@ -62,6 +63,41 @@ const NAV_GROUPS: { title: string; links: { to: string; label: string; end?: boo
     ],
   },
 ];
+
+const SCROLLERS = ".list, .ticker, .table-scroll, .hitl-channel-body, .hitl-field-pre, .panel, .pre";
+
+function useScrollableRegions(pathname: string, revisions: unknown) {
+  useEffect(() => {
+    let raf = 0;
+    const mark = () => {
+      for (const el of Array.from(document.querySelectorAll<HTMLElement>(SCROLLERS))) {
+        const scrolls = el.scrollHeight > el.clientHeight + 1 || el.scrollWidth > el.clientWidth + 1;
+        if (scrolls) {
+          if (!el.hasAttribute("tabindex")) el.setAttribute("tabindex", "0");
+          if (!el.hasAttribute("aria-label")) {
+            const head = el.querySelector("h3, h4")?.textContent?.trim();
+            if (head) el.setAttribute("aria-label", head);
+          }
+        } else if (el.getAttribute("tabindex") === "0") {
+          el.removeAttribute("tabindex");
+        }
+      }
+    };
+    const schedule = () => {
+      window.cancelAnimationFrame(raf);
+      raf = window.requestAnimationFrame(mark);
+    };
+    const t1 = window.setTimeout(schedule, 50);
+    const t2 = window.setTimeout(schedule, 900); // after the page's data has arrived
+    window.addEventListener("resize", schedule);
+    return () => {
+      window.clearTimeout(t1);
+      window.clearTimeout(t2);
+      window.cancelAnimationFrame(raf);
+      window.removeEventListener("resize", schedule);
+    };
+  }, [pathname, revisions]);
+}
 
 export default function App() {
   const [profile, setProfile] = useState<any>(null);
@@ -121,6 +157,12 @@ export default function App() {
     setNavOpen(false);
   }, [loc.pathname]);
 
+  // A region that scrolls must be reachable from the keyboard (WCAG 2.1.1). Lists, tickers,
+  // message bodies and, on a phone, panels holding a wide table all scroll; which ones do
+  // depends on the data and the viewport, so they are found after render rather than marked
+  // by hand in thirty places. Non-scrolling containers stay out of the tab order.
+  useScrollableRegions(loc.pathname, revisions);
+
   // --- the live storm, owned here so the guided demo can start it from any page ------
   const stormingRef = useRef(false);
   const [storming, setStorming] = useState(false);
@@ -171,9 +213,10 @@ export default function App() {
   if (isWall) {
     return (
       <RealtimeProvider value={realtime}>
-        <Routes>
-          <Route
-            path="/wallboard"
+        <main>
+          <Routes>
+            <Route
+              path="/wallboard"
             element={
               <Wallboard
                 metrics={metrics}
@@ -182,7 +225,8 @@ export default function App() {
               />
             }
           />
-        </Routes>
+          </Routes>
+        </main>
       </RealtimeProvider>
     );
   }
@@ -194,7 +238,7 @@ export default function App() {
           <div className="nav-brand-row">
             <div className="brand">
               Kenya NOC
-              <div className="muted">Mission Control · Safaricom</div>
+              <div className="muted">Mission Control, Safaricom demo</div>
             </div>
             <button
               type="button"
@@ -223,32 +267,33 @@ export default function App() {
         </nav>
         <div className="main">
           <header className="topbar">
-            <div className="chips">
-              <span className="chip accent">{profile?.display_name || "Connecting…"}</span>
-              <span className="chip">{profile?.autonomy_level || "L2"}</span>
-              <span className="chip chip-wide">
-                {(profile?.shift ? String(profile.shift).toUpperCase() : "DAY") + " SHIFT"}
+            <div className="topbar-left">
+              <span className="topbar-id">{profile?.display_name ? String(profile.display_name).replace(" (demo profile)", "") : "Connecting…"}</span>
+              <span className="topbar-meta chip-wide">
+                {humanAutonomy(profile?.autonomy_level)}, {profile?.shift ? String(profile.shift).toLowerCase() : "day"} shift
               </span>
-              <span className={"chip " + (connected ? "ok" : "bad")}>
-                {connected ? "LIVE WS" : "WS reconnecting"}
+              <span className={"chip " + (connected ? "ok" : "bad")} title="WebSocket to the agent event stream">
+                {connected ? "Live" : "Reconnecting"}
               </span>
-              <span className={"chip " + (apiOk ? "ok" : "bad")}>{apiOk ? "API OK" : "API DOWN"}</span>
-              <span className="chip hitl">HITL {metrics?.hitl_pending ?? 0}</span>
-              <span className="chip chip-wide">Open {metrics?.open_total ?? 0}</span>
-              <span className="chip chip-wide">P1 {metrics?.by_priority?.P1 ?? 0}</span>
-              <span className="chip chip-wide">P2 {metrics?.by_priority?.P2 ?? 0}</span>
+              <span className={"chip " + (apiOk ? "ok" : "bad")}>{apiOk ? "API ok" : "API down"}</span>
               {quietMode && suppressed > 0 && (
                 <span className="chip" title="Non-critical ticker lines held back by quiet mode">
-                  QUIET · {suppressed} held
+                  {suppressed} held
                 </span>
               )}
             </div>
-            <div className="chips">
-              <span className="chip">
-                {session.display_name} · {session.role}
-              </span>
+            <div className="topbar-right">
               <button
-                className={"btn" + (guideOpen ? " good" : "")}
+                type="button"
+                className={"chip " + ((metrics?.hitl_pending ?? 0) > 0 ? "hitl" : "")}
+                onClick={() => nav("/hitl")}
+                title="Decisions waiting for a person"
+              >
+                {metrics?.hitl_pending ?? 0} waiting for a decision
+              </button>
+              <span className="topbar-user chip-wide">{session.display_name}</span>
+              <button
+                className={"btn sm" + (guideOpen ? " good" : "")}
                 onClick={() => setGuideOpen((o) => !o)}
                 aria-pressed={guideOpen}
                 title="A five-step walkthrough for presenting the prototype"
@@ -256,13 +301,14 @@ export default function App() {
                 Guided demo
               </button>
               <button
-                className={"btn" + (quietMode ? " good" : "")}
+                className={"btn sm chip-wide" + (quietMode ? " good" : "")}
                 onClick={() => setQuietMode(!quietMode)}
+                aria-pressed={quietMode}
                 title="Night shift: stop animations and non-critical ticker churn. P1/P2 incidents and HITL prompts stay live."
               >
-                {quietMode ? "Quiet mode ON" : "Quiet mode"}
+                {quietMode ? "Quiet mode on" : "Quiet mode"}
               </button>
-              <button className="btn" onClick={() => nav("/settings")}>
+              <button className="btn sm" onClick={() => nav("/settings")}>
                 Settings
               </button>
             </div>
@@ -282,7 +328,7 @@ export default function App() {
               </div>
             </div>
           )}
-          <div className="content">
+          <main className="content" id="main">
             <Routes>
               <Route
                 path="/"
@@ -353,7 +399,7 @@ export default function App() {
                 }
               />
             </Routes>
-          </div>
+          </main>
         </div>
         <DemoGuide
           open={guideOpen}

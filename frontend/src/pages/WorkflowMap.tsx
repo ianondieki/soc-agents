@@ -44,7 +44,7 @@ export default function WorkflowMap({ profile }: { profile: any }) {
 
   return (
     <div>
-      <h2 style={{ marginTop: 0 }}>Workflow Map</h2>
+      <h1 className="page-title">Workflow Map</h1>
       <p className="muted">
         The twelve hops every alarm takes, in order. Autonomy {String(profile?.autonomy_level || "L2_GUARDED").replace("_", " ")}:
         the gate holds P1 and P2 external broadcasts for a person.

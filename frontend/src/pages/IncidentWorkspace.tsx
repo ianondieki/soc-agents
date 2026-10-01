@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
 import { api } from "../api";
 import AgentRail from "../components/AgentRail";
-import { countAbsorbed, fmtMs, pickCreatingRun, runChipClass, runStatusWord, sumDurations } from "../lib/agents";
+import { countAbsorbed, fmtMs, humanStatus, pickCreatingRun, runChipClass, runStatusWord, sumDurations } from "../lib/agents";
 import EarlierAtThisSite from "../components/EarlierAtThisSite";
 import ContractsDrawer from "../components/ContractsDrawer";
 import RegulatoryCountdown from "../components/RegulatoryCountdown";
@@ -78,11 +78,11 @@ export default function IncidentWorkspace({ session }: { session: any }) {
     <div>
       <div style={{ display: "flex", gap: "0.6rem", alignItems: "center", flexWrap: "wrap" }}>
         <span className={`pill ${inc.priority}`}>{inc.priority}</span>
-        <h2 style={{ margin: 0 }}>{inc.incident_number}</h2>
-        <span className="chip">{inc.status}</span>
-        <span className="chip">{inc.site_class || "STANDARD"}</span>
+        <h1 className="page-title">{inc.incident_number}</h1>
+        <span className="chip accent">{humanStatus(inc.status)}</span>
+        <span className="chip">{String(inc.site_class || "standard").toLowerCase()} site</span>
         {inc.mpesa_risk && <span className="chip hitl">M-PESA corridor risk</span>}
-        {inc.requires_hitl && <span className="chip hitl">HITL {inc.hitl_state}</span>}
+        {inc.requires_hitl && <span className="chip hitl">decision {humanStatus(inc.hitl_state)}</span>}
       </div>
       <p className="muted">
         {inc.site_name} ({inc.site_type}) · {inc.region_code}

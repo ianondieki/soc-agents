@@ -3,12 +3,27 @@ import { useNavigate } from "react-router-dom";
 import { api } from "../api";
 import { AUTO_STORM_KEY } from "../lib/demo";
 import LiveRunPanel from "../components/LiveRunPanel";
+import { humanGraph, humanStatus, runChipClass, runStatusWord } from "../lib/agents";
+import { labelFor } from "../lib/hitl";
 import { fmtTime } from "../lib/time";
 // One run-status palette and one error line for both run lists (A-13), so the two pages
 // cannot drift apart again.
-import { RunError, runChip } from "./Agents";
+import { RunError } from "./Agents";
 import { describeEvent, type NocEvent } from "../realtime/renderers";
 import { hitlSubject } from "../lib/hitlSubject";
+
+/** One figure of the strip. Colour only when the number is worth a look; zero stays quiet. */
+function Kpi({ label, value, tone }: { label: string; value: number | undefined; tone?: string }) {
+  const n = typeof value === "number" ? value : null;
+  return (
+    <div className="kpi">
+      <div className="label">{label}</div>
+      <div className={"value" + (n === 0 ? " zero" : "")} style={tone && n ? { color: tone } : undefined}>
+        {n == null ? "—" : n}
+      </div>
+    </div>
+  );
+}
 
 export default function MissionControl({
   metrics,
@@ -50,6 +65,24 @@ export default function MissionControl({
   const [err, setErr] = useState("");
   const [chase, setChase] = useState("");
   const autoStarted = useRef(false);
+
+  // Flash a row only when it is new on the board. The class used to be on every row, so
+  // every refetch re-ran the animation across the whole list — motion that meant nothing.
+  const seenIds = useRef<Set<string> | null>(null);
+  const [fresh, setFresh] = useState<Set<string>>(() => new Set());
+  useEffect(() => {
+    if (seenIds.current === null) {
+      seenIds.current = new Set(incidents.map((i) => i.id));
+      return;
+    }
+    const seen = seenIds.current;
+    const added = incidents.map((i) => i.id).filter((id) => !seen.has(id));
+    if (added.length === 0) return;
+    for (const id of added) seen.add(id);
+    setFresh(new Set(added));
+    const t = window.setTimeout(() => setFresh(new Set()), 1700);
+    return () => window.clearTimeout(t);
+  }, [incidents]);
 
   const loadIncidents = () => api.incidents().then(setIncidents).catch((e) => setErr(String(e)));
   const loadHitl = () => api.hitl().then(setHitl).catch(console.error);
@@ -111,21 +144,17 @@ export default function MissionControl({
 
   return (
     <div>
-      <div className="hero">
+      <div className="page-head">
         <div>
           <h1>Mission Control</h1>
           <p className="lead">
-            Live multi-agent NOC for Safaricom-scale ops (~7,000 sites). Every alarm runs the twelve agents below;
-            the rail shows the newest one hop by hop. Heavy rain in Rift, Mt Kenya and Nairobi East takes microwave
-            hops down and cascades child sites under their HUB majors.
+            Every alarm runs the twelve agents; the rail follows the newest one. The storm scenario drops microwave
+            hops in Rift, Mt Kenya and Nairobi East and cascades child sites under their HUB majors.
           </p>
         </div>
-        <div className="hero-actions">
+        <div className="page-actions">
           <button className="btn storm" disabled={storming} onClick={() => onLaunchStorm("Manual storm launch")}>
             {storming ? "Storm in progress…" : "Launch heavy-rain storm (live)"}
-          </button>
-          <button className="btn" onClick={onOpenGuide} title="Five steps for presenting the prototype">
-            Guided demo
           </button>
           <button
             className="btn"
@@ -158,44 +187,13 @@ export default function MissionControl({
       )}
 
       <div className="kpis">
-        <div className="kpi">
-          <div className="label">Open</div>
-          <div className="value">{metrics?.open_total ?? "—"}</div>
-        </div>
-        <div className="kpi">
-          <div className="label">P1 critical</div>
-          <div className="value" style={{ color: "var(--p1)" }}>
-            {metrics?.by_priority?.P1 ?? 0}
-          </div>
-        </div>
-        <div className="kpi">
-          <div className="label">P2 major</div>
-          <div className="value" style={{ color: "var(--p2)" }}>
-            {metrics?.by_priority?.P2 ?? 0}
-          </div>
-        </div>
-        <div className="kpi">
-          <div className="label">HITL queue</div>
-          <div className="value" style={{ color: "var(--hitl)" }}>
-            {metrics?.hitl_pending ?? 0}
-          </div>
-        </div>
-        <div className="kpi">
-          <div className="label">SLA risk</div>
-          <div className="value" style={{ color: "var(--warn)" }}>
-            {metrics?.sla_risk ?? 0}
-          </div>
-        </div>
-        <div className="kpi">
-          <div className="label">Problems</div>
-          <div className="value">{metrics?.problems_open ?? 0}</div>
-        </div>
-        <div className="kpi">
-          <div className="label">Silent risk</div>
-          <div className="value" style={{ color: "var(--warn)" }}>
-            {metrics?.silent_at_risk ?? 0}
-          </div>
-        </div>
+        <Kpi label="Open incidents" value={metrics?.open_total} />
+        <Kpi label="P1 critical" value={metrics?.by_priority?.P1} tone="var(--p1)" />
+        <Kpi label="P2 major" value={metrics?.by_priority?.P2} tone="var(--p2)" />
+        <Kpi label="Waiting for a decision" value={metrics?.hitl_pending} tone="var(--hitl)" />
+        <Kpi label="Past restore SLA" value={metrics?.sla_risk} tone="var(--warn)" />
+        <Kpi label="Vendor silent" value={metrics?.silent_at_risk} tone="var(--warn)" />
+        <Kpi label="Open problems" value={metrics?.problems_open} />
       </div>
 
       <div style={{ marginBottom: "1rem" }}>
@@ -222,19 +220,19 @@ export default function MissionControl({
               </div>
             )}
             {open.map((i) => (
-              <div key={i.id} className="row flash" onClick={() => onOpen(i.id)}>
+              <div key={i.id} className={"row" + (fresh.has(i.id) ? " flash" : "")} onClick={() => onOpen(i.id)}>
                 <span className={`pill ${i.priority}`}>{i.priority}</span>
                 <div>
                   <div>
-                    <strong>{i.incident_number}</strong> · {i.site_id}
+                    <strong>{i.incident_number}</strong> <span className="muted">{i.site_name || i.site_id}</span>
                   </div>
                   <div className="muted">
-                    {i.region_code} · {i.failure_domain} · {i.responsible_msp || i.assignee_name}
-                    {i.child_sites_down ? ` · children ${i.child_sites_down}` : ""}
-                    {i.mpesa_risk ? " · M-PESA" : ""}
+                    {i.region_code}, {String(i.failure_domain || "").toLowerCase()}, owner {i.responsible_msp || i.assignee_name}
+                    {i.child_sites_down ? `, ${i.child_sites_down} child sites` : ""}
+                    {i.mpesa_risk ? ", M-PESA risk" : ""}
                   </div>
                 </div>
-                <span className="muted dim">{i.status}</span>
+                <span className="status">{humanStatus(i.status)}</span>
               </div>
             ))}
           </div>
@@ -304,8 +302,8 @@ export default function MissionControl({
                     <strong>{hitlSubject(t)}</strong>
                   </div>
                   <div className="muted">
-                    {t.task_type}
-                    {t.claimed_by ? ` · ${t.claimed_by}` : " · unclaimed"}
+                    {labelFor(t.task_type)}
+                    {t.claimed_by ? `, claimed by ${t.claimed_by}` : ", unclaimed"}
                   </div>
                 </div>
                 <span className="muted dim">{t.site_id}</span>
@@ -315,9 +313,9 @@ export default function MissionControl({
         </div>
       </div>
 
-      <div className="grid-2" style={{ marginTop: "1rem" }}>
+      <div className="grid-2" style={{ marginTop: "var(--s4)", alignItems: "start" }}>
         <div className="panel">
-          <h3>Open load by region (RFT · MTK · NBI_E storm zones)</h3>
+          <h3>Open incidents by region</h3>
           <div className="region-bars">
             {Object.entries(metrics?.by_region || {}).length === 0 && (
               <div className="empty">Region load appears when incidents are open.</div>
@@ -326,16 +324,7 @@ export default function MissionControl({
               <div key={k} className="region-bar-row">
                 <span className="muted">{k}</span>
                 <div className="region-bar-track">
-                  <div
-                    className="region-bar-fill"
-                    style={{
-                      width: `${(Number(v) / maxRegion) * 100}%`,
-                      background:
-                        k === "RFT" || k === "MTK" || k === "NBI_E"
-                          ? "linear-gradient(90deg, #38bdf8, #a78bfa)"
-                          : undefined,
-                    }}
-                  />
+                  <div className="region-bar-fill" style={{ width: `${(Number(v) / maxRegion) * 100}%` }} />
                 </div>
                 <span className="muted">{String(v)}</span>
               </div>
@@ -353,13 +342,13 @@ export default function MissionControl({
                 onClick={() => r.incident_id && onOpen(r.incident_id)}
               >
                 {/* Same A-13 fix as the Agent Observatory: FAILED is red with its word, never green. */}
-                <span className={runChip(r.status)}>{r.status}</span>
+                <span className={runChipClass(r.status)}>{runStatusWord(r.status)}</span>
                 <div>
-                  <div className="muted">
-                    {r.graph_name} · {r.trigger}
+                  <div>
+                    {humanGraph(r.graph_name)} <span className="muted">{String(r.trigger || "").toLowerCase()}</span>
                   </div>
                   <div className="muted dim">
-                    {r.current_node || (r.steps && `${r.steps.length} steps`) || "—"}
+                    {r.current_node ? `at ${r.current_node}` : r.steps ? `${r.steps.length} steps` : ""}
                   </div>
                   <RunError status={r.status} summary={r.error_summary} />
                 </div>

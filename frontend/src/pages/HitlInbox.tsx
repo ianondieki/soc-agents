@@ -148,7 +148,7 @@ export default function HitlInbox({ session, tick }: { session: any; tick: numbe
 
   return (
     <div>
-      <h2 style={{ marginTop: 0 }}>HITL Inbox</h2>
+      <h1 className="page-title">HITL Inbox</h1>
       <p className="muted">
         Shared team queue — claim before approve to avoid double action. Every rendering below is
         what actually leaves; read both columns before deciding.

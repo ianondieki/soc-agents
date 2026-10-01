@@ -165,26 +165,27 @@ export default function Showcase({
           operator profile's estimate of the manual work, not a stopwatch.
         </p>
         <ol className="sc-steps">
-          {(p?.steps?.by_node || []).map((n: any) => {
+          {(p?.steps?.by_node || []).map((n: any, idx: number) => {
             const story = HOP_STORY[n.node] || { does: "", instead: "" };
             const human = n.node === "HITL";
             return (
               <li key={n.node} className={"sc-step" + (human ? " human" : "")}>
-                <div className="sc-step-head">
+                <span className="sc-step-no">{idx + 1}</span>
+                <div className="sc-step-name">
                   <strong>{n.label}</strong>
                   <span className="muted">{agentDisplayName(n.agent)}</span>
-                  <span className="sc-step-min">{human ? "stays human" : `${n.toil_minutes_each} min by hand`}</span>
                 </div>
-                <div className="sc-step-body">
-                  <p>
-                    <span className="sc-k">Now</span> {story.does}
-                  </p>
-                  <p className="muted">
-                    <span className="sc-k">Before</span> {story.instead}
-                  </p>
+                <div className="sc-step-now">
+                  <span className="sc-k">Now</span>
+                  {story.does}
                 </div>
-                <div className="sc-step-stat muted">
-                  {n.steps ? `${n.steps} runs · avg ${fmtMs(n.avg_ms)}${n.failed ? ` · ${n.failed} failed` : ""}` : "not run yet"}
+                <div className="sc-step-before">
+                  <span className="sc-k">Before</span>
+                  {story.instead}
+                </div>
+                <div className="sc-step-min">
+                  <span>{human ? "stays human" : `${n.toil_minutes_each} min by hand`}</span>
+                  <span className="muted">{n.steps ? `${n.steps} runs, ${fmtMs(n.avg_ms)}${n.failed ? `, ${n.failed} failed` : ""}` : "not run yet"}</span>
                 </div>
               </li>
             );

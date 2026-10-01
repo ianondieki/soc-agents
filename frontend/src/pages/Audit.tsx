@@ -9,7 +9,8 @@ export default function Audit({ tick }: { tick: number }) {
   }, [tick]);
   return (
     <div>
-      <h2 style={{ marginTop: 0 }}>Audit Explorer</h2>
+      <h1 className="page-title">Audit Explorer</h1>
+      <p className="muted">Every agent step and human decision, with its reason, newest first. This is the regulator-facing record.</p>
       <div className="panel">
         <table>
           <thead>

@@ -12,31 +12,37 @@ export default function ShiftDesk({ tick }: { tick: number }) {
 
   return (
     <div>
-      <h2 style={{ marginTop: 0 }}>Shift Desk</h2>
-      <p className="muted">EAT day/night ledger + handover package for incoming shift.</p>
-      <button
-        className="btn primary"
-        onClick={async () => {
-          const h = await api.handover();
-          setHandover(h);
-        }}
-      >
-        Generate / send handover preview
-      </button>
+      <div className="page-head">
+        <div>
+          <h1>Shift Desk</h1>
+          <p className="lead">The day and night ledger (EAT), and the handover package for the incoming shift.</p>
+        </div>
+        <div className="page-actions">
+          <button
+            className="btn primary"
+            onClick={async () => {
+              const h = await api.handover();
+              setHandover(h);
+            }}
+          >
+            Generate handover preview
+          </button>
+        </div>
+      </div>
       {handover && (
-        <div className="panel" style={{ marginTop: "1rem" }}>
+        <div className="panel" style={{ marginBottom: "var(--s4)" }}>
           <h3>{handover.subject}</h3>
           <div className="pre">{handover.body}</div>
         </div>
       )}
-      <div className="panel" style={{ marginTop: "1rem" }}>
+      <div className="panel">
         <h3>Shift ledger rows</h3>
         <table>
           <thead>
             <tr>
               <th>Time (EAT)</th>
-              <th>INC</th>
-              <th>Pri</th>
+              <th>Incident</th>
+              <th>Priority</th>
               <th>Site</th>
               <th>Region</th>
               <th>Owner</th>
@@ -54,7 +60,7 @@ export default function ShiftDesk({ tick }: { tick: number }) {
                 <td>{r.site}</td>
                 <td>{r.region_code}</td>
                 <td>{r.owner}</td>
-                <td>{r.shift_type}</td>
+                <td>{String(r.shift_type || "").toLowerCase()}</td>
               </tr>
             ))}
           </tbody>

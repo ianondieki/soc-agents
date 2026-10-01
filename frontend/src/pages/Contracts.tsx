@@ -96,7 +96,7 @@ export default function Contracts() {
 
   return (
     <div>
-      <h2 style={{ marginTop: 0 }}>Contracts</h2>
+      <h1 className="page-title">Contracts</h1>
       <p className="muted">
         Clause search and cited advisory answers over the contracts your role may see. Advisory only: nothing here writes a
         credit, a penalty or a regulator submission.

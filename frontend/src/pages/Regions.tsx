@@ -115,8 +115,10 @@ function RegionCard({ region }: { region: any }) {
       </div>
 
       <div className="chips" style={{ marginBottom: "0.6rem" }}>
+        {/* Colour is spent only on a count that is not zero: a red "P1 0" on six quiet regions
+            would make the one real P1 invisible. */}
         {PRIORITIES.map((p) => (
-          <span key={p} className={`pill ${p}`} title={`${p} incidents open now`}>
+          <span key={p} className={num(byPriority[p]) > 0 ? `pill ${p}` : "chip"} title={`${p} incidents open now`}>
             {p} {num(byPriority[p])}
           </span>
         ))}
@@ -231,7 +233,7 @@ export default function Regions({ tick }: { tick: number }) {
 
   return (
     <div>
-      <h2 style={{ marginTop: 0 }}>Regions</h2>
+      <h1 className="page-title">Regions</h1>
       <p className="muted">
         Per-region fault load, repeat faults and outside-world signal freshness. Rows are every
         region on the operator profile — a region with nothing open still appears, because a

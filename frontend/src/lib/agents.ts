@@ -48,6 +48,23 @@ export function runChipClass(status: unknown): string {
   return "chip";
 }
 
+/** "incident_lifecycle" → "Incident lifecycle". */
+export function humanGraph(name: unknown): string {
+  const s = String(name ?? "").replace(/_/g, " ");
+  return s ? s[0].toUpperCase() + s.slice(1) : "";
+}
+
+/** "L2_GUARDED" → "L2 guarded": the level token stays as written, the rest reads as words. */
+export function humanAutonomy(level: unknown): string {
+  const [lvl, ...rest] = String(level || "L2_GUARDED").split("_");
+  return [lvl, ...rest.map((w) => w.toLowerCase())].join(" ");
+}
+
+/** "AWAITING_VENDOR" → "awaiting vendor": an enum as a person reads it. */
+export function humanStatus(status: unknown): string {
+  return String(status ?? "").toLowerCase().replace(/_/g, " ");
+}
+
 /** The run status as a person reads it. */
 export function runStatusWord(status: unknown): string {
   const s = String(status ?? "").toUpperCase();

@@ -153,7 +153,7 @@ export default function Pirs({ tick }: { tick: number }) {
   if (off) {
     return (
       <div>
-        <h2 style={{ marginTop: 0 }}>Post-incident reviews</h2>
+        <h1 className="page-title">Post-incident reviews</h1>
         <div className="panel">
           <div className="empty">
             Post-incident reviews are not enabled on this deployment. Set{" "}
@@ -169,7 +169,7 @@ export default function Pirs({ tick }: { tick: number }) {
   return (
     <div>
       <div style={{ display: "flex", gap: "0.6rem", alignItems: "baseline", flexWrap: "wrap" }}>
-        <h2 style={{ margin: 0 }}>Post-incident reviews</h2>
+        <h1 className="page-title">Post-incident reviews</h1>
         {awaiting != null && (
           <span className={awaiting > 0 ? "chip warn" : "chip ok"}>
             {awaiting} AWAITING REVIEW

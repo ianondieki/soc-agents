@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
-import { agentDisplayName, fmtInt, fmtMs } from "../lib/agents";
+import { agentDisplayName, fmtInt, fmtMs, humanGraph, runChipClass, runStatusWord } from "../lib/agents";
 import { fmtTime } from "../lib/time";
 
 /**
@@ -84,7 +84,7 @@ export default function Agents({ tick = 0 }: { tick?: number }) {
 
   return (
     <div>
-      <div className="hero">
+      <div className="page-head">
         <div>
           <h1>Agent Observatory</h1>
           <p className="lead">
@@ -120,10 +120,10 @@ export default function Agents({ tick = 0 }: { tick?: number }) {
                     {s?.last_step_at && <span>last {fmtTime(s.last_step_at)}</span>}
                   </div>
                   <div className="agent-tags">
-                    <span className="status-pill">{a.status || "ready"}</span>
-                    <span className="chip">{a.criticality === "fail_closed" ? "stops the run on error" : "run continues on error"}</span>
-                    {a.node_ids?.length ? <span className="chip">{a.node_ids.join(", ")}</span> : <span className="chip">on request</span>}
-                    {a.mcp?.length ? <span className="chip">{a.mcp.length} tool connections declared</span> : null}
+                    {a.node_ids?.length ? `Hops ${a.node_ids.join(", ")}` : "Runs on request"}
+                    {"; "}
+                    {a.criticality === "fail_closed" ? "an error stops the run" : "an error fails only its step"}
+                    {a.mcp?.length ? `; ${a.mcp.length} tool connection${a.mcp.length === 1 ? "" : "s"} declared` : ""}
                   </div>
                 </div>
               );
@@ -138,13 +138,14 @@ export default function Agents({ tick = 0 }: { tick?: number }) {
             )}
             {runs.slice(0, 15).map((r) => (
               <div key={r.id} className="row" style={{ cursor: "default" }}>
-                <span className={runChip(r.status)}>{r.status}</span>
+                <span className={runChipClass(r.status)}>{runStatusWord(r.status)}</span>
                 <div>
                   <div>
-                    <strong>{r.graph_name}</strong>
+                    <strong>{humanGraph(r.graph_name)}</strong> <span className="muted">{String(r.trigger || "").toLowerCase()}</span>
                   </div>
                   <div className="muted">
-                    {r.trigger} · node {r.current_node || "—"} · steps {r.steps?.length ?? "?"}
+                    {r.current_node ? `at ${r.current_node}, ` : ""}
+                    {r.steps?.length ?? 0} steps
                   </div>
                   {/* A failed run keeps current_node at the node that broke; error_summary says why.
                       Without it the operator sees FAILED and has to open the DB to learn anything. */}

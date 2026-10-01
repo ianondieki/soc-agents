@@ -133,8 +133,12 @@ export default function LiveRunPanel({
         <div className="chips">
           {incidentNumber && <span className="chip accent">{incidentNumber}</span>}
           {status && <span className={runChipClass(status)}>{runStatusWord(status)}</span>}
-          {steps.length > 0 && <span className="chip">{steps.length} of 12 hops · {fmtMs(elapsed)}</span>}
-          {!useLive && stored?.started_at && <span className="chip">{fmtTime(stored.started_at)} EAT</span>}
+          {steps.length > 0 && (
+            <span className="muted">
+              {steps.length} of 12 hops, {fmtMs(elapsed)}
+              {!useLive && stored?.started_at ? `, ${fmtTime(stored.started_at)} EAT` : ""}
+            </span>
+          )}
           {incidentId && onOpen && (
             <button className="btn" onClick={() => onOpen(incidentId)}>
               Open ticket

@@ -8,7 +8,7 @@ export default function Problems({ tick }: { tick: number }) {
   }, [tick]);
   return (
     <div>
-      <h2 style={{ marginTop: 0 }}>Problem Board</h2>
+      <h1 className="page-title">Problem Board</h1>
       <p className="muted">Recurring / chronic sites (power, MW, fibre) across Safaricom regions.</p>
       <div className="panel">
         <table>

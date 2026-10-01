@@ -148,7 +148,7 @@ export default function Scorecards({ session }: { session: Session }) {
 
   const heading = (
     <div style={{ display: "flex", gap: "0.6rem", alignItems: "baseline", flexWrap: "wrap" }}>
-      <h2 style={{ margin: 0 }}>Vendor scorecards</h2>
+      <h1 className="page-title">Vendor scorecards</h1>
       <span className="chip">VIEWING AS · {role || "unknown role"}</span>
     </div>
   );

@@ -107,7 +107,7 @@ export default function ApprovalCard({
         <span className={`pill ${priority}`}>{priority}</span>
         {/* Since v8 a maintenance card has no incident; say what it IS about (lib/hitlSubject). */}
         <strong className="hitl-inc">{hitlSubject(t)}</strong>
-        <span className="chip hitl" title={typeof t.task_type === "string" ? t.task_type : "no task_type"}>
+        <span className="hitl-type" title={typeof t.task_type === "string" ? t.task_type : "no task_type"}>
           {label}
         </span>
         {!spec.known && (
@@ -118,9 +118,9 @@ export default function ApprovalCard({
             type not recognised
           </span>
         )}
-        <span className="chip">{t.status || "PENDING"}</span>
+        {t.status && t.status !== "PENDING" && <span className="chip">{String(t.status).toLowerCase()}</span>}
         {claimed ? (
-          <span className="chip ok">claimed: {claimedByMe ? "you" : claimed}</span>
+          <span className="chip ok">claimed by {claimedByMe ? "you" : claimed}</span>
         ) : (
           <span className="chip">unclaimed</span>
         )}

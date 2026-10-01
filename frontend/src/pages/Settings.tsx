@@ -163,12 +163,12 @@ export default function Settings({
 
   return (
     <div>
-      <h2 style={{ marginTop: 0 }}>Settings & Demo Inject</h2>
+      <h1 className="page-title">Settings & Demo Inject</h1>
       <div className="panel">
         <h3>Session role (team demo)</h3>
         <div className="form-row">
-          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Display name" />
-          <select value={role} onChange={(e) => setRole(e.target.value)}>
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Display name" aria-label="Display name" />
+          <select value={role} onChange={(e) => setRole(e.target.value)} aria-label="Session role">
             {ROLES.map((r) => (
               <option key={r.value} value={r.value}>
                 {r.value} — {r.label}

@@ -5,9 +5,7 @@
 
 .wb-card.escalated {
   border-color: #ff3b5c;
-  box-shadow:
-    0 0 0 2px rgba(255, 59, 92, 0.35),
-    0 0 42px rgba(255, 59, 92, 0.55);
+  box-shadow: 0 0 0 2px rgba(255, 59, 92, 0.35);
   animation: pulse 1.4s infinite;
 }
 .wb-card.escalated .wb-escalated-line {

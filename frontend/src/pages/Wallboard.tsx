@@ -154,14 +154,14 @@ export default function Wallboard({
               </div>
               <div style={{ fontSize: "1.2rem", marginTop: "0.5rem" }}>{i.site_name}</div>
               <div className="muted" style={{ marginTop: "0.4rem", fontSize: "1rem" }}>
-                {i.region_code} · {i.failure_domain} · {i.users_affected?.toLocaleString()} users
+                {i.region_code} · {String(i.failure_domain || "").toLowerCase()} · {i.users_affected?.toLocaleString()} users
               </div>
               <div style={{ marginTop: "0.8rem", fontSize: "1.05rem" }}>Owner: {i.assignee_name}</div>
               <div className="muted">
-                {i.status}
+                {String(i.status || "").replace(/_/g, " ")}
                 {i.mpesa_risk ? " · M-PESA RISK" : ""}
-                {i.requires_hitl ? " · HITL WAITING" : ""}
-                {i.tt_category ? ` · ${i.tt_category}` : ""}
+                {i.requires_hitl ? " · DECISION WAITING" : ""}
+                {i.tt_category ? ` · ${String(i.tt_category).replace(/_/g, " ")}` : ""}
               </div>
               {esc && (
                 <div className="wb-escalated-line">
