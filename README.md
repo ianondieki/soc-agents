@@ -104,7 +104,7 @@ cd frontend; npm run dev
 | System | `tests/system/` — FastAPI health, ingest, workflow, HITL, metrics |
 
 ```bash
-python -m pytest -q                 # 3,206 tests, about seven minutes, no network
+python -m pytest -q                 # 3,208 tests, about seven minutes, no network
 cd frontend && npm run build        # TypeScript + Vite bundle
 python scripts/screenshots.py out/  # every route at 375 and 1440 px against a running stack
 ```

@@ -11,7 +11,7 @@ broadcast, executive brief, shift ledger, recurrence, monitor), each step record
 reasoning, its tool calls and its timing. The React UI shows the whole shift what the agents
 did and lets a person approve what leaves the building. Everything runs offline on SQLite
 with mock adapters; the LLM, e-mail, SMS and every external connection are off by default
-and switch on with environment flags. The suite is green (3,206 tests), the UI builds, and
+and switch on with environment flags. The suite is green (3,208 tests), the UI builds, and
 `bash scripts/run_all.sh` starts the whole thing on one port.
 
 ## What exists and works today
