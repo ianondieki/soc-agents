@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../api";
+import LaneOff from "../components/LaneOff";
 import PirEditor from "../components/PirEditor";
 import { detailOf, isLaneOff } from "../lib/apiError";
 import { fmtDateTime } from "../lib/time";
@@ -154,14 +155,9 @@ export default function Pirs({ tick }: { tick: number }) {
     return (
       <div>
         <h1 className="page-title">Post-incident reviews</h1>
-        <div className="panel">
-          <div className="empty">
-            Post-incident reviews are not enabled on this deployment. Set{" "}
-            <code>PIR_ENABLED=true</code> in <code>.env</code> and restart the API. With the flag
-            off the whole lane is invisible by design — no review is opened, and the{" "}
-            <code>pir_autoopen</code> job is a no-op.
-          </div>
-        </div>
+        <LaneOff title="Post-incident reviews are off" flag="PIR_ENABLED">
+          no review is opened and the <code>pir_autoopen</code> job does nothing.
+        </LaneOff>
       </div>
     );
   }

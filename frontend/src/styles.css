@@ -240,7 +240,7 @@ button.chip:hover { border-color: var(--accent); color: var(--text-bright); }
   padding: var(--s4) var(--s4);
   min-width: 0;
 }
-.panel h3, .panel-head h3 {
+.panel h3, .panel-head h3, .panel-kicker {
   margin: 0 0 var(--s3);
   font-size: 0.74rem;
   font-weight: 600;
@@ -249,7 +249,7 @@ button.chip:hover { border-color: var(--accent); color: var(--text-bright); }
   letter-spacing: 0.06em;
 }
 .panel-head { display: flex; justify-content: space-between; align-items: center; gap: var(--s2); margin-bottom: var(--s3); flex-wrap: wrap; }
-.panel-head h3 { margin: 0; }
+.panel-head h3, .panel-head .panel-kicker { margin: 0; }
 .panel-head .chips { gap: var(--s2); }
 
 /* Lists: hairline rows, no inner boxes. */
@@ -1394,4 +1394,50 @@ textarea { width: 100%; min-height: 90px; }
   select { max-width: 100%; }
   .wb-alarm-chip { white-space: normal; font-size: 16px; max-width: 100%; }
   .wallboard { padding: var(--s4); }
+}
+
+/* A feature lane that is switched off: one dashed panel, the same on every flagged page. */
+.lane-off { border-style: dashed; }
+.lane-off-body { margin: 0; color: var(--muted); max-width: 70ch; font-size: 0.9rem; line-height: 1.55; }
+
+/* The Workflow Map's training grid: twelve numbered cards, no connectors. */
+.rail-grid .rail-track { display: grid; grid-template-columns: repeat(auto-fill, minmax(148px, 1fr)); gap: var(--s2); }
+.rail-grid .rail-hop { display: block; }
+.rail-grid .rail-btn { width: 100%; position: relative; }
+.rail-n { position: absolute; top: 0.4rem; left: 0.5rem; font-family: var(--mono); font-size: 0.64rem; color: var(--muted-dim); }
+.table-wide table { min-width: 820px; }
+.phone-only { display: none; }
+td.num { text-align: right; font-family: var(--mono); white-space: nowrap; }
+.hop-what { margin: 0.2rem 0 0; font-weight: 400; color: var(--muted); font-size: 0.82rem; line-height: 1.45; }
+
+/* Audit Explorer: blocks per record, a hairline list inside, the reason on its own line. */
+.audit-search { min-width: 18rem; }
+.audit-count { margin: calc(-1 * var(--s3)) 0 var(--s4); font-size: 0.82rem; }
+.audit-block { margin-bottom: var(--s3); }
+.audit-block .panel-kicker { display: flex; gap: var(--s2); align-items: baseline; flex-wrap: wrap; }
+.audit-ref { font-family: var(--mono); text-transform: none; letter-spacing: 0; color: var(--text); font-size: 0.8rem; font-weight: 600; }
+.audit-ref.muted { font-family: var(--font); font-weight: 500; }
+.audit-when { font-size: 0.78rem; white-space: nowrap; }
+.audit-list { list-style: none; margin: 0; padding: 0; }
+.audit-row {
+  display: grid;
+  grid-template-columns: 5rem 1fr;
+  gap: var(--s3);
+  padding: 0.5rem 0;
+  border-top: 1px solid var(--line);
+}
+.audit-row:first-child { border-top: 0; padding-top: 0; }
+.audit-time { font-family: var(--mono); font-size: 0.74rem; color: var(--muted-dim); padding-top: 0.25rem; }
+.audit-line { display: flex; flex-wrap: wrap; gap: var(--s2); align-items: center; }
+.audit-actor { color: var(--text-bright); font-size: 0.86rem; font-weight: 600; }
+.audit-kind { font-size: 0.7rem; color: var(--muted-dim); }
+.audit-why { margin: 0.2rem 0 0; color: var(--muted); font-size: 0.84rem; line-height: 1.5; overflow-wrap: anywhere; }
+.audit-more { display: flex; justify-content: center; padding: var(--s3) 0 var(--s5); }
+@media (max-width: 700px) {
+  .table-wide table { min-width: 100%; }
+  .table-wide .col-what, .table-wide .col-agent { display: none; }
+  .phone-only { display: block; }
+  .audit-search { min-width: 0; width: 100%; }
+  .audit-row { grid-template-columns: 1fr; gap: 0.15rem; }
+  .audit-time { padding-top: 0; }
 }

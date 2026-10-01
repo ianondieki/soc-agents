@@ -33,6 +33,7 @@ export default function AgentRail({
   selectedNode,
   onSelect,
   caption,
+  layout = "route",
 }: {
   steps: RailStep[] | null | undefined;
   nodes?: { id: string; label: string; agent: string; status?: string }[] | null;
@@ -43,6 +44,9 @@ export default function AgentRail({
   selectedNode?: string | null;
   onSelect?: (nodeId: string, step: RailStep | null) => void;
   caption?: string;
+  /** "route" draws the hops joined by a line (a live alarm); "grid" lays the twelve out as
+   *  numbered cards with no connectors, for the training view where nothing is moving. */
+  layout?: "route" | "grid";
 }) {
   const order = nodes && nodes.length > 0 ? nodes : (LIFECYCLE_NODES as { id: string; label: string; agent: string; status?: string }[]);
   const byNode = useMemo(() => stepsByNode(steps), [steps]);
@@ -73,7 +77,7 @@ export default function AgentRail({
   const currentMeta = selected ? order.find((n) => n.id === selected) : null;
 
   return (
-    <div className={"rail" + (compact ? " rail-compact" : "")}>
+    <div className={"rail" + (compact ? " rail-compact" : "") + (layout === "grid" ? " rail-grid" : "")}>
       <ol className="rail-track" aria-label={caption || "Agent workflow"}>
         {order.map((n, i) => {
           const st = statuses[i];
@@ -93,6 +97,11 @@ export default function AgentRail({
                   onSelect?.(n.id, step || null);
                 }}
               >
+                {layout === "grid" && (
+                  <span className="rail-n" aria-hidden="true">
+                    {i + 1}
+                  </span>
+                )}
                 <span className="rail-dot" aria-hidden="true">
                   {st === "succeeded" && "✓"}
                   {st === "failed" && "!"}
@@ -112,7 +121,7 @@ export default function AgentRail({
                   )}
                 </span>
               </button>
-              {i < order.length - 1 && <span className={`rail-link ${statuses[i + 1]}`} aria-hidden="true" />}
+              {layout === "route" && i < order.length - 1 && <span className={`rail-link ${statuses[i + 1]}`} aria-hidden="true" />}
             </li>
           );
         })}

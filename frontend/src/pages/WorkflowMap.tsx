@@ -50,15 +50,19 @@ export default function WorkflowMap({ profile }: { profile: any }) {
         the gate holds P1 and P2 external broadcasts for a person.
       </p>
       <div className="panel" style={{ marginBottom: "1rem" }}>
-        <AgentRail steps={null} nodes={nodes} caption="The lifecycle" />
+        <AgentRail steps={null} nodes={nodes} caption="The lifecycle" layout="grid" />
       </div>
-      <div className="panel table-scroll">
+      <div className="panel table-scroll table-wide">
         <table>
           <thead>
             <tr>
               <th scope="col">Hop</th>
-              <th scope="col">Agent</th>
-              <th scope="col">What it does</th>
+              <th scope="col" className="col-agent">
+                Agent
+              </th>
+              <th scope="col" className="col-what">
+                What it does
+              </th>
               <th scope="col" style={{ textAlign: "right" }}>
                 By hand
               </th>
@@ -75,14 +79,15 @@ export default function WorkflowMap({ profile }: { profile: any }) {
               <tr key={n.id}>
                 <td>
                   <strong>{n.label}</strong>
+                  <p className="hop-what phone-only">{WHAT[n.id] || ""}</p>
                 </td>
-                <td className="muted">{agentDisplayName(n.agent)}</td>
-                <td>{WHAT[n.id] || ""}</td>
-                <td style={{ textAlign: "right", fontFamily: "var(--mono)" }}>
+                <td className="muted col-agent">{agentDisplayName(n.agent)}</td>
+                <td className="col-what">{WHAT[n.id] || ""}</td>
+                <td className="num">
                   {n.id === "HITL" ? "stays human" : toil[n.id] != null ? `${toil[n.id]} min` : "—"}
                 </td>
-                <td style={{ textAlign: "right", fontFamily: "var(--mono)" }}>{fmtInt(byNode[n.id]?.steps ?? 0)}</td>
-                <td style={{ textAlign: "right", fontFamily: "var(--mono)" }}>{fmtMs(byNode[n.id]?.avg_ms)}</td>
+                <td className="num">{fmtInt(byNode[n.id]?.steps ?? 0)}</td>
+                <td className="num">{fmtMs(byNode[n.id]?.avg_ms)}</td>
               </tr>
             ))}
           </tbody>

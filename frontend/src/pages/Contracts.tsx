@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useLocation } from "react-router-dom";
 import { api } from "../api";
 import ContractsDrawer from "../components/ContractsDrawer";
+import LaneOff from "../components/LaneOff";
 
 /**
  * Contracts page (spec §7.8, Phase 5 Lane 5B). Three things, in the order a reader needs them:
@@ -103,16 +104,9 @@ export default function Contracts() {
       </p>
 
       {off && (
-        <div className="panel" style={{ marginBottom: "1rem" }}>
-          <div className="panel-head">
-            <h3>Contracts assistant is off</h3>
-            <span className="chip">CONTRACTS_ENABLED=false</span>
-          </div>
-          <p className="muted">
-            This deployment has not enabled the contracts lane, so no contract is indexed and nothing can be asked. This is
-            the shipped default, not an empty corpus.
-          </p>
-        </div>
+        <LaneOff title="Contracts assistant is off" flag="CONTRACTS_ENABLED">
+          no contract is indexed and nothing can be asked.
+        </LaneOff>
       )}
 
       {status && (

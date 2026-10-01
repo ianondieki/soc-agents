@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api";
+import LaneOff from "../components/LaneOff";
 
 /**
  * Planned maintenance (spec §7.5) — windows, the tasks booked into them, and the two
@@ -106,12 +107,7 @@ export default function Maintenance({ tick }: { tick: number }) {
     return (
       <div>
         <h1 className="page-title">Planned Maintenance</h1>
-        <div className="panel">
-          <div className="empty">
-            Planned maintenance is not enabled on this deployment. Set{" "}
-            <code>MAINTENANCE_ENABLED=true</code> in <code>.env</code> and restart the API.
-          </div>
-        </div>
+        <LaneOff title="Planned maintenance is off" flag="MAINTENANCE_ENABLED" />
       </div>
     );
   }

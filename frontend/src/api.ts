@@ -47,7 +47,7 @@ export const api = {
     }),
   agents: () => req<any[]>("/api/v1/agents"),
   problems: () => req<any[]>("/api/v1/problems"),
-  audit: () => req<any[]>("/api/v1/audit"),
+  audit: (limit = 100) => req<any[]>(`/api/v1/audit?limit=${limit}`),
   ledger: () => req<any[]>("/api/v1/shifts/ledger"),
   handover: () => req<any>("/api/v1/shifts/handover", { method: "POST" }),
   sites: () => req<any[]>("/api/v1/sites"),

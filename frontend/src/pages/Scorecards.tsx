@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import LaneOff from "../components/LaneOff";
 import VendorPeriodPicker, { type PickerValue } from "../components/VendorPeriodPicker";
 import ScorecardDetail from "../components/ScorecardDetail";
 import { scorecardApi } from "../components/scorecardApi";
@@ -156,28 +157,28 @@ export default function Scorecards({ session }: { session: Session }) {
   // ---- whole-page states: off, sign in, not available to this role -------------------------
   if (listFailure && (listFailure.view.kind === "off" || listFailure.view.kind === "role" || listFailure.view.kind === "signin")) {
     const off = listFailure.view.kind === "off";
+    if (off) {
+      return (
+        <div>
+          <h1 className="page-title">Vendor scorecards</h1>
+          <LaneOff title="Vendor scorecards are off" flag="SCORECARDS_ENABLED">
+            every <code>/scorecards</code> route answers 404 and the <code>scorecard_close</code> job does nothing.
+          </LaneOff>
+        </div>
+      );
+    }
     return (
       <div>
         {heading}
         <div className="panel" style={{ marginTop: "0.9rem" }}>
           <div className="panel-head">
             <h3>{listFailure.view.title}</h3>
-            <span className="chip">{off ? "LANE OFF" : listFailure.view.title.toUpperCase()}</span>
+            <span className="chip">{listFailure.view.title.toUpperCase()}</span>
           </div>
-          {off ? (
-            <div className="empty">
-              Vendor scorecards are not enabled on this deployment. Set <code>SCORECARDS_ENABLED=true</code> in{" "}
-              <code>.env</code> and restart the API. With the flag off, the whole lane is invisible by design: every{" "}
-              <code>/scorecards</code> route answers 404 and the <code>scorecard_close</code> job does nothing.
-            </div>
-          ) : (
-            <>
-              <p className="muted" style={{ marginTop: 0 }}>
-                {listFailure.view.body} Your role here is <strong>{role || "unknown"}</strong>.
-              </p>
-              {listFailure.detail && <div className="pre">{listFailure.detail}</div>}
-            </>
-          )}
+          <p className="muted" style={{ marginTop: 0 }}>
+            {listFailure.view.body} Your role here is <strong>{role || "unknown"}</strong>.
+          </p>
+          {listFailure.detail && <div className="pre">{listFailure.detail}</div>}
         </div>
       </div>
     );
