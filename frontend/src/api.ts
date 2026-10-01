@@ -78,6 +78,20 @@ export const api = {
   emailTest: () => req<any>("/api/v1/email/test", { method: "POST" }),
   runs: () => req<any[]>("/api/v1/runs"),
   /**
+   * The lifecycle runs of ONE incident, newest first. The workspace draws the run that
+   * opened the ticket (`lib/agents.pickCreatingRun`) rather than the newest, which for a
+   * HUB major is usually a two-step merge; see that helper for why.
+   */
+  runsFor: (incidentId: string) =>
+    req<any[]>(`/api/v1/runs?incident_id=${encodeURIComponent(incidentId)}&graph_name=incident_lifecycle`),
+  lifecycleRuns: () => req<any[]>("/api/v1/runs?graph_name=incident_lifecycle"),
+  /**
+   * Productivity rollup for the Showcase page (`services/productivity.py`): what the agents
+   * did in the window and what the operator profile says it would have cost by hand.
+   * `windowHours` 0 = everything on record. Shape pinned by tests/unit/test_productivity.py.
+   */
+  productivity: (windowHours = 24) => req<any>(`/api/v1/metrics/productivity?window_hours=${windowHours}`),
+  /**
    * §7.3.2 Wallboard risk strip: `{regions: {NBI_E: weather_risk, …}, cap: {…}}`.
    *
    * The read endpoint is Phase 3 and does not exist yet — it 404s today, which

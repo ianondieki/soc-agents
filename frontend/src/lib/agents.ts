@@ -1,0 +1,119 @@
+/**
+ * Shared vocabulary for drawing agent runs: node order, status normalisation and the
+ * choice of WHICH run represents an incident.
+ *
+ * The backend's `/incidents/{id}/workflow` deliberately shows the NEWEST lifecycle run
+ * (pinned by `tests/system/test_contracts.py`). For a HUB major that has absorbed six
+ * cascade children, the newest run is a two-step merge, so the ticket's own twelve-step
+ * run — the one a supervisor wants to audit — was hidden behind "pending" nodes. The UI
+ * therefore reads `/runs?incident_id=` and picks the run that opened the ticket
+ * (`pickCreatingRun`), while still counting the merges it absorbed.
+ */
+
+/** The twelve lifecycle nodes in execution order. Mirrors `orchestrator/registry.py`
+ *  NODE_CARDS; the live list from `/workflow` or `/agents` wins when present. */
+export const LIFECYCLE_NODES: readonly { id: string; label: string; agent: string }[] = [
+  { id: "INGEST", label: "Ingest", agent: "IngestCorrelationAgent" },
+  { id: "CORRELATE", label: "Correlate", agent: "IngestCorrelationAgent" },
+  { id: "ENRICH", label: "Enrich", agent: "EnrichmentAgent" },
+  { id: "SEVERITY", label: "Severity", agent: "SeverityImpactAgent" },
+  { id: "TICKET", label: "Ticket", agent: "TicketingAgent" },
+  { id: "ASSIGN", label: "Assign", agent: "DispatchAssignmentAgent" },
+  { id: "HITL", label: "HITL Gate", agent: "SupervisorAgent" },
+  { id: "BROADCAST", label: "Broadcast", agent: "BroadcastCommsAgent" },
+  { id: "EXEC_BRIEF", label: "Exec Brief", agent: "ExecutiveBriefingAgent" },
+  { id: "LEDGER", label: "Shift Ledger", agent: "ShiftLedgerAgent" },
+  { id: "RECURRENCE", label: "Recurrence", agent: "RecurrenceProblemAgent" },
+  { id: "MONITOR", label: "Monitor", agent: "WorklogMonitorAgent" },
+];
+
+export type NodeStatus = "pending" | "running" | "succeeded" | "waiting_hitl" | "failed" | "skipped";
+
+export interface RailStep {
+  node_name: string;
+  agent_name?: string;
+  status?: string;
+  duration_ms?: number | null;
+  rationale?: string | null;
+  output_summary?: string | null;
+  input_summary?: string | null;
+  tools_called?: { name?: string; ok?: boolean; latency_ms?: number; error?: string | null }[];
+  confidence?: number | null;
+  seq?: number;
+}
+
+/** Backend step/node status words → the rail's vocabulary. Unknown words read as pending. */
+export function normaliseStatus(raw: unknown): NodeStatus {
+  const s = String(raw ?? "").toLowerCase();
+  if (s === "succeeded") return "succeeded";
+  if (s === "waiting_hitl") return "waiting_hitl";
+  if (s === "failed") return "failed";
+  if (s === "started" || s === "running") return "running";
+  if (s === "skipped") return "skipped";
+  return "pending";
+}
+
+export const STATUS_WORD: Record<NodeStatus, string> = {
+  pending: "pending",
+  running: "running",
+  succeeded: "done",
+  waiting_hitl: "waiting for a human",
+  failed: "failed",
+  skipped: "skipped",
+};
+
+/** "IngestCorrelationAgent" → "Ingest Correlation": the agent name as a person reads it. */
+export function agentDisplayName(name: string | undefined | null): string {
+  if (!name) return "";
+  return name.replace(/Agent$/, "").replace(/([a-z])([A-Z])/g, "$1 $2");
+}
+
+/** The step a node ran, from a list of steps (last one wins if a node ran twice). */
+export function stepsByNode(steps: RailStep[] | undefined | null): Record<string, RailStep> {
+  const out: Record<string, RailStep> = {};
+  for (const s of steps || []) if (s && s.node_name) out[s.node_name] = s;
+  return out;
+}
+
+/**
+ * Among an incident's lifecycle runs (newest first, as `/runs` returns them), the one that
+ * opened the ticket: it carries a TICKET step. Falls back to the newest run with the most
+ * steps, then the newest run, then null.
+ */
+export function pickCreatingRun<T extends { steps?: RailStep[]; graph_name?: string }>(runs: T[] | undefined | null): T | null {
+  const lifecycle = (runs || []).filter((r) => !r.graph_name || r.graph_name === "incident_lifecycle");
+  if (lifecycle.length === 0) return null;
+  const creating = lifecycle.find((r) => (r.steps || []).some((s) => s.node_name === "TICKET"));
+  if (creating) return creating;
+  return lifecycle.reduce((best, r) => ((r.steps?.length ?? 0) > (best.steps?.length ?? 0) ? r : best), lifecycle[0]);
+}
+
+/** Runs that ended early because the alarm folded into an open ticket (merge or cascade). */
+export function countAbsorbed<T extends { steps?: RailStep[]; status?: string }>(runs: T[] | undefined | null): number {
+  return (runs || []).filter((r) => r.status !== "FAILED" && !(r.steps || []).some((s) => s.node_name === "TICKET")).length;
+}
+
+/** Whole-run elapsed time from its step durations, when the run row has no finished_at yet. */
+export function sumDurations(steps: RailStep[] | undefined | null): number {
+  let total = 0;
+  for (const s of steps || []) if (typeof s.duration_ms === "number") total += s.duration_ms;
+  return total;
+}
+
+export function fmtMs(ms: number | null | undefined): string {
+  if (ms == null || !Number.isFinite(ms)) return "—";
+  if (ms < 1000) return `${Math.round(ms)} ms`;
+  return `${(ms / 1000).toFixed(ms < 10000 ? 2 : 1)} s`;
+}
+
+export function fmtMinutes(min: number | null | undefined): string {
+  if (min == null || !Number.isFinite(min)) return "—";
+  if (min < 60) return `${Math.round(min)} min`;
+  const h = min / 60;
+  return `${h >= 10 ? Math.round(h) : h.toFixed(1)} h`;
+}
+
+export function fmtInt(n: number | null | undefined): string {
+  if (n == null || !Number.isFinite(n)) return "—";
+  return n.toLocaleString("en-KE");
+}

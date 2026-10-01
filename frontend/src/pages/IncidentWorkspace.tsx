@@ -1,6 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
 import { api } from "../api";
+import AgentRail from "../components/AgentRail";
+import { countAbsorbed, fmtMs, pickCreatingRun, sumDurations } from "../lib/agents";
 import EarlierAtThisSite from "../components/EarlierAtThisSite";
 import ContractsDrawer from "../components/ContractsDrawer";
 import RegulatoryCountdown from "../components/RegulatoryCountdown";
@@ -16,6 +18,7 @@ export default function IncidentWorkspace({ session }: { session: any }) {
   const [inc, setInc] = useState<any>(null);
   const [wf, setWf] = useState<any>(null);
   const [timeline, setTimeline] = useState<any[]>([]);
+  const [runs, setRuns] = useState<any[]>([]);
   const [brief, setBrief] = useState<string>("");
   const [note, setNote] = useState("");
   const [vendorRef, setVendorRef] = useState("");
@@ -23,7 +26,6 @@ export default function IncidentWorkspace({ session }: { session: any }) {
   const [mspAction, setMspAction] = useState("");
   const [mspPct, setMspPct] = useState("");
   const [markRestored, setMarkRestored] = useState(false);
-  const [selectedStep, setSelectedStep] = useState<any>(null);
   const [msg, setMsg] = useState("");
 
   const load = () => {
@@ -31,6 +33,8 @@ export default function IncidentWorkspace({ session }: { session: any }) {
     api.incident(id).then(setInc).catch(console.error);
     api.workflow(id).then(setWf).catch(console.error);
     api.timeline(id).then(setTimeline).catch(console.error);
+    // The run that opened the ticket, not the newest (usually a two-step merge): lib/agents.
+    api.runsFor(id).then((r) => setRuns(Array.isArray(r) ? r : [])).catch(() => setRuns([]));
     api
       .brief(id)
       .then((b) => setBrief(b.body))
@@ -38,6 +42,11 @@ export default function IncidentWorkspace({ session }: { session: any }) {
   };
 
   useEffect(load, [id, rev]);
+
+  const creating = useMemo(() => pickCreatingRun(runs), [runs]);
+  const absorbed = useMemo(() => countAbsorbed(runs), [runs]);
+  const railSteps = creating?.steps || wf?.steps || [];
+  const elapsed = creating?.finished_at && creating?.started_at ? Math.max(0, +new Date(creating.finished_at) - +new Date(creating.started_at)) : sumDurations(railSteps);
 
   const who = session?.display_name || "NOC";
 
@@ -170,43 +179,20 @@ export default function IncidentWorkspace({ session }: { session: any }) {
       </div>
 
       <div className="panel" style={{ marginBottom: "1rem" }}>
-        <h3>Live multi-agent workflow</h3>
-        <p className="muted">Click a node for rationale/tools — whole shift can audit the agents.</p>
-        <div className="workflow">
-          {(wf?.nodes || []).map((n: any, idx: number) => (
-            <div key={n.id} style={{ display: "flex", alignItems: "center", gap: "0.35rem" }}>
-              <button
-                type="button"
-                className={`node ${n.status || "pending"}`}
-                onClick={() => {
-                  const step = (wf?.steps || []).find((s: any) => s.node_name === n.id);
-                  setSelectedStep(
-                    step || { node_name: n.id, agent_name: n.agent, rationale: "No step detail yet" }
-                  );
-                }}
-              >
-                <div>{n.label}</div>
-                <div className="muted">{n.status}</div>
-              </button>
-              {idx < (wf?.nodes?.length || 0) - 1 && <span className="arrow">→</span>}
-            </div>
-          ))}
-        </div>
-        {selectedStep && (
-          <div className="pre" style={{ marginTop: "0.75rem" }}>
-            <strong>
-              {selectedStep.agent_name} · {selectedStep.node_name}
-            </strong>
-            {"\n"}
-            Status: {selectedStep.status}
-            {"\n"}
-            Rationale: {selectedStep.rationale || "—"}
-            {"\n"}
-            Output: {selectedStep.output_summary || "—"}
-            {"\n"}
-            Tools: {JSON.stringify(selectedStep.tools_called || [], null, 0)}
+        <div className="panel-head">
+          <h3>How the agents handled this alarm</h3>
+          <div className="chips">
+            {railSteps.length > 0 && <span className="chip">{railSteps.length} hops · {fmtMs(elapsed)}</span>}
+            {creating?.status && <span className={"chip " + (creating.status === "WAITING_HITL" ? "hitl" : creating.status === "FAILED" ? "danger" : "ok")}>{creating.status === "WAITING_HITL" ? "waiting for a human" : String(creating.status).toLowerCase()}</span>}
+            {absorbed > 0 && (
+              <span className="chip accent" title="Later alarms the correlation step folded into this ticket instead of opening a duplicate">
+                {absorbed} later alarm{absorbed === 1 ? "" : "s"} folded in
+              </span>
+            )}
           </div>
-        )}
+        </div>
+        <p className="muted">Click a hop for the agent's reasoning, what it produced and the tools it called. The whole shift can audit the agents.</p>
+        <AgentRail steps={railSteps} nodes={wf?.nodes} caption="This ticket's run" />
       </div>
 
       <div className="detail-grid">

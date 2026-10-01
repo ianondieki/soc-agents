@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
+import { agentDisplayName, fmtInt, fmtMs } from "../lib/agents";
 import { fmtTime } from "../lib/time";
 
 /**
@@ -43,10 +44,21 @@ export function RunError({ status, summary }: { status?: string; summary?: strin
 export default function Agents({ tick = 0 }: { tick?: number }) {
   const [agents, setAgents] = useState<any[]>([]);
   const [runs, setRuns] = useState<any[]>([]);
+  const [stats, setStats] = useState<Record<string, any>>({});
 
   useEffect(() => {
     api.agents().then(setAgents).catch(console.error);
     api.runs().then(setRuns).catch(console.error);
+    // Per-agent throughput from the productivity rollup (everything on record): steps,
+    // failures, timings. Advisory for the roster; a failure here leaves the cards static.
+    api
+      .productivity(0)
+      .then((p) => {
+        const map: Record<string, any> = {};
+        for (const a of p?.agents || []) if (a?.name) map[a.name] = a;
+        setStats(map);
+      })
+      .catch(() => undefined);
     const id = window.setInterval(() => {
       api.runs().then(setRuns).catch(() => undefined);
     }, 4000);
@@ -61,8 +73,9 @@ export default function Agents({ tick = 0 }: { tick?: number }) {
         <div>
           <h1>Agent Observatory</h1>
           <p className="lead">
-            Supervisor–worker agents that replace NOC toil. During a live storm you will see runs flip to
-            RUNNING / WAITING_HITL / SUCCEEDED as each alarm is processed.
+            Twelve agents under one supervisor, each with a mission, a criticality and the tools it is allowed
+            to call. The counts are everything on record; during a storm the run list flips to RUNNING, WAITING
+            HITL and SUCCEEDED as each alarm is processed.
           </p>
         </div>
       </div>
@@ -70,15 +83,36 @@ export default function Agents({ tick = 0 }: { tick?: number }) {
         <div className="panel">
           <h3>Agent roster</h3>
           <div className="grid-2" style={{ gridTemplateColumns: "1fr 1fr" }}>
-            {agents.map((a) => (
-              <div key={a.name} className="agent-card">
-                <h4>{a.name}</h4>
-                <p className="muted" style={{ margin: 0 }}>
-                  {a.mission}
-                </p>
-                <span className="status-pill">{a.status || "ready"}</span>
-              </div>
-            ))}
+            {agents.map((a) => {
+              const s = stats[a.name];
+              const failed = s?.failed || 0;
+              return (
+                <div key={a.name} className="agent-card">
+                  <h4>{agentDisplayName(a.name)}</h4>
+                  <p className="muted" style={{ margin: 0 }}>
+                    {a.mission}
+                  </p>
+                  <div className="agent-stats">
+                    <span>
+                      <strong>{fmtInt(s?.steps ?? 0)}</strong> steps
+                    </span>
+                    <span>
+                      avg <strong>{fmtMs(s?.avg_ms)}</strong>
+                    </span>
+                    <span style={failed ? { color: "#ffb4c0" } : undefined}>
+                      <strong>{fmtInt(failed)}</strong> failed
+                    </span>
+                    {s?.last_step_at && <span>last {fmtTime(s.last_step_at)}</span>}
+                  </div>
+                  <div className="agent-tags">
+                    <span className="status-pill">{a.status || "ready"}</span>
+                    <span className="chip">{a.criticality === "fail_closed" ? "stops the run on error" : "run continues on error"}</span>
+                    {a.node_ids?.length ? <span className="chip">{a.node_ids.join(", ")}</span> : <span className="chip">on request</span>}
+                    {a.mcp?.length ? <span className="chip">{a.mcp.length} tool connections declared</span> : null}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
         <div className="panel">
