@@ -44,6 +44,12 @@ import { hitlSubject, hitlSubjectIsIncident } from "../lib/hitlSubject";
  * shows the receipt ("Approved by NOC Analyst" and what that did) where the buttons were and
  * takes focus; the page collapses the card a moment later (pages/HitlInbox.tsx).
  *
+ * DECIDED ELSEWHERE: when another session decided the card first, the page hands it the same
+ * receipt worded for that ("Approved by Ian in another session, 15:24"), with the reason typed
+ * here kept under it and a Copy button, since it was never recorded. The reason itself is held
+ * by the page (`initialReason` / `onReasonChange`), so collapsing the card to its queue row and
+ * opening it again keeps what was typed.
+ *
  * DEGRADATION RULES — nothing here may blank the inbox:
  *  - unknown `task_type` → `specFor` returns the fallback spec and the card
  *    still renders, labelled "not recognised", with every payload field listed
@@ -76,8 +82,69 @@ const BUSY_LABEL: Record<CardAction, string> = { claim: "Claiming…", approve: 
 export interface CardReceipt {
   headline: string;
   effect: string;
-  /** Approved here: the check in the done colour. */
+  /** Approved: the check in the done colour. */
   approved: boolean;
+  /** Decided in another session; the page keeps this receipt longer (pages/HitlInbox.tsx). */
+  elsewhere?: boolean;
+  /** The reason typed here that the other session's decision made moot: shown with Copy. */
+  lostReason?: string;
+}
+
+/**
+ * Copies `text`, falling back to selecting `el` (and the legacy copy command) where the
+ * Clipboard API is missing or refused. "select" means the text is selected for Ctrl+C.
+ */
+async function copyText(text: string, el: HTMLElement | null): Promise<"done" | "select"> {
+  try {
+    if (!navigator.clipboard) throw new Error("no clipboard");
+    await navigator.clipboard.writeText(text);
+    return "done";
+  } catch {
+    const sel = window.getSelection();
+    if (!el || !sel) return "select";
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    sel.removeAllRanges();
+    sel.addRange(range);
+    try {
+      return document.execCommand("copy") ? "done" : "select";
+    } catch {
+      return "select";
+    }
+  }
+}
+
+/** The reason typed on a card another session decided first: kept on screen, with Copy. */
+function LostReason({ text }: { text: string }) {
+  const textRef = useRef<HTMLSpanElement>(null);
+  const [copied, setCopied] = useState<"" | "done" | "select">("");
+  return (
+    <span className="hitl-lost">
+      <span className="hitl-lost-label">Your reason, not recorded:</span>
+      <span className="hitl-lost-text" ref={textRef}>
+        {text}
+      </span>
+      <button type="button" className="btn sm" onClick={async () => setCopied(await copyText(text, textRef.current))}>
+        {copied === "done" ? "Copied" : "Copy"}
+      </button>
+      {copied === "select" && <span className="hitl-lost-hint">Selected. Press Ctrl+C to copy.</span>}
+    </span>
+  );
+}
+
+/** The receipt's words: who decided and what that did, and a reason this tab could not record.
+ *  Shared by the card footer and the one-line queue row (pages/HitlInbox.tsx). */
+export function ReceiptBody({ receipt }: { receipt: CardReceipt }) {
+  return (
+    <>
+      <span className={receipt.approved ? "hitl-receipt-verb ok" : "hitl-receipt-verb"}>
+        <IconCheck />
+        {receipt.headline}
+      </span>
+      {receipt.effect && <span className="hitl-receipt-effect">{receipt.effect}</span>}
+      {receipt.lostReason && <LostReason text={receipt.lostReason} />}
+    </>
+  );
 }
 
 const REASON_NEEDED = "Add a reason; it is kept in the Audit trail";
@@ -96,6 +163,10 @@ export interface ApprovalCardProps {
   errorDetail?: string;
   /** Set once the card is decided: the footer shows the receipt instead of the controls. */
   receipt?: CardReceipt | null;
+  /** What was typed in the reason box before this card was last collapsed. */
+  initialReason?: string;
+  /** Every edit of the reason box, so the page can keep it while the card is collapsed. */
+  onReasonChange?: (reason: string) => void;
   onClaim: () => void;
   onApprove: (reason: string) => void;
   onReject: (reason: string) => void;
@@ -109,11 +180,17 @@ export default function ApprovalCard({
   error,
   errorDetail,
   receipt = null,
+  initialReason = "",
+  onReasonChange,
   onClaim,
   onApprove,
   onReject,
 }: ApprovalCardProps) {
-  const [reason, setReason] = useState("");
+  const [reason, setReasonState] = useState(initialReason);
+  const setReason = (value: string) => {
+    setReasonState(value);
+    onReasonChange?.(value);
+  };
   const [expanded, setExpanded] = useState(false);
   // Approve or Reject pressed with an empty reason: the box says so and takes focus.
   const [reasonMissing, setReasonMissing] = useState(false);
@@ -155,9 +232,13 @@ export default function ApprovalCard({
 
   // The decision lands where the eye is: the receipt replaces the buttons in the sticky footer
   // and takes focus before the buttons leave, so focus never falls to <body>.
-  const receiptRef = useRef<HTMLParagraphElement>(null);
+  // Once: a receipt whose words are filled in later (who decided elsewhere) does not take focus
+  // back from the Copy button.
+  const receiptRef = useRef<HTMLDivElement>(null);
+  const hadReceipt = useRef(false);
   useLayoutEffect(() => {
-    if (receipt) receiptRef.current?.focus({ preventScroll: true });
+    if (receipt && !hadReceipt.current) receiptRef.current?.focus({ preventScroll: true });
+    hadReceipt.current = Boolean(receipt);
   }, [receipt]);
 
   /** An empty reason is said beside the box, never by greying out the button. */
@@ -429,13 +510,9 @@ export default function ApprovalCard({
           </div>
         </div>
         {receipt && (
-          <p className="hitl-receipt" tabIndex={-1} ref={receiptRef}>
-            <span className={receipt.approved ? "hitl-receipt-verb ok" : "hitl-receipt-verb"}>
-              <IconCheck />
-              {receipt.headline}
-            </span>
-            {receipt.effect && <span className="hitl-receipt-effect">{receipt.effect}</span>}
-          </p>
+          <div className="hitl-receipt" tabIndex={-1} ref={receiptRef}>
+            <ReceiptBody receipt={receipt} />
+          </div>
         )}
       </footer>
     </article>

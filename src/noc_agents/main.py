@@ -16,7 +16,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import HTMLResponse, StreamingResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from openpyxl import Workbook
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 
 from noc_agents.api import auth
 from noc_agents.api.auth import require_role
@@ -1321,17 +1321,36 @@ def list_problems() -> list[dict]:
         session.close()
 
 
+# A search is a handful of words, not a query language: the Audit trail sends what was typed
+# plus the ids of the tickets it names (a step row carries the ticket's id, never its number).
+AUDIT_SEARCH_MAX_TERMS = 25
+AUDIT_SEARCH_MAX_LEN = 200
+
+
 @app.get("/api/v1/audit", dependencies=[Depends(require_role(*AUDIT_READERS))])
-def list_audit(limit: int = Query(100, ge=1, le=1000)) -> list[dict]:
+def list_audit(
+    limit: int = Query(100, ge=1, le=1000),
+    q: list[str] | None = Query(None),
+) -> list[dict]:
     """The operator's audit rows, newest first. Each row also carries ``run_id`` and ``node``
     lifted from its payload (None when absent), so the Audit trail can keep a run's intake
     steps, written before the ticket existed, with the ticket they opened; and
     ``incident_id`` when the payload names one (an approval card's escalation rows do).
 
+    ``q`` (repeatable) narrows the rows before ``limit`` is applied, so a search reaches past
+    the newest page: a row is kept when any term occurs, ignoring case, in its actor, action,
+    rationale or entity_id. ``%`` and ``_`` in a term are literal. Blank terms are ignored;
+    more than 25 terms, or a term over 200 characters, is a 422.
+
     Step rows are written as JSON (graph/instrumentation.py). Older step rows hold a Python repr
     (``{'node': 'INGEST', 'output': ...}``): their node is still read, by pattern and never by
     evaluation; their run_id was never recorded. Nothing stored is changed here.
     """
+    terms = list(dict.fromkeys(t.strip() for t in (q or []) if t and t.strip()))
+    if len(terms) > AUDIT_SEARCH_MAX_TERMS:
+        raise HTTPException(422, f"at most {AUDIT_SEARCH_MAX_TERMS} search terms")
+    if any(len(t) > AUDIT_SEARCH_MAX_LEN for t in terms):
+        raise HTTPException(422, f"a search term is at most {AUDIT_SEARCH_MAX_LEN} characters")
     legacy_node = re.compile(r"\{'node': '([A-Za-z0-9_.:-]{1,64})'")
     json_prefix = re.compile(r'\{"node": "([A-Za-z0-9_.:-]{1,64})", "run_id": "([A-Za-z0-9-]{1,64})"')
 
@@ -1356,7 +1375,11 @@ def list_audit(limit: int = Query(100, ge=1, le=1000)) -> list[dict]:
 
     session = get_session()
     try:
-        rows = session.scalars(_owned(AuditRow).order_by(AuditRow.ts.desc()).limit(limit)).all()
+        stmt = _owned(AuditRow)
+        if terms:
+            fields = (AuditRow.actor, AuditRow.action, AuditRow.rationale, AuditRow.entity_id)
+            stmt = stmt.where(or_(*(f.icontains(t, autoescape=True) for t in terms for f in fields)))
+        rows = session.scalars(stmt.order_by(AuditRow.ts.desc()).limit(limit)).all()
         out: list[dict] = []
         for a in rows:
             run_id, node, incident_id = refs(a.payload_json)

@@ -378,6 +378,10 @@ included — answers `401`. Turning auth on needs engineering first.
 **The database queries need no role.** They need a PowerShell window on the server. That is
 the fallback when the screens are unavailable to you.
 
+### The UI says API unreachable
+
+The backend is not answering: start it from the project folder with `C:\Python313\python.exe -m uvicorn noc_agents.main:app --app-dir src --host 127.0.0.1 --port 8000` (for the UI dev server, also `cd frontend; npm run dev` and open `http://127.0.0.1:5173`); the page retries every 8 seconds and recovers on its own.
+
 ---
 
 ## 8. Rotate a key or secret

@@ -825,6 +825,122 @@ export function ladderBreached(mins: number | null, priority: unknown, claimedBy
 }
 
 /* ------------------------------------------------------------------ *
+ * The queue: order, summary                                           *
+ * ------------------------------------------------------------------ */
+
+const PRIORITY_RANK: Readonly<Record<string, number>> = { P1: 0, P2: 1, P3: 2, P4: 3 };
+
+/** P1 first, then P2…P4, then cards with no priority (a handover, a maintenance window). */
+export function priorityRank(priority: unknown): number {
+  return typeof priority === "string" && Object.prototype.hasOwnProperty.call(PRIORITY_RANK, priority)
+    ? PRIORITY_RANK[priority]
+    : 9;
+}
+
+/**
+ * The order a supervisor works the queue in: the most urgent card first, and within a priority
+ * the card that has waited longest. A card whose time cannot be read goes after the dated ones
+ * of its priority; the id breaks ties, so two answers of the same queue always draw the same
+ * order. Total: tolerates anything in the array.
+ */
+export function compareCards(a: unknown, b: unknown): number {
+  const ta = isPlainObject(a) ? a : {};
+  const tb = isPlainObject(b) ? b : {};
+  const rank = priorityRank(own(ta, "priority")) - priorityRank(own(tb, "priority"));
+  if (rank) return rank;
+  const da = parseInstant(own(ta, "created_at"))?.getTime() ?? Infinity;
+  const db = parseInstant(own(tb, "created_at"))?.getTime() ?? Infinity;
+  if (da !== db) return da < db ? -1 : 1;
+  const ia = asText(own(ta, "id"));
+  const ib = asText(own(tb, "id"));
+  return ia < ib ? -1 : ia > ib ? 1 : 0;
+}
+
+export function sortQueue<T>(tasks: readonly T[]): T[] {
+  return [...tasks].sort(compareCards);
+}
+
+export interface QueueSummary {
+  /** "4 P1, 36 P2": the count per priority present, most urgent first; "" when none carries one. */
+  byPriority: string;
+  waiting: number;
+  /** Minutes the oldest card has waited, or null. */
+  oldest: number | null;
+}
+
+/** The line under the page head: "4 P1, 36 P2", "40 waiting", "oldest 3 h 16 min". */
+export function queueSummary(tasks: readonly unknown[], now: number = Date.now()): QueueSummary {
+  const counts: Record<string, number> = {};
+  let oldest: number | null = null;
+  for (const t of tasks) {
+    const p = isPlainObject(t) ? own(t, "priority") : undefined;
+    if (typeof p === "string" && Object.prototype.hasOwnProperty.call(PRIORITY_RANK, p)) counts[p] = (counts[p] ?? 0) + 1;
+    const m = ageMinutes(isPlainObject(t) ? own(t, "created_at") : undefined, now);
+    if (m != null && (oldest == null || m > oldest)) oldest = m;
+  }
+  const byPriority = Object.keys(PRIORITY_RANK)
+    .filter((p) => counts[p])
+    .map((p) => `${counts[p]} ${p}`)
+    .join(", ");
+  return { byPriority, waiting: tasks.length, oldest };
+}
+
+/* ------------------------------------------------------------------ *
+ * A decision taken somewhere else                                     *
+ * ------------------------------------------------------------------ */
+
+export type Verdict = "approved" | "rejected" | "closed";
+
+/** What another session did to a card, as far as this tab can tell. Every field may be unknown. */
+export interface ElsewhereDecision {
+  verdict: Verdict | null;
+  by: string | null;
+  at: string | null;
+}
+
+/** The API's 409 says what the card became: `{"detail": "task already APPROVED"}`. */
+export function verdictOfConflict(err: unknown): Verdict | null {
+  const m = /already\s+([A-Z_]+)/i.exec(detailOf(err, ""));
+  if (!m) return null;
+  const s = m[1].toUpperCase();
+  if (s === "APPROVED") return "approved";
+  if (s === "REJECTED") return "rejected";
+  return "closed"; // EXPIRED, CANCELLED, …: decided, though not by a yes or a no
+}
+
+/**
+ * The decision as the incident timeline records it: the work note an approve or a reject
+ * writes ("HITL approved broadcast/assignment." / "HITL rejected: wording", authored
+ * "NOC Analyst (NOC)"), the newest one at or after the card was raised. Null when the timeline
+ * has none (the card had no incident, or the note has not landed yet).
+ */
+export function decisionFromTimeline(items: unknown, raisedAt: unknown): ElsewhereDecision | null {
+  if (!Array.isArray(items)) return null;
+  const since = parseInstant(raisedAt)?.getTime() ?? -Infinity;
+  let best: ElsewhereDecision | null = null;
+  let bestT = -Infinity;
+  for (const it of items) {
+    if (!isPlainObject(it) || own(it, "kind") !== "note") continue;
+    const m = /^HITL (approved|rejected)\b/i.exec(asText(own(it, "detail")));
+    if (!m) continue;
+    const t = parseInstant(own(it, "ts"))?.getTime() ?? -Infinity;
+    if (t < since || t < bestT) continue;
+    const by = asText(own(it, "title")).replace(/\s*\([^)]*\)\s*$/, "").trim();
+    best = { verdict: m[1].toLowerCase() as Verdict, by: by || null, at: asText(own(it, "ts")) || null };
+    bestT = t;
+  }
+  return best;
+}
+
+/** "Approved by NOC Analyst in another session, 15:24"; the parts that are unknown are left out. */
+export function elsewhereHeadline(d: ElsewhereDecision, hm: (ts: unknown) => string): string {
+  const verb = d.verdict === "approved" ? "Approved" : d.verdict === "rejected" ? "Rejected" : "Decided";
+  const by = d.by ? ` by ${clamp(d.by, 60)}` : "";
+  const at = d.at ? hm(d.at) : "";
+  return `${verb}${by} in another session${at ? `, ${at}` : ""}`;
+}
+
+/* ------------------------------------------------------------------ *
  * Errors                                                              *
  * ------------------------------------------------------------------ */
 

@@ -3,11 +3,13 @@ import { priorityTitle } from "../lib/agents";
 import { Link } from "react-router-dom";
 import { api } from "../api";
 import { statusOf } from "../lib/apiError";
+import { usePrinting } from "../lib/display";
 import { IconAlert, IconCheck, IconDot, IconPause } from "../lib/icons";
 import { fmtDate, fmtDateTime, fmtTime, parseInstant } from "../lib/time";
 import {
   actorKind,
   actorLabel,
+  auditUrl,
   entityLabel,
   groupBlocks,
   isOpaqueId,
@@ -18,6 +20,7 @@ import {
   routineNames,
   rowHaystack,
   rowTitle,
+  searchTerms,
   type AuditBlock,
   type AuditEntry,
   type DisplayRow,
@@ -30,8 +33,17 @@ import "./Audit.css";
  * (a run's intake steps sit with the ticket they opened), routine steps quiet, exceptions in
  * their state colour. Stored text is never rewritten: a row's raw actor, action, time and
  * rationale are one click away under "Recorded as", with Copy.
+ *
+ * SEARCH IS HONEST ABOUT ITS REACH. Typing filters the newest 500 entries in the browser, at once.
+ * When that finds nothing it says so ("No match in the newest 500 entries") and offers "Search
+ * all entries", which asks the API (`q`, up to 1000 matches) with what was typed plus the id of
+ * each ticket the text names (a step row stores the ticket's id, not its INC number). The same
+ * offer sits in the count line whenever a search runs over a capped page. Changing the search
+ * goes back to the newest 500.
  */
 const FETCH = 500;
+/** "Search all entries": the API's own bound on `limit`. */
+const SEARCH_ALL = 1000;
 const PAGE = 8; // tickets shown before "Show N older tickets"
 const VIEW_KEY = "noc_audit_view_v1";
 
@@ -55,6 +67,16 @@ function readView(): View {
   }
 }
 
+/** The audit rows for `terms` (each a `q`, matched by the API over every entry), newest first. */
+async function searchAudit(terms: string[]): Promise<AuditEntry[]> {
+  const r = await fetch(auditUrl(SEARCH_ALL, terms), { headers: { "Content-Type": "application/json" } });
+  if (!r.ok) throw new Error(`${r.status}: ${await r.text()}`);
+  const list = await r.json();
+  return Array.isArray(list) ? (list as AuditEntry[]) : [];
+}
+
+type SearchAll = { needle: string; terms: string[] };
+
 function saveView(view: View): void {
   try {
     sessionStorage.setItem(VIEW_KEY, view);
@@ -75,6 +97,13 @@ export default function Audit({ tick }: { tick: number }) {
   const [shown, setShown] = useState(PAGE);
   const [forbidden, setForbidden] = useState(false);
   const loaded = useRef(false);
+  // "Search all entries": the request (what was typed when it was pressed), its answer, and its state.
+  const [searchReq, setSearchReq] = useState<SearchAll | null>(null);
+  const [found, setFound] = useState<{ needle: string; rows: AuditEntry[] } | null>(null);
+  const [searchState, setSearchState] = useState<"idle" | "loading" | "error">("idle");
+  const [said, setSaid] = useState("");
+  const focusResults = useRef(false);
+  const panelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     let live = true;
@@ -112,6 +141,24 @@ export default function Audit({ tick }: { tick: number }) {
     setAttempt((n) => n + 1);
   };
 
+  // The search over every entry, asked again when the trail moves (a new row may match).
+  useEffect(() => {
+    if (!searchReq) return;
+    let live = true;
+    searchAudit(searchReq.terms)
+      .then((list) => {
+        if (!live) return;
+        setFound({ needle: searchReq.needle, rows: list });
+        setSearchState("idle");
+      })
+      .catch(() => {
+        if (live) setSearchState("error");
+      });
+    return () => {
+      live = false;
+    };
+  }, [searchReq, tick]);
+
   // Tickets per site, for a folded run whose rationale names its parent HUB.
   const bySite = useMemo(() => {
     const out: Record<string, IncidentLite[]> = {};
@@ -119,14 +166,20 @@ export default function Audit({ tick }: { tick: number }) {
     return out;
   }, [incidents]);
 
-  // At the cap the oldest block is probably cut short (its earlier rows are past the 500), so
-  // it is left out rather than shown as if it were the whole ticket.
-  const capped = rows.length >= FETCH;
-  const blocks = useMemo(() => {
-    const all = groupBlocks(rows);
-    return capped && all.length > 1 ? all.slice(0, -1) : all;
-  }, [rows, capped]);
   const needle = q.trim().toLowerCase();
+  // The rows on screen: every entry's matches once "Search all entries" has answered for what is
+  // typed now; otherwise the newest 500.
+  const searchedAll = found !== null && found.needle === needle && needle !== "";
+  const source = searchedAll ? found.rows : rows;
+  const cap = searchedAll ? SEARCH_ALL : FETCH;
+  // At the cap the oldest block is probably cut short (its earlier rows are past the cap), so
+  // it is left out rather than shown as if it were the whole ticket.
+  const capped = source.length >= cap;
+  const blocks = useMemo(() => {
+    const all = groupBlocks(source);
+    return capped && all.length > 1 ? all.slice(0, -1) : all;
+  }, [source, capped]);
+  const baseCapped = rows.length >= FETCH;
   const filterActive = needle !== "" || kind !== "all";
 
   // Blocks are formed from every loaded row first, so a filter never orphans a run's intake
@@ -165,11 +218,43 @@ export default function Audit({ tick }: { tick: number }) {
   );
   const entryCount = useMemo(() => filtered.reduce((n, f) => n + f.rows.length, 0), [filtered]);
 
+  /** A new search (or none) goes back to the newest 500 and forgets the last search-all. */
+  const forgetSearchAll = () => {
+    setSearchReq(null);
+    setFound(null);
+    setSearchState("idle");
+  };
   const clearFilters = () => {
     setQ("");
     setKind("all");
     setShown(PAGE);
+    forgetSearchAll();
   };
+  const searchAll = () => {
+    if (searchState === "loading" || !needle) return;
+    focusResults.current = true;
+    setSearchState("loading");
+    setShown(PAGE);
+    setSearchReq({ needle, terms: searchTerms(q, Object.values(incidents)) });
+  };
+  // Pressing "Search all entries" removes the button it was pressed on: the answer is spoken, and
+  // focus goes to the first block found (the panel when nothing was).
+  useEffect(() => {
+    if (!searchedAll || !focusResults.current) return;
+    focusResults.current = false;
+    const tickets = new Set(filtered.filter((f) => f.block.kind === "ticket").map((f) => f.block.ticketId)).size;
+    const entries = filtered.reduce((n, f) => n + f.rows.length, 0);
+    setSaid(
+      entries === 0
+        ? "Searched every entry: nothing matches."
+        : `Searched every entry: ${tickets} ${tickets === 1 ? "ticket" : "tickets"}, ${entries} ${entries === 1 ? "entry" : "entries"}.`
+    );
+    window.requestAnimationFrame(() => {
+      const first = panelRef.current?.querySelector<HTMLElement>(".audit-head-title");
+      (first || panelRef.current)?.focus({ preventScroll: false });
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchedAll, found]);
   const chooseView = (v: View) => {
     setView(v);
     saveView(v);
@@ -190,6 +275,7 @@ export default function Audit({ tick }: { tick: number }) {
             onChange={(e) => {
               setQ(e.target.value);
               setShown(PAGE);
+              if (searchReq || found) forgetSearchAll();
             }}
             placeholder="Search ticket, site, actor or reason"
             aria-label="Search ticket, site, actor or reason"
@@ -213,15 +299,33 @@ export default function Audit({ tick }: { tick: number }) {
 
       <div className="audit-bar">
         <p className="audit-count">
-          {load === "ready" && rows.length > 0 && (
+          {/* With nothing matching, the panel says so (and how far it looked); no "0 tickets" here. */}
+          {load === "ready" && rows.length > 0 && entryCount > 0 && (
             <span>
               {ticketCount} {ticketCount === 1 ? "ticket" : "tickets"}, {entryCount} {entryCount === 1 ? "entry" : "entries"}
             </span>
           )}
-          {load === "ready" && capped && (
+          {load === "ready" && searchedAll && (
+            <span
+              title={
+                capped
+                  ? `More than ${SEARCH_ALL} entries match; these are the newest ${SEARCH_ALL}, less the oldest ticket, which they only cover in part.`
+                  : "Every entry the trail keeps was searched."
+              }
+            >
+              {capped ? `Newest ${SEARCH_ALL} matches` : "Searched every entry"}
+            </span>
+          )}
+          {load === "ready" && !searchedAll && capped && entryCount > 0 && (
             <span title={`The trail keeps more; this page reads the newest ${FETCH} and leaves out the oldest ticket, which those entries only cover in part.`}>
               Newest {FETCH} entries
             </span>
+          )}
+          {/* A search over a capped page may miss older matches: the way to reach them, in reach. */}
+          {load === "ready" && !searchedAll && baseCapped && needle && filtered.length > 0 && (
+            <button type="button" className="audit-link" onClick={searchAll} aria-disabled={searchState === "loading" || undefined}>
+              {searchState === "loading" ? "Searching all entries…" : "Search all entries"}
+            </button>
           )}
           {filterActive && (
             <button type="button" className="audit-link" onClick={clearFilters}>
@@ -247,7 +351,11 @@ export default function Audit({ tick }: { tick: number }) {
         </div>
       </div>
 
-      <div className="panel audit-panel">
+      <span className="sr-only" role="status">
+        {said}
+      </span>
+
+      <div className="panel audit-panel" ref={panelRef} tabIndex={-1} aria-label="Audit entries">
         {load === "loading" ? (
           <SkeletonRows />
         ) : load === "error" ? (
@@ -265,12 +373,32 @@ export default function Audit({ tick }: { tick: number }) {
             here.
           </div>
         ) : filtered.length === 0 ? (
-          <div className="empty audit-nomatch">
-            No entries match.
-            <button type="button" className="btn sm" onClick={clearFilters}>
-              Clear filters
-            </button>
-          </div>
+          needle && baseCapped && !searchedAll ? (
+            // The newest 500 are not the whole trail: say which part was searched, and offer the rest.
+            <div className="empty audit-nomatch" role={searchState === "error" ? "alert" : undefined}>
+              {searchState === "error" ? "Couldn't search all entries." : `No match in the newest ${FETCH} entries.`}
+              <span className="audit-nomatch-actions">
+                <button
+                  type="button"
+                  className="btn sm"
+                  onClick={searchAll}
+                  aria-disabled={searchState === "loading" || undefined}
+                >
+                  {searchState === "loading" ? "Searching…" : searchState === "error" ? "Retry" : "Search all entries"}
+                </button>
+                <button type="button" className="btn sm" onClick={clearFilters}>
+                  Clear filters
+                </button>
+              </span>
+            </div>
+          ) : (
+            <div className="empty audit-nomatch">
+              {searchedAll ? "No entry in the whole trail matches." : "No entries match."}
+              <button type="button" className="btn sm" onClick={clearFilters}>
+                Clear filters
+              </button>
+            </div>
+          )
         ) : (
           visible.map((f) => (
             <Block
@@ -382,7 +510,8 @@ function Block({
   const display = useMemo(() => mergeIdentical(rows), [rows]);
   const routine = useMemo(() => display.filter((d) => isRoutine(d.entry)), [display]);
   const folding = view === "decisions" && routine.length > 0;
-  const listed = folding && !showRoutine ? display.filter((d) => !isRoutine(d.entry)) : display;
+  const printing = usePrinting(); // a printed trail shows every step; nothing stays folded on paper
+  const listed = folding && !showRoutine && !printing ? display.filter((d) => !isRoutine(d.entry)) : display;
 
   let routineLabel = "";
   if (folding) {
@@ -395,7 +524,7 @@ function Block({
   return (
     <section className="audit-block" aria-labelledby={headId}>
       <header className="audit-head">
-        <h2 id={headId} className="audit-head-title">
+        <h2 id={headId} className="audit-head-title" tabIndex={-1}>
           <BlockTitle block={block} incident={incident} parent={parent} />
         </h2>
         <p className="audit-head-meta">

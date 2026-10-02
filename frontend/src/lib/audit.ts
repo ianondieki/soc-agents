@@ -419,3 +419,37 @@ export function rowHaystack(r: AuditEntry): string {
     .join(" ")
     .toLowerCase();
 }
+
+// --------------------------------------------------------------------------- search all entries
+
+/** Tickets a search names, resolved to their ids, at most this many (the API takes 25 terms). */
+export const SEARCH_ID_CAP = 20;
+
+type TicketLite = { id: string; incident_number?: string | null; site_id?: string | null; site_name?: string | null };
+
+/**
+ * The terms "Search all entries" sends as `q`: what was typed, plus the id of every ticket whose
+ * number, site code or site name contains it. A step row stores the ticket's id, never its
+ * number, so "INC000027" alone would find only the rows whose reason happens to quote it. When
+ * the text names more tickets than the cap, only the text is sent: a partial list of ids would
+ * be a partial answer that looks complete.
+ */
+export function searchTerms(typed: string, tickets: Iterable<TicketLite>): string[] {
+  const text = typed.trim();
+  if (!text) return [];
+  const needle = text.toLowerCase();
+  const ids: string[] = [];
+  for (const t of tickets) {
+    if (!t || typeof t.id !== "string" || !t.id) continue;
+    const hit = [t.incident_number, t.site_id, t.site_name].some((f) => typeof f === "string" && f.toLowerCase().includes(needle));
+    if (hit && !ids.includes(t.id)) ids.push(t.id);
+  }
+  return ids.length <= SEARCH_ID_CAP ? [text, ...ids] : [text];
+}
+
+/** `/api/v1/audit?limit=1000&q=INC000027&q=0b22…`: each term its own `q`, encoded. */
+export function auditUrl(limit: number, terms: readonly string[] = []): string {
+  const qs = new URLSearchParams({ limit: String(limit) });
+  for (const t of terms) if (t.trim()) qs.append("q", t.trim());
+  return `/api/v1/audit?${qs}`;
+}
