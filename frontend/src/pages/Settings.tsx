@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useId, useState } from "react";
+import { memo, useCallback, useEffect, useId, useState } from "react";
 import { Link } from "react-router-dom";
-import { api, runLiveRainStorm } from "../api";
+import { api } from "../api";
 import { humanEnum } from "../lib/agents";
 import { detailOf, statusOf } from "../lib/apiError";
 import { IconAlert, IconDot } from "../lib/icons";
@@ -190,25 +190,39 @@ function siteType(v: unknown): string {
   return humanEnum(raw);
 }
 
-/** The stored-not-sent wording for the test email, without the env-var names the server puts there. */
+/** The test email's outcome, without the env-var names the server puts there. A mock adapter
+ *  kept the message and delivered nothing, so its wording never says "sent". */
 function testMailWords(r: any): { ok: boolean; text: string } {
   const mode = typeof r?.mode === "string" ? r.mode : "";
   const to: string[] = Array.isArray(r?.to) ? r.to.filter((x: unknown) => typeof x === "string") : [];
   if (mode === "smtp" && r?.ok !== false) return { ok: true, text: to.length ? `Sent to ${to.join(", ")}` : "Sent" };
-  if (mode === "mock") return { ok: true, text: "Email stored, not sent (mock)" };
+  if (mode === "mock") return { ok: true, text: "Kept in the demo outbox by the mock adapter; not delivered" };
   return { ok: false, text: "Couldn't send the test email" };
 }
 
-export default function Settings({
+function Settings({
   session,
   onSession,
   profile,
   onInjected,
+  storming,
+  stormProg,
+  stormErr,
+  onLaunchStorm,
+  onResumeStorm,
 }: {
   session: any;
   onSession: (s: any) => void;
   profile: any;
   onInjected: () => void;
+  /** The storm is App's (one storm, whichever page started it): its state and its two actions. */
+  storming: boolean;
+  /** The storm's progress or completion line ("" while idle or stopped). */
+  stormProg: string;
+  /** Where and why it stopped ("" unless it did). */
+  stormErr: string;
+  onLaunchStorm: () => void;
+  onResumeStorm: () => void;
 }) {
   const sessionId = useId();
   const emailId = useId();
@@ -229,9 +243,6 @@ export default function Settings({
   const [emailFail, setEmailFail] = useState<Fail>(null);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; text: string; detail: string } | null>(null);
-
-  const [storm, setStorm] = useState<{ running: boolean; text: string } | null>(null);
-  const [stormFail, setStormFail] = useState<Fail>(null);
 
   const [injecting, setInjecting] = useState<string | null>(null);
   const [injectFail, setInjectFail] = useState<{ label: string; fail: Fail } | null>(null);
@@ -288,22 +299,6 @@ export default function Settings({
     }
   };
 
-  const launchStorm = async () => {
-    setStormFail(null);
-    setStorm({ running: true, text: "Starting the storm" });
-    try {
-      const res = await runLiveRainStorm((i, total) =>
-        setStorm({ running: true, text: `Storm running: alarm ${i} of ${total}` })
-      );
-      setStorm({ running: false, text: `Storm done: ${res.count} alarms injected` });
-    } catch (e) {
-      setStorm(null);
-      setStormFail(toFail(e));
-    } finally {
-      onInjected();
-    }
-  };
-
   const inject = async (label: string, body: Record<string, unknown>) => {
     setInjecting(label);
     setInjectFail(null);
@@ -318,7 +313,6 @@ export default function Settings({
     }
   };
 
-  const busyStorm = storm?.running === true;
   const mailReady = emailSt?.configured === true;
   const recipients: string[] = Array.isArray(emailSt?.recipients) ? emailSt.recipients : [];
 
@@ -394,7 +388,7 @@ export default function Settings({
                     "SMTP ready (Gmail)"
                   ) : (
                     <span className="attn warn">
-                      <IconDot /> Mock only: mail is stored, not sent
+                      <IconDot /> Mock only: mail is kept in the outbox, not delivered
                     </span>
                   )}
                 </dd>
@@ -472,13 +466,18 @@ export default function Settings({
             here.
           </p>
           <div className="settings-actions">
-            <button className="btn" onClick={launchStorm} disabled={busyStorm}>
-              {busyStorm ? "Storm running…" : "Launch the storm"}
+            <button className="btn" onClick={onLaunchStorm} disabled={storming}>
+              {storming ? "Storm running…" : "Launch the storm"}
             </button>
+            {stormErr && !storming && (
+              <button className="btn sm" onClick={onResumeStorm}>
+                Resume storm
+              </button>
+            )}
             <span role="status" className="muted">
-              {storm?.text || ""}
+              {stormProg}
             </span>
-            {stormFail && <Failed text={`The storm stopped: ${stormFail.text}`} detail={stormFail.detail} />}
+            {stormErr && !storming && <Failed text={`The storm stopped. ${stormErr}`} detail={stormErr} />}
           </div>
         </section>
 
@@ -586,3 +585,6 @@ export default function Settings({
     </div>
   );
 }
+
+/** Memoised: App's flushes and metrics answers do not re-render a page whose props held still. */
+export default memo(Settings);

@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api } from "../api";
-import { AUTO_STORM_KEY } from "../lib/demo";
+import { isStorming, stormCounts, stormStopLine, type StormState } from "../lib/demo";
 import LiveRunPanel, { RunState } from "../components/LiveRunPanel";
 import { humanEnum, humanGraph, humanStatus, nodeLabel, triggerWord } from "../lib/agents";
 import { IconDot } from "../lib/icons";
@@ -9,8 +9,10 @@ import { labelFor } from "../lib/hitl";
 import { fmtTime } from "../lib/time";
 // One run-status palette and one error line for both run lists (A-13), so the two pages
 // cannot drift apart again.
-import { RunError } from "./Agents";
-import { describeEvent, type NocEvent } from "../realtime/renderers";
+import { RunError } from "../components/RunError";
+import { describeEvent, isMock, type NocEvent } from "../realtime/renderers";
+import { TICKER_MAX } from "../realtime/feed";
+import { useQuietMode, useSuppressedCount, useTickerEvents } from "../realtime/RealtimeContext";
 import { hitlSubject } from "../lib/hitlSubject";
 
 /** One figure of the strip. Colour only when the number is worth a look; zero stays quiet. */
@@ -45,7 +47,8 @@ function fromLink(e: { target: EventTarget | null }): boolean {
   return e.target instanceof Element && !!e.target.closest("a");
 }
 
-type Load = "loading" | "ok" | "error";
+/** "stale": a refetch failed after a good answer; the rows on screen stay, with a note. */
+type Load = "loading" | "ok" | "error" | "stale";
 
 /** Skeleton rows while a list loads for the first time: never a spinner. */
 function SkeletonRows({ rows = 5 }: { rows?: number }) {
@@ -60,6 +63,11 @@ function SkeletonRows({ rows = 5 }: { rows?: number }) {
       </div>
     </div>
   );
+}
+
+/** A refetch failed but the last answer is still good: keep the rows, say so once. */
+function StaleNote() {
+  return <div className="list-stale muted">Couldn't refresh; showing the last list received.</div>;
 }
 
 /** A list that could not load says so in a sentence and offers the retry. */
@@ -91,7 +99,7 @@ const EVENT_WORDS: Record<string, string> = {
   "hitl.claimed": "Card claimed",
   "hitl.approved": "Approved",
   "hitl.rejected": "Rejected",
-  "email.sent": "Email sent",
+  "email.sent": "Email sent", // a real SMTP send only; a mock reads "Email stored" (eventWord)
   "email.failed": "Email failed",
   "outbox.failed": "Delivery failed",
   "external_signal.updated": "Signal updated",
@@ -107,50 +115,51 @@ const EVENT_WORDS: Record<string, string> = {
 
 function eventWord(e: NocEvent): string {
   const type = e.type;
-  // A mock adapter stored the message and sent nothing: the head must not say "sent".
-  if (type === "email.sent" && String(e.payload?.mode ?? "").toLowerCase() === "mock") return "Email";
+  // A mock adapter stored the message and sent nothing: neither the head nor the line says "sent".
+  if ((type === "email.sent" || type === "email.failed") && isMock(e.payload)) return "Email stored";
   if (EVENT_WORDS[type]) return EVENT_WORDS[type];
   const s = String(type || "event").replace(/[._]+/g, " ").trim();
   return s ? s[0].toUpperCase() + s.slice(1) : "Event";
 }
 
-/** Statuses the ticker names: only the ones worth a look. */
+/** Statuses the ticker names: only the ones worth a look, and only on an agent frame (an email
+ *  frame's "SENT" is not a run state, and a mock never sent anything). */
 const ROUTINE_STEP = new Set(["", "SUCCEEDED", "STARTED", "RUNNING", "PENDING"]);
+const showsRunState = (e: NocEvent) => e.type.startsWith("agent.");
 
-export default function MissionControl({
+/** "5 tickets opened", "1 alarm folded". */
+const count = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+
+function MissionControl({
   metrics,
-  events,
   incidentsRev,
   hitlRev,
   runsRev,
-  quietMode = false,
-  suppressed = 0,
-  storming,
-  stormProg,
-  stormErr,
+  storm,
   onLaunchStorm,
-  onOpenGuide,
+  onResumeStorm,
   onOpen,
   onRefresh,
 }: {
   metrics: any;
-  events: NocEvent[];
   /** Revision of the incidents slice — see realtime/renderers.ts. */
   incidentsRev: number;
   hitlRev: number;
   runsRev: number;
-  quietMode?: boolean;
-  suppressed?: number;
-  /** The live storm is owned by App so the guided demo can start it from any page. */
-  storming: boolean;
-  stormProg: string;
-  stormErr: string;
-  onLaunchStorm: (reason: string) => Promise<void> | void;
-  onOpenGuide: () => void;
+  /** The live storm is owned by App so the guided demo and Settings can start it too. */
+  storm: StormState;
+  onLaunchStorm: () => void;
+  /** Carry on from the alarm after the one that stopped the storm. */
+  onResumeStorm: () => void;
   onOpen: (id: string) => void;
   onRefresh?: () => void;
 }) {
   const navigate = useNavigate();
+  // The ticker reads the feed store directly: a new line re-renders this page, never App.
+  const events = useTickerEvents();
+  const suppressed = useSuppressedCount();
+  const quietMode = useQuietMode();
+  const storming = isStorming(storm);
   const [incidents, setIncidents] = useState<any[]>([]);
   const [hitl, setHitl] = useState<any[]>([]);
   const [runs, setRuns] = useState<any[]>([]);
@@ -158,13 +167,13 @@ export default function MissionControl({
   const [hitlLoad, setHitlLoad] = useState<Load>("loading");
   const [runsLoad, setRunsLoad] = useState<Load>("loading");
   const [chase, setChase] = useState<{ text: string; bad: boolean } | null>(null);
-  const autoStarted = useRef(false);
 
-  // Flash a row only when it is new on the board. The class used to be on every row, so
-  // every refetch re-ran the animation across the whole list — motion that meant nothing.
+  // Flash a row only when it is new on the board. The ids on the first good answer are the
+  // board as found, not news, so they seed the set and nothing flashes on arrival.
   const seenIds = useRef<Set<string> | null>(null);
   const [fresh, setFresh] = useState<Set<string>>(() => new Set());
   useEffect(() => {
+    if (incLoad === "loading") return;
     if (seenIds.current === null) {
       seenIds.current = new Set(incidents.map((i) => i.id));
       return;
@@ -176,32 +185,46 @@ export default function MissionControl({
     setFresh(new Set(added));
     const t = window.setTimeout(() => setFresh(new Set()), 1700);
     return () => window.clearTimeout(t);
-  }, [incidents]);
+  }, [incidents, incLoad]);
 
-  const loadIncidents = () =>
-    api
-      .incidents()
-      .then((rows) => {
-        setIncidents(rows);
-        setIncLoad("ok");
-      })
-      .catch(() => setIncLoad("error"));
-  const loadHitl = () =>
-    api
-      .hitl()
-      .then((rows) => {
-        setHitl(rows);
-        setHitlLoad("ok");
-      })
-      .catch(() => setHitlLoad("error"));
-  const loadRuns = () =>
-    api
-      .runs()
-      .then((rows) => {
-        setRuns(rows);
-        setRunsLoad("ok");
-      })
-      .catch(() => setRunsLoad("error"));
+  // A failed refetch after a good answer keeps the rows ("stale"); only a list that never
+  // loaded shows the error with its Retry.
+  const failed = (l: Load): Load => (l === "ok" || l === "stale" ? "stale" : "error");
+  const loadIncidents = useCallback(
+    () =>
+      api
+        .incidents()
+        .then((rows) => {
+          setIncidents(rows);
+          setIncLoad("ok");
+        })
+        .catch(() => setIncLoad(failed)),
+    []
+  );
+  const loadHitl = useCallback(
+    () =>
+      api
+        .hitl()
+        .then((rows) => {
+          setHitl(rows);
+          setHitlLoad("ok");
+        })
+        .catch(() => setHitlLoad(failed)),
+    []
+  );
+  // One /runs request feeds both the run list and the live rail (LiveRunPanel keeps the
+  // lifecycle runs), instead of one each.
+  const loadRuns = useCallback(
+    () =>
+      api
+        .runs()
+        .then((rows) => {
+          setRuns(rows);
+          setRunsLoad("ok");
+        })
+        .catch(() => setRunsLoad(failed)),
+    []
+  );
 
   const loadLists = () => {
     loadIncidents();
@@ -214,62 +237,42 @@ export default function MissionControl({
   // still while the ticker streams.
   useEffect(() => {
     loadIncidents();
-  }, [incidentsRev]);
+  }, [incidentsRev, loadIncidents]);
   useEffect(() => {
     loadHitl();
-  }, [hitlRev]);
+  }, [hitlRev, loadHitl]);
   useEffect(() => {
     loadRuns();
-  }, [runsRev]);
+  }, [runsRev, loadRuns]);
 
   const open = incidents.filter((i) => !["CLOSED", "CANCELLED"].includes(i.status));
-  const maxRegion = Math.max(1, ...Object.values(metrics?.by_region || { x: 1 }).map(Number));
   const regions = Object.entries(metrics?.by_region || {});
+  const maxRegion = Math.max(1, ...regions.map(([, v]) => Number(v) || 0));
   // A run row names its ticket by INC number when the board has loaded it.
   const incNumber = new Map<string, string>(incidents.map((i) => [i.id, i.incident_number]));
-
-  // Auto-run storm once when board is empty so first visit always has live demo data
-  useEffect(() => {
-    if (autoStarted.current) return;
-    if (metrics == null) return;
-    if ((metrics.open_total ?? 0) > 0) return;
-    let skipped = false;
-    try {
-      skipped = sessionStorage.getItem(AUTO_STORM_KEY) === "1";
-    } catch {
-      skipped = false;
-    }
-    // Still auto once per browser session if empty
-    if (skipped) return;
-    autoStarted.current = true;
-    // small delay so WS can connect
-    const t = window.setTimeout(() => {
-      onLaunchStorm("Auto demo on an empty board");
-    }, 900);
-    return () => window.clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [metrics?.open_total]);
+  const pendingDecisions = typeof metrics?.hitl_pending === "number" ? metrics.hitl_pending : hitlLoad === "ok" ? hitl.length : 0;
 
   // A storm start retires whatever the banner was saying (an SLA chase result): while it runs
   // the per-alarm progress line is the only thing worth reading.
   useEffect(() => {
     if (storming) setChase(null);
   }, [storming]);
-  const bannerText = storming ? stormProg : stormErr || chase?.text || stormProg;
-  const bannerBad = !storming && (!!stormErr || !!chase?.bad);
+
+  const showStorm = storm.phase !== "idle" && !(chase && !storming);
+  const counts = stormCounts(storm);
 
   return (
     <div className="stack">
       <div className="page-head">
         <div>
           <h1>Mission control</h1>
-          <p className="lead">Every alarm runs the twelve agents; the rail follows the newest one.</p>
+          <p className="lead">Every alarm runs the twelve agents; the rail follows the newest ticket.</p>
         </div>
         <div className="page-actions">
           <button
             className="btn storm"
             disabled={storming}
-            onClick={() => onLaunchStorm("Manual storm launch")}
+            onClick={onLaunchStorm}
             title="Drops microwave hops in Rift, Mt Kenya and Nairobi East and cascades child sites under their HUB majors."
           >
             {storming ? "Storm in progress…" : "Launch heavy-rain storm (live)"}
@@ -293,14 +296,43 @@ export default function MissionControl({
         </div>
       </div>
 
-      {bannerText && (
-        <div className={"storm-banner" + (bannerBad ? " danger" : "")} role={bannerBad ? "alert" : undefined}>
-          <div>
-            {storming && <span className="live-dot" aria-hidden="true" />}
-            <strong>{storming ? "Heavy-rain storm" : stormErr ? "The storm stopped" : "Scenario status"}</strong>
-            <div className="storm-progress">{bannerText}</div>
+      {showStorm && (
+        <div
+          className={"storm-banner" + (storm.phase === "failed" ? " danger" : "")}
+          role={storm.phase === "failed" ? "alert" : "status"}
+        >
+          <div className="storm-text">
+            <strong className="storm-title">
+              {storming && <span className="live-dot" aria-hidden="true" />}
+              {storm.phase === "failed" ? "The storm stopped" : storm.phase === "done" ? "Storm complete" : "Heavy-rain storm"}
+            </strong>
+            <div className="storm-progress">
+              {storm.phase === "failed"
+                ? stormStopLine(storm)
+                : storm.phase === "done"
+                  ? `${count(storm.total, "alarm", "alarms")} through the agents.`
+                  : storm.text}
+            </div>
+            <div className="storm-counts">{counts}</div>
           </div>
-          {storming && <span className="chip accent">Agents executing</span>}
+          {storm.phase === "failed" && (
+            <button type="button" className="btn sm" onClick={onResumeStorm}>
+              Resume storm
+            </button>
+          )}
+          {storm.phase === "done" && pendingDecisions > 0 && (
+            <button type="button" className="btn sm hitl" onClick={() => navigate("/hitl")}>
+              Open Approvals ({pendingDecisions})
+            </button>
+          )}
+        </div>
+      )}
+      {!showStorm && chase && (
+        <div className={"storm-banner" + (chase.bad ? " danger" : "")} role={chase.bad ? "alert" : "status"}>
+          <div className="storm-text">
+            <strong className="storm-title">SLA chase</strong>
+            <div className="storm-progress">{chase.text}</div>
+          </div>
         </div>
       )}
 
@@ -314,7 +346,13 @@ export default function MissionControl({
         <Kpi label="Open problems" value={metrics?.problems_open} />
       </div>
 
-      <LiveRunPanel events={events} runsRev={runsRev} onOpen={onOpen} />
+      <LiveRunPanel
+        runs={runsLoad === "ok" || runsLoad === "stale" ? runs : null}
+        runsFailed={runsLoad === "error"}
+        onRetry={loadRuns}
+        runsRev={runsRev}
+        onOpen={onOpen}
+      />
 
       {/* The two lists a shift acts on sit side by side, wide enough for one-line approval rows;
           the two agent logs and the region load follow. */}
@@ -323,22 +361,20 @@ export default function MissionControl({
           <div className="panel-head">
             <div className="head-row">
               <h2 className="panel-title">Live incidents</h2>
-              {incLoad === "ok" && <span>{open.length} open</span>}
+              {(incLoad === "ok" || incLoad === "stale") && <span>{open.length} open</span>}
             </div>
           </div>
           <div className="list peek">
             {incLoad === "loading" && incidents.length === 0 && <SkeletonRows />}
             {incLoad === "error" && <ListError what="the incidents" onRetry={loadIncidents} />}
+            {incLoad === "stale" && <StaleNote />}
             {incLoad === "ok" && open.length === 0 && !storming && (
               <div className="empty">
                 No open incidents. Launch the storm above, or see closed tickets on the <Link to="/incidents">Incident board</Link>.
               </div>
             )}
             {incLoad !== "loading" && open.length === 0 && storming && (
-              <div className="empty">
-                <span className="live-dot" aria-hidden="true" />
-                Agents are opening tickets; this list fills as they do.
-              </div>
+              <div className="empty">Agents are opening tickets; this list fills as they do.</div>
             )}
             {open.slice(0, PEEK).map((i) => (
               <div
@@ -371,19 +407,22 @@ export default function MissionControl({
               </div>
             ))}
           </div>
-          {incLoad === "ok" && <ShowAll to="/incidents" total={open.length} what="open incidents on the Incident board" />}
+          {(incLoad === "ok" || incLoad === "stale") && (
+            <ShowAll to="/incidents" total={open.length} what="open incidents on the Incident board" />
+          )}
         </div>
 
         <div className="panel">
           <div className="panel-head">
             <div className="head-row">
               <h2 className="panel-title">Approvals</h2>
-              {hitlLoad === "ok" && <span>{hitl.length} waiting</span>}
+              {(hitlLoad === "ok" || hitlLoad === "stale") && <span>{hitl.length} waiting</span>}
             </div>
           </div>
           <div className="list peek">
             {hitlLoad === "loading" && hitl.length === 0 && <SkeletonRows rows={4} />}
             {hitlLoad === "error" && <ListError what="the approvals" onRetry={loadHitl} />}
+            {hitlLoad === "stale" && <StaleNote />}
             {hitlLoad === "ok" && hitl.length === 0 && (
               <div className="empty">
                 No decisions waiting. Cards land in <Link to="/hitl">Approvals</Link> when an agent needs a person.
@@ -416,7 +455,7 @@ export default function MissionControl({
               );
             })}
           </div>
-          {hitlLoad === "ok" && <ShowAll to="/hitl" total={hitl.length} what="decisions in Approvals" />}
+          {(hitlLoad === "ok" || hitlLoad === "stale") && <ShowAll to="/hitl" total={hitl.length} what="decisions in Approvals" />}
         </div>
       </div>
 
@@ -427,11 +466,11 @@ export default function MissionControl({
               <h2 className="panel-title">Agent activity</h2>
               {quietMode ? (
                 <>
-                  <span>{events.length} critical</span>
+                  <span>{events.length >= TICKER_MAX ? `latest ${TICKER_MAX} critical` : `${events.length} critical`}</span>
                   <span>{suppressed} held back</span>
                 </>
               ) : (
-                <span>{events.length} events</span>
+                <span>{events.length >= TICKER_MAX ? `latest ${TICKER_MAX}` : `${events.length} events`}</span>
               )}
               <span>times in EAT</span>
             </div>
@@ -444,7 +483,7 @@ export default function MissionControl({
                   : "Waiting for the agent stream. Each alarm appears here as it moves through Ingest, Correlate, Enrich, Severity, Ticket and Assign."}
               </div>
             )}
-            {events.slice(0, PEEK).map((e, idx) => {
+            {events.slice(0, PEEK).map((e) => {
               const p = e.payload || {};
               const st = String(p.status || "").toUpperCase();
               const base = p.rationale || p.output || p.detail;
@@ -452,7 +491,7 @@ export default function MissionControl({
               const described = describeEvent(e).replace(/^—\s*/, "");
               const why = described || (base ? String(base).slice(0, 160) : "");
               return (
-                <div key={`${e.ts}-${idx}-${e.type}`} className="ticker-line">
+                <div key={e.uid} className="ticker-line">
                   <span className="ticker-time">{fmtTime(e.ts)}</span>
                   <div>
                     <div className="ticker-head">
@@ -466,7 +505,7 @@ export default function MissionControl({
                           <span className="mono">{p.incident_number}</span>
                         ))}
                       {p.node && <span>{nodeLabel(p.node)}</span>}
-                      {!ROUTINE_STEP.has(st) && <RunState status={st} routine={false} />}
+                      {showsRunState(e) && !ROUTINE_STEP.has(st) && <RunState status={st} routine={false} />}
                     </div>
                     {why && <div className="ticker-why">{why}</div>}
                   </div>
@@ -487,6 +526,7 @@ export default function MissionControl({
           <div className="list peek">
             {runsLoad === "loading" && runs.length === 0 && <SkeletonRows rows={4} />}
             {runsLoad === "error" && <ListError what="the agent runs" onRetry={loadRuns} />}
+            {runsLoad === "stale" && <StaleNote />}
             {runs.slice(0, PEEK).map((r) => {
               const inc = r.incident_id ? incNumber.get(r.incident_id) : undefined;
               const trigger = triggerWord(r.trigger);
@@ -520,7 +560,9 @@ export default function MissionControl({
             })}
             {runsLoad === "ok" && runs.length === 0 && <div className="empty">Runs appear as the storm executes.</div>}
           </div>
-          {runsLoad === "ok" && <ShowAll to="/agents" total={runs.length} what="agent runs in the Agent observatory" label="Show recent runs" />}
+          {(runsLoad === "ok" || runsLoad === "stale") && (
+            <ShowAll to="/agents" total={runs.length} what="agent runs in the Agent observatory" label="Show recent runs" />
+          )}
         </div>
 
         <div className="panel">
@@ -535,7 +577,8 @@ export default function MissionControl({
                 <div key={k} className="region-bar-row">
                   <span className="muted mono">{k}</span>
                   <div className="region-bar-track">
-                    <div className="region-bar-fill" style={{ width: `${(Number(v) / maxRegion) * 100}%` }} />
+                    {/* Grows with transform, not width: a compositor animation, no layout. */}
+                    <div className="region-bar-fill" style={{ transform: `scaleX(${Math.min(1, (Number(v) || 0) / maxRegion)})` }} />
                   </div>
                   <span className="muted mono">{String(v)}</span>
                 </div>
@@ -547,3 +590,7 @@ export default function MissionControl({
     </div>
   );
 }
+
+/** Memoised: App re-renders on a debounced flush or a metrics answer; this page re-renders when
+ *  one of its own props moves, and for a new ticker line through the feed store. */
+export default memo(MissionControl);

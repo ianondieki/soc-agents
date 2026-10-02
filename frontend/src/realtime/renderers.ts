@@ -73,9 +73,17 @@ export interface NocEvent {
   payload: Record<string, any>;
   incidentId: string | null;
   runId: string | null;
+  /** The server's global seq, when the frame carried one (live frames do not, yet). */
   seq: number | null;
+  /** This tab's own sequence number for the frame: unique and increasing, so a ticker line has a
+   *  stable key whether or not the server sent a seq. */
+  uid: number;
+  /** When this tab received the frame (ms since epoch). */
+  receivedAt: number;
   raw: any;
 }
+
+let nextUid = 0;
 
 export interface RendererSpec {
   /** List slices this event can change. Empty = no global refetch at all. */
@@ -106,11 +114,11 @@ const HIGH_PRIORITY = new Set(["P1", "P2"]);
 export const RENDERERS: Readonly<Record<string, RendererSpec>> = {
   // ---- incident lifecycle: changes list membership or the KPI counts ---------
   "incident.created": {
-    slices: ["incidents", "metrics", "problems", "ledger"],
+    slices: ["incidents", "metrics", "problems", "ledger", "hitl"],
     incidentScoped: true,
     ticker: true,
     critical: "priority",
-    why: "a new row appears on the board; open/priority counts move; recurrence may open a problem and the ledger gains a row",
+    why: "a new row appears on the board; open/priority counts move; recurrence may open a problem and the ledger gains a row; a P1/P2 run raises its broadcast-approval card in the same commit and no hitl.created frame announces it, so the approvals list refetches here",
   },
   "incident.merged": {
     slices: ["incidents", "metrics"],
@@ -174,9 +182,9 @@ export const RENDERERS: Readonly<Record<string, RendererSpec>> = {
   "agent.step.started": {
     slices: [],
     incidentScoped: true,
-    ticker: true,
+    ticker: false,
     critical: false,
-    why: "highest-volume event in a storm and it changes one incident's workflow graph only — never a list refetch",
+    why: "highest-volume event in a storm and it changes one incident's workflow graph only — never a list refetch; the ticker shows the completed step, not this one, and the rail reads it from the frame feed",
   },
   "agent.step.completed": {
     slices: [],
@@ -202,18 +210,18 @@ export const RENDERERS: Readonly<Record<string, RendererSpec>> = {
     why: "the queue shows who holds it — no count change, so metrics are left alone",
   },
   "hitl.approved": {
-    slices: ["hitl", "metrics", "audit"],
+    slices: ["hitl", "metrics", "audit", "runs"],
     incidentScoped: true,
     ticker: true,
     critical: true,
-    why: "the task leaves the queue, the pending count drops, broadcasts release, an audit row is written",
+    why: "the task leaves the queue, the pending count drops, broadcasts release, an audit row is written; a broadcast-gate approval also finishes the waiting run (SUCCEEDED) without an agent.run.finished frame, so the runs list refetches here or the rail would read 'waiting' after the decision",
   },
   "hitl.rejected": {
-    slices: ["hitl", "metrics", "audit"],
+    slices: ["hitl", "metrics", "audit", "runs"],
     incidentScoped: true,
     ticker: true,
     critical: true,
-    why: "as approved; the backend also emits agent.run.finished alongside, which covers the runs list",
+    why: "as approved; the backend also emits agent.run.finished (CANCELLED) alongside, and the runs slice is named here too so the two arrive as one debounced refetch",
   },
 
   // ---- delivery ------------------------------------------------------------
@@ -386,8 +394,15 @@ export function normalizeEvent(raw: any): NocEvent | null {
     ts: typeof env.ts === "string" ? env.ts : null,
     payload,
     incidentId,
-    runId: typeof env.run_id === "string" && env.run_id ? env.run_id : null,
+    runId:
+      typeof env.run_id === "string" && env.run_id
+        ? env.run_id
+        : typeof payload.run_id === "string" && payload.run_id
+          ? payload.run_id
+          : null,
     seq,
+    uid: ++nextUid,
+    receivedAt: Date.now(),
     raw: env,
   };
 }
@@ -406,7 +421,8 @@ export function isCriticalEvent(ev: NocEvent, spec?: RendererSpec): boolean {
  * and one of `rationale`/`output`/`detail`. None of the payloads below carries
  * the fields that make them worth reading (the failed job's name, the
  * deadline, the pattern counts), or its `detail` is written for a developer
- * (the mock email names environment variables), so each gets a describer built
+ * (the mock email names environment variables, and a mock never "sent" anything:
+ * the word does not appear for one, head or line), so each gets a describer built
  * from what the backend actually sends — grep the `type="…"` string in
  * src/noc_agents/ for the publisher. Mission control prints the description in
  * place of the raw detail; the stored event is never changed. A describer that
@@ -429,20 +445,23 @@ function span(minutes: unknown): string {
 }
 
 /** True when a mock adapter stored the message instead of sending it. */
-function isMock(p: Record<string, any>): boolean {
-  return String(p.mode ?? "").toLowerCase() === "mock";
+export function isMock(p: Record<string, any> | null | undefined): boolean {
+  return String(p?.mode ?? "").toLowerCase() === "mock";
 }
+
+/** What a mock email did, for the ticker: it was kept, and nothing left the building. */
+export const MOCK_EMAIL_LINE = "Kept in the demo outbox by the mock adapter; not delivered";
 
 const DESCRIBERS: Readonly<Record<string, (p: Record<string, any>) => string>> = {
   // services/notify.record_email_outcome: {incident_number, mode, to, detail, status}. A mock
   // send's detail names env vars ("No DEMO_EMAIL_TO / GMAIL_ADDRESS — …") or lists the
   // addresses it would have used; the floor reads what happened, not how to configure it.
   "email.sent": (p) => {
-    if (isMock(p)) return "Email stored, not sent (mock)";
+    if (isMock(p)) return MOCK_EMAIL_LINE;
     const n = Array.isArray(p.to) ? p.to.length : 0;
     return n ? `Sent to ${n} recipient${n === 1 ? "" : "s"}` : "";
   },
-  "email.failed": (p) => (isMock(p) ? "Email stored, not sent (mock)" : ""),
+  "email.failed": (p) => (isMock(p) ? MOCK_EMAIL_LINE : ""),
   // services/pir.open_pir: {incident_number, opened_reason, pir_id, status}
   "pir.opened": (p) => `Review opened, trigger ${humanEnum(p.opened_reason) || "?"}`,
   // services/regulatory._deadline_event: {notification_id, kind, status, incident_number,

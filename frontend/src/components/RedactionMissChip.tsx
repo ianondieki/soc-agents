@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import { fmtDateTime, parseInstant } from "../lib/time";
-import { useRealtimeState } from "../realtime/RealtimeContext";
+import { useRealtimeState, useTickerEvents } from "../realtime/RealtimeContext";
 
 /**
  * The §9.6 breach signal — a red chip on the Wallboard when a message that already left the
@@ -56,7 +56,9 @@ function fresh(hit: Hit, now: number): boolean {
 
 export default function RedactionMissChip() {
   const rt = useRealtimeState();
-  const events = rt?.events;
+  // The ticker lines live in the realtime feed store (security.redaction_miss is critical, so
+  // quiet mode never holds one back); reading them here re-renders only this chip.
+  const events = useTickerEvents();
   const auditRev = rt?.revisions?.audit ?? 0;
   const [hits, setHits] = useState<Record<string, Hit>>({});
 

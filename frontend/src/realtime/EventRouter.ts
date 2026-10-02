@@ -39,6 +39,9 @@ export interface RouterHooks {
   onSuppressed(total: number): void;
   /** Running total of accepted frames — diagnostics only. */
   onReceived(total: number): void;
+  /** Every accepted frame, the moment it arrives: unpaced, not gated by quiet mode. The agent
+   *  rail reads runs from here (it paces its own replay); the ticker reads `onReveal`. */
+  onFrame?(ev: NocEvent): void;
 }
 
 export interface RouterOptions {
@@ -134,6 +137,7 @@ export class EventRouter {
     }
 
     this.noteReceived();
+    if (this.hooks.onFrame) this.safely(() => this.hooks.onFrame?.(ev as NocEvent));
     this.safely(() => this.markDirty(ev as NocEvent, spec, critical));
 
     if (!spec.ticker) return;

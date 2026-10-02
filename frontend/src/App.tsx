@@ -1,28 +1,69 @@
 import { NavLink, Route, Routes, useLocation, useNavigate } from "react-router-dom";
-import { useCallback, useEffect, useRef, useState } from "react";
-import { api, runLiveRainStorm } from "./api";
+import { Suspense, lazy, useCallback, useEffect, useRef, useState } from "react";
+import { api } from "./api";
 import { useRealtime } from "./realtime/useRealtime";
-import { RealtimeProvider } from "./realtime/RealtimeContext";
-import DemoGuide from "./components/DemoGuide";
-import { AUTO_STORM_KEY } from "./lib/demo";
+import { RealtimeProvider, useSuppressedCount } from "./realtime/RealtimeContext";
+import {
+  STORM_DONE_KEY,
+  STORM_IDLE,
+  fetchStormTemplates,
+  isStorming,
+  runStorm,
+  stormFailureText,
+  stormLine,
+  stormStopLine,
+  type StormState,
+} from "./lib/demo";
+import { detailOf } from "./lib/apiError";
 import { WAITING_WORD, humanAutonomy, humanEnum } from "./lib/agents";
-import MissionControl from "./pages/MissionControl";
-import IncidentBoard from "./pages/IncidentBoard";
-import IncidentWorkspace from "./pages/IncidentWorkspace";
-import HitlInbox from "./pages/HitlInbox";
-import ShiftDesk from "./pages/ShiftDesk";
-import Wallboard from "./pages/Wallboard";
-import Agents from "./pages/Agents";
-import Problems from "./pages/Problems";
-import Regions from "./pages/Regions";
-import Maintenance from "./pages/Maintenance";
-import Audit from "./pages/Audit";
-import Settings from "./pages/Settings";
-import WorkflowMap from "./pages/WorkflowMap";
-import Contracts from "./pages/Contracts";
-import Pirs from "./pages/Pirs";
-import Scorecards from "./pages/Scorecards";
-import Showcase from "./pages/Showcase";
+
+// Every page is its own chunk: the first visit downloads the shell and the one page it opened,
+// not all seventeen. A page's own stylesheet (Audit.css, Wallboard.escalation.css…) travels
+// with its chunk, and Vite holds the page until that stylesheet has loaded.
+const MissionControl = lazy(() => import("./pages/MissionControl"));
+const IncidentBoard = lazy(() => import("./pages/IncidentBoard"));
+const IncidentWorkspace = lazy(() => import("./pages/IncidentWorkspace"));
+const HitlInbox = lazy(() => import("./pages/HitlInbox"));
+const ShiftDesk = lazy(() => import("./pages/ShiftDesk"));
+const Wallboard = lazy(() => import("./pages/Wallboard"));
+const Agents = lazy(() => import("./pages/Agents"));
+const Problems = lazy(() => import("./pages/Problems"));
+const Regions = lazy(() => import("./pages/Regions"));
+const Maintenance = lazy(() => import("./pages/Maintenance"));
+const Audit = lazy(() => import("./pages/Audit"));
+const Settings = lazy(() => import("./pages/Settings"));
+const WorkflowMap = lazy(() => import("./pages/WorkflowMap"));
+const Contracts = lazy(() => import("./pages/Contracts"));
+const Pirs = lazy(() => import("./pages/Pirs"));
+const Scorecards = lazy(() => import("./pages/Scorecards"));
+const Showcase = lazy(() => import("./pages/Showcase"));
+// The guide bar is closed on almost every first paint: its chunk arrives beside the page's,
+// behind its own null fallback, instead of in the shell.
+const DemoGuide = lazy(() => import("./components/DemoGuide"));
+
+/** What a route shows while its chunk arrives: a page head and a first panel of skeleton rows,
+ *  sized like the real ones (see the perf block at the top of styles.css), so the page lands in
+ *  the space already held for it. */
+function PageSkeleton() {
+  return (
+    <div className="page-skeleton" role="status">
+      <span className="sr-only">Loading</span>
+      <div className="page-head" aria-hidden="true">
+        <div>
+          <span className="skeleton skeleton-title" />
+          <span className="skeleton skeleton-lead" />
+        </div>
+      </div>
+      <div className="panel" aria-hidden="true">
+        <div className="skeleton-rows">
+          {["72%", "58%", "66%", "50%", "62%", "56%"].map((w, i) => (
+            <span key={i} className="skeleton" style={{ width: w }} />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 /** The sidebar, grouped by who reaches for it: the shift, the agent story, quality, vendors,
  *  platform. Each label is its page's title, in sentence case. */
@@ -96,15 +137,64 @@ function useScrollableRegions(pathname: string, revisions: unknown) {
     };
     const t1 = window.setTimeout(schedule, 50);
     const t2 = window.setTimeout(schedule, 900); // after the page's data has arrived
+    // A lazily loaded page on a slow link can land after both timers, and its lists fill later
+    // still: re-mark when the content under #main changes, at most every 400 ms.
+    let pending = 0;
+    const throttled = () => {
+      if (pending) return;
+      pending = window.setTimeout(() => {
+        pending = 0;
+        schedule();
+      }, 400);
+    };
+    const main = document.getElementById("main");
+    const mo = main && typeof MutationObserver !== "undefined" ? new MutationObserver(throttled) : null;
+    if (mo && main) mo.observe(main, { childList: true, subtree: true });
     window.addEventListener("resize", schedule);
     return () => {
       window.clearTimeout(t1);
       window.clearTimeout(t2);
+      window.clearTimeout(pending);
+      mo?.disconnect();
       window.cancelAnimationFrame(raf);
       window.removeEventListener("resize", schedule);
     };
   }, [pathname, revisions]);
 }
+
+/** Quiet mode's top-bar toggle. Its own component, so the held-back count it names re-renders
+ *  this button only, never App. */
+function QuietToggle({ on, onToggle }: { on: boolean; onToggle: () => void }) {
+  const suppressed = useSuppressedCount();
+  return (
+    <button
+      type="button"
+      className="btn sm chip-wide"
+      onClick={onToggle}
+      aria-pressed={on}
+      title={
+        "Night shift: stop animations and non-critical ticker churn. P1 and P2 incidents and decisions stay live." +
+        (on && suppressed > 0 ? ` ${suppressed} non-critical lines held back.` : "")
+      }
+    >
+      {on ? "Quiet mode on" : "Quiet mode"}
+    </button>
+  );
+}
+
+/** The Showcase's live panel reads the frame feed from the realtime context; its old `events`
+ *  prop is fed a constant so the page does not re-render for every ticker line. */
+
+function prefersReducedMotion(): boolean {
+  try {
+    return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  } catch {
+    return false;
+  }
+}
+
+/** How long the rail takes to replay the last run (12 hops at ~100 ms) before "Storm complete". */
+const RAIL_SETTLE_MS = 1400;
 
 export default function App() {
   const [profile, setProfile] = useState<any>(null);
@@ -117,26 +207,54 @@ export default function App() {
   const nav = useNavigate();
   const loc = useLocation();
 
+  // The ticker lines and the run frames live in realtime.feed (an external store read by the few
+  // components that show them), so App re-renders for a debounced flush, never for a frame.
   const realtime = useRealtime();
-  const { connected, events, revisions, quietMode, setQuietMode, suppressed } = realtime;
+  const { connected, link, revisions, quietMode, setQuietMode, feed } = realtime;
+  const connectedRef = useRef(connected);
+  connectedRef.current = connected;
 
+  // The 8-second heartbeat refetches the metrics only; the lists follow the WS revisions, and
+  // fall back to the heartbeat only while the stream is down (manualTick below).
   const refresh = useCallback(() => {
     api
-      .profile()
-      .then((p) => {
-        setProfile(p);
+      .metrics()
+      .then((m) => {
+        setMetrics(m);
         setApiOk(true);
       })
       .catch(() => setApiOk(false));
-    api.metrics().then(setMetrics).catch(() => setApiOk(false));
+  }, []);
+  const loadIdentity = useCallback(() => {
+    api.profile().then(setProfile).catch(() => undefined);
     api.session().then(setSession).catch(() => undefined);
   }, []);
 
   useEffect(() => {
+    loadIdentity();
     refresh();
-    const id = window.setInterval(refresh, 8000);
+    const id = window.setInterval(() => {
+      refresh();
+      if (!connectedRef.current) setManualTick((t) => t + 1);
+    }, 8000);
     return () => window.clearInterval(id);
-  }, [refresh]);
+  }, [refresh, loadIdentity]);
+
+  // Outage recovery: when the stream reconnects or the API answers again, every list refetches
+  // once (it missed the frames in between). The first connection is not a recovery: the pages'
+  // own mount loads cover it.
+  const upRef = useRef({ connected, apiOk, wasConnected: false });
+  useEffect(() => {
+    const prev = upRef.current;
+    const reconnected = connected && !prev.connected && prev.wasConnected;
+    const apiBack = apiOk && !prev.apiOk;
+    if (reconnected || apiBack) {
+      setManualTick((t) => t + 1);
+      refresh();
+      if (apiBack) loadIdentity();
+    }
+    upRef.current = { connected, apiOk, wasConnected: prev.wasConnected || connected };
+  }, [connected, apiOk, refresh, loadIdentity]);
 
   // Defect #26: the KPI row used to refetch on *every* WS frame. It now refetches
   // once per debounced flush of the `metrics` slice — and only for event types
@@ -170,51 +288,130 @@ export default function App() {
   // by hand in thirty places. Non-scrolling containers stay out of the tab order.
   useScrollableRegions(loc.pathname, revisions);
 
-  // --- the live storm, owned here so the guided demo can start it from any page ------
-  const stormingRef = useRef(false);
-  const [storming, setStorming] = useState(false);
-  const [stormProg, setStormProg] = useState("");
-  const [stormErr, setStormErr] = useState("");
-  const [firstStormIncident, setFirstStormIncident] = useState<string | null>(null);
+  // --- the live storm, owned here so the guide, Mission control and Settings share one ------
+  // Nothing starts it but a press of Launch: that press is the opening beat of the demo.
+  const [storm, setStorm] = useState<StormState>(STORM_IDLE);
+  const stormRun = useRef<{ running: boolean; templates: any[] | null; next: number }>({ running: false, templates: null, next: 0 });
+  const quietRef = useRef(quietMode);
+  quietRef.current = quietMode;
+  const storming = isStorming(storm);
 
-  const launchStorm = useCallback(
-    async (reason: string) => {
-      if (stormingRef.current) return;
-      stormingRef.current = true;
-      setStorming(true);
-      setStormProg(`${reason}: contacting the agents…`);
-      setStormErr("");
+  const runStormFrom = useCallback(
+    async (resume: boolean) => {
+      const run = stormRun.current;
+      if (run.running) return;
+      run.running = true;
+      if (!resume || !run.templates) {
+        run.templates = null;
+        run.next = 0;
+        setStorm({ ...STORM_IDLE, phase: "starting", text: "Starting the heavy-rain storm" });
+      } else {
+        setStorm((s) => ({ ...s, phase: "running", error: "", text: `Resuming at alarm ${run.next + 1} of ${s.total}` }));
+      }
       try {
-        const result = await runLiveRainStorm((i, total, inc) => {
-          const owner = inc.responsible_msp || inc.msp_name || inc.assignee_name;
-          setStormProg(
-            `Alarm ${i} of ${total}: ${inc.incident_number} at ${inc.site_id} (${inc.region_code}), ` +
-              `${humanEnum(inc.failure_domain)}${owner ? `, owner ${owner}` : ""}.`
-          );
-          if (i === 1 && inc?.id) setFirstStormIncident(inc.id);
-          refresh();
-          setManualTick((t) => t + 1);
-        }, 1500);
-        setStormProg(
-          `Storm complete: ${result.count} alarms. HUB majors opened and child sites folded under their parents; P2 broadcasts wait in Approvals.`
-        );
-        refresh();
-        setManualTick((t) => t + 1);
+        if (!run.templates) run.templates = await fetchStormTemplates();
+        const total = run.templates.length;
+        setStorm((s) => ({ ...s, total, phase: "running", text: s.phase === "starting" ? "Starting the heavy-rain storm" : s.text }));
+        await runStorm({
+          templates: run.templates,
+          from: run.next,
+          onAlarm: (i, n, r) => {
+            run.next = i;
+            const inc = r.incident || {};
+            const owner = inc.responsible_msp || inc.msp_name || inc.assignee_name;
+            const text =
+              r.outcome === "opened"
+                ? `Alarm ${i} of ${n}: ${inc.incident_number || "a ticket"} opened at ${r.site}` +
+                  `${inc.region_code ? ` (${inc.region_code})` : ""}, ${humanEnum(inc.failure_domain) || "fault"}${owner ? `, owner ${owner}` : ""}.`
+                : `Alarm ${i} of ${n}: ${r.site} folded into ${r.into || "an open ticket"} at Correlate.`;
+            setStorm((s) => ({
+              ...s,
+              done: i,
+              opened: s.opened + (r.outcome === "opened" ? 1 : 0),
+              folded: s.folded + (r.outcome === "folded" ? 1 : 0),
+              text,
+              firstIncidentId: s.firstIncidentId || (r.outcome === "opened" ? inc.id ?? null : null),
+              lastOpenedId: r.outcome === "opened" && inc.id ? inc.id : s.lastOpenedId,
+            }));
+            refresh();
+            // With the stream up the WS revisions refetch the lists; only without it does the
+            // storm nudge them itself.
+            if (!connectedRef.current) setManualTick((t) => t + 1);
+          },
+        });
+        // The rail replays the last run hop by hop; "Storm complete" waits until it has.
+        setStorm((s) => ({ ...s, phase: "settling" }));
+        if (!quietRef.current && !prefersReducedMotion()) await new Promise((r) => window.setTimeout(r, RAIL_SETTLE_MS));
+        setStorm((s) => ({ ...s, phase: "done", text: "" }));
         try {
-          sessionStorage.setItem(AUTO_STORM_KEY, "1");
+          sessionStorage.setItem(STORM_DONE_KEY, "1");
         } catch {
-          /* ignore */
+          /* storage blocked: "storm done" falls back to "an incident is open" */
         }
-      } catch (e: any) {
-        setStormErr(e?.message || String(e));
-        setStormProg("");
+        refresh();
+        if (!connectedRef.current) setManualTick((t) => t + 1);
+      } catch (e) {
+        setStorm((s) => ({ ...s, phase: "failed", error: stormFailureText(detailOf(e, "The request failed.")) }));
       } finally {
-        stormingRef.current = false;
-        setStorming(false);
+        run.running = false;
       }
     },
     [refresh]
   );
+  const launchStorm = useCallback(() => void runStormFrom(false), [runStormFrom]);
+  const resumeStorm = useCallback(() => void runStormFrom(true), [runStormFrom]);
+
+  const onOpenIncident = useCallback((id: string) => nav(`/incidents/${id}`), [nav]);
+  const onInjected = useCallback(() => {
+    refresh();
+    // A manual inject is a user action, not a WS burst: refresh every list at once the way the
+    // button always has.
+    setManualTick((t) => t + 1);
+  }, [refresh]);
+
+  // --- what the guide reads ------------------------------------------------------------
+  // The newest ticket and the approvals since the guide opened come from the frame feed through
+  // a tap: no subscription, so App renders only when one of the two values actually changes.
+  const [latestIncidentId, setLatestIncidentId] = useState<string | null>(null);
+  const [approvedSinceOpen, setApprovedSinceOpen] = useState(0);
+  const guideOpenRef = useRef(guideOpen);
+  guideOpenRef.current = guideOpen;
+  useEffect(
+    () =>
+      feed.tap((ev) => {
+        if (ev.type === "incident.created" && ev.incidentId) setLatestIncidentId(ev.incidentId);
+        if (ev.type === "hitl.approved" && guideOpenRef.current) setApprovedSinceOpen((n) => n + 1);
+      }),
+    [feed]
+  );
+  useEffect(() => {
+    if (!guideOpen) return;
+    setApprovedSinceOpen(0);
+    // No ticket seen on the stream this session: the newest open one on the board.
+    if (latestIncidentId || storm.lastOpenedId) return;
+    let cancelled = false;
+    api
+      .incidents()
+      .then((rows) => {
+        if (cancelled || !Array.isArray(rows)) return;
+        const open = rows.filter((r) => r && !["CLOSED", "CANCELLED"].includes(r.status));
+        const newest = open.sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")))[0];
+        if (newest?.id) setLatestIncidentId(newest.id);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [guideOpen]);
+  const stormDoneThisSession = (() => {
+    try {
+      return sessionStorage.getItem(STORM_DONE_KEY) === "1";
+    } catch {
+      return false;
+    }
+  })();
+  const stormDone = storm.phase === "done" || stormDoneThisSession || (metrics?.open_total ?? 0) > 0;
 
   const isWall = loc.pathname.startsWith("/wallboard");
   const org = profile?.display_name ? String(profile.display_name).replace(" (demo profile)", "") : "Connecting…";
@@ -225,18 +422,20 @@ export default function App() {
     return (
       <RealtimeProvider value={realtime}>
         <main>
-          <Routes>
-            <Route
-              path="/wallboard"
-            element={
-              <Wallboard
-                metrics={metrics}
-                rev={revisions.incidents}
-                signalsRev={revisions.signals}
+          <Suspense fallback={null}>
+            <Routes>
+              <Route
+                path="/wallboard"
+                element={
+                  <Wallboard
+                    metrics={metrics}
+                    rev={revisions.incidents}
+                    signalsRev={revisions.signals}
+                  />
+                }
               />
-            }
-          />
-          </Routes>
+            </Routes>
+          </Suspense>
         </main>
       </RealtimeProvider>
     );
@@ -292,19 +491,20 @@ export default function App() {
                   {orgMeta}
                 </span>
               </span>
-              {/* Healthy is not news: "Live" stays a muted word; only a broken link turns red. */}
+              {/* Healthy is not news: "Live" stays a muted word; only a broken link turns red, and
+                  never in the first seconds while the stream is still connecting. */}
               <span
-                className={"topbar-live" + (!apiOk || !connected ? " bad" : "")}
+                className={"topbar-live" + (!apiOk || link === "down" ? " bad" : "")}
                 role="status"
                 title={!apiOk ? "The API is not answering" : "WebSocket to the agent event stream"}
               >
-                {!apiOk ? "API unreachable" : connected ? "Live" : "Reconnecting"}
+                {!apiOk ? "API unreachable" : link === "live" ? "Live" : link === "connecting" ? "Connecting…" : "Reconnecting"}
               </span>
             </div>
             <div className="topbar-right">
               <button
                 type="button"
-                className={"btn sm" + ((pending ?? 0) > 0 ? " hitl" : " quiet")}
+                className={"btn sm topbar-decisions" + ((pending ?? 0) > 0 ? " hitl" : " quiet")}
                 onClick={() => nav("/hitl")}
                 title="Open Approvals"
               >
@@ -316,22 +516,13 @@ export default function App() {
                 className="btn sm"
                 onClick={() => setGuideOpen((o) => !o)}
                 aria-pressed={guideOpen}
+                aria-controls={guideOpen ? "guide-bar" : undefined}
+                data-guide-toggle=""
                 title="A five-step walkthrough for presenting the prototype"
               >
                 Guided demo
               </button>
-              <button
-                type="button"
-                className="btn sm chip-wide"
-                onClick={() => setQuietMode(!quietMode)}
-                aria-pressed={quietMode}
-                title={
-                  "Night shift: stop animations and non-critical ticker churn. P1 and P2 incidents and decisions stay live." +
-                  (quietMode && suppressed > 0 ? ` ${suppressed} non-critical lines held back.` : "")
-                }
-              >
-                {quietMode ? "Quiet mode on" : "Quiet mode"}
-              </button>
+              <QuietToggle on={quietMode} onToggle={() => setQuietMode(!quietMode)} />
             </div>
           </header>
           {!apiOk && (
@@ -349,32 +540,45 @@ export default function App() {
               </div>
             </div>
           )}
+          {/* The guided demo is a bar in normal flow between the top bar and the page: it pushes
+              the page down and covers nothing. */}
+          <div id="guide-bar">
+            <Suspense fallback={null}>
+              <DemoGuide
+                open={guideOpen}
+                onClose={() => setGuideOpen(false)}
+                storming={storming}
+                stormDone={stormDone}
+                pendingCount={pending ?? 0}
+                latestIncidentId={storm.lastOpenedId || latestIncidentId}
+                approvedSinceOpen={approvedSinceOpen}
+                onLaunchStorm={launchStorm}
+                firstIncidentId={storm.firstIncidentId}
+              />
+            </Suspense>
+          </div>
           <main className="content" id="main" tabIndex={-1}>
+            <Suspense fallback={<PageSkeleton />}>
             <Routes>
               <Route
                 path="/"
                 element={
                   <MissionControl
                     metrics={metrics}
-                    events={events}
                     incidentsRev={revisions.incidents + manualTick}
                     hitlRev={revisions.hitl + manualTick}
                     runsRev={revisions.runs + manualTick}
-                    quietMode={quietMode}
-                    suppressed={suppressed}
-                    storming={storming}
-                    stormProg={stormProg}
-                    stormErr={stormErr}
+                    storm={storm}
                     onLaunchStorm={launchStorm}
-                    onOpenGuide={() => setGuideOpen(true)}
-                    onOpen={(id) => nav(`/incidents/${id}`)}
+                    onResumeStorm={resumeStorm}
+                    onOpen={onOpenIncident}
                     onRefresh={refresh}
                   />
                 }
               />
               <Route
                 path="/showcase"
-                element={<Showcase profile={profile} metrics={metrics} events={events} runsRev={revisions.runs + manualTick} />}
+                element={<Showcase profile={profile} metrics={metrics} runsRev={revisions.runs + manualTick} />}
               />
               <Route
                 path="/incidents"
@@ -410,28 +614,19 @@ export default function App() {
                     session={session}
                     onSession={setSession}
                     profile={profile}
-                    onInjected={() => {
-                      refresh();
-                      // A manual inject is a user action, not a WS burst: refresh
-                      // every list at once the way the button always has.
-                      setManualTick((t) => t + 1);
-                    }}
+                    onInjected={onInjected}
+                    storming={storming}
+                    stormProg={stormLine(storm)}
+                    stormErr={stormStopLine(storm)}
+                    onLaunchStorm={launchStorm}
+                    onResumeStorm={resumeStorm}
                   />
                 }
               />
             </Routes>
+            </Suspense>
           </main>
         </div>
-        <DemoGuide
-          open={guideOpen}
-          onClose={() => setGuideOpen(false)}
-          storming={storming}
-          firstIncidentId={firstStormIncident}
-          onRunStorm={() => {
-            nav("/");
-            return launchStorm("Guided demo");
-          }}
-        />
       </div>
     </RealtimeProvider>
   );

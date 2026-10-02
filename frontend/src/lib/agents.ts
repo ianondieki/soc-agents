@@ -1,3 +1,5 @@
+import { parseInstant } from "./time";
+
 /**
  * Shared vocabulary for drawing agent runs: node order, status normalisation and the
  * choice of WHICH run represents an incident.
@@ -137,7 +139,9 @@ export function runOutcome(status: unknown): { word: string; tone: "hitl" | "dan
   return { word: runStatusWord(s), tone: "" };
 }
 
-export type NodeStatus = "pending" | "running" | "succeeded" | "waiting_hitl" | "failed" | "skipped";
+/** A hop's state on the rail. `decided` is a hop that waited for a person and has been decided
+ *  (the backend leaves those step rows at WAITING_HITL; `displaySteps` maps them). */
+export type NodeStatus = "pending" | "running" | "succeeded" | "waiting_hitl" | "decided" | "failed" | "skipped";
 
 export interface RailStep {
   node_name: string;
@@ -150,6 +154,12 @@ export interface RailStep {
   tools_called?: { name?: string; ok?: boolean; latency_ms?: number; error?: string | null }[];
   confidence?: number | null;
   seq?: number;
+  started_at?: string | null;
+  finished_at?: string | null;
+  /** Set by `displaySteps` on a decided hop: what the person decided. */
+  decision?: "approved" | "rejected";
+  /** Set by `displaySteps` on the Approval hop: how long the run waited (or has waited) for a person. */
+  waited_ms?: number | null;
 }
 
 /** Backend step/node status words → the rail's vocabulary. Unknown words read as pending. */
@@ -157,6 +167,7 @@ export function normaliseStatus(raw: unknown): NodeStatus {
   const s = String(raw ?? "").toLowerCase();
   if (s === "succeeded") return "succeeded";
   if (s === "waiting_hitl") return "waiting_hitl";
+  if (s === "decided") return "decided";
   if (s === "failed") return "failed";
   if (s === "started" || s === "running") return "running";
   if (s === "skipped") return "skipped";
@@ -168,6 +179,7 @@ export const STATUS_WORD: Record<NodeStatus, string> = {
   running: "running",
   succeeded: "done",
   waiting_hitl: WAITING_WORD,
+  decided: "approved",
   failed: "failed",
   skipped: "skipped",
 };
@@ -206,7 +218,9 @@ export function countAbsorbed<T extends { steps?: RailStep[]; status?: string }>
   ).length;
 }
 
-/** Whole-run elapsed time from its step durations, when the run row has no finished_at yet. */
+/** "Agents took": the sum of the step durations. This is the one figure for how long a run's
+ *  agents worked, everywhere; a run's finished_at moves when a person approves hours later, so
+ *  finished_at minus started_at is time waited, never time worked. */
 export function sumDurations(steps: RailStep[] | undefined | null): number {
   let total = 0;
   for (const s of steps || []) if (typeof s.duration_ms === "number") total += s.duration_ms;
@@ -229,4 +243,102 @@ export function fmtMinutes(min: number | null | undefined): string {
 export function fmtInt(n: number | null | undefined): string {
   if (n == null || !Number.isFinite(n)) return "—";
   return n.toLocaleString("en-KE");
+}
+
+/** "3 h 16 m", "4 m", "35 s": a wait, as a person says it. */
+export function fmtWait(ms: number | null | undefined): string {
+  if (ms == null || !Number.isFinite(ms) || ms < 0) return "—";
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `${s} s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m} m`;
+  const h = Math.floor(m / 60);
+  if (h < 48) return `${h} h ${m % 60} m`;
+  return `${Math.floor(h / 24)} d ${h % 24} h`;
+}
+
+/** Run statuses after which nothing more happens on the run (WAITING_HITL is still waiting). */
+export const DONE_RUN_STATUSES: ReadonlySet<string> = new Set(["SUCCEEDED", "FAILED", "CANCELLED"]);
+
+export function isRunDone(status: unknown): boolean {
+  return DONE_RUN_STATUSES.has(String(status ?? "").toUpperCase());
+}
+
+/** The run opened a ticket: it carries a TICKET step. */
+export function opensTicket(run: { steps?: RailStep[] | null } | null | undefined): boolean {
+  return (run?.steps || []).some((s) => s && s.node_name === "TICKET");
+}
+
+/** The site an alarm came from, read from the Ingest step's input ("site=SFC-RFT-HUB-NKR"). */
+export function alarmSite(steps: RailStep[] | null | undefined): string | null {
+  const ingest = (steps || []).find((s) => s && s.node_name === "INGEST");
+  const m = /site=([A-Za-z0-9][A-Za-z0-9_-]*)/.exec(String(ingest?.input_summary ?? ""));
+  return m ? m[1] : null;
+}
+
+/**
+ * A run that folded into an open ticket at Correlate (a repeat alarm, or a child site under its
+ * HUB), read from its Correlate step ("merged into INC000001", "cascade child under INC000001").
+ * Null for a run that opened a ticket or has not reached a decision at Correlate.
+ */
+export function foldOf(
+  run: { steps?: RailStep[] | null } | null | undefined
+): { into: string | null; site: string | null; kind: "repeat" | "child" } | null {
+  const steps = run?.steps || [];
+  if (opensTicket(run)) return null;
+  const corr = steps.find((s) => s && s.node_name === "CORRELATE");
+  if (!corr) return null;
+  const m = /(merged into|cascade child under)\s+([A-Z]{2,}\d+)/i.exec(String(corr.output_summary ?? ""));
+  if (!m) return null;
+  return { into: m[2], site: alarmSite(steps), kind: /merged/i.test(m[1]) ? "repeat" : "child" };
+}
+
+function msOf(value: unknown): number | null {
+  const d = parseInstant(value);
+  return d ? d.getTime() : null;
+}
+
+/**
+ * The steps of a run as the rail should draw them.
+ *
+ * - The backend leaves the Approval and Broadcast rows at WAITING_HITL after a person decides,
+ *   while the run reads SUCCEEDED (approved) or CANCELLED (rejected). On a decided run those hops
+ *   read "decided": approved (both), or rejected (Approval) with the Broadcast skipped, since it
+ *   never left.
+ * - The Approval hop carries `waited_ms`: from the hop parking the run to the decision (the run's
+ *   finished_at), or to `now` while it still waits.
+ * - A finished run that folded into an open ticket at Correlate draws the hops it never reached
+ *   as skipped, not as "pending" grey dashes that look stalled.
+ */
+export function displaySteps(
+  run: { status?: string | null; steps?: RailStep[] | null; finished_at?: string | null } | null | undefined,
+  now: number = Date.now()
+): RailStep[] {
+  const steps = (run?.steps || []).filter((s): s is RailStep => !!s && !!s.node_name).map((s) => ({ ...s }));
+  const status = String(run?.status ?? "").toUpperCase();
+  const decided = status === "SUCCEEDED" || status === "CANCELLED";
+  const rejected = status === "CANCELLED";
+  const decidedAt = msOf(run?.finished_at);
+  for (const s of steps) {
+    if (normaliseStatus(s.status) !== "waiting_hitl") continue;
+    if (s.node_name === "HITL") {
+      const parkedAt = msOf(s.finished_at);
+      const until = decided ? decidedAt : status === "WAITING_HITL" ? now : null;
+      s.waited_ms = parkedAt != null && until != null ? Math.max(0, until - parkedAt) : null;
+    }
+    if (!decided) continue;
+    if (rejected && s.node_name === "BROADCAST") {
+      s.status = "SKIPPED";
+      continue;
+    }
+    s.status = "DECIDED";
+    s.decision = rejected ? "rejected" : "approved";
+  }
+  if (isRunDone(status) && foldOf({ steps })) {
+    const ran = new Set(steps.map((s) => s.node_name));
+    for (const n of LIFECYCLE_NODES) {
+      if (!ran.has(n.id)) steps.push({ node_name: n.id, agent_name: n.agent, status: "SKIPPED" });
+    }
+  }
+  return steps;
 }
