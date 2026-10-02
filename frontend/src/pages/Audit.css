@@ -1,30 +1,318 @@
-/* Audit Explorer. Owned by pages/Audit.tsx; loaded after styles.css. */
+/* Audit trail. Owned by pages/Audit.tsx; loaded after styles.css.
+   One panel, one block per ticket with a sticky head, hairline rows in four columns:
+   time, actor, what and why, and an outcome word only for an exception. */
 
-/* Audit Explorer: blocks per record, a hairline list inside, the reason on its own line. */
-.audit-search { min-width: 18rem; }
-.audit-count { margin: calc(-1 * var(--s3)) 0 var(--s4); font-size: 0.82rem; }
-.audit-block { margin-bottom: var(--s3); }
-.audit-block .panel-kicker { display: flex; gap: var(--s2); align-items: baseline; flex-wrap: wrap; }
-.audit-ref { font-family: var(--mono); text-transform: none; letter-spacing: 0; color: var(--text); font-size: 0.8rem; font-weight: 600; }
-.audit-ref.muted { font-family: var(--font); font-weight: 500; }
-.audit-when { font-size: 0.78rem; white-space: nowrap; }
-.audit-list { list-style: none; margin: 0; padding: 0; }
+.audit-page { --audit-indent: calc(16px + 5.5rem + 16px + 11rem + 16px); }
+
+.audit-search { width: 16rem; font-size: var(--fs-sm); padding: 6px 10px; }
+.audit-kind { flex: none; width: auto; font-size: var(--fs-sm); padding: 6px 8px; }
+
+/* Under the head: the count on the left, the view toggle on the right. */
+.audit-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s2) var(--s4);
+  margin: calc(-1 * var(--s3)) 0 var(--s3);
+}
+.audit-count {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 var(--s4);
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+}
+.audit-link {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: var(--accent);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-color: rgba(70, 198, 242, 0.45);
+}
+.audit-link:hover { color: var(--text-bright); text-decoration-color: currentColor; }
+.audit-stale { color: var(--warn); }
+
+.audit-seg {
+  display: inline-flex;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm);
+  overflow: hidden;
+}
+.audit-seg button {
+  background: transparent;
+  border: 0;
+  margin: 0;
+  color: var(--muted);
+  font: inherit;
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  line-height: 1.4;
+  padding: 5px 12px;
+  cursor: pointer;
+}
+.audit-seg button + button { border-left: 1px solid var(--line-strong); }
+.audit-seg button:hover { background: var(--surface-3); color: var(--text-bright); }
+.audit-seg button[aria-pressed="true"] { background: var(--accent-soft); color: var(--text-bright); font-weight: 600; }
+.audit-seg button:focus-visible { outline-offset: -2px; border-radius: 0; }
+
+/* The panel: no padding, and never a scroll box (a scroll box would stop the heads sticking). */
+.panel.audit-panel { padding: 0; overflow: visible; }
+
+/* Block head: sticks under the top bar while its block is on screen. */
+.audit-head {
+  position: sticky;
+  top: var(--topbar-h, 48px);
+  z-index: 2;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s1) var(--s4);
+  padding: 12px 16px;
+  background: var(--surface-2);
+  border-top: 1px solid var(--line-strong);
+}
+.audit-block:first-child .audit-head,
+.audit-skeleton .audit-head {
+  border-top: 0;
+  border-radius: calc(var(--r-lg) - 1px) calc(var(--r-lg) - 1px) 0 0;
+}
+.audit-head-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 var(--s4);
+  min-width: 0;
+  margin: 0;
+  font-size: var(--fs-sm);
+  font-weight: 400;
+  color: var(--muted);
+  line-height: 1.4;
+}
+.audit-head-title .pill { align-self: center; margin-right: calc(-1 * var(--s1)); }
+.audit-inc { font-size: var(--fs-base); font-weight: 600; color: var(--text-bright); }
+.audit-site { color: var(--muted); }
+.audit-parent { color: var(--text); }
+.audit-code { font-family: var(--mono); font-size: var(--fs-xs); }
+.audit-head-meta {
+  display: flex;
+  gap: var(--s4);
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* Rows */
+.audit-rows { list-style: none; margin: 0; padding: 0; }
+.audit-entry { border-top: 1px solid var(--line); }
 .audit-row {
   display: grid;
-  grid-template-columns: 5rem 1fr;
+  grid-template-columns: 5.5rem 11rem minmax(0, 1fr) 10rem;
+  gap: 0 16px;
+  align-items: baseline;
+  width: 100%;
+  margin: 0;
+  padding: 8px 16px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  line-height: 1.45;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 0.12s ease;
+}
+.audit-row:hover, .audit-entry.open > .audit-row { background: var(--surface-3); }
+.audit-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 0; }
+.audit-block:last-child .audit-rows > li:last-child > .audit-row,
+.audit-block:last-child .audit-rows > li:last-child > .audit-routine {
+  border-radius: 0 0 calc(var(--r-lg) - 1px) calc(var(--r-lg) - 1px);
+}
+
+.audit-time {
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  color: var(--muted-dim);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.audit-actor {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-md);
+  font-weight: 500;
+  color: var(--text);
+}
+.audit-actor.person { color: var(--hitl); }
+.audit-job { color: var(--muted-dim); font-weight: 400; }
+.audit-summary {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-md);
+  color: var(--muted);
+}
+.audit-step { font-weight: 600; color: var(--text); }
+.audit-times { margin-left: var(--s2); font-family: var(--mono); font-size: var(--fs-xs); color: var(--muted-dim); }
+.audit-sentence { margin-left: var(--s3); }
+.audit-fact { margin-left: var(--s4); }
+.audit-fact-k { color: var(--muted-dim); }
+.audit-outcome { text-align: right; white-space: nowrap; }
+.audit-out { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-sm); font-weight: 600; }
+.audit-out svg { flex: none; align-self: center; }
+.audit-out.hitl { color: var(--hitl); }
+.audit-out.danger { color: var(--danger); }
+.audit-out.warn { color: var(--warn); }
+.audit-out.ok { color: var(--ok); }
+
+/* "Show 10 routine steps (Ingest, Correlate, Enrich…)": one quiet line, aligned with the actor. */
+.audit-routine {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 8px 16px 8px calc(16px + 5.5rem + 16px);
+  border: 0;
+  border-top: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: var(--fs-sm);
+  line-height: 1.45;
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.audit-rows > li:first-child > .audit-routine { border-top: 0; }
+.audit-routine:hover { background: var(--surface-3); color: var(--text-bright); }
+.audit-routine:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 0; }
+
+/* Expanded row: the reason in full, every fact, then the record exactly as stored. */
+.audit-detail {
+  display: grid;
   gap: var(--s3);
-  padding: 0.5rem 0;
+  padding: 4px 16px 16px var(--audit-indent);
+  background: var(--surface-3);
+  font-size: var(--fs-md);
+}
+.audit-detail-sentence { margin: 0; max-width: 75ch; color: var(--text); line-height: 1.5; overflow-wrap: anywhere; }
+.audit-facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 4px var(--s4);
+  margin: 0;
+  font-size: var(--fs-sm);
+}
+.audit-facts > div { display: contents; }
+.audit-facts dt { color: var(--muted-dim); }
+.audit-facts dd { margin: 0; color: var(--text); overflow-wrap: anywhere; }
+.audit-detail-note { margin: 0; color: var(--muted); font-size: var(--fs-sm); }
+.audit-record {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr) auto;
+  gap: var(--s2) var(--s4);
+  align-items: start;
+  padding-top: var(--s3);
+  border-top: 1px solid var(--line-strong);
+}
+.audit-record-label { color: var(--muted-dim); font-size: var(--fs-sm); line-height: 1.6; }
+.audit-record-raw {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px var(--s4);
+  min-width: 0;
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  line-height: 1.6;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.audit-record-why { flex-basis: 100%; white-space: pre-wrap; }
+.audit-record-copy { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.audit-record-hint { color: var(--muted); font-size: var(--fs-xs); white-space: nowrap; }
+
+/* States */
+.audit-state {
+  display: grid;
+  justify-items: center;
+  gap: var(--s3);
+  padding: var(--s6) var(--s4);
+  text-align: center;
+  color: var(--text);
+}
+.audit-state p { margin: 0; }
+.audit-state-hint { color: var(--muted); font-size: var(--fs-sm); }
+.audit-state-hint a { color: var(--accent); text-decoration: underline; text-underline-offset: 3px; }
+.audit-skel-row {
+  display: grid;
+  grid-template-columns: 5.5rem 11rem minmax(0, 1fr) 10rem;
+  gap: 0 16px;
+  align-items: center;
+  padding: 11px 16px;
   border-top: 1px solid var(--line);
 }
-.audit-row:first-child { border-top: 0; padding-top: 0; }
-.audit-time { font-family: var(--mono); font-size: 0.74rem; color: var(--muted-dim); padding-top: 0.25rem; }
-.audit-line { display: flex; flex-wrap: wrap; gap: var(--s2); align-items: center; }
-.audit-actor { color: var(--text-bright); font-size: 0.86rem; font-weight: 600; }
-.audit-kind { font-size: 0.7rem; color: var(--muted-dim); }
-.audit-why { margin: 0.2rem 0 0; color: var(--muted); font-size: 0.84rem; line-height: 1.5; overflow-wrap: anywhere; }
-.audit-more { display: flex; justify-content: center; padding: var(--s3) 0 var(--s5); }
+.audit-more { display: flex; justify-content: center; padding: var(--s4) 0 var(--s2); }
+
+/* Below 960 px the top bar scrolls away, so the block heads stick to the very top. */
+@media (max-width: 960px) {
+  .audit-head { top: 0; }
+}
+
+/* Phone: time and actor share the first line, the summary takes two, the outcome word sits
+   under it only for an exception; every row is a 44 px target; nothing scrolls sideways. */
 @media (max-width: 700px) {
-  .audit-search { min-width: 0; width: 100%; }
-  .audit-row { grid-template-columns: 1fr; gap: 0.15rem; }
-  .audit-time { padding-top: 0; }
+  .audit-page { --audit-indent: 16px; }
+  .page-actions .audit-search { flex: 1 1 12rem; width: auto; min-width: 0; }
+  .audit-bar { margin-top: calc(-1 * var(--s2)); }
+  .audit-head { padding: 10px 16px; }
+  .audit-head-meta { white-space: normal; flex-wrap: wrap; gap: 0 var(--s3); }
+  .audit-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 2px 0;
+    min-height: 44px;
+    padding: 10px 16px;
+  }
+  .audit-time { margin-right: var(--s3); }
+  .audit-time.same { margin-right: 0; }
+  .audit-actor { flex: 1 1 auto; }
+  .audit-summary {
+    flex: 1 1 100%;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  .audit-outcome { flex: 1 1 100%; text-align: left; }
+  .audit-outcome:empty { display: none; }
+  .audit-routine {
+    min-height: 44px;
+    padding: 12px 16px;
+    white-space: normal;
+  }
+  .audit-record { grid-template-columns: minmax(0, 1fr); }
+  .audit-record-copy { align-items: flex-start; }
+  .audit-skel-row { grid-template-columns: 4.5rem minmax(0, 1fr); }
+  .audit-skel-row { row-gap: 8px; }
+  .audit-skel-row > :nth-child(3) { grid-column: 1 / -1; }
+  .audit-skel-row > :nth-child(4) { display: none; }
 }
