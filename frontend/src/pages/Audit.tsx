@@ -11,6 +11,7 @@ import {
   type AuditEntry,
   type AuditGroup,
 } from "../lib/audit";
+import "./Audit.css";
 
 /**
  * The regulator-facing record, newest first, read the way a person reads it: who, what,

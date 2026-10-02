@@ -4,6 +4,7 @@ import ApprovalCard from "../components/ApprovalCard";
 import CardBoundary from "../components/CardBoundary";
 import { ageMinutes, fmtAge, friendlyError, isPlainObject, rawPayload } from "../lib/hitl";
 import { useRealtimeState } from "../realtime/RealtimeContext";
+import "./HitlInbox.css";
 
 /**
  * The shared HITL approval queue.

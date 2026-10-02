@@ -1,0 +1,30 @@
+/* Audit Explorer. Owned by pages/Audit.tsx; loaded after styles.css. */
+
+/* Audit Explorer: blocks per record, a hairline list inside, the reason on its own line. */
+.audit-search { min-width: 18rem; }
+.audit-count { margin: calc(-1 * var(--s3)) 0 var(--s4); font-size: 0.82rem; }
+.audit-block { margin-bottom: var(--s3); }
+.audit-block .panel-kicker { display: flex; gap: var(--s2); align-items: baseline; flex-wrap: wrap; }
+.audit-ref { font-family: var(--mono); text-transform: none; letter-spacing: 0; color: var(--text); font-size: 0.8rem; font-weight: 600; }
+.audit-ref.muted { font-family: var(--font); font-weight: 500; }
+.audit-when { font-size: 0.78rem; white-space: nowrap; }
+.audit-list { list-style: none; margin: 0; padding: 0; }
+.audit-row {
+  display: grid;
+  grid-template-columns: 5rem 1fr;
+  gap: var(--s3);
+  padding: 0.5rem 0;
+  border-top: 1px solid var(--line);
+}
+.audit-row:first-child { border-top: 0; padding-top: 0; }
+.audit-time { font-family: var(--mono); font-size: 0.74rem; color: var(--muted-dim); padding-top: 0.25rem; }
+.audit-line { display: flex; flex-wrap: wrap; gap: var(--s2); align-items: center; }
+.audit-actor { color: var(--text-bright); font-size: 0.86rem; font-weight: 600; }
+.audit-kind { font-size: 0.7rem; color: var(--muted-dim); }
+.audit-why { margin: 0.2rem 0 0; color: var(--muted); font-size: 0.84rem; line-height: 1.5; overflow-wrap: anywhere; }
+.audit-more { display: flex; justify-content: center; padding: var(--s3) 0 var(--s5); }
+@media (max-width: 700px) {
+  .audit-search { min-width: 0; width: 100%; }
+  .audit-row { grid-template-columns: 1fr; gap: 0.15rem; }
+  .audit-time { padding-top: 0; }
+}
