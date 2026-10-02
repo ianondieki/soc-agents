@@ -118,7 +118,8 @@ export type Outcome = { word: string; tone: OutcomeTone; icon: "pause" | "alert"
 export function outcomeOf(action: string | null | undefined): Outcome | null {
   const a = String(action ?? "").toLowerCase();
   if (/waiting_hitl|approval_requested|awaiting/.test(a)) return { word: "Waiting for a decision", tone: "hitl", icon: "pause" };
-  if (/reject|cancel/.test(a)) return { word: "Rejected", tone: "danger", icon: "alert" };
+  if (/cancel/.test(a)) return { word: "Cancelled", tone: "warn", icon: "alert" };
+  if (/reject/.test(a)) return { word: "Rejected", tone: "danger", icon: "alert" };
   if (/fail|error|\.miss$/.test(a)) return { word: "Failed", tone: "danger", icon: "alert" };
   if (/escalat|wallboard_red/.test(a)) return { word: "Escalated", tone: "warn", icon: "alert" };
   if (/skipped/.test(a)) return { word: "Skipped", tone: "warn", icon: "dot" };
@@ -232,7 +233,7 @@ export function isOpaqueId(id: string | null | undefined): boolean {
 
 // --------------------------------------------------------------------------- blocks
 
-export type BlockKind = "ticket" | "folded" | "approval" | "job" | "record";
+export type BlockKind = "ticket" | "folded" | "alarm" | "approval" | "job" | "record";
 
 export type AuditBlock = {
   key: string;
@@ -332,10 +333,13 @@ function classify(b: AuditBlock, base: string): void {
       b.entityType = "incident";
       b.entityId = ticketRow.entity_id;
     } else if (b.rows.some((r) => isLifecycleNode(r.node))) {
-      b.kind = "folded";
+      // "Folded" only when a step names the parent it merged under; an alarm run that ended
+      // with no ticket for another reason is an alarm run, nothing more.
+      b.kind = "alarm";
       for (const r of b.rows) {
         const m = PARENT_SITE.exec(r.rationale || "");
         if (m) {
+          b.kind = "folded";
           b.parentSite = m[1];
           break;
         }
@@ -395,7 +399,7 @@ export function routineNames(rows: AuditEntry[], max = 3): string {
 
 /** The words a search matches for one row: raw and rendered, so either spelling finds it. */
 export function rowHaystack(r: AuditEntry): string {
-  return [r.actor, actorLabel(r.actor), r.action, actionLabel(r.action), r.rationale, r.node, stepName(r.node)]
+  return [r.actor, actorLabel(r.actor), r.action, actionLabel(r.action), r.rationale, r.node, stepName(r.node), r.entity_type, r.entity_id, r.incident_id]
     .join(" ")
     .toLowerCase();
 }

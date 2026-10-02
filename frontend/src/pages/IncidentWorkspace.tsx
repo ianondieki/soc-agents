@@ -113,6 +113,8 @@ export default function IncidentWorkspace({ session }: { session: any }) {
       setReassigning(false);
       setReassignReason("");
       load();
+    } catch (e: any) {
+      setMsg(`Reassign failed: ${e?.message || e}`);
     } finally {
       setReassignBusy(false);
     }

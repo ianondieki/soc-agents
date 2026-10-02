@@ -84,7 +84,7 @@ function useScrollableRegions(pathname: string, revisions: unknown) {
             const head = el.querySelector("h3, h4")?.textContent?.trim();
             if (head) el.setAttribute("aria-label", head);
           }
-        } else if (el.getAttribute("tabindex") === "0") {
+        } else if (el.getAttribute("tabindex") === "0" && !el.hasAttribute("data-keep-tab")) {
           el.removeAttribute("tabindex");
         }
       }

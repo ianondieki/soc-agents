@@ -77,20 +77,23 @@ export default function AgentRail({
   // When the route wraps, the connector after the last hop on a row would point into the
   // margin; mark those hops so the CSS can hide it. Re-run on resize.
   const trackRef = useRef<HTMLOListElement>(null);
-  useLayoutEffect(() => {
+  const markWraps = () => {
     const ol = trackRef.current;
     if (!ol) return;
-    const mark = () => {
-      const hops = Array.from(ol.children) as HTMLElement[];
-      hops.forEach((li, i) => {
-        const next = hops[i + 1];
-        if (next && next.offsetTop > li.offsetTop + 4) li.setAttribute("data-wrap", "1");
-        else li.removeAttribute("data-wrap");
-      });
-    };
-    mark();
-    if (typeof ResizeObserver === "undefined") return;
-    const ro = new ResizeObserver(mark);
+    const hops = Array.from(ol.children) as HTMLElement[];
+    hops.forEach((li, i) => {
+      const next = hops[i + 1];
+      if (next && next.offsetTop > li.offsetTop + 4) li.setAttribute("data-wrap", "1");
+      else li.removeAttribute("data-wrap");
+    });
+  };
+  // A hop's text changes during a live run ("—", "running", "1.2 s") and can move the wrap
+  // point without resizing the list, so re-mark after every render as well as on resize.
+  useLayoutEffect(markWraps);
+  useLayoutEffect(() => {
+    const ol = trackRef.current;
+    if (!ol || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(markWraps);
     ro.observe(ol);
     return () => ro.disconnect();
   }, [order.length, layout]);

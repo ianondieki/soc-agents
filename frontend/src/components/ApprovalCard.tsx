@@ -149,8 +149,9 @@ export default function ApprovalCard({
         <span className="hitl-created">raised {fmtDateTime(t.created_at)}</span>
       </header>
 
-      <p className="hitl-effect" title={spec.check}>
+      <p className="hitl-effect">
         {spec.effect}
+        {spec.check && <span className="hitl-check">{spec.check}</span>}
       </p>
 
       {facts.length > 0 && (
@@ -206,6 +207,7 @@ export default function ApprovalCard({
                 <pre
                   className={`pre hitl-channel-body${expanded ? " full" : ""}`}
                   tabIndex={0}
+                  data-keep-tab=""
                   aria-label={`${c.label} text`}
                 >
                   {c.text || "(no body, heading only)"}
@@ -234,7 +236,7 @@ export default function ApprovalCard({
                   <td className="hitl-field-key">{e.label}</td>
                   <td>
                     {e.long ? (
-                      <pre className="pre hitl-field-pre" tabIndex={0}>
+                      <pre className="pre hitl-field-pre" tabIndex={0} data-keep-tab="">
                         {e.value}
                       </pre>
                     ) : (
@@ -250,7 +252,7 @@ export default function ApprovalCard({
 
       <details className="hitl-raw">
         <summary>Raw proposed payload</summary>
-        <pre className="pre hitl-field-pre" tabIndex={0}>
+        <pre className="pre hitl-field-pre" tabIndex={0} data-keep-tab="">
           {rawPayload(payload)}
         </pre>
       </details>

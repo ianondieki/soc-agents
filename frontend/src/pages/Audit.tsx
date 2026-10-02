@@ -1,6 +1,7 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api";
+import { statusOf } from "../lib/apiError";
 import { IconAlert, IconCheck, IconDot, IconPause } from "../lib/icons";
 import { fmtDate, fmtDateTime, fmtTime, parseInstant } from "../lib/time";
 import {
@@ -71,6 +72,7 @@ export default function Audit({ tick }: { tick: number }) {
   const [kind, setKind] = useState<Kind>("all");
   const [view, setView] = useState<View>(readView);
   const [shown, setShown] = useState(PAGE);
+  const [forbidden, setForbidden] = useState(false);
   const loaded = useRef(false);
 
   useEffect(() => {
@@ -84,8 +86,9 @@ export default function Audit({ tick }: { tick: number }) {
         setStale(false);
         loaded.current = true;
       })
-      .catch(() => {
+      .catch((e: unknown) => {
         if (!live) return;
+        setForbidden(statusOf(e) === 403);
         if (loaded.current) setStale(true);
         else setLoad("error");
       });
@@ -238,10 +241,12 @@ export default function Audit({ tick }: { tick: number }) {
           <SkeletonRows />
         ) : load === "error" ? (
           <div className="audit-state" role="alert">
-            <p>Couldn't load the audit trail.</p>
-            <button type="button" className="btn sm" onClick={retry}>
-              Retry
-            </button>
+            <p>{forbidden ? "Your role cannot read the audit trail." : "Couldn't load the audit trail."}</p>
+            {!forbidden && (
+              <button type="button" className="btn sm" onClick={retry}>
+                Retry
+              </button>
+            )}
           </div>
         ) : rows.length === 0 ? (
           <div className="audit-state">
@@ -324,6 +329,8 @@ function blockTitleText(block: AuditBlock, incident?: IncidentLite): string {
       return incident ? incident.incident_number : "Ticket";
     case "folded":
       return "Folded into an open ticket";
+    case "alarm":
+      return "Alarm run, no ticket";
     case "approval":
       return incident ? `Approval ${incident.incident_number}` : "Approval, not linked to a ticket";
     case "job":
@@ -442,6 +449,8 @@ function BlockTitle({ block, incident, parent }: { block: AuditBlock; incident?:
           {block.parentSite && <span className="audit-site">under HUB {block.parentSite}</span>}
         </>
       );
+    case "alarm":
+      return <span className="audit-inc">Alarm run, no ticket</span>;
     case "approval":
       return incident ? ticket(incident, "Approval") : <span className="audit-inc">Approval, not linked to a ticket</span>;
     case "job":

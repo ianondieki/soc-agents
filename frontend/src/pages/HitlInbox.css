@@ -104,6 +104,12 @@
   font-weight: 400;
   line-height: 1.5;
 }
+.hitl-check { display: block; color: var(--text); }
+/* Focus never lands under the sticky footer; on a short viewport the footer stops sticking. */
+.hitl-card :focus-visible { scroll-margin-bottom: 16rem; }
+@media (max-height: 560px) {
+  .hitl-actions { position: static; }
+}
 
 /* ---------------------------------------------------------------- facts */
 /* The justification as a definition grid between two hairlines: one glance, no boxes. */

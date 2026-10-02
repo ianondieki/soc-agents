@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, AsyncIterator
 
-from fastapi import Depends, FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, StreamingResponse, FileResponse
@@ -1314,7 +1314,7 @@ def list_problems() -> list[dict]:
 
 
 @app.get("/api/v1/audit", dependencies=[Depends(require_role(*AUDIT_READERS))])
-def list_audit(limit: int = 100) -> list[dict]:
+def list_audit(limit: int = Query(100, ge=1, le=1000)) -> list[dict]:
     """The operator's audit rows, newest first. Each row also carries ``run_id`` and ``node``
     lifted from its payload (None when absent), so the Audit trail can keep a run's intake
     steps, written before the ticket existed, with the ticket they opened; and
@@ -1331,7 +1331,7 @@ def list_audit(limit: int = 100) -> list[dict]:
         text = raw or ""
         try:
             data = json.loads(text)
-        except ValueError:  # a pre-JSON repr, or a JSON payload cut at the 2000-char cap
+        except (ValueError, RecursionError):  # a pre-JSON repr, a payload cut at the cap, or absurd nesting
             cut = json_prefix.match(text)
             if cut:
                 return cut.group(2), cut.group(1), None

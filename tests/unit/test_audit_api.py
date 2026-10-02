@@ -131,7 +131,10 @@ def test_older_and_foreign_payloads_still_list(api):
     not_object = _audit_row(3, json.dumps(["ENRICH"]), action="scorecard.published")
     garbage = _audit_row(4, "not json at all", action="outbox.retried")
     cut = _audit_row(5, json.dumps({"node": "TICKET", "run_id": "run-cut-1", "output": "x" * 3000})[:2000])
-    legacy_id, no_keys_id, not_object_id, garbage_id, cut_id = _add_rows(legacy, no_keys, not_object, garbage, cut)
+    linked = _audit_row(6, json.dumps({"task_id": "t-2", "incident_id": "inc-77"}), action="hitl.escalated")
+    legacy_id, no_keys_id, not_object_id, garbage_id, cut_id, linked_id = _add_rows(
+        legacy, no_keys, not_object, garbage, cut, linked
+    )
 
     listed = {row["id"]: row for row in api.get("/api/v1/audit", params={"limit": 50}).json()}
 
@@ -139,6 +142,15 @@ def test_older_and_foreign_payloads_still_list(api):
     for row_id in (no_keys_id, not_object_id, garbage_id):
         assert (listed[row_id]["node"], listed[row_id]["run_id"]) == (None, None), listed[row_id]
     assert (listed[cut_id]["node"], listed[cut_id]["run_id"]) == ("TICKET", "run-cut-1")
+    # An approval-ladder row names its ticket in the payload; the page links it through this.
+    assert listed[linked_id]["incident_id"] == "inc-77"
+    assert listed[no_keys_id]["incident_id"] is None
+
+
+def test_limit_is_bounded(api):
+    assert api.get("/api/v1/audit", params={"limit": 0}).status_code == 422
+    assert api.get("/api/v1/audit", params={"limit": 5000}).status_code == 422
+    assert api.get("/api/v1/audit", params={"limit": 1000}).status_code == 200
 
 
 def test_the_rationale_is_returned_as_stored(api):
