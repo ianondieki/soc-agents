@@ -49,7 +49,7 @@ Then:
 
 1. Open Mission Control UI  
 2. **Settings → Inject** a small outage (P4 BTS) for immediate mail, **or**  
-3. Inject a HUB (P2) → **HITL Inbox → Approve** → mail sends  
+3. Inject a HUB (P2) → **Approvals → Approve** → mail sends  
 
 ## 4. Behaviour notes
 

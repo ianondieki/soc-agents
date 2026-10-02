@@ -372,7 +372,7 @@ on many read routes, are new and not yet committed.
 
 **Do not set `AUTH_DISABLED=false` in this build.** There is no login route yet — the signed
 session cookie the role checks read is issued by "a future login route" (`api/auth.py`). With
-auth on today, nobody can sign in through the app, and every gated route — the HITL Inbox
+auth on today, nobody can sign in through the app, and every gated route — the Approvals
 included — answers `401`. Turning auth on needs engineering first.
 
 **The database queries need no role.** They need a PowerShell window on the server. That is
@@ -462,7 +462,7 @@ Every piece of agent work is a "run": the 12-step incident pipeline, and every s
 
 ### Where it shows
 
-* **Agent Observatory** page (`/agents`), panel "Live / recent runs". It lists the 15 newest.
+* **Agent observatory** page (`/agents`), panel "Live / recent runs". It lists the 15 newest.
   Needs a **platform reader** role.
 * The API. This is the only place that shows **why** a run failed. `GET /api/v1/runs` is open
   to operations, `management`, `msp_coordinator`, `field_engineer` and `planning`:
@@ -481,7 +481,7 @@ Or straight from the database, with no 50-row limit:
 noc-sql "SELECT started_at, graph_name, trigger, current_node, error_summary FROM agent_runs WHERE status='FAILED' ORDER BY started_at DESC LIMIT 20"
 ```
 
-**Two traps on the Agent Observatory page:**
+**Two traps on the Agent observatory page:**
 
 1. **A FAILED run is drawn green.** Only `RUNNING` and `WAITING_HITL` get a different chip
    colour. Every other status, FAILED included, gets the green "ok" chip. Read the word, not the
@@ -526,7 +526,7 @@ So:
 
 ### Statuses that are not failures
 
-* `WAITING_HITL` — a card is waiting in the HITL Inbox. See sections 13 and 14.
+* `WAITING_HITL` — a card is waiting in the Approvals. See sections 13 and 14.
 * `CANCELLED` with `error_summary: "HITL rejected: <reason>"` — a supervisor rejected the
   broadcast. The drafts were cancelled and nothing was sent. That is the gate working.
 
@@ -594,7 +594,7 @@ noc-sql "SELECT id, kind, created_at, attempts, next_attempt_at, last_error FROM
 Read `last_error`. It tells you which case you are in.
 
 * **`refused: requires HITL approval and approved_at is NULL`** — nobody approved it. Nothing was
-  sent. Find the card in the HITL Inbox.
+  sent. Find the card in the Approvals.
 * **`no transmitter for outbox kind 'WHATSAPP'`** — this build has no WhatsApp adapter. That
   message is not coming. If it mattered, send it by hand.
 * **`refused: payload is not redacted (...)`** — an AI-drafting row still carried a phone number
@@ -789,7 +789,7 @@ drafts sit `HELD` in the outbox until you decide. Nothing external leaves before
 
 ### Steps
 
-1. Open **HITL Inbox** (`/hitl`). Oldest first. The header counts how many are unclaimed.
+1. Open **Approvals** (`/hitl`). Oldest first. The header counts how many are unclaimed.
 2. **Claim** the card. It is a shared queue; claiming tells everyone else you have it.
 3. Read the card — and **read the incident too** (see "Re-render on approve" below).
 4. **Approve** or **Reject**. A reject always needs a reason. An approve needs one only when
@@ -851,7 +851,7 @@ What that means for you:
 * Any older held draft for the same incident is marked `SUPPRESSED`. Only one wording ever
   reaches the wire.
 * **You cannot type your own wording on the card.** The API accepts one override (`priority`);
-  the HITL Inbox does not send it. To change what goes out, change the incident, then approve.
+  the Approvals does not send it. To change what goes out, change the incident, then approve.
 
 ### What you should see
 
@@ -891,7 +891,7 @@ Silence on the card is silence to everyone who needs to act on the outage.
 
 ### Every shift
 
-1. Keep the **HITL Inbox** open. It sorts oldest first and counts unclaimed cards.
+1. Keep the **Approvals** open. It sorts oldest first and counts unclaimed cards.
 2. Check the queue with ages:
 
 ```powershell

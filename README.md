@@ -122,8 +122,8 @@ what the operator profile's `productivity.toil_minutes` says it would have cost 
 | `/hitl` | Shared claim/approve/reject queue |
 | `/shift` | Ledger + handover |
 | `/wallboard` | TV-friendly P1/P2 |
-| `/agents` | Agent Observatory: roster with real throughput per agent, recent runs |
-| `/workflow` | Workflow Map: the twelve hops, what each does, minutes by hand |
+| `/agents` | Agent observatory: roster with real throughput per agent, recent runs |
+| `/workflow` | Workflow map: the twelve hops, what each does, minutes by hand |
 | `/settings` | Role + **demo inject** (Westlands HUB, Coast, Nyanza, NEA, …) |
 
 ## Config

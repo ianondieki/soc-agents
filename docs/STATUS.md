@@ -22,7 +22,7 @@ and switch on with environment flags. The suite is green (3,208 tests), the UI b
 | Correlation: duplicates merge, child sites fold under their HUB major | Built | `agents/correlate.py` |
 | P1–P4 severity with HUB/CORE floors and the M-PESA corridor tag | Built, config-driven | `config/operators/safaricom.yaml` |
 | Region × domain MSP assignment matrix (Egypro, Tetranet, ATC, Camusat…) | Built | `services/assignment.py` |
-| HITL inbox: claim, read both renderings, approve or reject with a reason | Built | `frontend/src/pages/HitlInbox.tsx` |
+| Approvals page: claim, read both renderings, approve or reject with a reason | Built | `frontend/src/pages/HitlInbox.tsx` |
 | Transactional outbox: nothing e-mailed or texted from inside a transaction | Built | `orchestrator/outbox.py` |
 | Scheduler for unattended jobs (SLA chase, pollers, housekeeping) | Built, **off** by default (`SCHEDULER_ENABLED`) | `scheduler/loop.py` |
 | Live WebSocket stream of every agent step to the UI | Built | `realtime/` |
@@ -51,7 +51,7 @@ and switch on with environment flags. The suite is green (3,208 tests), the UI b
    never automated, where the minutes go, and how to add an agent.
 4. **Guided demo** — a five-step presenter panel (top bar button) that runs the storm and
    walks the audience through ticket, approval, handover and the numbers.
-5. Grouped navigation with a phone menu; the Agent Observatory and Workflow Map now show
+5. Grouped navigation with a phone menu; the Agent observatory and Workflow map now show
    real throughput per agent and per hop.
 6. `bash scripts/run_all.sh` / `make demo-up` for Linux and macOS (the PowerShell script
    remains); `scripts/screenshots.py` captures every route at 375 and 1440 px.
