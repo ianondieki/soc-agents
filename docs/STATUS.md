@@ -58,6 +58,15 @@ and switch on with environment flags. The suite is green (3,208 tests), the UI b
 7. Five tests that failed on a fresh Linux machine were made environment-independent (see
    the commit message `test: make five suite failures environment-independent`); none hid a
    product defect.
+8. **Design pass (2 October).** Two independent critiques (code review and screenshot
+   evidence at a 1280 × 650 laptop) found every screen fighting itself: bold, monospace,
+   uppercase labels, chips and five colours on the same row. The UI now has one type scale,
+   sentence-case headings, chips only for state, drawn icons, one name per state
+   ("waiting for a decision"), a six-item top bar, a sidebar that fits a 650 px window, one
+   page head on every screen, loading/error/empty states on every list, self-hosted fonts,
+   and an Audit trail that groups each alarm's steps by run (the API now returns `run_id`
+   and `node` per audit row). Verified with Playwright at 1280 × 650, 1440 × 900 and
+   375 × 812: no overflow, no console errors, zero critical or serious axe findings.
 
 ## What is not done (honest list)
 
