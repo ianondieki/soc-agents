@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import time
 from typing import Any
@@ -111,7 +112,15 @@ class RunTracker:
                 entity_type="incident",
                 entity_id=self.run.incident_id or "",
                 rationale=rationale,
-                payload_json=str({"node": step.node_name, "output": output_summary})[:2000],
+                # JSON, so GET /api/v1/audit can lift ``node`` and ``run_id`` (the audit trail groups a
+                # run's intake steps with the ticket they opened). ``node`` and ``run_id`` come first
+                # and the output is cut BEFORE encoding, so the 2000-char cap never truncates the
+                # JSON in practice; the reader tolerates it anyway. Rows written before this change
+                # hold a Python repr and are read as such.
+                payload_json=json.dumps(
+                    {"node": step.node_name, "run_id": self.run.id, "output": (output_summary or "")[:1200]},
+                    ensure_ascii=False,
+                )[:2000],
             )
         )
         self.session.flush()

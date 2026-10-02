@@ -1315,21 +1315,58 @@ def list_problems() -> list[dict]:
 
 @app.get("/api/v1/audit", dependencies=[Depends(require_role(*AUDIT_READERS))])
 def list_audit(limit: int = 100) -> list[dict]:
+    """The operator's audit rows, newest first. Each row also carries ``run_id`` and ``node``
+    lifted from its payload (None when absent), so the Audit trail can keep a run's intake
+    steps, written before the ticket existed, with the ticket they opened; and
+    ``incident_id`` when the payload names one (an approval card's escalation rows do).
+
+    Step rows are written as JSON (graph/instrumentation.py). Older step rows hold a Python repr
+    (``{'node': 'INGEST', 'output': ...}``): their node is still read, by pattern and never by
+    evaluation; their run_id was never recorded. Nothing stored is changed here.
+    """
+    legacy_node = re.compile(r"\{'node': '([A-Za-z0-9_.:-]{1,64})'")
+    json_prefix = re.compile(r'\{"node": "([A-Za-z0-9_.:-]{1,64})", "run_id": "([A-Za-z0-9-]{1,64})"')
+
+    def refs(raw: str | None) -> tuple[str | None, str | None, str | None]:
+        text = raw or ""
+        try:
+            data = json.loads(text)
+        except ValueError:  # a pre-JSON repr, or a JSON payload cut at the 2000-char cap
+            cut = json_prefix.match(text)
+            if cut:
+                return cut.group(2), cut.group(1), None
+            old = legacy_node.match(text)
+            return None, (old.group(1) if old else None), None
+        if not isinstance(data, dict):
+            return None, None, None
+
+        def text_or_none(key: str) -> str | None:
+            value = data.get(key)
+            return value if isinstance(value, str) and value else None
+
+        return text_or_none("run_id"), text_or_none("node"), text_or_none("incident_id")
+
     session = get_session()
     try:
         rows = session.scalars(_owned(AuditRow).order_by(AuditRow.ts.desc()).limit(limit)).all()
-        return [
-            {
-                "id": a.id,
-                "ts": a.ts,
-                "actor": a.actor,
-                "action": a.action,
-                "entity_type": a.entity_type,
-                "entity_id": a.entity_id,
-                "rationale": a.rationale,
-            }
-            for a in rows
-        ]
+        out: list[dict] = []
+        for a in rows:
+            run_id, node, incident_id = refs(a.payload_json)
+            out.append(
+                {
+                    "id": a.id,
+                    "ts": a.ts,
+                    "actor": a.actor,
+                    "action": a.action,
+                    "entity_type": a.entity_type,
+                    "entity_id": a.entity_id,
+                    "rationale": a.rationale,
+                    "run_id": run_id,
+                    "node": node,
+                    "incident_id": incident_id,
+                }
+            )
+        return out
     finally:
         session.close()
 
