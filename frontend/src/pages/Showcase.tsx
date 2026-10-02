@@ -6,6 +6,7 @@ import LiveRunPanel from "../components/LiveRunPanel";
 import ToilBars from "../components/ToilBars";
 import { agentDisplayName, fmtInt, fmtMinutes, fmtMs, humanAutonomy } from "../lib/agents";
 import type { NocEvent } from "../realtime/renderers";
+import "./Showcase.css";
 
 /**
  * The page for the people who decide: what the agents do to an alarm, how they sit on
