@@ -66,7 +66,7 @@ export function humanStatus(status: unknown): string {
 }
 
 const ACRONYMS: Record<string, string> = {
-  MPESA: "M-PESA", HUB: "HUB", CORE: "CORE", MSP: "MSP", RNIO: "RNIO", FE: "FE", TX: "TX", MW: "MW", SMS: "SMS",
+  MPESA: "M‑PESA", HUB: "HUB", CORE: "CORE", MSP: "MSP", RNIO: "RNIO", FE: "FE", TX: "TX", MW: "MW", SMS: "SMS",
   NOC: "NOC", SLA: "SLA", EAT: "EAT", CA: "CA", PIR: "PIR", TT: "TT", INC: "INC", OEM: "OEM", RF: "RF", IP: "IP",
   DWDM: "DWDM", GSM: "GSM", LTE: "LTE", VOICE: "voice", DATA: "data", HITL: "HITL",
 };
