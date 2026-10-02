@@ -11,6 +11,9 @@ import type { RealtimeState } from "./useRealtime";
  * external store; only the components that call the hooks below re-render when it moves.
  */
 const RealtimeCtx = createContext<RealtimeState | null>(null);
+/* The feed store is stable for the life of the provider, so the slice hooks below read it from
+ * a context of its own and are not re-rendered by a revision flush they do not care about. */
+const FeedCtx = createContext<RealtimeState["feed"] | null>(null);
 
 export function RealtimeProvider({
   value,
@@ -19,7 +22,11 @@ export function RealtimeProvider({
   value: RealtimeState;
   children: ReactNode;
 }) {
-  return <RealtimeCtx.Provider value={value}>{children}</RealtimeCtx.Provider>;
+  return (
+    <RealtimeCtx.Provider value={value}>
+      <FeedCtx.Provider value={value.feed}>{children}</FeedCtx.Provider>
+    </RealtimeCtx.Provider>
+  );
 }
 
 /** `null` outside a provider — callers must cope, never assume. */
@@ -54,18 +61,18 @@ const zero = () => 0;
 
 /** The ticker: newest first, the latest 100 lines (step-started frames are not ticker lines). */
 export function useTickerEvents(): NocEvent[] {
-  const feed = useContext(RealtimeCtx)?.feed;
+  const feed = useContext(FeedCtx);
   return useSyncExternalStore(feed ? feed.subscribeTicker : noSubscribe, feed ? feed.getEvents : noEvents);
 }
 
 /** Ticker lines quiet mode held back. */
 export function useSuppressedCount(): number {
-  const feed = useContext(RealtimeCtx)?.feed;
+  const feed = useContext(FeedCtx);
   return useSyncExternalStore(feed ? feed.subscribeTicker : noSubscribe, feed ? feed.getSuppressed : zero);
 }
 
 /** Agent step / run / incident frames, oldest first, the moment they arrive (unpaced). */
 export function useRunFrames(): NocEvent[] {
-  const feed = useContext(RealtimeCtx)?.feed;
+  const feed = useContext(FeedCtx);
   return useSyncExternalStore(feed ? feed.subscribeFrames : noSubscribe, feed ? feed.getFrames : noEvents);
 }

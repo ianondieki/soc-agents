@@ -109,7 +109,8 @@ export default function Showcase({
           if (mine === fired.current) setErr("");
           // An all-time answer, and the toggle is still hidden: ask the last 24 hours straight
           // after and compare the pair. More on record than in the last day means older data.
-          if (windowHours === 0 && !spansDayRef.current) {
+          if (windowHours === 0 && !spansDayRef.current && Date.now() - lastDayCheck.current > 60_000) {
+            lastDayCheck.current = Date.now();
             api
               .productivity(24)
               .then((recent) => {
@@ -127,6 +128,7 @@ export default function Showcase({
 
   const spansDayRef = useRef(spansDay);
   spansDayRef.current = spansDay;
+  const lastDayCheck = useRef(0);
 
   useEffect(() => {
     let cancelled = false;
