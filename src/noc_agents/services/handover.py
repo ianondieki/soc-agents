@@ -65,6 +65,7 @@ from noc_agents.db.models import HitlTaskRow, IncidentRow, OutboxRow, new_id, ut
 from noc_agents.domain.alerts import AudienceSpec, Content, NocAlert
 from noc_agents.domain.enums import HitlTaskType
 from noc_agents.orchestrator import outbox
+from noc_agents.services.clock import fmt_eat
 from noc_agents.services.alerts import build_alert
 from noc_agents.services.hitl import envelope_payload
 from noc_agents.services.notify import dispatch_handover_email
@@ -153,7 +154,7 @@ def build_handover(session: Session, cfg: OperatorConfig) -> dict:
     ]
     for r in watch:
         lines.append(
-            f"{r.created_at.isoformat(timespec='minutes')} | {r.incident_number} | {r.priority} | "
+            f"{fmt_eat(r.created_at, '%Y-%m-%d %H:%M')} | {r.incident_number} | {r.priority} | "
             f"{r.site_id} | {r.site_type} | {r.region_code} | {r.failure_domain} | "
             f"{r.assignee_name} | {r.status} | {'Y' if r.mpesa_risk else 'N'}"
         )
