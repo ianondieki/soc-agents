@@ -74,6 +74,15 @@ and switch on with environment flags. The suite is green (3,208 tests), the UI b
    steps to one and from 4,362 px to about 2,000 px at 1280 wide; the approval card shows the
    SMS above its sticky decision bar on a laptop; the phone layouts stack rows instead of
    scrolling tables sideways.
+10. **Demo pass (2 October, third round).** Two critiques ran the demo as a presenter would,
+   from an empty board. The storm no longer starts by itself; the rail replays each new
+   ticket run hop by hop and never jumps; a decided card shows its receipt where the eye
+   is and focus moves to the next card; the guide is a bar under the top bar instead of a
+   panel that covered what it described; waiting hops read as decided after the decision;
+   the live layer keeps a small store so pages stop re-rendering during a storm; the
+   server gzips, the build ships one chunk per route, the fonts are preloaded. Lighthouse
+   (mobile profile) on the four main routes: performance 48–68 → 96–99, layout shift
+   0.4 → 0, LCP 4–5 s → about 2 s.
 
 ## What is not done (honest list)
 
