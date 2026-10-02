@@ -754,7 +754,8 @@ export function extraEntries(task: unknown, facts: Fact[]): PayloadEntry[] {
   if (shown("Audiences") && Array.isArray(own(payload, "audiences"))) skip.add("audiences");
   const assignee = asText(own(payload, "assignee")).trim();
   if (assignee && assignee === shown("Owner")) skip.add("assignee");
-  if (typeof own(payload, "alert_id") === "string") skip.add("alert_id");
+  // A recognised type shows the alert elsewhere; an unknown one keeps every field it carries.
+  if (specFor(own(t, "task_type")).known && typeof own(payload, "alert_id") === "string") skip.add("alert_id");
   return payloadEntries(payload, skip);
 }
 

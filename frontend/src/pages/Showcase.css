@@ -1,5 +1,5 @@
-/* Showcase, the manager page. Owned by pages/Showcase.tsx. It is injected BEFORE styles.css
-   (main.tsx imports App first), so a rule here that overrides a global one is scoped under a
+/* Showcase, the manager page. Owned by pages/Showcase.tsx. It loads AFTER styles.css
+   (main.tsx imports styles.css first); overrides are still scoped under a
    Showcase class to win on specificity, never on source order.
 
    One authored page, about three screens at 1280 x 650. The loud part is the hero: a balanced

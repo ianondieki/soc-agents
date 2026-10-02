@@ -1,7 +1,7 @@
 /* The Wallboard's own rules, owned by pages/Wallboard.tsx. The base glass (.wallboard, .wb-grid,
  * .wb-card) lives in styles.css; this file adds the card's lines, the flags, the skeleton cards
- * and the §6.5 T+30 escalation. It loads BEFORE styles.css (App is imported first in main.tsx),
- * so a rule that must beat a styles.css rule (.muted, .wb-card.P1) is scoped under .wallboard.
+ * and the §6.5 T+30 escalation. It loads AFTER styles.css (main.tsx imports styles.css first);
+ * rules that must beat a styles.css rule (.muted, .wb-card.P1) stay scoped under .wallboard.
  * Weights stay within the 400–600 that are loaded. */
 
 /* Head: the title left, the counts right, on one baseline. */

@@ -599,7 +599,7 @@ function RowDetail({
           <span>{r.actor}</span>
           <span>{r.action}</span>
           <span>{iso}</span>
-          {rawWhy && <span className="audit-record-why">{rawWhy}</span>}
+          {rawWhy ? <span className="audit-record-why">{rawWhy}</span> : r.rationale ? <span className="sr-only">{r.rationale}</span> : null}
         </div>
         <div className="audit-record-copy">
           <button type="button" className="btn sm" onClick={copy}>

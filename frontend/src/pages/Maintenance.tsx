@@ -180,7 +180,7 @@ export default function Maintenance({ tick }: { tick: number }) {
                 <td>
                   {humanEnum(w.scope)} {w.scope_ref}
                   <div className="facts">
-                    <span className="mono">{w.uid}</span>
+                    <span className="mono wrap">{w.uid}</span>
                     <span>sequence {w.sequence}</span>
                   </div>
                 </td>

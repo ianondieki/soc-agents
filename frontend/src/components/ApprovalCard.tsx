@@ -1,4 +1,4 @@
-import { Fragment, useId, useMemo, useState } from "react";
+import { Fragment, useEffect, useId, useMemo, useRef, useState } from "react";
 import { humanStatus } from "../lib/agents";
 import { IconDot } from "../lib/icons";
 import { fmtDateTime } from "../lib/time";
@@ -106,6 +106,13 @@ export default function ApprovalCard({
   const priority = typeof t.priority === "string" && t.priority ? t.priority : "P4";
   const claimed = typeof t.claimed_by === "string" && t.claimed_by ? t.claimed_by : "";
   const claimedByMe = claimed && claimed === who;
+  // When the claim lands the Claim button goes away; keyboard focus moves to the reason box.
+  const reasonRef = useRef<HTMLTextAreaElement>(null);
+  const wasMine = useRef(Boolean(claimedByMe));
+  useEffect(() => {
+    if (claimedByMe && !wasMine.current) reasonRef.current?.focus();
+    wasMine.current = Boolean(claimedByMe);
+  }, [claimedByMe]);
   // `/hitl/pending` returns PENDING and CLAIMED rows; the claim chip already says which.
   // Anything else is unexpected enough to print, as plain text.
   const oddStatus =
@@ -276,6 +283,7 @@ export default function ApprovalCard({
         <div className="hitl-decide">
           {/* One line that grows with what is typed, so the footer leaves the drafts in view. */}
           <textarea
+            ref={reasonRef}
             className="hitl-reason"
             value={reason}
             onChange={(e) => setReason(e.target.value)}

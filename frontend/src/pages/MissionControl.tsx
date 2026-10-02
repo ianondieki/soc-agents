@@ -108,7 +108,7 @@ const EVENT_WORDS: Record<string, string> = {
 function eventWord(e: NocEvent): string {
   const type = e.type;
   // A mock adapter stored the message and sent nothing: the head must not say "sent".
-  if (type.startsWith("email.") && String(e.payload?.mode ?? "").toLowerCase() === "mock") return "Email";
+  if (type === "email.sent" && String(e.payload?.mode ?? "").toLowerCase() === "mock") return "Email";
   if (EVENT_WORDS[type]) return EVENT_WORDS[type];
   const s = String(type || "event").replace(/[._]+/g, " ").trim();
   return s ? s[0].toUpperCase() + s.slice(1) : "Event";
@@ -520,7 +520,7 @@ export default function MissionControl({
             })}
             {runsLoad === "ok" && runs.length === 0 && <div className="empty">Runs appear as the storm executes.</div>}
           </div>
-          {runsLoad === "ok" && <ShowAll to="/agents" total={runs.length} what="agent runs in the Agent observatory" />}
+          {runsLoad === "ok" && <ShowAll to="/agents" total={runs.length} what="agent runs in the Agent observatory" label="Show recent runs" />}
         </div>
 
         <div className="panel">

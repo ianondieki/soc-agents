@@ -250,7 +250,7 @@ export default function Scorecards({ session }: { session: Session }) {
         {computeResult && (
           <div className="muted" style={{ marginTop: "0.5rem" }} role="status">
             <IconCheck /> Period {computeResult.period}: {computeResult.computed} computed,{" "}
-            {computeResult.skipped} skipped. Run <span className="mono">{computeResult.run_id}</span>.
+            {computeResult.skipped} skipped. Run <span className="mono wrap">{computeResult.run_id}</span>.
             {computeResult.computed_detail && computeResult.computed_detail.length > 0 && (
               <div>Computed: {computeResult.computed_detail.join("; ")}</div>
             )}

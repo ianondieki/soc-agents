@@ -66,16 +66,6 @@ export function nodeDoes(id: unknown): string {
 /** Run statuses that mean the run has decided what it was going to decide. */
 export const FINISHED_RUN_STATUSES: ReadonlySet<string> = new Set(["SUCCEEDED", "WAITING_HITL"]);
 
-/** Chip class for a run status. CANCELLED (a rejected gate) and PENDING are neutral, never green. */
-export function runChipClass(status: unknown): string {
-  const s = String(status ?? "").toUpperCase();
-  if (s === "RUNNING") return "chip accent";
-  if (s === "WAITING_HITL") return "chip hitl";
-  if (s === "SUCCEEDED") return "chip ok";
-  if (s === "FAILED") return "chip danger";
-  return "chip";
-}
-
 /** How a run was started, as a word worth printing: "" for the ordinary alarm event ("Incident
  *  lifecycle" needs no "event"), "scheduled", "on request", or the trigger humanised. */
 export function triggerWord(trigger: unknown): string {

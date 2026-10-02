@@ -364,6 +364,7 @@ button.chip:hover { border-color: var(--accent); color: var(--text-bright); }
    between items, never inside one. */
 .mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
 .mono, .row-id { white-space: nowrap; overflow-wrap: normal; hyphens: none; }
+.mono.wrap { white-space: normal; overflow-wrap: anywhere; }
 /* A state word with its drawn icon (lib/icons.tsx), 600 in the state colour: exceptions only. */
 .state { display: inline-flex; align-items: center; gap: var(--s1); font-weight: 600; white-space: nowrap; color: var(--muted); }
 .state.hitl { color: var(--hitl); }
@@ -1333,7 +1334,7 @@ textarea { width: 100%; min-height: 90px; }
    sticks just above it. */
 :root[data-guide="on"] .hitl-actions { padding-right: calc(min(380px, 100vw - 2rem) + var(--s4)); }
 @media (max-width: 700px) {
-  :root[data-guide="on"] .hitl-actions { padding-right: 0; bottom: calc(var(--guide-h) + var(--s4)); }
+  :root[data-guide="on"] .hitl-actions { padding-right: var(--s3); bottom: calc(var(--guide-h) + var(--s4)); }
 }
 
 /* Loading: skeleton rows, not a spinner. A 14 px bar with a slow pulse; size it with an

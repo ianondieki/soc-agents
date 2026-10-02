@@ -39,7 +39,7 @@ const arrowsToWords = (s: unknown) => String(s ?? "").replace(/\s*→\s*/g, " to
 function tidyValue(value: string): string {
   let s = arrowsToWords(value);
   s = s.replace(/\s+([A-Za-z_]+)=/g, ", $1 ");
-  s = s.replace(/\b\d{4,}\b/g, (n) => Number(n).toLocaleString("en-KE"));
+  if (/^\d{5,}$/.test(s) && !s.startsWith("0")) s = Number(s).toLocaleString("en-KE");
   s = s.replace(/^true\b/, "yes").replace(/^false\b/, "no");
   if (/^[a-z]+(?:_[a-z]+)+$/.test(s)) s = humanEnum(s.toUpperCase());
   return s;
@@ -357,9 +357,9 @@ export default function IncidentWorkspace({ session }: { session: any }) {
     ["Escalated", fmtDateTime(inc.escalated_at)],
     ["Expected resolution", fmtDateTime(inc.expected_resolution_at)],
     ["Responsible MSP", inc.responsible_msp || inc.msp_name || dash],
-    ["Field engineer", inc.fe_name ? <span className="mono">{inc.fe_name}</span> : dash],
+    ["Field engineer", inc.fe_name ? <span className="mono wrap">{inc.fe_name}</span> : dash],
     ["Radio OEM", humanEnum(inc.radio_oem) || dash],
-    ["Vendor TT ref", inc.vendor_tt_ref ? <span className="mono">{inc.vendor_tt_ref}</span> : dash],
+    ["Vendor TT ref", inc.vendor_tt_ref ? <span className="mono wrap">{inc.vendor_tt_ref}</span> : dash],
     ["MSP progress", inc.msp_percent_complete != null ? `${inc.msp_percent_complete}%` : dash],
     ["Resolution", resolution || dash],
     ["MSP root cause", inc.msp_root_cause || dash],

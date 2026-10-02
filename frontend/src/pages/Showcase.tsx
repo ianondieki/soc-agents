@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api";
 import LiveRunPanel from "../components/LiveRunPanel";
-import { LIFECYCLE_NODES, WAITING_WORD, fmtInt, fmtMinutes, fmtMs, humanAutonomy, nodeLabel } from "../lib/agents";
+import { LIFECYCLE_NODES, WAITING_WORD, fmtInt, fmtMinutes, fmtMs, humanAutonomy, nodeDoes, nodeLabel } from "../lib/agents";
 import { fmtEAT } from "../lib/time";
 import type { NocEvent } from "../realtime/renderers";
 import "./Showcase.css";
@@ -40,10 +40,6 @@ const LADDER = [
   { level: "L2_GUARDED", label: "L2 guarded", text: "HUB and CORE tickets open on their own; P3 and P4 broadcasts go; P1 and P2 wait for a person." },
   { level: "L3_CONDITIONAL", label: "L3 conditional", text: "Only P1 waits. Note chasing and the handover run unattended. Still never a live network change." },
 ];
-
-function nodeDoes(id: string): string {
-  return LIFECYCLE_NODES.find((n) => n.id === id)?.does || "";
-}
 
 function plural(n: number, word: string): string {
   return `${fmtInt(n)} ${n === 1 ? word : `${word}s`}`;
@@ -99,7 +95,7 @@ export default function Showcase({
           if (!mounted.current || mine < applied.current) return;
           applied.current = mine;
           setP(d);
-          setErr("");
+          if (mine === fired.current) setErr("");
         })
         .catch((e) => {
           if (mounted.current && mine === fired.current) setErr(String(e?.message || e));
@@ -289,7 +285,7 @@ function Figures({ p, windowHours, waitingNow }: { p: any | null; windowHours: W
   return (
     <ul className="sc-fig-list" aria-live="polite">
       <li className="sc-fig" title={minutesTitle}>
-        <span className="sc-fig-value">{fmtMinutes(toil.net_minutes_saved)}</span>{" "}
+        <span className="sc-fig-value">{fmtMinutes(Math.max(0, Number(toil.net_minutes_saved) || 0))}</span>{" "}
         <span className="sc-fig-label">saved, after the time people spent deciding</span>
       </li>
       <li className="sc-fig">
