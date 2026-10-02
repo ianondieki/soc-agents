@@ -3,6 +3,12 @@ import { useLocation } from "react-router-dom";
 import { api } from "../api";
 import ContractsDrawer from "../components/ContractsDrawer";
 import LaneOff from "../components/LaneOff";
+import { humanEnum } from "../lib/agents";
+
+/** "duty_manager" → "duty manager": a role id as a person reads it. */
+function roleWords(value: string): string {
+  return humanEnum(String(value || "").toUpperCase());
+}
 
 /**
  * Contracts page (spec §7.8, Phase 5 Lane 5B). Three things, in the order a reader needs them:
@@ -96,12 +102,18 @@ export default function Contracts() {
   };
 
   return (
-    <div>
-      <h1 className="page-title">Contracts</h1>
-      <p className="muted">
-        Clause search and cited advisory answers over the contracts your role may see. Advisory only: nothing here writes a
-        credit, a penalty or a regulator submission.
-      </p>
+    <div className="content-narrow">
+      <div className="page-head">
+        <div>
+          <h1>Contracts</h1>
+          <p
+            className="lead"
+            title="Advisory only: nothing here writes a credit, a penalty or a regulator submission."
+          >
+            Clause search and cited, advisory answers from the contracts you may see.
+          </p>
+        </div>
+      </div>
 
       {off && (
         <LaneOff title="Contracts assistant is off" flag="CONTRACTS_ENABLED">
@@ -113,15 +125,18 @@ export default function Contracts() {
         <div className="panel" style={{ marginBottom: "1rem" }}>
           <div className="panel-head">
             <h3>Status</h3>
-            <span className="chip ok">ENABLED</span>
-            <span className="chip">{status.role}</span>
-            <span className={"chip " + (status.llm.cited_answers ? "ok" : "")}>
-              {status.llm.cited_answers ? `cited answers · ${status.llm.model}` : `clause list only · ${status.llm.unavailable_reason || "no citations provider"}`}
-            </span>
-            <span className={"chip " + (status.fts5_available ? "" : "bad")}>{status.fts5_available ? "FTS5 index" : "FTS5 unavailable"}</span>
+            <div className="facts">
+              <span>Role: {roleWords(status.role)}</span>
+              {status.llm.cited_answers ? (
+                <span>Cited answers from {status.llm.model}</span>
+              ) : (
+                <span>Clause list only: {status.llm.unavailable_reason || "no citations provider"}</span>
+              )}
+              {status.fts5_available ? <span>FTS5 index</span> : <span className="chip danger">FTS5 unavailable</span>}
+            </div>
           </div>
           <p className="muted">
-            Corpus you may see: {status.corpus.contracts} contract{status.corpus.contracts === 1 ? "" : "s"}, ≈
+            Corpus you may see: {status.corpus.contracts} contract{status.corpus.contracts === 1 ? "" : "s"}, about{" "}
             {status.corpus.est_tokens.toLocaleString()} tokens (chars/4 estimate) against a {status.corpus.ceiling_tokens.toLocaleString()}-token
             line.{" "}
             {status.corpus.fits_in_prompt
@@ -137,10 +152,11 @@ export default function Contracts() {
         <div className="panel" style={{ marginTop: "1rem" }}>
           <div className="panel-head">
             <h3>Clause search</h3>
-            {incidentId && <span className="chip">narrowed to incident {incidentId.slice(0, 8)}…</span>}
+            {incidentId && <span className="muted">Narrowed to incident {incidentId.slice(0, 8)}…</span>}
           </div>
           <div style={{ display: "flex", gap: "0.5rem" }}>
             <input
+              aria-label="Search clause text and headings"
               value={q}
               onChange={(e) => setQ(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && search()}
@@ -160,11 +176,11 @@ export default function Contracts() {
             <div className="list">
               {hits.map((h) => (
                 <div key={h.clause_id} className="row" style={{ cursor: "default" }}>
-                  <span className="chip">§{h.clause_number}</span>
+                  <span className="mono">§{h.clause_number}</span>
                   <div>
-                    <div>
+                    <div className="head-row">
                       <strong>{h.contract_title}</strong>
-                      {h.heading ? ` · ${h.heading}` : ""}
+                      {h.heading ? <span className="muted">{h.heading}</span> : null}
                     </div>
                     <div className="muted">{h.text.length > 300 ? h.text.slice(0, 299) + "…" : h.text}</div>
                   </div>
@@ -187,7 +203,7 @@ export default function Contracts() {
                 <th>Effective</th>
                 <th>Version</th>
                 <th>Clauses</th>
-                <th>≈ tokens</th>
+                <th>Tokens (est.)</th>
                 <th>Roles</th>
                 <th>Hosted model</th>
               </tr>
@@ -201,7 +217,7 @@ export default function Contracts() {
                   <td>{c.version}</td>
                   <td>{c.clauses ?? "—"}</td>
                   <td>{c.token_count.toLocaleString()}</td>
-                  <td className="muted">{c.allowed_roles.join(", ")}</td>
+                  <td className="muted">{c.allowed_roles.map(roleWords).join(", ")}</td>
                   <td>{c.third_party_processing_permitted ? "permitted" : "local only"}</td>
                 </tr>
               ))}

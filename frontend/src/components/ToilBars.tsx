@@ -37,7 +37,7 @@ export default function ToilBars({
     <figure className="toil">
       <figcaption className="toil-cap">
         <span>{caption}</span>
-        <button type="button" className="btn toil-toggle" onClick={() => setTable((t) => !t)} aria-pressed={table}>
+        <button type="button" className="btn sm toil-toggle" onClick={() => setTable((t) => !t)} aria-pressed={table}>
           {table ? "Show as bars" : "Show as table"}
         </button>
       </figcaption>
@@ -47,7 +47,7 @@ export default function ToilBars({
             <tr>
               <th scope="col">Step</th>
               <th scope="col" style={{ textAlign: "right" }}>
-                {unit}
+                {unit ? unit[0].toUpperCase() + unit.slice(1) : unit}
               </th>
               <th scope="col">Note</th>
             </tr>

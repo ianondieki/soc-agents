@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api";
+import { humanEnum } from "../lib/agents";
 import { detailOf, isLaneOff } from "../lib/apiError";
+import { IconCheck, IconDot } from "../lib/icons";
 import { fmtDateTime } from "../lib/time";
 import { useIncidentRevision } from "../realtime/RealtimeContext";
 
@@ -16,7 +18,7 @@ import { useIncidentRevision } from "../realtime/RealtimeContext";
  *    reversal needs its own reason. The buttons stay disabled until the reason field has
  *    words in it, so the 400 is never the first time an analyst hears about the rule.
  * 2. **Late openings are the operator's discipline number, not the vendor's.** An SCC recorded
- *    more than 60 minutes after it started is flagged LATE (§7.6.2) — shown on the row and
+ *    more than 60 minutes after it started is flagged late (§7.6.2) — shown on the row and
  *    counted in the header, because a back-dated stop clock is the first thing a vendor
  *    dispute will pull on.
  * 3. **The deduction is shown as a number**, beside the incident window it was computed over,
@@ -30,8 +32,10 @@ import { useIncidentRevision } from "../realtime/RealtimeContext";
  * Roles are the server's: `noc_analyst`+ opens, `shift_supervisor`+ closes and reverses, and
  * a vendor role is refused even with auth off (§7.6.6). A 403 is shown in the server's words.
  *
- * 3 a.m. rules (§7.10): every state is a chip with a word in it (OPEN / CLOSED / REVERSED /
- * LATE), never colour alone; every time is absolute EAT via `fmtDateTime`; nothing animates.
+ * 3 a.m. rules (§7.10): every state is a word (open / closed / reversed / late), never colour
+ * alone; only an open clock is a chip, and "late" carries the attention dot; every time is
+ * absolute EAT via `fmtDateTime`; nothing animates. Codes are shown as words, with the stored
+ * code in the tooltip.
  */
 
 type ClockEvent = {
@@ -92,10 +96,11 @@ function fmtMinutes(m: number | null | undefined): string {
   return h + " h" + (r ? " " + r + " min" : "");
 }
 
-function stateChip(ev: ClockEvent): { cls: string; word: string } {
-  if (ev.reversed) return { cls: "chip", word: "REVERSED" };
-  if (ev.open) return { cls: "chip warn", word: "OPEN · clock stopped" };
-  return { cls: "chip ok", word: "CLOSED" };
+/** Only an open clock is a state worth a chip; reversed and closed are settled facts. */
+function stateView(ev: ClockEvent): { cls: string | null; word: string; note?: string } {
+  if (ev.reversed) return { cls: null, word: "reversed" };
+  if (ev.open) return { cls: "chip warn", word: "open", note: "clock stopped" };
+  return { cls: null, word: "closed" };
 }
 
 export default function StopClockPanel({ incidentId }: { incidentId?: string | null }) {
@@ -185,16 +190,20 @@ export default function StopClockPanel({ incidentId }: { incidentId?: string | n
     <div className="panel" style={{ marginTop: "1rem" }}>
       <div className="panel-head">
         <h3>Stop clock (SCC)</h3>
-        {openCount > 0 ? (
-          <span className="chip warn">{openCount} OPEN · vendor clock stopped</span>
-        ) : (
-          <span className="chip">NO OPEN SCC · vendor clock running</span>
-        )}
-        {view.late_openings > 0 && (
-          <span className="chip danger">
-            {view.late_openings} LATE OPENING{view.late_openings === 1 ? "" : "S"} (&gt; 60 min)
-          </span>
-        )}
+        <div className="facts">
+          {openCount > 0 ? (
+            <span className="attn warn">
+              <IconDot /> {openCount} open, vendor clock stopped
+            </span>
+          ) : (
+            <span>No stop clock open; vendor clock running</span>
+          )}
+          {view.late_openings > 0 && (
+            <span className="attn danger">
+              <IconDot /> {view.late_openings} late opening{view.late_openings === 1 ? "" : "s"} (over 60 min)
+            </span>
+          )}
+        </div>
       </div>
 
       <div className="scc-summary">
@@ -205,7 +214,8 @@ export default function StopClockPanel({ incidentId }: { incidentId?: string | n
         <div>
           <div className="pir-metric-label">Outage window (EAT)</div>
           <div className="scc-window">
-            {fmtDateTime(view.window_start)} → {view.restored ? fmtDateTime(view.window_end) : "still open"}
+            {fmtDateTime(view.window_start)} <span className="muted">to</span>{" "}
+            {view.restored ? fmtDateTime(view.window_end) : "still open"}
           </div>
         </div>
         <div className="muted" style={{ alignSelf: "end" }}>
@@ -220,7 +230,7 @@ export default function StopClockPanel({ incidentId }: { incidentId?: string | n
           <thead>
             <tr>
               <th>Code</th>
-              <th>Started → ended (EAT)</th>
+              <th>Interval (EAT)</th>
               <th>State</th>
               <th>Recorded</th>
               <th>Reason</th>
@@ -229,24 +239,32 @@ export default function StopClockPanel({ incidentId }: { incidentId?: string | n
           </thead>
           <tbody>
             {view.events.map((ev) => {
-              const st = stateChip(ev);
+              const st = stateView(ev);
               return (
                 <tr key={ev.id}>
-                  <td className="pir-mono">{ev.scc_code}</td>
+                  <td title={ev.scc_code}>{humanEnum(ev.scc_code)}</td>
                   <td>
-                    {fmtDateTime(ev.started_at)} → {ev.ended_at ? fmtDateTime(ev.ended_at) : "open"}
+                    {fmtDateTime(ev.started_at)} <span className="muted">to</span>{" "}
+                    {ev.ended_at ? fmtDateTime(ev.ended_at) : "open"}
                   </td>
                   <td>
-                    <span className={st.cls}>{st.word}</span>
+                    {st.cls ? <span className={st.cls}>{st.word}</span> : st.word}
+                    {st.note && <div className="muted">{st.note}</div>}
                   </td>
                   <td>
-                    <div className="muted">
-                      {ev.opened_by} · {ev.opened_role}
+                    <div className="facts">
+                      <span>{ev.opened_by}</span>
+                      <span>{humanEnum(String(ev.opened_role || "").toUpperCase())}</span>
                     </div>
-                    <div className="muted">
-                      {fmtDateTime(ev.opened_at)} · {ev.opening_delay_min} min after start
+                    <div className="facts">
+                      <span>{fmtDateTime(ev.opened_at)}</span>
+                      <span>{ev.opening_delay_min} min after start</span>
                     </div>
-                    {ev.late && <span className="chip danger">LATE OPENING</span>}
+                    {ev.late && (
+                      <span className="attn danger">
+                        <IconDot /> late opening
+                      </span>
+                    )}
                   </td>
                   <td>
                     {ev.reason}
@@ -279,6 +297,7 @@ export default function StopClockPanel({ incidentId }: { incidentId?: string | n
                       <div className="scc-reverse">
                         <input
                           autoFocus
+                          aria-label="Why is this stop clock being reversed?"
                           placeholder="Why is this SCC being reversed? (required)"
                           value={reverseReason}
                           disabled={busy}
@@ -308,14 +327,15 @@ export default function StopClockPanel({ incidentId }: { incidentId?: string | n
       )}
 
       <div className="scc-open">
-        <select value={code} disabled={busy} onChange={(e) => setCode(e.target.value)}>
+        <select aria-label="Stop-clock code" value={code} disabled={busy} onChange={(e) => setCode(e.target.value)}>
           {SCC_CODES.map((c) => (
             <option key={c} value={c}>
-              {c}
+              {humanEnum(c)}
             </option>
           ))}
         </select>
         <input
+          aria-label="Reason for stopping the clock (required)"
           placeholder="Reason — required before the clock can be stopped"
           value={reason}
           disabled={busy}
@@ -330,10 +350,14 @@ export default function StopClockPanel({ incidentId }: { incidentId?: string | n
           Stop clock
         </button>
       </div>
-      {note && <p className="chip ok">{note}</p>}
+      {note && (
+        <p className="muted" role="status">
+          <IconCheck /> {note}
+        </p>
+      )}
       {problem && (
         <div className="pir-error">
-          <span className="chip warn">REFUSED</span>
+          <span className="chip warn">refused</span>
           <div>{problem}</div>
         </div>
       )}

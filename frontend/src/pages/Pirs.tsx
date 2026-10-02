@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import LaneOff from "../components/LaneOff";
-import PirEditor from "../components/PirEditor";
+import PirEditor, { PIR_REASON_WORDS, pirStatus } from "../components/PirEditor";
+import { humanEnum, humanStatus } from "../lib/agents";
 import { detailOf, isLaneOff } from "../lib/apiError";
+import { IconDot } from "../lib/icons";
 import { fmtDateTime } from "../lib/time";
 
 /**
@@ -16,7 +18,7 @@ import { fmtDateTime } from "../lib/time";
  *    `pages/Maintenance.tsx` does for its own flag. "Off" and "no reviews" must never look
  *    the same (§7.10, the 3 a.m. rules).
  * 2. **A review is worth nothing until somebody signs it.** The list leads with the status
- *    and the reviewer, and the awaiting-review count is in the header, because the failure
+ *    and the reviewer, and the awaiting-review count is in the list heading, because the failure
  *    mode of this lane is not a bad review, it is a DRAFT nobody ever returns to.
  * 3. **Blameless is a rule you learn before you break it**, so `BlamelessHint` lives in the
  *    editor above the two validated fields rather than appearing as a 422 toast.
@@ -56,20 +58,11 @@ type IncidentLite = {
 
 const STATUSES = ["ALL", "DRAFT", "IN_REVIEW", "PUBLISHED", "NOT_REQUIRED"];
 
-/** §7.7.3 trigger matrix, spelled out — "P1_P2" on its own tells a new analyst nothing. */
-const REASON_WORDS: Record<string, string> = {
-  P1_P2: "P1/P2 incident",
-  HUB_CORE: "HUB or CORE site",
-  SLA_BREACH: "SLA breached",
-  PROBLEM_LINKED: "linked to a problem record",
-  RUN_FAILED: "an agent run failed",
-  MANUAL: "opened by hand",
-};
-
-function statusChip(status: string): string {
-  if (status === "PUBLISHED") return "chip ok";
-  if (status === "IN_REVIEW") return "chip accent";
-  return "chip";
+/** The filter's button words; the value sent stays the status. */
+function statusWord(s: string): string {
+  if (s === "ALL") return "All";
+  const h = humanEnum(s);
+  return h ? h[0].toUpperCase() + h.slice(1) : s;
 }
 
 export default function Pirs({ tick }: { tick: number }) {
@@ -82,6 +75,8 @@ export default function Pirs({ tick }: { tick: number }) {
   const [selected, setSelected] = useState<string | null>(null);
   const [openFor, setOpenFor] = useState("");
   const [busy, setBusy] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const [failed, setFailed] = useState(false);
 
   const load = useCallback(() => {
     api
@@ -89,11 +84,16 @@ export default function Pirs({ tick }: { tick: number }) {
       .then((list: PirRow[]) => {
         setRows(list);
         setOff(false);
+        setLoaded(true);
+        setFailed(false);
       })
       .catch((e) => {
         // 404 is the whole lane being off, which is the shipped default — not a failure.
         if (isLaneOff(e)) setOff(true);
-        else setNote(detailOf(e, "The review list could not be loaded."));
+        else {
+          setNote(detailOf(e, "The review list could not be loaded."));
+          setFailed(true);
+        }
       });
     api
       .pirAwaitingReview()
@@ -151,10 +151,44 @@ export default function Pirs({ tick }: { tick: number }) {
     }
   };
 
+  const head = (
+    <div className="page-head">
+      <div>
+        <h1>Post-incident reviews</h1>
+        <p
+          className="lead"
+          title="Root causes and contributing factors are validated against the people on the incident, and an action item is owned by a role token. A postmortem nobody signed is a document nobody owns."
+        >
+          Blameless by rule: a named person signs each review. Times in EAT.
+        </p>
+      </div>
+      {!off && (
+        <div className="page-actions">
+          <select
+            aria-label="Open a review by hand for a resolved incident"
+            value={openFor}
+            disabled={busy}
+            onChange={(e) => setOpenFor(e.target.value)}
+          >
+            <option value="">Open a review by hand…</option>
+            {openable.map((i) => (
+              <option key={i.id} value={i.id}>
+                {i.incident_number}, {i.site_id}, {i.priority}, {humanStatus(i.status)}
+              </option>
+            ))}
+          </select>
+          <button className="btn" disabled={busy || !openFor} onClick={openManual}>
+            Open review
+          </button>
+        </div>
+      )}
+    </div>
+  );
+
   if (off) {
     return (
-      <div>
-        <h1 className="page-title">Post-incident reviews</h1>
+      <div className="content-narrow">
+        {head}
         <LaneOff title="Post-incident reviews are off" flag="PIR_ENABLED">
           no review is opened and the <code>pir_autoopen</code> job does nothing.
         </LaneOff>
@@ -163,60 +197,42 @@ export default function Pirs({ tick }: { tick: number }) {
   }
 
   return (
-    <div>
-      <div style={{ display: "flex", gap: "0.6rem", alignItems: "baseline", flexWrap: "wrap" }}>
-        <h1 className="page-title">Post-incident reviews</h1>
-        {awaiting != null && (
-          <span className={awaiting > 0 ? "chip warn" : "chip ok"}>
-            {awaiting} AWAITING REVIEW
-          </span>
-        )}
-      </div>
-      <p className="muted">
-        Blameless by rule, not by convention: root causes and contributing factors are validated
-        against the people on the incident, and an action item is owned by a role token. A named
-        human publishes — a postmortem nobody signed is a document nobody owns. Times are EAT.
-      </p>
+    <div className="content-narrow">
+      {head}
 
       {note && (
-        <div className="panel" style={{ marginBottom: "0.75rem" }}>
+        <div className="panel" style={{ marginBottom: "0.75rem" }} role="status">
           <div className="muted">{note}</div>
         </div>
       )}
 
-      <div className="panel" style={{ marginBottom: "1rem" }}>
-        <div className="form-row" style={{ marginBottom: 0 }}>
-          {STATUSES.map((s) => (
-            <button
-              key={s}
-              className={"btn" + (status === s ? " primary" : "")}
-              onClick={() => setStatus(s)}
-            >
-              {s}
-            </button>
-          ))}
-          <span style={{ flex: 1 }} />
-          <label className="muted">
-            Open a review by hand{" "}
-            <select value={openFor} disabled={busy} onChange={(e) => setOpenFor(e.target.value)}>
-              <option value="">select a resolved incident…</option>
-              {openable.map((i) => (
-                <option key={i.id} value={i.id}>
-                  {i.incident_number} · {i.site_id} · {i.priority} · {i.status}
-                </option>
-              ))}
-            </select>
-          </label>
-          <button className="btn" disabled={busy || !openFor} onClick={openManual}>
-            Open review
+      <div className="form-row" role="group" aria-label="Filter reviews by status">
+        {STATUSES.map((s) => (
+          <button
+            key={s}
+            className={"btn sm" + (status === s ? " primary" : "")}
+            aria-pressed={status === s}
+            onClick={() => setStatus(s)}
+          >
+            {statusWord(s)}
           </button>
-        </div>
+        ))}
       </div>
 
       <div className="panel">
         <div className="panel-head">
           <h3>Reviews</h3>
-          <span className="chip">{rows.length}</span>
+          <div className="facts">
+            <span>{rows.length} shown</span>
+            {awaiting != null &&
+              (awaiting > 0 ? (
+                <span className="attn warn">
+                  <IconDot /> {awaiting} awaiting review
+                </span>
+              ) : (
+                <span>none awaiting review</span>
+              ))}
+          </div>
         </div>
         <table>
           <thead>
@@ -230,7 +246,16 @@ export default function Pirs({ tick }: { tick: number }) {
               <th>Updated (EAT)</th>
             </tr>
           </thead>
-          <tbody>
+          <tbody aria-busy={!loaded || undefined}>
+            {!loaded &&
+              !failed &&
+              Array.from({ length: 5 }, (_, i) => (
+                <tr key={"sk-" + i}>
+                  <td colSpan={7}>
+                    <div className="skeleton" />
+                  </td>
+                </tr>
+              ))}
             {rows.map((r) => (
               <tr
                 key={r.id}
@@ -245,14 +270,13 @@ export default function Pirs({ tick }: { tick: number }) {
                   </div>
                 </td>
                 <td>
-                  <span className={statusChip(r.status)}>{r.status}</span>
-                  {r.ai_assisted ? (
-                    <div>
-                      <span className="chip accent">AI-ASSISTED</span>
-                    </div>
-                  ) : null}
+                  {(() => {
+                    const st = pirStatus(r.status);
+                    return st.chip ? <span className={st.chip}>{st.word}</span> : st.word;
+                  })()}
+                  {r.ai_assisted ? <div className="muted">AI-assisted</div> : null}
                 </td>
-                <td className="muted">{REASON_WORDS[r.opened_reason] || r.opened_reason}</td>
+                <td className="muted">{PIR_REASON_WORDS[r.opened_reason] || humanEnum(r.opened_reason)}</td>
                 <td>{(r.impact?.users_affected ?? 0).toLocaleString()}</td>
                 <td className="muted">
                   {r.mttr_minutes != null ? Math.round(r.mttr_minutes) + " min" : "—"}
@@ -265,11 +289,26 @@ export default function Pirs({ tick }: { tick: number }) {
             ))}
           </tbody>
         </table>
-        {rows.length === 0 && (
+        {!loaded && failed && (
+          <div className="empty" role="alert">
+            Couldn't load the reviews.{" "}
+            <button className="btn sm" onClick={load}>
+              Retry
+            </button>
+          </div>
+        )}
+        {loaded && rows.length === 0 && status !== "ALL" && (
           <div className="empty">
-            No reviews with this status. The <code>pir_autoopen</code> job opens one every 5
-            minutes for incidents that became RESTORED or CLOSED and match the trigger matrix;
-            anything else is opened by hand above.
+            No reviews with this status.{" "}
+            <button className="btn sm" onClick={() => setStatus("ALL")}>
+              Show all
+            </button>
+          </div>
+        )}
+        {loaded && rows.length === 0 && status === "ALL" && (
+          <div className="empty">
+            No reviews yet. The <code>pir_autoopen</code> job opens one every 5 minutes for incidents that were
+            restored or closed and match the trigger matrix; open any other by hand above.
           </div>
         )}
       </div>

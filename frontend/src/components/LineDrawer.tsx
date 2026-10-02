@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { humanEnum } from "../lib/agents";
 import {
   bandView,
   columnWords,
@@ -51,8 +52,8 @@ export default function LineDrawer({
   sccMinutes: number;
   /** The rest of the row: values, band, credit, dispute columns and the evidence rows. */
   line: ScorecardLine;
-  /** e.g. "EGYPRO · 2026-08". */
-  cardTitle: string;
+  /** e.g. ["EGYPRO", "2026-08", "shadow"]: separate facts, shown as separate spans. */
+  cardTitle: string | string[];
   /** The card's watermark text, or null. */
   watermark: string | null;
   onClose: () => void;
@@ -92,6 +93,9 @@ export default function LineDrawer({
   const measured = tabulate((evidence as Record<string, unknown>).measured);
   const sites = tabulate((evidence as Record<string, unknown>).sites);
   const facts = evidenceFacts(evidence);
+  const titleParts = Array.isArray(cardTitle) ? cardTitle : [cardTitle];
+  // A green band is the normal outcome: a word. Amber, red and unknown are chips.
+  const bandIsChip = band.chip !== "chip ok";
 
   return (
     <>
@@ -139,20 +143,29 @@ export default function LineDrawer({
           )}
           <div className="panel-head" style={{ flexWrap: "wrap" }}>
             <div>
-              <div className="muted">{cardTitle}</div>
-              <h3 style={{ margin: "0.15rem 0 0" }}>
-                {k.label} · {priorityLabel(line.priority)}
-              </h3>
-              <div className="muted" style={{ fontFamily: "var(--mono)" }}>
-                {k.code}
+              <div className="facts">
+                {titleParts.map((t, i) => (
+                  <span key={i}>{t}</span>
+                ))}
               </div>
+              <h3 className="head-row" style={{ margin: "0.15rem 0 0" }}>
+                {k.label}
+                <span className="muted">{priorityLabel(line.priority)}</span>
+              </h3>
+              <div className="mono muted">{k.code}</div>
             </div>
             <div className="chips">
-              {watermark && <span className="chip hitl">{watermark} · INTERNAL ONLY</span>}
-              <span className={band.chip} title={band.title}>
-                {band.label}
-              </span>
-              <button className="btn" onClick={onClose}>
+              {watermark && <span className="chip hitl">{humanEnum(watermark)}, internal only</span>}
+              {bandIsChip ? (
+                <span className={band.chip} title={band.title}>
+                  {humanEnum(band.label)}
+                </span>
+              ) : (
+                <span className="muted" title={band.title}>
+                  {humanEnum(band.label)} band
+                </span>
+              )}
+              <button className="btn sm" onClick={onClose}>
                 Close
               </button>
             </div>
@@ -161,22 +174,23 @@ export default function LineDrawer({
           {/* ---- raw beside normalised --------------------------------------- */}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 0.7fr", gap: "0.6rem", margin: "0.3rem 0 0.9rem" }}>
             <Tile label="Raw" value={pair.raw} />
-            <Tile label={"Normalised · " + pair.normalisedLabel} value={pair.normalised} note={pair.normalisedWhy} />
+            <Tile label={"Normalised (" + pair.normalisedLabel + ")"} value={pair.normalised} note={pair.normalisedWhy} />
             <Tile label="Region multiplier" value={mult.text} note={mult.text === "—" ? mult.title : null} />
           </div>
 
           <h4 style={H4}>Formula</h4>
-          <div className="pre" style={{ fontFamily: "var(--mono)", fontSize: "0.8rem" }}>
+          <div className="pre" style={{ fontFamily: "var(--mono)", fontSize: "var(--fs-xs)" }}>
             {formula || "—"}
           </div>
 
-          <h4 style={H4}>
-            Terms cited <span className="muted">· yaml_path, resolved against the card's sla_terms version</span>
+          <h4 style={H4} className="head-row">
+            Terms cited
+            <span className="muted">yaml_path, resolved against the card's SLA terms version</span>
           </h4>
           {paths.length ? (
             <ul style={{ margin: 0, paddingLeft: "1.1rem" }}>
               {paths.map((p) => (
-                <li key={p} style={{ fontFamily: "var(--mono)", fontSize: "0.82rem" }}>
+                <li key={p} style={{ fontFamily: "var(--mono)", fontSize: "var(--fs-xs)" }}>
                   {p}
                 </li>
               ))}
@@ -185,22 +199,25 @@ export default function LineDrawer({
             <div className="muted">No term path recorded.</div>
           )}
 
-          <h4 style={H4}>
-            Stop-clock minutes deducted <span className="muted">· un-reversed SCC intervals inside the outage</span>
+          <h4 style={H4} className="head-row">
+            Stop-clock minutes deducted
+            <span className="muted">un-reversed SCC intervals inside the outage</span>
           </h4>
-          <div>
-            <strong style={{ fontFamily: "var(--mono)", fontSize: "1.1rem" }}>{sccMinutes} min</strong>
+          <div className="facts">
+            <span style={{ fontFamily: "var(--mono)", fontSize: "var(--fs-lg)", fontWeight: 500, color: "var(--text-bright)" }}>
+              {sccMinutes} min
+            </span>
             {scc.length > 0 && (
-              <span className="muted">
-                {" "}
-                from {scc.map((s) => `${s.who} (${s.minutes} min)`).join(", ")}
-              </span>
+              <span className="muted">from {scc.map((s) => `${s.who} (${s.minutes} min)`).join(", ")}</span>
             )}
-            {sccMinutes === 0 && <span className="muted"> · none on this line</span>}
+            {sccMinutes === 0 && <span className="muted">none on this line</span>}
           </div>
 
-          <h4 style={H4}>
-            Excluded incidents <span className="muted">· {excluded.length} listed, {line.excluded_incidents} counted</span>
+          <h4 style={H4} className="head-row">
+            Excluded incidents
+            <span className="muted">
+              {excluded.length} listed, {line.excluded_incidents} counted
+            </span>
           </h4>
           {excluded.length ? (
             <table>
@@ -216,7 +233,7 @@ export default function LineDrawer({
                   <tr key={x.incident + "-" + i}>
                     <td style={{ fontFamily: "var(--mono)" }}>{x.incident}</td>
                     <td>{exclusionWords(x.reason)}</td>
-                    <td className="muted" style={{ fontFamily: "var(--mono)", fontSize: "0.78rem" }}>
+                    <td className="muted" style={{ fontFamily: "var(--mono)", fontSize: "var(--fs-xs)" }}>
                       {x.reason}
                     </td>
                   </tr>
@@ -227,8 +244,9 @@ export default function LineDrawer({
             <div className="muted">No incident was excluded from this line.</div>
           )}
 
-          <h4 style={H4}>
-            Measured <span className="muted">· {line.eligible_incidents} eligible</span>
+          <h4 style={H4} className="head-row">
+            Measured
+            <span className="muted">{line.eligible_incidents} eligible</span>
           </h4>
           <EvidenceTable table={measured} empty="No measured rows on this line." />
           {sites.rows.length > 0 && (
@@ -250,7 +268,7 @@ export default function LineDrawer({
           <h4 style={H4}>Credit</h4>
           {credit ? (
             <span className={credit.chip} title={credit.title}>
-              {credit.label}
+              {humanEnum(credit.label)}
             </span>
           ) : (
             <div className="muted">No credit proposed on this line.</div>
@@ -260,7 +278,7 @@ export default function LineDrawer({
           {dispute && (
             <>
               <h4 style={H4}>Dispute</h4>
-              <span className="chip accent">{dispute.label}</span>
+              <span className="chip accent">{humanEnum(dispute.label)}</span>
               {dispute.detail ? <span className="muted"> {dispute.detail}</span> : null}
               {line.adjudicated_by ? <div className="muted">Adjudicated by {line.adjudicated_by}</div> : null}
               {line.adjudication_reason ? <div className="pre">{line.adjudication_reason}</div> : null}
@@ -272,14 +290,15 @@ export default function LineDrawer({
   );
 }
 
-const H4 = { margin: "1.05rem 0 0.45rem", fontSize: "0.92rem", color: "var(--text-bright)" } as const;
+const H4 = { margin: "1.05rem 0 0.45rem", fontSize: "var(--fs-md)", color: "var(--text-bright)" } as const;
 
 function Tile({ label, value, note }: { label: string; value: string; note?: string | null }) {
   return (
     <div style={{ border: "1px solid var(--border)", borderRadius: 10, padding: "0.55rem 0.7rem", background: "rgba(8, 16, 30, 0.6)" }}>
-      <div style={{ fontSize: "0.72rem", letterSpacing: "0.06em", textTransform: "uppercase", color: "var(--muted)" }}>{label}</div>
-      <div style={{ fontFamily: "var(--mono)", fontSize: "1.2rem", fontWeight: 700, color: "var(--text-bright)" }}>{value}</div>
-      {note ? <div className="muted" style={{ fontSize: "0.76rem", marginTop: "0.2rem" }}>{note}</div> : null}
+      <div style={{ fontSize: "var(--fs-xs)", color: "var(--muted)" }}>{label}</div>
+      {/* A measurement: mono at 500, never bold and mono together. */}
+      <div style={{ fontFamily: "var(--mono)", fontSize: "var(--fs-lg)", fontWeight: 500, color: "var(--text-bright)" }}>{value}</div>
+      {note ? <div className="muted" style={{ fontSize: "var(--fs-xs)", marginTop: "0.2rem" }}>{note}</div> : null}
     </div>
   );
 }
@@ -300,7 +319,7 @@ function EvidenceTable({ table, empty }: { table: { columns: string[]; rows: str
           {table.rows.map((r, i) => (
             <tr key={i}>
               {r.map((v, j) => (
-                <td key={j} style={{ fontFamily: "var(--mono)", fontSize: "0.8rem" }}>
+                <td key={j} style={{ fontFamily: "var(--mono)", fontSize: "var(--fs-xs)" }}>
                   {v}
                 </td>
               ))}

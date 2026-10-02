@@ -1,9 +1,14 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { api, runLiveRainStorm } from "../api";
+import { humanEnum } from "../lib/agents";
+import { IconDot } from "../lib/icons";
 
-const PRESETS = [
+/** `route` names the MSP the assignment matrix should pick, shown beside the label. */
+const PRESETS: { label: string; route?: string; body: Record<string, unknown> }[] = [
   {
-    label: "Nairobi East HUB power → EGYPRO",
+    label: "Nairobi East HUB power",
+    route: "Egypro",
     body: {
       site_id: "SFC-NBIE-HUB-EMB",
       site_name: "Embakasi East Aggregation HUB",
@@ -17,7 +22,8 @@ const PRESETS = [
     },
   },
   {
-    label: "Nairobi West radio → HUAWEI_RADIO",
+    label: "Nairobi West radio",
+    route: "Huawei radio",
     body: {
       site_id: "SFC-NBIW-ENB-CBD07",
       site_name: "Upper Hill eNodeB 07",
@@ -30,7 +36,8 @@ const PRESETS = [
     },
   },
   {
-    label: "Mt Kenya TX fibre → SOLITON",
+    label: "Mt Kenya TX fibre",
+    route: "Soliton",
     body: {
       site_id: "SFC-MTK-HUB-THK",
       site_name: "Thika Mt Kenya HUB",
@@ -56,7 +63,8 @@ const PRESETS = [
     },
   },
   {
-    label: "Rift HUB power → TETRANET",
+    label: "Rift HUB power",
+    route: "Tetranet",
     body: {
       site_id: "SFC-RFT-HUB-NKR",
       site_name: "Nakuru Rift HUB",
@@ -69,7 +77,8 @@ const PRESETS = [
     },
   },
   {
-    label: "Western-Nyanza HUB power → TETRANET",
+    label: "Western-Nyanza HUB power",
+    route: "Tetranet",
     body: {
       site_id: "SFC-WNY-HUB-KSM",
       site_name: "Kisumu Western-Nyanza HUB",
@@ -135,6 +144,12 @@ const ROLES: { value: string; label: string }[] = [
 /** `api/auth.DEFAULT_ROLE`: what a client that never touched this switcher already is. */
 const DEFAULT_ROLE = "noc_analyst";
 
+/** "msp_coordinator" → "MSP coordinator": the role id as a person reads it (the value sent stays the id). */
+function roleWords(value: string): string {
+  const h = humanEnum(value.toUpperCase());
+  return h ? h[0].toUpperCase() + h.slice(1) : value;
+}
+
 export default function Settings({
   session,
   onSession,
@@ -149,7 +164,8 @@ export default function Settings({
   const [name, setName] = useState(session?.display_name || "NOC Analyst");
   const [role, setRole] = useState(session?.role || DEFAULT_ROLE);
   const [sites, setSites] = useState<any[]>([]);
-  const [last, setLast] = useState("");
+  // The last inject or storm result, as separate facts (rendered as spans, never joined with dots).
+  const [last, setLast] = useState<string[]>([]);
   const [emailSt, setEmailSt] = useState<any>(null);
   const [emailMsg, setEmailMsg] = useState("");
 
@@ -162,8 +178,13 @@ export default function Settings({
   }, []);
 
   return (
-    <div>
-      <h1 className="page-title">Settings & Demo Inject</h1>
+    <div className="content-narrow">
+      <div className="page-head">
+        <div>
+          <h1>Settings</h1>
+          <p className="lead">Who the demo records as the actor, the email channel, and alarms to inject.</p>
+        </div>
+      </div>
       <div className="panel">
         <h3>Session role (team demo)</h3>
         <div className="form-row">
@@ -171,7 +192,7 @@ export default function Settings({
           <select value={role} onChange={(e) => setRole(e.target.value)} aria-label="Session role">
             {ROLES.map((r) => (
               <option key={r.value} value={r.value}>
-                {r.value} — {r.label}
+                {roleWords(r.value)} — {r.label}
               </option>
             ))}
             {/* A role stored before this list was corrected would otherwise leave the select
@@ -203,9 +224,13 @@ export default function Settings({
           <div className="muted">
             <div>
               Status:{" "}
-              <strong style={{ color: emailSt.configured ? "var(--ok)" : "var(--warn)" }}>
-                {emailSt.configured ? "SMTP READY (Gmail)" : "MOCK ONLY"}
-              </strong>
+              {emailSt.configured ? (
+                <span>SMTP ready (Gmail)</span>
+              ) : (
+                <span className="attn warn">
+                  <IconDot /> Mock only
+                </span>
+              )}
             </div>
             <div>From: {emailSt.from || "—"}</div>
             <div>To: {(emailSt.recipients || []).join(", ") || "—"}</div>
@@ -224,7 +249,11 @@ export default function Settings({
             >
               Send test email now
             </button>
-            {emailMsg && <p className="chip ok">{emailMsg}</p>}
+            {emailMsg && (
+              <p className="muted" role="status">
+                {emailMsg}
+              </p>
+            )}
           </div>
         ) : (
           <p className="muted">Loading email status…</p>
@@ -232,10 +261,11 @@ export default function Settings({
       </div>
 
       <div className="panel" style={{ marginTop: "1rem" }}>
-        <h3>Six Safaricom geographical regions + MSP map</h3>
+        <h3>Regions and MSP map</h3>
         <p className="muted">
-          ~7000 sites / 50M+ subscribers. Power: NBI_E+MTK→Egypro; RFT+WNY→Tetranet. Radio: NBI_W+CST→Huawei.
-          Fibre: Egypro Fibre, Soliton (Mt Kenya), Camusat, Ecta, Adrian, Alan Dick.
+          About 7,000 sites and 50M+ subscribers in six Safaricom regions. Power: NBI_E and MTK to Egypro, RFT and WNY
+          to Tetranet. Radio: NBI_W and CST to Huawei. Fibre: Egypro Fibre, Soliton (Mt Kenya), Camusat, Ecta, Adrian,
+          Alan Dick.
         </p>
         <div className="list">
           {profile?.regions &&
@@ -243,8 +273,10 @@ export default function Settings({
               <div key={code} className="row" style={{ cursor: "default", gridTemplateColumns: "90px 1fr" }}>
                 <strong>{code}</strong>
                 <div>
-                  <div>
-                    {r.label} · RNIO {r.rnio} · FE {r.fe_oncall}
+                  <div className="head-row">
+                    <div>{r.label}</div>
+                    <span>RNIO {r.rnio}</span>
+                    <span>FE {r.fe_oncall}</span>
                   </div>
                   <div className="muted">{r.description}</div>
                 </div>
@@ -254,38 +286,47 @@ export default function Settings({
       </div>
 
       <div className="panel" style={{ marginTop: "1rem" }}>
-        <h3>Heavy-rain MW storm (LIVE)</h3>
+        <h3>Heavy-rain microwave storm</h3>
         <p className="muted">
-          Best launched from <strong>Mission Control</strong> so agent steps stream live. Bulk button also
-          available:
+          Best launched from <Link to="/">Mission control</Link>, so the agent steps stream live. It also runs from
+          here:
         </p>
         <button
           className="btn storm"
           onClick={async () => {
-            setLast("Storm running — watch Mission Control ticker…");
+            setLast(["Storm running; watch the Mission control ticker…"]);
             const res = await runLiveRainStorm();
-            setLast(`Storm done: ${res.count} events`);
+            setLast([`Storm done: ${res.count} events`]);
             onInjected();
           }}
         >
-          Run rain / MW cascade LIVE
+          Run the rain and MW cascade live
         </button>
       </div>
 
       <div className="panel" style={{ marginTop: "1rem" }}>
-        <h3>Single-event inject (creates INC###### tickets)</h3>
+        <div className="panel-head">
+          <h3>Single-event inject</h3>
+          <span className="muted">Each one opens an INC ticket</span>
+        </div>
         <div className="list">
           {PRESETS.map((p) => (
             <div key={p.label} className="row" style={{ gridTemplateColumns: "1fr auto" }}>
-              <div>{p.label}</div>
+              <div className="head-row">
+                <div>{p.label}</div>
+                {p.route && <span>routes to {p.route}</span>}
+              </div>
               <button
                 className="btn primary"
                 onClick={async () => {
                   const res = await api.inject(p.body);
                   const i = res.incident;
-                  setLast(
-                    `${i.incident_number} · ${i.priority} · MSP ${i.responsible_msp || i.msp_name} · FE ${i.fe_name}`
-                  );
+                  setLast([
+                    i.incident_number,
+                    i.priority,
+                    `MSP ${i.responsible_msp || i.msp_name}`,
+                    `FE ${i.fe_name}`,
+                  ]);
                   onInjected();
                 }}
               >
@@ -294,11 +335,21 @@ export default function Settings({
             </div>
           ))}
         </div>
-        {last && <p className="chip ok">Last: {last}</p>}
+        {last.length > 0 && (
+          <p className="facts" role="status">
+            <span>Last:</span>
+            {last.map((part, n) => (
+              <span key={n}>{part}</span>
+            ))}
+          </p>
+        )}
       </div>
 
       <div className="panel" style={{ marginTop: "1rem" }}>
-        <h3>Seed sites ({sites.length})</h3>
+        <div className="panel-head">
+          <h3>Seed sites</h3>
+          <span className="muted">{sites.length} sites</span>
+        </div>
         <table>
           <thead>
             <tr>

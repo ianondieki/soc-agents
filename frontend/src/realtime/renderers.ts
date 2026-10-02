@@ -426,20 +426,20 @@ function span(minutes: unknown): string {
 
 const DESCRIBERS: Readonly<Record<string, (p: Record<string, any>) => string>> = {
   // services/pir.open_pir: {incident_number, opened_reason, pir_id, status}
-  "pir.opened": (p) => `review opened · trigger ${p.opened_reason ?? "?"}`,
+  "pir.opened": (p) => `review opened, trigger ${p.opened_reason ?? "?"}`,
   // services/regulatory._deadline_event: {notification_id, kind, status, incident_number,
   // threshold_hours, due_at, due_at_eat, minutes_remaining, overdue, hitl_task_id}
   "regulatory.deadline": (p) =>
-    `${p.kind ?? "notice"} · ${p.overdue ? `OVERDUE by ${span(p.minutes_remaining)}` : `${span(p.minutes_remaining)} left`}` +
-    ` · due ${fmtDateTime(p.due_at)} EAT · ${num(p.threshold_hours)} h threshold`,
+    `${p.kind ?? "notice"}, ${p.overdue ? `OVERDUE by ${span(p.minutes_remaining)}` : `${span(p.minutes_remaining)} left`}` +
+    `, due ${fmtDateTime(p.due_at)} EAT, ${num(p.threshold_hours)} h threshold`,
   // scheduler/loop.py: {job, run_id, error, consecutive_failures, circuit_open}
   "scheduler.job_failed": (p) =>
-    `job ${p.job ?? "?"} · ${p.circuit_open ? "CIRCUIT OPEN" : "failed"} after ${num(p.consecutive_failures)} failures` +
-    (p.error ? ` · ${String(p.error).slice(0, 90)}` : ""),
+    `job ${p.job ?? "?"}, ${p.circuit_open ? "CIRCUIT OPEN" : "failed"} after ${num(p.consecutive_failures)} failures` +
+    (p.error ? `, ${String(p.error).slice(0, 90)}` : ""),
   // services/housekeeping.RedactionHit.as_payload: {outbox_id, kind, incident_number, sent_at,
   // email_matches, phone_matches, paths, note}
   "security.redaction_miss": (p) =>
-    `REDACTION MISS · SENT ${p.kind ?? "message"} · ${num(p.email_matches)} e-mail / ${num(p.phone_matches)} MSISDN pattern(s)` +
+    `REDACTION MISS, SENT ${p.kind ?? "message"}, ${num(p.email_matches)} e-mail / ${num(p.phone_matches)} MSISDN pattern(s)` +
     (Array.isArray(p.paths) && p.paths.length ? ` at ${p.paths.slice(0, 3).join(", ")}` : ""),
   // NO PUBLISHER YET (Phase 6): the one describer built from the spec, not from code — §7.4.2's
   // {region_code, product_hint, zscore, count, bucket_start}. Every field is optional here, so a
@@ -454,7 +454,7 @@ const DESCRIBERS: Readonly<Record<string, (p: Record<string, any>) => string>> =
       p.bucket_start ? `from ${fmtDateTime(p.bucket_start)} EAT` : null,
     ]
       .filter(Boolean)
-      .join(" · "),
+      .join(", "),
 };
 
 /** Extra ticker text for one event, or "" — never throws. */

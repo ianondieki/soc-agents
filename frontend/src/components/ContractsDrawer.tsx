@@ -13,8 +13,8 @@ import { api } from "../api";
  *
  * 1. **It never takes the page down.** Every failure lands in a muted line. A 404 is the
  *    flag (`CONTRACTS_ENABLED=false`, the default) and is said in words, not shown as an error.
- * 2. **The label says where the answer came from.** Only `source=faq` is OFFICIAL — a
- *    Legal-approved answer. `llm` is AI-ASSISTED and rendered by the server from verbatim
+ * 2. **The label says where the answer came from.** Only `source=faq` is official — a
+ *    Legal-approved answer. `llm` is AI-assisted and rendered by the server from verbatim
  *    clause quotes; `deterministic` is a clause list with no judgement in it; `refused` is
  *    "no governing clause found" and is a real outcome, not a failure of the drawer.
  * 3. **The disclosure line is never trimmed.** It comes from the server on every non-FAQ
@@ -23,7 +23,8 @@ import { api } from "../api";
  *    contracts the answer may draw on is decided by the asker's role and the incident's vendor
  *    on the server (`allowed_contracts_for`). There is no contract picker here on purpose.
  *
- * 3 a.m. rules (§7.10): no status carried by colour alone — every chip has words in it.
+ * 3 a.m. rules (§7.10): no status carried by colour alone — every chip has words in it. The
+ * source is the one chip (plus "escalated to Legal" when it applies); the rest are words.
  */
 
 type Citation = {
@@ -60,11 +61,12 @@ export type ContractAnswer = {
   fallback_reason: string | null;
 };
 
-const SOURCE_LABEL: Record<ContractAnswer["source"], string> = {
-  faq: "OFFICIAL · Legal-approved FAQ",
-  llm: "AI-ASSISTED · verbatim quotes, validated",
-  deterministic: "CLAUSE LIST · no model consulted",
-  refused: "NO GOVERNING CLAUSE · escalate to Legal",
+/** The source as a short chip word, and what that means beside it. */
+const SOURCE_LABEL: Record<ContractAnswer["source"], { word: string; note: string }> = {
+  faq: { word: "official", note: "Legal-approved FAQ" },
+  llm: { word: "AI-assisted", note: "verbatim quotes, validated" },
+  deterministic: { word: "clause list", note: "no model consulted" },
+  refused: { word: "no governing clause", note: "escalate to Legal" },
 };
 
 function sourceChipClass(source: ContractAnswer["source"]): string {
@@ -116,15 +118,22 @@ export default function ContractsDrawer({
     <div className="panel" style={{ marginTop: "1rem" }}>
       <div className="panel-head">
         <h3>Ask the contracts</h3>
-        {incidentId && <span className="chip" title="Answers are narrowed to this incident's vendor">incident scope</span>}
-        <button className="btn" onClick={() => setOpen((o) => !o)}>
-          {open ? "Hide" : "Open"}
-        </button>
+        <div className="head-row">
+          {incidentId && (
+            <span className="muted" title="Answers are narrowed to this incident's vendor">
+              Incident scope
+            </span>
+          )}
+          <button className="btn sm" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
+            {open ? "Hide" : "Open"}
+          </button>
+        </div>
       </div>
 
       {open && (
         <>
           <textarea
+            aria-label="Question for the contracts assistant"
             value={question}
             onChange={(e) => setQuestion(e.target.value)}
             placeholder="e.g. What is the response time for a Priority 1 fault?"
@@ -147,14 +156,13 @@ export default function ContractsDrawer({
 
           {answer && (
             <div style={{ marginTop: "0.9rem" }}>
-              <div style={{ display: "flex", gap: "0.4rem", flexWrap: "wrap", marginBottom: "0.5rem" }}>
-                <span className={sourceChipClass(answer.source)}>{SOURCE_LABEL[answer.source]}</span>
-                {answer.escalated_to_legal && <span className="chip warn">ESCALATED TO LEGAL</span>}
-                {answer.model && <span className="chip">{answer.model}</span>}
+              <div className="facts" style={{ marginBottom: "0.5rem" }}>
+                <span className={sourceChipClass(answer.source)}>{SOURCE_LABEL[answer.source].word}</span>
+                <span>{SOURCE_LABEL[answer.source].note}</span>
+                {answer.escalated_to_legal && <span className="chip warn">escalated to Legal</span>}
+                {answer.model && <span className="mono">{answer.model}</span>}
                 {answer.fallback_reason && answer.source !== "llm" && (
-                  <span className="chip" title="Why no cited model answer was produced">
-                    reason: {answer.fallback_reason}
-                  </span>
+                  <span title="Why no cited model answer was produced">reason: {answer.fallback_reason}</span>
                 )}
               </div>
 
@@ -168,7 +176,7 @@ export default function ContractsDrawer({
                   <div className="list" style={{ maxHeight: 260 }}>
                     {answer.citations.map((c, i) => (
                       <div key={`${c.contract_id}-${c.clause_number}-${i}`} className="row" style={{ cursor: "default" }}>
-                        <span className="chip">§{c.clause_number}</span>
+                        <span className="mono">§{c.clause_number}</span>
                         <div>
                           <div>{c.contract_title || c.contract_ref || c.contract_id}</div>
                           {c.cited_text && <div className="muted">“{c.cited_text}”</div>}
@@ -188,7 +196,7 @@ export default function ContractsDrawer({
                   <div className="list" style={{ maxHeight: 260 }}>
                     {answer.nearest_clauses.map((n) => (
                       <div key={n.clause_id} className="row" style={{ cursor: "default" }}>
-                        <span className="chip">§{n.clause_number}</span>
+                        <span className="mono">§{n.clause_number}</span>
                         <div>
                           <div>{n.contract_title}</div>
                           <div className="muted">{n.text.length > 220 ? n.text.slice(0, 219) + "…" : n.text}</div>

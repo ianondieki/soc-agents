@@ -4,7 +4,7 @@ import { api } from "../api";
 import AgentRail from "../components/AgentRail";
 import LiveRunPanel from "../components/LiveRunPanel";
 import ToilBars from "../components/ToilBars";
-import { agentDisplayName, fmtInt, fmtMinutes, fmtMs } from "../lib/agents";
+import { agentDisplayName, fmtInt, fmtMinutes, fmtMs, humanAutonomy } from "../lib/agents";
 import type { NocEvent } from "../realtime/renderers";
 
 /**
@@ -21,7 +21,7 @@ const HOP_STORY: Record<string, { does: string; instead: string }> = {
   INGEST: { does: "Normalises the alarm: site, domain, technology, fingerprint.", instead: "Read the alarm off the NMS and work out which site it is." },
   CORRELATE: { does: "Finds an open ticket or a parent HUB and folds the alarm into it.", instead: "Search the ticket queue before raising a duplicate." },
   ENRICH: { does: "Looks up the site, region, RNIO and on-call FE; estimates subscribers affected.", instead: "Open the CMDB and the on-call sheet; guess the impact." },
-  SEVERITY: { does: "Applies the P1–P4 thresholds, the HUB and CORE floors, the M-PESA corridor tag.", instead: "Judge the priority, argue it later." },
+  SEVERITY: { does: "Applies the P1–P4 thresholds, the HUB and CORE floors, the M‑PESA corridor tag.", instead: "Judge the priority, argue it later." },
   TICKET: { does: "Allocates the INC number and fills every ticket field and the narrative.", instead: "Type the ticket into the UI, field by field." },
   ASSIGN: { does: "Routes to the MSP or FE from the region-by-domain matrix and stamps the escalation.", instead: "Remember who covers power in Rift tonight." },
   HITL: { does: "Holds P1 and P2 wording for a person; lets P3 and P4 go.", instead: "Nothing changes here: the decision stays human." },
@@ -121,13 +121,13 @@ export default function Showcase({
           </p>
           <div className="sc-hero-actions">
             <button className="btn primary" onClick={() => nav("/")}>
-              Watch it live on Mission Control
+              Watch it live on Mission control
             </button>
             <span className="sc-window" role="group" aria-label="Numbers window">
-              <button className={"btn" + (windowHours === 24 ? " good" : "")} onClick={() => setWindowHours(24)} aria-pressed={windowHours === 24}>
+              <button className="btn sm" onClick={() => setWindowHours(24)} aria-pressed={windowHours === 24}>
                 Last 24 h
               </button>
-              <button className={"btn" + (windowHours === 0 ? " good" : "")} onClick={() => setWindowHours(0)} aria-pressed={windowHours === 0}>
+              <button className="btn sm" onClick={() => setWindowHours(0)} aria-pressed={windowHours === 0}>
                 All time
               </button>
             </span>
@@ -140,7 +140,7 @@ export default function Showcase({
           </div>
           <div className="sc-number">
             <span className="sc-number-value">
-              {fmtInt(alarms?.processed)} → {fmtInt(alarms?.incidents_created)}
+              {fmtInt(alarms?.processed)} to {fmtInt(alarms?.incidents_created)}
             </span>
             <span className="sc-number-label">
               alarms into tickets{alarms?.noise_reduction_pct != null ? `; ${alarms.noise_reduction_pct}% absorbed as duplicates or cascades` : ""}
@@ -206,7 +206,7 @@ export default function Showcase({
       <section className="sc-section sc-two">
         <div>
           <h2>People keep the decisions</h2>
-          <p className="sc-lead">The autonomy level is one setting. This deployment runs at {autonomy.replace("_", " ")}.</p>
+          <p className="sc-lead">The autonomy level is one setting. This deployment runs at {humanAutonomy(autonomy)}.</p>
           <ol className="sc-ladder">
             {LADDER.map((l) => (
               <li key={l.level} className={"sc-rung" + (l.level === autonomy ? " current" : "")} aria-current={l.level === autonomy ? "true" : undefined}>
@@ -305,10 +305,10 @@ export default function Showcase({
           <p className="sc-lead">Everything on this page is read from the running system. The storm is repeatable.</p>
           <div className="sc-hero-actions">
             <button className="btn primary" onClick={() => nav("/")}>
-              Mission Control
+              Mission control
             </button>
             <button className="btn" onClick={() => nav("/hitl")}>
-              HITL inbox
+              Approvals
             </button>
             <button className="btn" onClick={() => nav("/agents")}>
               Agent observatory
@@ -326,7 +326,7 @@ export default function Showcase({
 /** The platform diagram: existing systems on the left, agents in the middle, people on the right. */
 function Architecture({ autonomy, agentsCount, mcp }: { autonomy: string; agentsCount: number; mcp: { cards: number; servers: number } }) {
   const left = ["NMS and EMS alarm feeds", "Ticketing system", "Site catalogue and CMDB", "Mail and SMS gateways", "Excel shift ledger"];
-  const right = ["HITL inbox: claim, read, approve", "Wallboard and Mission Control", "Executive brief readers", "RNIO, FE and MSP recipients"];
+  const right = ["Approvals: claim, read, approve", "Wallboard and Mission control", "Executive brief readers", "RNIO, FE and MSP recipients"];
   return (
     <figure className="sc-arch">
       <svg viewBox="0 0 980 360" role="img" aria-labelledby="arch-title arch-desc">
@@ -377,7 +377,7 @@ function Architecture({ autonomy, agentsCount, mcp }: { autonomy: string; agents
           </text>
           <rect x="24" y="118" width="232" height="40" rx="8" className="sc-arch-gate" />
           <text x="140" y="143" className="sc-arch-t" textAnchor="middle">
-            autonomy {autonomy.replace("_", " ")}
+            autonomy {humanAutonomy(autonomy)}
           </text>
           <text x="140" y="188" className="sc-arch-s" textAnchor="middle">
             every step records its reason, its tools

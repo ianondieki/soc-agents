@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api";
 import { isLaneOff } from "../lib/apiError";
+import { IconAlert } from "../lib/icons";
 import { fmtDateTime, parseInstant } from "../lib/time";
 import { useIncidentRevision } from "../realtime/RealtimeContext";
 
@@ -20,7 +21,7 @@ import { useIncidentRevision } from "../realtime/RealtimeContext";
  * was approved by a named human, released to the outbox, and did **not** go out — the
  * dispatcher reached a terminal non-SENT outcome, `sent_at` is NULL, and the Authority has
  * heard nothing. It renders as a full-width block at the top of the panel, in words
- * ("REGULATOR NOTICE NOT SENT"), with the dispatcher's recorded reason and whether the
+ * ("Regulator notice not sent"), with the dispatcher's recorded reason and whether the
  * deadline had already passed. `QUEUED` is the quieter sibling: approved, released, nothing
  * transmitted *yet* — the countdown still runs, because a queued notice that leaves after
  * the deadline is still a late notice.
@@ -33,7 +34,7 @@ import { useIncidentRevision } from "../realtime/RealtimeContext";
  * the last good reading afterwards — it can never put an error box in an outage workspace.
  *
  * 3 a.m. rules (§7.10): every countdown shows the **absolute EAT deadline** beside the
- * relative time ("14 h 22 min left · due 22 Sep, 09:00:00 EAT") — a relative time nobody can
+ * relative time ("14 h 22 min left", "due 22 Sep, 09:00:00 EAT") — a relative time nobody can
  * check against a clock is how deadlines get missed; statuses are words, never colour alone;
  * nothing blinks.
  */
@@ -89,21 +90,30 @@ type RegulatoryView = {
   significance: { significant: boolean; rule_matched: string | null; yaml_path?: string } | null;
 };
 
-const KIND_WORDS: Record<string, string> = {
-  CA_OUTAGE_24H: "CA 24-hour outage notice · licence Condition 9.2",
-  ODPC_BREACH_72H: "ODPC 72-hour breach notice · DPA 2019 s.43",
-  CII_24H: "Critical-infrastructure 24-hour notice",
-  CBK_FACTSHEET: "CBK factsheet · M-PESA-affecting outage",
+/** The notice's name, and the rule it answers to (shown beside it as its own fact). */
+const KIND_WORDS: Record<string, { name: string; ref?: string }> = {
+  CA_OUTAGE_24H: { name: "CA 24-hour outage notice", ref: "licence Condition 9.2" },
+  ODPC_BREACH_72H: { name: "ODPC 72-hour breach notice", ref: "DPA 2019 s.43" },
+  CII_24H: { name: "Critical-infrastructure 24-hour notice" },
+  CBK_FACTSHEET: { name: "CBK factsheet", ref: "M‑PESA-affecting outage" },
 };
 
-/** Words for every status the service can write, including the two it added (QUEUED, SEND_FAILED). */
-const STATUS_WORDS: Record<string, { cls: string; word: string }> = {
-  DRAFT: { cls: "chip", word: "DRAFT · not yet sent for approval" },
-  PENDING_APPROVAL: { cls: "chip hitl", word: "PENDING APPROVAL · on the HITL Inbox" },
-  QUEUED: { cls: "chip accent", word: "QUEUED · approved, nothing transmitted yet" },
-  SENT: { cls: "chip ok", word: "SENT" },
-  SEND_FAILED: { cls: "chip danger", word: "SEND FAILED · NOT SENT" },
-  NOT_REQUIRED: { cls: "chip", word: "NOT REQUIRED" },
+function kindName(kind: string): string {
+  return KIND_WORDS[kind]?.name || kind;
+}
+
+/**
+ * Words for every status the service can write, including the two it added (QUEUED, SEND_FAILED).
+ * A chip only where the state is not the settled default: waiting for a decision (lavender),
+ * queued, and not sent. Draft, sent and not required are plain words.
+ */
+const STATUS_WORDS: Record<string, { cls: string | null; word: string; note?: string }> = {
+  DRAFT: { cls: null, word: "draft", note: "not yet sent for approval" },
+  PENDING_APPROVAL: { cls: "chip hitl", word: "waiting for a decision", note: "on Approvals" },
+  QUEUED: { cls: "chip accent", word: "queued", note: "approved, nothing transmitted yet" },
+  SENT: { cls: null, word: "sent" },
+  SEND_FAILED: { cls: "chip danger", word: "not sent", note: "the send failed" },
+  NOT_REQUIRED: { cls: null, word: "not required" },
 };
 
 /** Statuses whose deadline is still live. SENT and NOT_REQUIRED are settled. */
@@ -166,9 +176,8 @@ export default function RegulatoryCountdown({ incidentId }: { incidentId?: strin
     const sig = view.significance;
     return (
       <div className="reg-strip">
-        <span className={sig?.significant ? "chip warn" : "chip"}>
-          {sig?.significant ? "REGULATORY · SIGNIFICANT · NO CLOCK OPEN" : "REGULATORY · NO CLOCK OPEN"}
-        </span>
+        <span>No regulatory clock open</span>
+        {sig?.significant && <span className="chip warn">significant</span>}
         <span className="muted">
           {sig == null
             ? "Significance could not be evaluated."
@@ -190,12 +199,12 @@ export default function RegulatoryCountdown({ incidentId }: { incidentId?: strin
           <div key={"failed-" + n.id} className="reg-failed" role="alert">
             <div className="reg-failed-head">
               <span className="reg-failed-mark" aria-hidden="true">
-                ✕
+                <IconAlert size={14} />
               </span>
-              <span>REGULATOR NOTICE NOT SENT</span>
+              <span>Regulator notice not sent</span>
             </div>
             <div className="reg-failed-body">
-              {KIND_WORDS[n.kind] || n.kind} was approved
+              {kindName(n.kind)} was approved
               {n.approved_by ? " by " + n.approved_by : ""}
               {n.approved_at ? " at " + fmtDateTime(n.approved_at) + " EAT" : ""} and released to
               the outbox, but it <strong>did not go out</strong>. Nothing has reached the regulator.
@@ -235,39 +244,46 @@ export default function RegulatoryCountdown({ incidentId }: { incidentId?: strin
         {notices.map((n) => {
           const cd = n.countdown;
           const st = STATUS_WORDS[n.status] || { cls: "chip", word: n.status };
+          const kind = KIND_WORDS[n.kind];
           const live = COUNTING.has(n.status) && cd != null;
           const left = live && cd ? minutesLeft(cd, now) : null;
           const overdue = left != null && left < 0;
           return (
             <div key={n.id} className={"reg-row" + (n.status === "SEND_FAILED" ? " failed" : "")}>
               <div className="reg-row-head">
-                <strong>{KIND_WORDS[n.kind] || n.kind}</strong>
-                <span className={st.cls}>{st.word}</span>
+                <strong>{kind?.name || n.kind}</strong>
+                {kind?.ref && <span className="muted">{kind.ref}</span>}
+                {st.cls ? <span className={st.cls}>{st.word}</span> : <span>{st.word}</span>}
+                {st.note && <span className="muted">{st.note}</span>}
               </div>
               {live && cd ? (
                 <div className="reg-countdown">
                   <div className={"reg-left" + (overdue ? " overdue" : "")}>
-                    {overdue ? "OVERDUE by " + fmtSpan(left as number) : fmtSpan(left as number) + " left"}
+                    {overdue ? "Overdue by " + fmtSpan(left as number) : fmtSpan(left as number) + " left"}
                   </div>
                   {/* §7.10: the absolute deadline, always beside the relative one. */}
-                  <div className="reg-due">
-                    due <strong>{fmtDateTime(cd.due_at)} EAT</strong>
-                    <span className="muted">
-                      {" "}
-                      · clock started {fmtDateTime(cd.clock_started_at)} EAT
-                      {cd.next_threshold_hours != null && !overdue
-                        ? " · next alert at " + cd.next_threshold_hours + " h remaining"
-                        : ""}
-                    </span>
+                  <div className="reg-due head-row">
+                    <div>
+                      due <strong>{fmtDateTime(cd.due_at)} EAT</strong>
+                    </div>
+                    <span className="muted">clock started {fmtDateTime(cd.clock_started_at)} EAT</span>
+                    {cd.next_threshold_hours != null && !overdue ? (
+                      <span className="muted">next alert at {cd.next_threshold_hours} h remaining</span>
+                    ) : null}
                   </div>
                 </div>
               ) : (
-                <div className="muted">
-                  {n.status === "SENT"
-                    ? "Sent " + fmtDateTime(n.sent_at) + " EAT" + (n.external_ref ? " · ref " + n.external_ref : "")
-                    : n.status === "NOT_REQUIRED"
-                      ? "Ruled not required."
-                      : "No countdown available."}
+                <div className="facts">
+                  {n.status === "SENT" ? (
+                    <>
+                      <span>Sent {fmtDateTime(n.sent_at)} EAT</span>
+                      {n.external_ref ? <span>ref {n.external_ref}</span> : null}
+                    </>
+                  ) : n.status === "NOT_REQUIRED" ? (
+                    <span>Ruled not required.</span>
+                  ) : (
+                    <span>No countdown available.</span>
+                  )}
                 </div>
               )}
             </div>

@@ -22,23 +22,32 @@
  * `tests/unit/test_dashboard_regions.py`, but a page that a NOC relies on should
  * not fall over because a deploy went out in the wrong order.
  *
- * No new CSS: this reuses `.panel`, `.chip`, `.pill` and `.muted` from
- * `styles.css`, with layout done inline, so the page adds no shared-file edits
- * beyond its route.
+ * No new CSS beyond the shared `.facts`, `.head-row` and `.attn`: this reuses `.panel`,
+ * `.chip`, `.pill` and `.muted` from `styles.css`, with the card grid done inline.
+ * Counts and signal readings are text, not chips; the one chip on a card is its
+ * status when that status is not calm.
  */
 
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api";
+import { IconDot } from "../lib/icons";
 import { fmtDateTime } from "../lib/time";
 
 /** Status → chip class. Grey (plain `chip`) for STALE is deliberate: grey reads as
- *  "unknown", which is exactly the claim being made. Green is reserved for CALM,
- *  which means somebody actually looked. */
-const STATUS_CHIP: Record<string, string> = {
+ *  "unknown", which is exactly the claim being made. CALM is the normal state, so it
+ *  is a word and earns no chip and no green. */
+const STATUS_CHIP: Record<string, string | null> = {
   ALERT: "chip bad",
   WATCH: "chip warn",
   STALE: "chip",
-  CALM: "chip ok",
+  CALM: null,
+};
+
+const STATUS_WORD: Record<string, string> = {
+  ALERT: "alert",
+  WATCH: "watch",
+  STALE: "stale",
+  CALM: "calm",
 };
 
 const STATUS_HINT: Record<string, string> = {
@@ -63,28 +72,32 @@ function pct(value: unknown): string {
     : "—";
 }
 
-function SignalBadge({ name, block }: { name: string; block: any }) {
+/** One outside-world feed, as words. Only a live storm flag earns the attention dot;
+ *  "no feed" and "stale" are said plainly, never painted green. */
+function SignalReading({ name, block }: { name: string; block: any }) {
   const b = block && typeof block === "object" ? block : {};
   const available = b.available === true;
   const stale = b.stale !== false;
   const storm = b.storm_flag === true || b.flag === true;
 
-  let cls = "chip";
-  let text = `${name} · NO FEED`;
-  if (available && !stale) {
-    cls = storm ? "chip warn" : "chip ok";
-    text = `${name} · ${storm ? "FLAG" : "OK"}`;
-  } else if (available) {
-    text = `${name} · STALE`;
-  }
-  // The title carries the *reason*, which is the difference between a badge an
+  let word = "no feed";
+  if (available && !stale) word = storm ? "storm flag" : "fresh";
+  else if (available) word = "stale";
+  // The title carries the *reason*, which is the difference between a reading an
   // operator acts on and one they learn to ignore.
   const why = [b.reason, b.last_error, b.fetched_at ? `fetched ${fmtDateTime(b.fetched_at)}` : null]
     .filter(Boolean)
     .join(" — ");
+  if (available && !stale && storm) {
+    return (
+      <span className="attn warn" title={why || `${name}: storm flag`}>
+        <IconDot /> {name} storm flag
+      </span>
+    );
+  }
   return (
-    <span className={cls} title={why || `${name}: no data`}>
-      {text}
+    <span title={why || `${name}: no data`}>
+      {name} {word}
     </span>
   );
 }
@@ -98,47 +111,62 @@ function RegionCard({ region }: { region: any }) {
   const byPriority = region.open_by_priority && typeof region.open_by_priority === "object"
     ? region.open_by_priority
     : {};
+  const chip = status in STATUS_CHIP ? STATUS_CHIP[status] : "chip";
+  const word = STATUS_WORD[status] || status.toLowerCase();
 
   return (
     <div className="panel">
       <div className="panel-head">
-        <h3>
-          {region.region_code} · {region.label || region.region_code}
+        <h3 className="head-row">
+          {region.label || region.region_code}
+          <span className="muted">{region.region_code}</span>
         </h3>
-        <span className={STATUS_CHIP[status] || "chip"} title={STATUS_HINT[status] || ""}>
-          {status}
-        </span>
-      </div>
-
-      <div className="muted" style={{ fontSize: "0.72rem", marginBottom: "0.6rem" }}>
-        {counties.length ? counties.join(" · ") : "counties not configured"}
-      </div>
-
-      <div className="chips" style={{ marginBottom: "0.6rem" }}>
-        {/* Colour is spent only on a count that is not zero: a red "P1 0" on six quiet regions
-            would make the one real P1 invisible. */}
-        {PRIORITIES.map((p) => (
-          <span key={p} className={num(byPriority[p]) > 0 ? `pill ${p}` : "chip"} title={`${p} incidents open now`}>
-            {p} {num(byPriority[p])}
+        {chip ? (
+          <span className={chip} title={STATUS_HINT[status] || ""}>
+            {word}
           </span>
-        ))}
-        <span className="chip">Open {num(region.open_total)}</span>
-        {num(region.sla_breached) > 0 && (
-          <span className="chip warn" title="Open incidents already past their restore SLA">
-            SLA {num(region.sla_breached)}
+        ) : (
+          <span className="muted" title={STATUS_HINT[status] || ""}>
+            {word}
           </span>
         )}
       </div>
 
-      <div className="chips" style={{ marginBottom: "0.7rem" }}>
-        <SignalBadge name="WX" block={signals.weather} />
-        <SignalBadge name="FLOOD" block={signals.flood} />
-        <SignalBadge name="CAP" block={signals.cap} />
-        <SignalBadge name="KPLC" block={signals.kplc} />
+      <div className="muted" style={{ marginBottom: "0.6rem" }}>
+        {counties.length ? counties.join(", ") : "counties not configured"}
       </div>
 
-      <div className="muted" style={{ fontSize: "0.72rem", marginBottom: "0.5rem" }}>
-        Repeat faults (30d): <strong>{pct(region.repeat_fault_rate_30d)}</strong>{" "}
+      <div className="facts" style={{ marginBottom: "0.6rem" }}>
+        {/* Colour is spent only on a count that is not zero: a red "P1 0" on six quiet regions
+            would make the one real P1 invisible. */}
+        {PRIORITIES.map((p) =>
+          num(byPriority[p]) > 0 ? (
+            <span key={p} title={`${p} incidents open now`}>
+              <span className={`pill ${p}`}>{p}</span> {num(byPriority[p])}
+            </span>
+          ) : (
+            <span key={p} className="muted" title={`${p} incidents open now`}>
+              {p} 0
+            </span>
+          )
+        )}
+        <span className="muted">{num(region.open_total)} open</span>
+        {num(region.sla_breached) > 0 && (
+          <span className="attn warn" title="Open incidents already past their restore SLA">
+            <IconDot /> {num(region.sla_breached)} past SLA
+          </span>
+        )}
+      </div>
+
+      <div className="facts" style={{ marginBottom: "0.7rem" }}>
+        <SignalReading name="Weather" block={signals.weather} />
+        <SignalReading name="Flood" block={signals.flood} />
+        <SignalReading name="CAP" block={signals.cap} />
+        <SignalReading name="KPLC" block={signals.kplc} />
+      </div>
+
+      <div className="muted" style={{ marginBottom: "0.5rem" }}>
+        Repeat faults (30 days): <strong>{pct(region.repeat_fault_rate_30d)}</strong>{" "}
         ({num(region.repeat_faults_30d)} of {num(region.incidents_30d)} incidents)
       </div>
 
@@ -153,54 +181,64 @@ function RegionCard({ region }: { region: any }) {
               style={{
                 display: "flex",
                 justifyContent: "space-between",
-                alignItems: "center",
+                alignItems: "baseline",
                 gap: "0.6rem",
-                padding: "0.45rem 0.6rem",
-                borderRadius: "9px",
-                border: "1px solid var(--border)",
-                fontSize: "0.74rem",
+                padding: "0.45rem 0",
+                borderTop: "1px solid var(--line)",
               }}
             >
-              <span>
-                <strong>{p.problem_number}</strong>{" "}
-                <span className="muted">
-                  {p.site_id} · ×{num(p.occurrence_count)} · last {fmtDateTime(p.last_seen)}
-                </span>
+              <span className="head-row">
+                <strong>{p.problem_number}</strong>
+                <span className="muted">{p.site_id}</span>
+                <span className="muted">{num(p.occurrence_count)} times</span>
+                <span className="muted">last {fmtDateTime(p.last_seen)}</span>
               </span>
               {p.known_error === true && (
-                <span className="chip ok" title="Cause understood and a workaround is recorded">
-                  KNOWN ERROR
+                <span className="muted" title="Cause understood and a workaround is recorded">
+                  known error
                 </span>
               )}
             </div>
           ))}
           {num(region.problems_open_total) > problems.length && (
-            <div className="muted" style={{ fontSize: "0.7rem" }}>
+            <div className="muted">
               + {num(region.problems_open_total) - problems.length} more open problem(s)
             </div>
           )}
         </div>
       ) : (
-        <div className="muted" style={{ fontSize: "0.72rem" }}>No open problems.</div>
+        <div className="muted">No open problems.</div>
       )}
 
       <div
         className="muted"
-        style={{ fontSize: "0.68rem", marginTop: "0.7rem", borderTop: "1px solid var(--border)", paddingTop: "0.5rem" }}
+        style={{ marginTop: "0.7rem", borderTop: "1px solid var(--line)", paddingTop: "0.5rem" }}
       >
         {baseline ? (
           <>
-            CA QoS {typeof baseline.ca_qos_score === "number" ? `${baseline.ca_qos_score}%` : "—"}{" "}
-            {baseline.meets_pass_mark === false && <span className="chip warn">BELOW PASS MARK</span>}
-            <br />
-            {/* Granularity is the load-bearing word: the report has five clusters and
-                this dashboard has six regions, so an operator-wide figure must never
-                be presented as a measurement of this region. */}
-            {baseline.granularity === "cluster"
-              ? `cluster “${baseline.cluster}”`
-              : "operator-wide figure — no cluster mapped to this region yet"}
-            {" · "}
-            {baseline.report} (published {baseline.report_date})
+            <div className="facts">
+              <span>
+                CA QoS {typeof baseline.ca_qos_score === "number" ? `${baseline.ca_qos_score}%` : "—"}
+              </span>
+              {baseline.meets_pass_mark === false && (
+                <span className="attn warn">
+                  <IconDot /> below pass mark
+                </span>
+              )}
+            </div>
+            <div className="facts">
+              {/* Granularity is the load-bearing word: the report has five clusters and
+                  this dashboard has six regions, so an operator-wide figure must never
+                  be presented as a measurement of this region. */}
+              <span>
+                {baseline.granularity === "cluster"
+                  ? `cluster “${baseline.cluster}”`
+                  : "operator-wide figure — no cluster mapped to this region yet"}
+              </span>
+              <span>
+                {baseline.report} (published {baseline.report_date})
+              </span>
+            </div>
           </>
         ) : (
           <>No CA QoS baseline seeded for this operator.</>
@@ -233,41 +271,67 @@ export default function Regions({ tick }: { tick: number }) {
 
   return (
     <div>
-      <h1 className="page-title">Regions</h1>
-      <p className="muted">
-        Per-region fault load, repeat faults and outside-world signal freshness. Rows are every
-        region on the operator profile — a region with nothing open still appears, because a
-        region that vanishes from a wallboard is the one nobody checks.
-      </p>
+      <div className="page-head">
+        <div>
+          <h1>Regions</h1>
+          <p
+            className="lead"
+            title="Every region on the operator profile appears, even with nothing open: a region that vanishes from a wallboard is the one nobody checks."
+          >
+            Fault load, repeat faults and signal freshness for every region.
+          </p>
+        </div>
+        {data && (
+          <div className="page-actions facts">
+            <span>{data.operator_id}</span>
+            <span>{num(data.window_days, 30)}-day window</span>
+            <span title="When this snapshot was built">built {fmtDateTime(data.generated_at)}</span>
+          </div>
+        )}
+      </div>
 
       {error && (
-        <div className="storm-banner" style={{ marginBottom: "1rem" }}>
+        <div className="storm-banner" role="alert">
           <div>
             <strong>Regions dashboard unavailable</strong>
             <div className="muted">{error}</div>
           </div>
+          <button className="btn sm" onClick={load}>
+            Retry
+          </button>
         </div>
       )}
 
       {data && data.weather_enabled === false && (
-        <div className="storm-banner" style={{ marginBottom: "1rem" }}>
+        <div className="storm-banner">
           <div>
             <strong>Weather polling is off — {staleCount} of {regions.length} regions are blind</strong>
             <div className="muted">
               <code>WEATHER_ENABLED=false</code>, so no forecast is being fetched and those regions
-              show STALE rather than green. That is the honest reading, not a fault on this page.
+              show stale rather than calm. That is the honest reading, not a fault on this page.
             </div>
           </div>
         </div>
       )}
 
-      {data && (
-        <div className="chips" style={{ marginBottom: "1rem" }}>
-          <span className="chip accent">{data.operator_id}</span>
-          <span className="chip">Rollup window {num(data.window_days, 30)}d</span>
-          <span className="chip" title="When this snapshot was built">
-            {fmtDateTime(data.generated_at)}
-          </span>
+      {!data && !error && (
+        <div
+          aria-busy="true"
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fill, minmax(340px, 1fr))",
+            gap: "1rem",
+          }}
+        >
+          {Array.from({ length: 6 }, (_, i) => (
+            <div key={i} className="panel">
+              <div className="skeleton-rows" aria-hidden="true">
+                <span className="skeleton" style={{ width: "40%" }} />
+                <span className="skeleton" />
+                <span className="skeleton" style={{ width: "70%" }} />
+              </div>
+            </div>
+          ))}
         </div>
       )}
 

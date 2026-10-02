@@ -17,7 +17,9 @@ import {
   type Scorecard,
   type Vendor,
 } from "../components/scorecardModel";
+import { humanEnum } from "../lib/agents";
 import { detailOf, statusOf } from "../lib/apiError";
+import { IconCheck, IconDot } from "../lib/icons";
 import { fmtDateTime } from "../lib/time";
 
 /**
@@ -52,6 +54,11 @@ import { fmtDateTime } from "../lib/time";
  */
 
 const DEBOUNCE_MS = 500;
+
+/** "duty_manager" → "duty manager": a role id as a person reads it. */
+function roleWords(value: string): string {
+  return humanEnum(String(value || "").toUpperCase());
+}
 
 type Session = { display_name?: string; role?: string } | null;
 
@@ -148,9 +155,19 @@ export default function Scorecards({ session }: { session: Session }) {
   };
 
   const heading = (
-    <div style={{ display: "flex", gap: "0.6rem", alignItems: "baseline", flexWrap: "wrap" }}>
-      <h1 className="page-title">Vendor scorecards</h1>
-      <span className="chip">VIEWING AS · {role || "unknown role"}</span>
+    <div className="page-head">
+      <div>
+        <h1>Vendor scorecards</h1>
+        <p
+          className="lead"
+          title="Every line carries its formula and the contract term it was measured against, and raw and normalised values sit side by side. Nothing on this page sends anything to a vendor."
+        >
+          Evidence, not verdicts: each line shows its formula and term. Times in EAT.
+        </p>
+      </div>
+      <div className="page-actions">
+        <span className="muted">Viewing as {role ? roleWords(role) : "unknown role"}</span>
+      </div>
     </div>
   );
 
@@ -160,7 +177,7 @@ export default function Scorecards({ session }: { session: Session }) {
     if (off) {
       return (
         <div>
-          <h1 className="page-title">Vendor scorecards</h1>
+          {heading}
           <LaneOff title="Vendor scorecards are off" flag="SCORECARDS_ENABLED">
             every <code>/scorecards</code> route answers 404 and the <code>scorecard_close</code> job does nothing.
           </LaneOff>
@@ -170,13 +187,10 @@ export default function Scorecards({ session }: { session: Session }) {
     return (
       <div>
         {heading}
-        <div className="panel" style={{ marginTop: "0.9rem" }}>
-          <div className="panel-head">
-            <h3>{listFailure.view.title}</h3>
-            <span className="chip">{listFailure.view.title.toUpperCase()}</span>
-          </div>
+        <div className="panel">
+          <h3>{listFailure.view.title}</h3>
           <p className="muted" style={{ marginTop: 0 }}>
-            {listFailure.view.body} Your role here is <strong>{role || "unknown"}</strong>.
+            {listFailure.view.body} Your role here is <strong>{role ? roleWords(role) : "unknown"}</strong>.
           </p>
           {listFailure.detail && <div className="pre">{listFailure.detail}</div>}
         </div>
@@ -189,11 +203,6 @@ export default function Scorecards({ session }: { session: Session }) {
   return (
     <div>
       {heading}
-      <p className="muted">
-        A scorecard is evidence, not a verdict. Every line carries its formula and the contract term it was measured
-        against, and raw and normalised values sit side by side. Nothing on this page sends anything to a vendor. Times
-        are EAT.
-      </p>
 
       <div className="panel" style={{ marginBottom: "1rem" }}>
         <VendorPeriodPicker vendors={vendorOptions} value={filters} onChange={setFilters} />
@@ -214,7 +223,12 @@ export default function Scorecards({ session }: { session: Session }) {
                   title="Blank: the last month that has ended"
                 />
               </label>
-              <select value={computeVendor} disabled={computing} onChange={(e) => setComputeVendor(e.target.value)}>
+              <select
+                aria-label="Vendor to compute"
+                value={computeVendor}
+                disabled={computing}
+                onChange={(e) => setComputeVendor(e.target.value)}
+              >
                 <option value="">every vendor with incidents</option>
                 {vendorOptions.map((v) => (
                   <option key={v.code} value={v.code}>
@@ -226,7 +240,7 @@ export default function Scorecards({ session }: { session: Session }) {
                 className="btn"
                 disabled={computing || (computePeriod !== "" && !isPeriod(computePeriod))}
                 onClick={compute}
-                title="Computes DRAFT, SHADOW or WITHHELD cards for an ended month. It cannot publish, and it refuses (409) a card that is already PUBLISHED or FINAL."
+                title="Computes draft, shadow or withheld cards for an ended month. It cannot publish, and it refuses (409) a card that is already published or final."
               >
                 {computing ? "Computing…" : "Compute period"}
               </button>
@@ -234,23 +248,23 @@ export default function Scorecards({ session }: { session: Session }) {
           )}
         </div>
         {computeResult && (
-          <div className="muted" style={{ marginTop: "0.5rem" }}>
-            <span className="chip ok">COMPUTED</span> Period {computeResult.period}: {computeResult.computed} computed,{" "}
-            {computeResult.skipped} skipped. Run <span style={{ fontFamily: "var(--mono)" }}>{computeResult.run_id}</span>.
+          <div className="muted" style={{ marginTop: "0.5rem" }} role="status">
+            <IconCheck /> Period {computeResult.period}: {computeResult.computed} computed,{" "}
+            {computeResult.skipped} skipped. Run <span className="mono">{computeResult.run_id}</span>.
             {computeResult.computed_detail && computeResult.computed_detail.length > 0 && (
-              <div>Computed: {computeResult.computed_detail.join(" · ")}</div>
+              <div>Computed: {computeResult.computed_detail.join("; ")}</div>
             )}
             {computeResult.skipped_detail && computeResult.skipped_detail.length > 0 && (
-              <div>Skipped: {computeResult.skipped_detail.join(" · ")}</div>
+              <div>Skipped: {computeResult.skipped_detail.join("; ")}</div>
             )}
             {!computeResult.computed_detail && (
-              <div>Your role is told the counts only. Which vendor came out SHADOW or WITHHELD is visible to duty_manager, management and admin.</div>
+              <div>Your role is told the counts only. Which vendor came out shadow or withheld is visible to duty managers, management and admins.</div>
             )}
           </div>
         )}
         {computeFailure && (
           <div style={FAILURE_BOX} role="status">
-            <span className="chip warn">{computeFailure.view.title.toUpperCase()}</span>
+            <span className="chip warn">{computeFailure.view.title}</span>
             <div>
               <div>{computeFailure.view.body}</div>
               {computeFailure.detail && <div className="pre" style={{ marginTop: "0.35rem" }}>{computeFailure.detail}</div>}
@@ -261,7 +275,7 @@ export default function Scorecards({ session }: { session: Session }) {
 
       {listFailure && (
         <div style={FAILURE_BOX} role="status">
-          <span className="chip warn">{listFailure.view.title.toUpperCase()}</span>
+          <span className="chip warn">{listFailure.view.title}</span>
           <div>
             <div>{listFailure.view.body}</div>
             {listFailure.detail && <div className="pre" style={{ marginTop: "0.35rem" }}>{listFailure.detail}</div>}
@@ -272,7 +286,7 @@ export default function Scorecards({ session }: { session: Session }) {
       <div className="panel">
         <div className="panel-head">
           <h3>Cards</h3>
-          <span className="chip">{rows.length}</span>
+          <span className="muted">{rows.length} shown</span>
         </div>
         <div style={{ overflowX: "auto" }}>
           <table>
@@ -315,20 +329,34 @@ export default function Scorecards({ session }: { session: Session }) {
                       <div className="muted">{periodWords(r.period)}</div>
                     </td>
                     <td>
-                      <span className={sv.chip}>
-                        {sv.label} · {sv.tag}
-                      </span>
+                      <span className={sv.chip}>{humanEnum(sv.label)}</span>
+                      <div className="muted">{humanEnum(sv.tag)}</div>
                     </td>
                     <td>
-                      <span className={gate.passed === false ? "chip danger" : gate.passed === true ? "chip" : "chip warn"}>
-                        {gate.passed === true ? "PASSED" : gate.passed === false ? "FAILED" : "NOT RECORDED"}
-                      </span>
-                      <div className="muted">
-                        {gate.inferred} of {gate.restored} inferred ({gate.pct}) · limit {gate.threshold}
+                      {/* One chip per row (the status). The gate and the terms are facts: plain when
+                          normal, the attention dot when they are not. */}
+                      {gate.passed === true ? (
+                        <span>passed</span>
+                      ) : (
+                        <span className={"attn " + (gate.passed === false ? "danger" : "warn")}>
+                          <IconDot /> {gate.passed === false ? "failed" : "not recorded"}
+                        </span>
+                      )}
+                      <div className="facts">
+                        <span>
+                          {gate.inferred} of {gate.restored} inferred ({gate.pct})
+                        </span>
+                        <span>limit {gate.threshold}</span>
                       </div>
                     </td>
                     <td>
-                      <span className={terms.chip}>{terms.label}</span>
+                      {terms.kind === "CONTRACT" ? (
+                        <span>{humanEnum(terms.label)}</span>
+                      ) : (
+                        <span className="attn warn">
+                          <IconDot /> {humanEnum(terms.label)}
+                        </span>
+                      )}
                     </td>
                     <td className="muted">{fmtDateTime(r.computed_at)}</td>
                     <td className="muted">{r.dispute_window_ends_at ? fmtDateTime(r.dispute_window_ends_at) : "—"}</td>
@@ -341,14 +369,29 @@ export default function Scorecards({ session }: { session: Session }) {
         {loaded && rows.length === 0 && !listFailure && (
           <div className="empty">
             No scorecards match these filters.
+            {(filters.vendor || filters.period || filters.status !== "ALL") && (
+              <>
+                {" "}
+                <button className="btn sm" onClick={() => setFilters({ vendor: "", period: "", status: "ALL" })}>
+                  Clear filters
+                </button>
+              </>
+            )}
             {hiddenNote ? <div style={{ marginTop: "0.4rem" }}>{hiddenNote}</div> : null}
             <div style={{ marginTop: "0.4rem" }}>
               Cards are computed per ended EAT month. The hourly <code>scorecard_close</code> job does this when the
-              scheduler is on, or shift_supervisor and above can use Compute above.
+              scheduler is on, or a shift supervisor and above can use Compute above.
             </div>
           </div>
         )}
-        {!loaded && <div className="empty">Loading scorecards…</div>}
+        {!loaded && (
+          <div className="skeleton-rows" aria-hidden="true">
+            <span className="skeleton" />
+            <span className="skeleton" />
+            <span className="skeleton" />
+            <span className="skeleton" />
+          </div>
+        )}
         {loaded && rows.length > 0 && hiddenNote && <div className="muted" style={{ marginTop: "0.5rem" }}>{hiddenNote}</div>}
       </div>
 

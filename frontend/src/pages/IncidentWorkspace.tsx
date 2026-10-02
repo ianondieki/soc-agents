@@ -2,7 +2,17 @@ import { useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
 import { api } from "../api";
 import AgentRail from "../components/AgentRail";
-import { countAbsorbed, fmtMs, humanStatus, pickCreatingRun, runChipClass, runStatusWord, sumDurations } from "../lib/agents";
+import {
+  countAbsorbed,
+  fmtMs,
+  humanEnum,
+  humanStatus,
+  pickCreatingRun,
+  runChipClass,
+  runStatusWord,
+  sumDurations,
+} from "../lib/agents";
+import { IconCheck, IconDot } from "../lib/icons";
 import EarlierAtThisSite from "../components/EarlierAtThisSite";
 import ContractsDrawer from "../components/ContractsDrawer";
 import RegulatoryCountdown from "../components/RegulatoryCountdown";
@@ -27,10 +37,25 @@ export default function IncidentWorkspace({ session }: { session: any }) {
   const [mspPct, setMspPct] = useState("");
   const [markRestored, setMarkRestored] = useState(false);
   const [msg, setMsg] = useState("");
+  const [loadFailed, setLoadFailed] = useState(false);
+  // Reassign is an inline form in the narrative panel (no browser prompt): who, and why.
+  const [reassigning, setReassigning] = useState(false);
+  const [reassignMsp, setReassignMsp] = useState("");
+  const [reassignReason, setReassignReason] = useState("");
+  const [reassignBusy, setReassignBusy] = useState(false);
 
   const load = () => {
     if (!id) return;
-    api.incident(id).then(setInc).catch(console.error);
+    api
+      .incident(id)
+      .then((row) => {
+        setInc(row);
+        setLoadFailed(false);
+      })
+      .catch((e) => {
+        console.error(e);
+        setLoadFailed(true);
+      });
     api.workflow(id).then(setWf).catch(console.error);
     api.timeline(id).then(setTimeline).catch(console.error);
     // The run that opened the ticket, not the newest (usually a two-step merge): lib/agents.
@@ -68,34 +93,87 @@ export default function IncidentWorkspace({ session }: { session: any }) {
     setMspAction("");
     setMspPct("");
     setMarkRestored(false);
-    setMsg(`Note posted · status ${res.status}`);
+    setMsg(`Note posted. Status is now ${humanStatus(res.status)}.`);
     load();
   };
 
-  if (!inc) return <div className="empty">Loading incident…</div>;
+  const reassign = async () => {
+    const msp = reassignMsp.trim();
+    if (!id || !msp) return;
+    setReassignBusy(true);
+    try {
+      await api.reassign(id, {
+        by: who,
+        reason: reassignReason.trim() || "Wrong vendor pool",
+        assignee_type: "MSP",
+        assignee_name: msp,
+        msp_name: msp,
+      });
+      setMsg(`Reassigned to ${msp}`);
+      setReassigning(false);
+      setReassignReason("");
+      load();
+    } finally {
+      setReassignBusy(false);
+    }
+  };
+
+  if (!inc) {
+    return loadFailed ? (
+      <div className="empty" role="alert">
+        Couldn't load this incident.{" "}
+        <button className="btn sm" onClick={load}>
+          Retry
+        </button>
+      </div>
+    ) : (
+      <div className="empty">Loading incident…</div>
+    );
+  }
+
+  const runSucceeded = String(creating?.status || "").toUpperCase() === "SUCCEEDED";
 
   return (
     <div>
-      <div style={{ display: "flex", gap: "0.6rem", alignItems: "center", flexWrap: "wrap" }}>
-        <span className={`pill ${inc.priority}`}>{inc.priority}</span>
-        <h1 className="page-title">{inc.incident_number}</h1>
-        <span className="chip accent">{humanStatus(inc.status)}</span>
-        <span className="chip">{String(inc.site_class || "standard").toLowerCase()} site</span>
-        {inc.mpesa_risk && <span className="chip hitl">M-PESA corridor risk</span>}
-        {inc.requires_hitl && <span className="chip hitl">decision {humanStatus(inc.hitl_state)}</span>}
+      <div className="page-head">
+        <div>
+          <h1>
+            <span className={`pill ${inc.priority}`}>{inc.priority}</span> {inc.incident_number}
+          </h1>
+          <p className="lead facts">
+            <span>
+              {inc.site_name} ({inc.site_type})
+            </span>
+            <span>
+              {inc.region_code}
+              {inc.county ? `, ${inc.county}` : ""}
+            </span>
+            <span>{humanEnum(inc.site_class || "STANDARD")} site</span>
+            <span>est. {inc.users_affected?.toLocaleString()} users</span>
+            <span>owner {inc.assignee_name}</span>
+            <span>RNIO {inc.rnio_name || "—"}</span>
+          </p>
+        </div>
+        <div className="page-actions">
+          {inc.mpesa_risk && (
+            <span className="attn danger">
+              <IconDot /> M‑PESA corridor at risk
+            </span>
+          )}
+          <span className="chip accent">{humanStatus(inc.status)}</span>
+          {inc.requires_hitl && <span className="chip hitl">decision {humanStatus(inc.hitl_state)}</span>}
+        </div>
       </div>
-      <p className="muted">
-        {inc.site_name} ({inc.site_type}) · {inc.region_code}
-        {inc.county ? ` / ${inc.county}` : ""} · est. users {inc.users_affected?.toLocaleString()} · owner{" "}
-        {inc.assignee_name} · RNIO {inc.rnio_name || "—"}
-      </p>
       {/* Regulatory countdown (§5.3.20, §7.10) — at the top, because a SEND_FAILED regulator
           notice must be impossible to miss. Self-contained; renders nothing while
           REGULATORY_ENABLED is off or on any failure, so it cannot affect the page. */}
       <RegulatoryCountdown incidentId={inc.id} />
 
       <div className="panel" style={{ marginBottom: "1rem" }}>
-        <h3>NOC ticket fields (agent-filled · times in EAT)</h3>
+        <div className="panel-head">
+          <h3>NOC ticket fields</h3>
+          <span className="muted">Filled by the agents. Times in EAT.</span>
+        </div>
         <table>
           <tbody>
             <tr>
@@ -108,7 +186,7 @@ export default function IncidentWorkspace({ session }: { session: any }) {
             </tr>
             <tr>
               <td className="muted">Technology</td>
-              <td>{inc.technology}</td>
+              <td>{humanEnum(inc.technology)}</td>
               <td className="muted">Network element</td>
               <td>{inc.network_element}</td>
             </tr>
@@ -159,7 +237,8 @@ export default function IncidentWorkspace({ session }: { session: any }) {
             <tr>
               <td className="muted">Resolution</td>
               <td colSpan={3}>
-                {inc.resolution_code || "—"} {inc.restored_at ? `(restored ${fmtDateTime(inc.restored_at)})` : ""}
+                {inc.resolution_code ? humanEnum(inc.resolution_code) : "—"}{" "}
+                {inc.restored_at ? `(restored ${fmtDateTime(inc.restored_at)})` : ""}
               </td>
             </tr>
             <tr>
@@ -181,11 +260,18 @@ export default function IncidentWorkspace({ session }: { session: any }) {
       <div className="panel" style={{ marginBottom: "1rem" }}>
         <div className="panel-head">
           <h3>How the agents handled this alarm</h3>
-          <div className="chips">
-            {railSteps.length > 0 && <span className="chip">{railSteps.length} hops · {fmtMs(elapsed)}</span>}
-            {creating?.status && <span className={runChipClass(creating.status)}>{runStatusWord(creating.status)}</span>}
+          <div className="facts">
+            {railSteps.length > 0 && <span>{railSteps.length} hops</span>}
+            {railSteps.length > 0 && <span>{fmtMs(elapsed)}</span>}
+            {/* Success is the normal outcome: a word. Waiting or failed is a state worth a chip. */}
+            {creating?.status &&
+              (runSucceeded ? (
+                <span>{runStatusWord(creating.status)}</span>
+              ) : (
+                <span className={runChipClass(creating.status)}>{runStatusWord(creating.status)}</span>
+              ))}
             {absorbed > 0 && (
-              <span className="chip accent" title="Later alarms the correlation step folded into this ticket instead of opening a duplicate">
+              <span title="Later alarms the correlation step folded into this ticket instead of opening a duplicate">
                 {absorbed} later alarm{absorbed === 1 ? "" : "s"} folded in
               </span>
             )}
@@ -197,7 +283,7 @@ export default function IncidentWorkspace({ session }: { session: any }) {
 
       <div className="detail-grid">
         <div className="panel">
-          <h3>Ticket / narrative</h3>
+          <h3>Ticket narrative</h3>
           <p>
             <strong>{inc.title}</strong>
           </p>
@@ -222,57 +308,89 @@ export default function IncidentWorkspace({ session }: { session: any }) {
             >
               Close ticket
             </button>
-            <button
-              className="btn"
-              onClick={async () => {
-                const msp = window.prompt("Reassign to MSP name (e.g. Camusat)", inc.msp_name || "Camusat");
-                if (!msp) return;
-                const reason = window.prompt("Reason") || "Wrong vendor pool";
-                await api.reassign(id!, {
-                  by: who,
-                  reason,
-                  assignee_type: "MSP",
-                  assignee_name: msp,
-                  msp_name: msp,
-                });
-                setMsg(`Reassigned to ${msp}`);
-                load();
-              }}
-            >
-              Reassign MSP
-            </button>
+            {!reassigning && (
+              <button
+                className="btn"
+                onClick={() => {
+                  setReassignMsp(inc.msp_name || "Camusat");
+                  setReassignReason("");
+                  setReassigning(true);
+                }}
+              >
+                Reassign MSP
+              </button>
+            )}
           </div>
+          {reassigning && (
+            <div className="form-row" role="group" aria-label="Reassign to another MSP">
+              <input
+                autoFocus
+                aria-label="MSP to reassign to"
+                placeholder="MSP name, e.g. Camusat"
+                value={reassignMsp}
+                disabled={reassignBusy}
+                onChange={(e) => setReassignMsp(e.target.value)}
+              />
+              <input
+                aria-label="Reason for reassigning"
+                placeholder="Reason (default: wrong vendor pool)"
+                value={reassignReason}
+                disabled={reassignBusy}
+                onChange={(e) => setReassignReason(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && reassign()}
+              />
+              <button className="btn primary" disabled={reassignBusy || !reassignMsp.trim()} onClick={reassign}>
+                Reassign
+              </button>
+              <button className="btn" disabled={reassignBusy} onClick={() => setReassigning(false)}>
+                Cancel
+              </button>
+            </div>
+          )}
         </div>
         <div className="panel">
           <h3>Exec brief</h3>
           <div className="pre">{brief || "No brief yet."}</div>
-          <h3 style={{ marginTop: "1rem" }}>MSP / FE / NOC work note</h3>
-          {msg && <p className="chip ok">{msg}</p>}
+          <h3 style={{ marginTop: "1rem" }}>Work note</h3>
+          {msg && (
+            <p className="muted" role="status">
+              <IconCheck /> {msg}
+            </p>
+          )}
           <input
+            aria-label="Vendor TT ref (MSP)"
             placeholder="Vendor TT ref (MSP)"
             value={vendorRef}
             onChange={(e) => setVendorRef(e.target.value)}
             style={{ width: "100%", marginBottom: "0.4rem" }}
           />
           <input
+            aria-label="MSP root cause"
             placeholder="MSP root cause"
             value={mspRoot}
             onChange={(e) => setMspRoot(e.target.value)}
             style={{ width: "100%", marginBottom: "0.4rem" }}
           />
           <input
+            aria-label="MSP action taken"
             placeholder="MSP action taken"
             value={mspAction}
             onChange={(e) => setMspAction(e.target.value)}
             style={{ width: "100%", marginBottom: "0.4rem" }}
           />
           <input
+            aria-label="Percent complete, 0 to 100"
             placeholder="% complete (0-100)"
             value={mspPct}
             onChange={(e) => setMspPct(e.target.value)}
             style={{ width: "100%", marginBottom: "0.4rem" }}
           />
-          <textarea value={note} onChange={(e) => setNote(e.target.value)} placeholder="Work note until closure…" />
+          <textarea
+            aria-label="Work note"
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            placeholder="Work note until closure…"
+          />
           <label className="muted" style={{ display: "flex", gap: "0.4rem", alignItems: "center", marginTop: "0.4rem" }}>
             <input type="checkbox" checked={markRestored} onChange={(e) => setMarkRestored(e.target.checked)} />
             Mark service restored
@@ -300,14 +418,18 @@ export default function IncidentWorkspace({ session }: { session: any }) {
       <StopClockPanel incidentId={inc.id} />
 
       <div className="panel" style={{ marginTop: "1rem" }}>
-        <h3>Unified timeline (EAT)</h3>
+        <div className="panel-head">
+          <h3>Timeline</h3>
+          <span className="muted">Times in EAT</span>
+        </div>
         <div className="list">
           {timeline.map((t, i) => (
             <div key={i} className="row" style={{ cursor: "default" }}>
-              <span className="chip">{t.kind}</span>
+              <span className="muted">{humanEnum(t.kind)}</span>
               <div>
-                <div>
-                  <strong>{t.title}</strong> · {t.status}
+                <div className="head-row">
+                  <strong>{t.title}</strong>
+                  {t.status && <span className="muted">{humanStatus(t.status)}</span>}
                 </div>
                 <div className="muted">{t.detail}</div>
               </div>

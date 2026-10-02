@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import BlamelessHint from "./BlamelessHint";
+import { humanEnum } from "../lib/agents";
 import { detailOf, isStatus } from "../lib/apiError";
+import { IconCheck, IconDot } from "../lib/icons";
 import { fmtDate, fmtDateTime } from "../lib/time";
 
 /**
@@ -24,8 +26,9 @@ import { fmtDate, fmtDateTime } from "../lib/time";
  * A PUBLISHED review is immutable (the API answers 409). The editor goes read-only rather
  * than offering fields whose save cannot succeed.
  *
- * 3 a.m. rules (§7.10): statuses are chips with words in them, never colour alone; due dates
- * show the absolute EAT date beside "in 3 days" / "2 days overdue"; nothing animates.
+ * 3 a.m. rules (§7.10): statuses are words, never colour alone (a chip only for a state that is
+ * not the default); due dates show the absolute EAT date beside "in 3 days" / "2 days overdue";
+ * nothing animates.
  */
 
 export type Pir = {
@@ -98,8 +101,8 @@ const BLAMELESS_RE = /describe what the system allowed/i;
 const PUBLISH_GATES: { match: RegExp; title: string; fix: string }[] = [
   {
     match: /NOT_REQUIRED review cannot be published/i,
-    title: "This review is marked NOT_REQUIRED",
-    fix: "Set the status to DRAFT and write it up before publishing.",
+    title: "This review is marked not required",
+    fix: "Set the status to draft and write it up before publishing.",
   },
   {
     match: /named reviewer is required/i,
@@ -118,17 +121,23 @@ const PUBLISH_GATES: { match: RegExp; title: string; fix: string }[] = [
   },
 ];
 
-function statusChip(status: string): string {
-  if (status === "PUBLISHED") return "chip ok";
-  if (status === "IN_REVIEW") return "chip accent";
-  return "chip";
-}
+/** §7.7.3 trigger matrix, spelled out — "P1_P2" on its own tells a new analyst nothing. */
+export const PIR_REASON_WORDS: Record<string, string> = {
+  P1_P2: "P1/P2 incident",
+  HUB_CORE: "HUB or CORE site",
+  SLA_BREACH: "SLA breached",
+  PROBLEM_LINKED: "linked to a problem record",
+  RUN_FAILED: "an agent run failed",
+  MANUAL: "opened by hand",
+};
 
-function actionChip(status: string): string {
-  if (status === "DONE") return "chip ok";
-  if (status === "WONT_DO") return "chip";
-  if (status === "IN_PROGRESS") return "chip accent";
-  return "chip warn";
+/**
+ * A review status as words, and the chip it earns. Only IN_REVIEW is a chip: it is the one
+ * state where a named person has to act (lavender, §7). DRAFT is where every review starts and
+ * PUBLISHED is done, so both are plain words.
+ */
+export function pirStatus(status: string): { word: string; chip: string | null } {
+  return { word: humanEnum(status), chip: status === "IN_REVIEW" ? "chip hitl" : null };
 }
 
 /** Whole days between today (EAT) and a `YYYY-MM-DD` due date, or `null` if unparseable. */
@@ -144,15 +153,15 @@ function daysUntil(due: string): number | null {
   return Math.round((dueMs - todayMs) / 86400000);
 }
 
-/** "in 3 days" / "due today" / "2 days OVERDUE" — the relative half of the §7.10 pair. */
-function dueWords(due: string, closed: boolean): string {
+/** "in 3 days" / "due today" / "2 days overdue" — the relative half of the §7.10 pair. */
+function dueWords(due: string, closed: boolean): { words: string; overdue: boolean } {
   const d = daysUntil(due);
-  if (d == null) return "";
-  if (closed) return "closed";
-  if (d === 0) return "due today";
-  if (d > 0) return "in " + d + " day" + (d === 1 ? "" : "s");
+  if (d == null) return { words: "", overdue: false };
+  if (closed) return { words: "closed", overdue: false };
+  if (d === 0) return { words: "due today", overdue: false };
+  if (d > 0) return { words: "in " + d + " day" + (d === 1 ? "" : "s"), overdue: false };
   const late = Math.abs(d);
-  return late + " day" + (late === 1 ? "" : "s") + " OVERDUE";
+  return { words: late + " day" + (late === 1 ? "" : "s") + " overdue", overdue: true };
 }
 
 function minutes(value: number | null | undefined): string {
@@ -377,15 +386,18 @@ export default function PirEditor({
   }
 
   const gates = publishError ? PUBLISH_GATES.filter((g) => g.match.test(publishError)) : [];
+  const st = pirStatus(pir.status);
 
   return (
     <div className="panel pir-editor">
       <div className="panel-head">
         <h3>{incidentLabel || pir.incident_id}</h3>
-        <span className={statusChip(pir.status)}>{pir.status}</span>
-        <span className="chip">OPENED · {pir.opened_reason}</span>
-        {pir.ai_assisted ? <span className="chip accent">AI-ASSISTED DRAFT</span> : null}
-        {published && pir.reviewer ? <span className="chip ok">SIGNED · {pir.reviewer}</span> : null}
+        <div className="facts">
+          {st.chip ? <span className={st.chip}>{st.word}</span> : <span>{st.word}</span>}
+          <span>Opened: {PIR_REASON_WORDS[pir.opened_reason] || humanEnum(pir.opened_reason)}</span>
+          {pir.ai_assisted ? <span>AI-assisted draft</span> : null}
+          {published && pir.reviewer ? <span>Signed by {pir.reviewer}</span> : null}
+        </div>
       </div>
 
       <div className="pir-metrics">
@@ -424,9 +436,9 @@ export default function PirEditor({
       <div className="pir-fields">
         {TEXT_FIELDS.map((f) => (
           <label key={f.key as string} className="pir-field">
-            <span className="pir-field-label">
+            <span className="pir-field-label head-row">
               {f.label}
-              {f.hint ? <span className="muted"> · {f.hint}</span> : null}
+              {f.hint ? <span className="muted">{f.hint}</span> : null}
             </span>
             <textarea
               rows={f.rows}
@@ -445,12 +457,9 @@ export default function PirEditor({
           />
         </label>
         <label className="pir-field">
-          <span className="pir-field-label">
+          <span className="pir-field-label head-row">
             Revenue note
-            <span className="muted">
-              {" "}
-              · the one impact field a human fills in; the rest are computed from the ticket
-            </span>
+            <span className="muted">the one impact field a human fills in; the rest are computed from the ticket</span>
           </span>
           <input
             disabled={published || busy}
@@ -470,7 +479,7 @@ export default function PirEditor({
           >
             {(EDITABLE_STATUSES.includes(pir.status) ? EDITABLE_STATUSES : [pir.status, ...EDITABLE_STATUSES]).map((s) => (
               <option key={s} value={s}>
-                {s}
+                {humanEnum(s)}
               </option>
             ))}
           </select>
@@ -482,16 +491,20 @@ export default function PirEditor({
           className="btn"
           disabled={published || busy}
           onClick={draftWithModel}
-          title="Queues a redacted LLM_CALL on the outbox. DRAFT text only — it changes no status and publishes nothing."
+          title="Queues a redacted model call on the outbox. Draft text only — it changes no status and publishes nothing."
         >
           Draft with model (assist)
         </button>
-        {saveNote && <span className="chip ok">{saveNote}</span>}
+        {saveNote && (
+          <span className="muted" role="status">
+            <IconCheck /> {saveNote}
+          </span>
+        )}
       </div>
 
       {saveError && (
         <div className="pir-error">
-          <span className="chip warn">REJECTED</span>
+          <span className="chip warn">rejected</span>
           <div>
             <div>{saveError}</div>
             {blameless && (
@@ -505,8 +518,9 @@ export default function PirEditor({
       )}
 
       {/* ---- action items ------------------------------------------------- */}
-      <h4 className="pir-h4">
-        Action items <span className="muted">· the owner is a role token, never a person (§7.7.6)</span>
+      <h4 className="pir-h4 head-row">
+        Action items
+        <span className="muted">the owner is a role token, never a person (§7.7.6)</span>
       </h4>
       <table>
         <thead>
@@ -522,13 +536,13 @@ export default function PirEditor({
         <tbody>
           {actions.map((a) => {
             const closed = a.status === "DONE" || a.status === "WONT_DO";
-            const words = dueWords(a.due_date, closed);
+            const due = dueWords(a.due_date, closed);
             return (
               <tr key={a.id}>
                 <td>
                   <span className={"pill " + (a.priority === "P0" ? "P1" : a.priority)}>{a.priority}</span>
                 </td>
-                <td className="muted">{a.type}</td>
+                <td className="muted">{humanEnum(a.type)}</td>
                 <td>
                   {a.description}
                   {a.tracking_ref ? <div className="muted">ref {a.tracking_ref}</div> : null}
@@ -537,20 +551,22 @@ export default function PirEditor({
                 {/* §7.10: the absolute date and the relative reading, always together. */}
                 <td>
                   {fmtDate(a.due_date)}
-                  <div className={words.indexOf("OVERDUE") >= 0 ? "pir-overdue" : "muted"}>{words}</div>
+                  <div className={due.overdue ? "pir-overdue" : "muted"}>{due.words}</div>
                 </td>
                 <td>
-                  <span className={actionChip(a.status)}>{a.status}</span>
-                  {!published && (
+                  {/* The select already shows the status; a published review is read-only, so words. */}
+                  {published ? (
+                    <span>{humanEnum(a.status)}</span>
+                  ) : (
                     <select
                       disabled={busy}
                       value={a.status}
+                      aria-label={"Status of action: " + a.description}
                       onChange={(e) => moveAction(a, e.target.value)}
-                      style={{ marginLeft: "0.35rem" }}
                     >
                       {ACTION_STATUSES.map((s) => (
                         <option key={s} value={s}>
-                          {s}
+                          {humanEnum(s)}
                         </option>
                       ))}
                     </select>
@@ -572,6 +588,7 @@ export default function PirEditor({
       {!published && (
         <div className="pir-action-form">
           <select
+            aria-label="Action type"
             value={newAction.type}
             disabled={busy}
             onChange={(e) => setNewAction((a) => ({ ...a, type: e.target.value }))}
@@ -583,6 +600,7 @@ export default function PirEditor({
             ))}
           </select>
           <select
+            aria-label="Action priority"
             value={newAction.priority}
             disabled={busy}
             onChange={(e) => setNewAction((a) => ({ ...a, priority: e.target.value }))}
@@ -594,12 +612,14 @@ export default function PirEditor({
             ))}
           </select>
           <input
+            aria-label="What will be done"
             placeholder="What will be done"
             value={newAction.description}
             disabled={busy}
             onChange={(e) => setNewAction((a) => ({ ...a, description: e.target.value }))}
           />
           <input
+            aria-label="Owner role token"
             placeholder="Owner token (RNIO / FE / MSP_POWER)"
             value={newAction.owner_token}
             disabled={busy}
@@ -607,6 +627,7 @@ export default function PirEditor({
           />
           <input
             type="date"
+            aria-label="Due date (EAT)"
             value={newAction.due_date}
             disabled={busy}
             onChange={(e) => setNewAction((a) => ({ ...a, due_date: e.target.value }))}
@@ -618,23 +639,24 @@ export default function PirEditor({
       )}
       {actionError && (
         <div className="pir-error">
-          <span className="chip warn">REJECTED</span>
+          <span className="chip warn">rejected</span>
           <div>{actionError}</div>
         </div>
       )}
 
       {/* ---- timeline ----------------------------------------------------- */}
-      <h4 className="pir-h4">
-        Assembled timeline{" "}
-        <span className="muted">· work notes, agent steps, stop clocks, broadcasts, approvals</span>
+      <h4 className="pir-h4 head-row">
+        Assembled timeline
+        <span className="muted">work notes, agent steps, stop clocks, broadcasts, approvals</span>
       </h4>
       <div className="list">
         {(pir.timeline ?? []).map((t, i) => (
           <div key={t.ts + "-" + i} className="row" style={{ cursor: "default" }}>
-            <span className="chip">{t.kind}</span>
+            <span className="muted">{humanEnum(t.kind)}</span>
             <div>
-              <div>
-                <strong>{t.title}</strong> · {t.actor_role}
+              <div className="head-row">
+                <strong>{t.title}</strong>
+                {t.actor_role && <span className="muted">{t.actor_role}</span>}
               </div>
               <div className="muted">{t.detail}</div>
             </div>
@@ -658,6 +680,7 @@ export default function PirEditor({
           </p>
           <div className="form-row">
             <input
+              aria-label="Reviewer (a person's name, not a role label)"
               placeholder="Reviewer (a person's name, not a role label)"
               value={reviewer}
               disabled={busy}
@@ -665,6 +688,7 @@ export default function PirEditor({
               style={{ minWidth: "18rem" }}
             />
             <input
+              aria-label="Rationale for the audit row (optional)"
               placeholder="Rationale for the audit row (optional)"
               value={rationale}
               disabled={busy}
@@ -674,12 +698,16 @@ export default function PirEditor({
             <button className="btn good" disabled={busy || dirty} onClick={publish}>
               Publish review
             </button>
-            {dirty && <span className="chip warn">UNSAVED EDITS · save first</span>}
+            {dirty && (
+              <span className="attn warn">
+                <IconDot /> Unsaved edits: save first
+              </span>
+            )}
           </div>
           {publishError && (
             <div className="pir-blockers">
               <div className="pir-blockers-head">
-                <span className="chip warn">NOT PUBLISHED</span>
+                <span className="chip warn">not published</span>
                 <strong>
                   {gates.length > 1
                     ? gates.length + " things still block this review"

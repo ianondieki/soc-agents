@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
+import { humanEnum } from "../lib/agents";
 import { fmtDateTime } from "../lib/time";
 
 /**
@@ -23,7 +24,7 @@ import { fmtDateTime } from "../lib/time";
  *    (MEM1/G15). The footer says so, because a number rendered beside a live ticket at 03:00
  *    will otherwise be read as an instruction.
  *
- * 3 a.m. rules (§7.10): no status is carried by colour alone — every chip has words in it;
+ * 3 a.m. rules (§7.10): no status is carried by colour alone — every state is a word;
  * nothing blinks; every timestamp is absolute EAT via `fmtDateTime`.
  *
  * Self-contained on purpose: it owns its fetch and its state, so wiring it into the workspace
@@ -106,8 +107,10 @@ export default function EarlierAtThisSite({ siteId }: { siteId?: string | null }
     <div className="panel" style={{ marginTop: "1rem" }}>
       <div className="panel-head">
         <h3>Earlier at this site</h3>
-        <span className="chip">{siteId}</span>
-        {data && !data.enabled && <span className="chip">RECALL OFF</span>}
+        <div className="facts">
+          <span className="mono">{siteId}</span>
+          {data && !data.enabled && <span>recall off</span>}
+        </div>
       </div>
 
       {episodes.length === 0 ? (
@@ -116,11 +119,12 @@ export default function EarlierAtThisSite({ siteId }: { siteId?: string | null }
         <div className="list">
           {episodes.map((e) => (
             <div key={e.incident_id} className="row" style={{ cursor: "default" }}>
-              <span className="chip">{e.incident_number}</span>
+              <span className="mono">{e.incident_number}</span>
               <div>
-                <div>
-                  <strong>{e.fault_class}</strong> · {fmtDuration(e.restore_minutes)}
-                  {e.resolution_code ? ` · ${e.resolution_code}` : ""}
+                <div className="head-row">
+                  <strong>{humanEnum(e.fault_class)}</strong>
+                  <span className="muted">{fmtDuration(e.restore_minutes)}</span>
+                  {e.resolution_code ? <span className="muted">{humanEnum(e.resolution_code)}</span> : null}
                 </div>
                 <div className="muted">{e.resolution_summary || "No resolution note was recorded."}</div>
               </div>

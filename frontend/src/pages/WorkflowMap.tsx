@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import AgentRail from "../components/AgentRail";
-import { LIFECYCLE_NODES, agentDisplayName, fmtInt, fmtMs } from "../lib/agents";
+import { LIFECYCLE_NODES, agentDisplayName, fmtInt, fmtMs, humanAutonomy } from "../lib/agents";
 
 /**
  * The training view of the lifecycle: the rail with every hop lit, and under it what each
@@ -12,7 +12,7 @@ const WHAT: Record<string, string> = {
   INGEST: "Normalise the alarm and fingerprint it (site, alarm code, domain).",
   CORRELATE: "Fold a repeat or a child site into the open ticket or its parent HUB.",
   ENRICH: "Site catalogue: region, RNIO, FE on call, subscribers affected, TT classification.",
-  SEVERITY: "P4 under 50k users; P3, P2, P1 above; HUB floor P2; CORE floor P1; M-PESA corridor tag.",
+  SEVERITY: "P4 under 50k users; P3, P2, P1 above; HUB floor P2; CORE floor P1; M‑PESA corridor tag.",
   TICKET: "Allocate the INC number, fill the TT fields, write the narrative and set the SLA clocks.",
   ASSIGN: "Region × domain matrix: power to Egypro or Tetranet, fibre to Egypro Fibre, radio to the FE.",
   HITL: "Hold P1 and P2 wording for the shift. Nothing external leaves without a named person.",
@@ -44,11 +44,14 @@ export default function WorkflowMap({ profile }: { profile: any }) {
 
   return (
     <div>
-      <h1 className="page-title">Workflow Map</h1>
-      <p className="muted">
-        The twelve hops every alarm takes, in order. Autonomy {String(profile?.autonomy_level || "L2_GUARDED").replace("_", " ")}:
-        the gate holds P1 and P2 external broadcasts for a person.
-      </p>
+      <div className="page-head">
+        <div>
+          <h1>Workflow map</h1>
+          <p className="lead">
+            Every alarm's twelve hops. At {humanAutonomy(profile?.autonomy_level)}, P1 and P2 broadcasts wait for a person.
+          </p>
+        </div>
+      </div>
       <div className="panel" style={{ marginBottom: "1rem" }}>
         <AgentRail steps={null} nodes={nodes} caption="The lifecycle" layout="grid" />
       </div>

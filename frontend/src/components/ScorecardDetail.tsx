@@ -17,7 +17,9 @@ import {
   type Scorecard,
   type ScorecardLine,
 } from "./scorecardModel";
+import { humanEnum } from "../lib/agents";
 import { detailOf, statusOf } from "../lib/apiError";
+import { IconCheck, IconDot } from "../lib/icons";
 import { fmtDateTime, parseInstant } from "../lib/time";
 
 /**
@@ -27,7 +29,7 @@ import { fmtDateTime, parseInstant } from "../lib/time";
  * What each status looks like, and why:
  *
  * - **SHADOW** has a diagonal "SHADOW" watermark tiled across the whole card and into the line
- *   drawer, plus an "INTERNAL ONLY" chip in words. The watermark is decorative (aria-hidden);
+ *   drawer, plus "internal only" in words beside the status chip. The watermark is decorative (aria-hidden);
  *   the words carry the meaning (§7.10: never colour or decoration alone).
  * - **WITHHELD** leads with the data-quality gate: how many restore times were inferred, out
  *   of how many, the percentage, the limit and the YAML key it comes from, the incidents and
@@ -50,7 +52,7 @@ import { fmtDateTime, parseInstant } from "../lib/time";
  * well as the list. A recompute keeps the card's id (it is derived from operator, vendor and
  * period) and can turn SHADOW into WITHHELD and clear the shadow review, so a card fetched
  * once at open is not good enough. While a refetch runs, the old card stays on screen marked
- * REFRESHING. If the refetch fails, the card is taken down and the failure shown, rather than
+ * "Refreshing…". If the refetch fails, the card is taken down and the failure shown, rather than
  * leaving figures on screen that could not be confirmed.
  */
 
@@ -145,10 +147,7 @@ export default function ScorecardDetail({
   if (failure) {
     return (
       <div className="panel">
-        <div className="panel-head">
-          <h3>{failure.view.title}</h3>
-          <span className="chip">{failure.view.kind === "notfound" ? "NOT FOUND" : failure.view.title.toUpperCase()}</span>
-        </div>
+        <h3>{failure.view.title}</h3>
         <p className="muted" style={{ marginTop: 0 }}>
           {failure.view.body}
         </p>
@@ -171,7 +170,7 @@ export default function ScorecardDetail({
   const actions = cardActions(card, role, now, windowEnds);
   const dispute = disputeAffordance();
   const lines = card.lines ?? [];
-  const title = `${card.vendor_code || card.vendor_id} · ${card.period}`;
+  const titleParts = [card.vendor_code || card.vendor_id, card.period];
   const d = card.discipline || {};
 
   const act = async (what: "review" | "publish" | "finalise") => {
@@ -193,7 +192,7 @@ export default function ScorecardDetail({
       setFinaliseReason("");
       setActionNote(
         what === "review"
-          ? "Shadow review recorded. The card is still SHADOW; publishing is a separate act."
+          ? "Shadow review recorded. The card is still shadow; publishing is a separate act."
           : what === "publish"
             ? "Published. The dispute window is running. Nothing was sent to anyone."
             : "Finalised."
@@ -232,21 +231,29 @@ export default function ScorecardDetail({
         {/* ---- header ------------------------------------------------------------ */}
         <div className="panel-head" style={{ flexWrap: "wrap" }}>
           <div>
-            <h3 style={{ margin: 0 }}>
+            <h3 className="head-row" style={{ margin: 0 }}>
               {card.vendor_code || "vendor " + card.vendor_id}
-              {card.vendor_name ? <span className="muted"> · {card.vendor_name}</span> : null}
+              {card.vendor_name ? <span className="muted">{card.vendor_name}</span> : null}
             </h3>
-            <div className="muted">
-              Period {card.period} ({periodWords(card.period)}, EAT calendar month) · sla_terms {card.sla_terms_version}
+            <div className="facts">
+              <span>
+                Period {card.period} ({periodWords(card.period)}, EAT calendar month)
+              </span>
+              <span>SLA terms {card.sla_terms_version}</span>
             </div>
           </div>
-          <div className="chips">
-            <span className={sv.chip}>
-              {sv.label} · {sv.tag}
-            </span>
-            <span className={terms.chip}>{terms.label}</span>
-            {card.shadow_reviewed_by ? <span className="chip ok">SHADOW-REVIEWED · {card.shadow_reviewed_by}</span> : null}
-            {refreshing ? <span className="chip">REFRESHING…</span> : null}
+          <div className="facts">
+            <span className={sv.chip}>{humanEnum(sv.label)}</span>
+            <span>{humanEnum(sv.tag)}</span>
+            {terms.kind === "CONTRACT" ? (
+              <span>{humanEnum(terms.label)}</span>
+            ) : (
+              <span className="attn warn">
+                <IconDot /> {humanEnum(terms.label)}
+              </span>
+            )}
+            {card.shadow_reviewed_by ? <span>Shadow-reviewed by {card.shadow_reviewed_by}</span> : null}
+            {refreshing ? <span role="status">Refreshing…</span> : null}
           </div>
         </div>
         <p className="muted" style={{ marginTop: 0 }}>
@@ -256,7 +263,7 @@ export default function ScorecardDetail({
         {/* ---- "defaults, not contract": never dismissible (§7.6.6) --------------- */}
         {terms.kind !== "CONTRACT" ? (
           <div style={NOTICE}>
-            <span className="chip warn">{terms.label}</span>
+            <span className="chip warn">{humanEnum(terms.label)}</span>
             <div>
               <div>{terms.text}</div>
               <div className="muted" style={{ marginTop: "0.25rem" }}>
@@ -275,8 +282,8 @@ export default function ScorecardDetail({
         {sv.label === "WITHHELD" && (
           <div style={WITHHELD_BOX}>
             <div style={{ display: "flex", gap: "0.55rem", alignItems: "center", flexWrap: "wrap" }}>
-              <span className="chip danger">WITHHELD</span>
-              <strong style={{ fontSize: "1.1rem", color: "var(--text-bright)" }}>The data-quality gate failed</strong>
+              <span className="chip danger">withheld</span>
+              <strong style={{ fontSize: "var(--fs-lg)", color: "var(--text-bright)" }}>The data-quality gate failed</strong>
             </div>
             <div style={{ marginTop: "0.45rem", color: "var(--text-bright)" }}>{gate.sentence}</div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: "0.5rem", marginTop: "0.6rem" }}>
@@ -287,7 +294,7 @@ export default function ScorecardDetail({
             </div>
             {gate.bySource.length > 0 && (
               <div className="muted" style={{ marginTop: "0.5rem" }}>
-                Inferred by source: {gate.bySource.map(([src, n]) => `${src} ${n}`).join(" · ")}
+                Inferred by source: {gate.bySource.map(([src, n]) => `${src} ${n}`).join(", ")}
               </div>
             )}
             {gate.inferredIncidents.length > 0 && (
@@ -309,13 +316,13 @@ export default function ScorecardDetail({
           <Fact label="Computed (EAT)" value={fmtDateTime(card.computed_at)} small />
           <Fact
             label="Data-quality gate"
-            value={gate.passed === true ? "PASSED" : gate.passed === false ? "FAILED" : "NOT RECORDED"}
+            value={gate.passed === true ? "Passed" : gate.passed === false ? "Failed" : "Not recorded"}
             note={sv.label === "WITHHELD" ? null : `${gate.inferred} of ${gate.restored} restores inferred (${gate.pct}); limit ${gate.threshold}`}
             small
           />
           <Fact
             label="Shadow review"
-            value={card.shadow_reviewed_by ? card.shadow_reviewed_by : card.shadow_required ? "required · not yet recorded" : "not required"}
+            value={card.shadow_reviewed_by ? card.shadow_reviewed_by : card.shadow_required ? "Required, not yet recorded" : "Not required"}
             note={card.shadow_reviewed_at ? fmtDateTime(card.shadow_reviewed_at) + " EAT" : null}
             small
           />
@@ -346,6 +353,7 @@ export default function ScorecardDetail({
               <>
                 <div className="form-row">
                   <input
+                    aria-label="Your name, recorded as the actor"
                     placeholder={"Your name (default: " + (session?.display_name || "the session name") + ")"}
                     value={actor}
                     disabled={busy}
@@ -362,6 +370,7 @@ export default function ScorecardDetail({
                 {actions.review.show && (
                   <div className="form-row">
                     <input
+                      aria-label="What did you check? (required)"
                       placeholder="What did you check? (required)"
                       value={rationale}
                       disabled={busy}
@@ -378,6 +387,7 @@ export default function ScorecardDetail({
                 {actions.publish.show && (
                   <div className="form-row">
                     <input
+                      aria-label="Reason for releasing it (required)"
                       placeholder="Reason for releasing it (required)"
                       value={reason}
                       disabled={busy || !actions.publish.enabled}
@@ -397,6 +407,7 @@ export default function ScorecardDetail({
                 {actions.finalise.show && (
                   <div className="form-row">
                     <input
+                      aria-label="Reason for finalising (optional)"
                       placeholder="Reason (optional)"
                       value={finaliseReason}
                       disabled={busy || !actions.finalise.enabled}
@@ -410,16 +421,20 @@ export default function ScorecardDetail({
                       {actions.finalise.why
                         ? actions.finalise.why +
                           (card.dispute_window_ends_at ? ` It closes ${fmtDateTime(card.dispute_window_ends_at)} EAT (${windowWords(now, windowEnds)}).` : "")
-                        : "The window has closed. The server also refuses while any line has an OPEN dispute."}
+                        : "The window has closed. The server also refuses while any line has an open dispute."}
                     </span>
                   </div>
                 )}
               </>
             )}
-            {actionNote && <span className="chip ok">{actionNote}</span>}
+            {actionNote && (
+              <span className="muted" role="status">
+                <IconCheck /> {actionNote}
+              </span>
+            )}
             {actionFailure && (
               <div style={{ ...NOTICE, margin: "0.5rem 0" }} role="status">
-                <span className="chip warn">{actionFailure.view.title.toUpperCase()}</span>
+                <span className="chip warn">{actionFailure.view.title}</span>
                 <div>
                   <div>{actionFailure.view.body}</div>
                   {actionFailure.detail && <div className="pre" style={{ marginTop: "0.35rem" }}>{actionFailure.detail}</div>}
@@ -430,8 +445,11 @@ export default function ScorecardDetail({
         )}
 
         {/* ---- lines ------------------------------------------------------------- */}
-        <h4 style={H4}>
-          Lines <span className="muted">· {lines.length} · raw beside normalised, never instead of it · select a line for its formula and evidence</span>
+        <h4 style={H4} className="head-row">
+          Lines
+          <span className="muted">{lines.length} lines</span>
+          <span className="muted">raw beside normalised, never instead of it</span>
+          <span className="muted">select a line for its formula and evidence</span>
         </h4>
         <ScorecardLinesTable
           lines={lines}
@@ -442,36 +460,47 @@ export default function ScorecardDetail({
         />
 
         {/* ---- operator discipline: OUR record-keeping, shown to the vendor -------- */}
-        <h4 style={H4}>
-          Operator discipline <span className="muted">· the operator's own record-keeping; it moves no vendor KPI</span>
+        <h4 style={H4} className="head-row">
+          Operator discipline
+          <span className="muted">the operator's own record-keeping; it moves no vendor KPI</span>
         </h4>
-        <div className="muted">
-          Stop clocks recorded: <strong style={{ color: "var(--text)" }}>{d.scc_events ?? "not recorded"}</strong> · recorded more than{" "}
-          {d.late_scc_opening_threshold_min ?? "?"} min after they started:{" "}
-          <strong style={{ color: "var(--text)" }}>{d.late_scc_openings ?? "not recorded"}</strong>
+        <div className="facts">
+          <span>
+            Stop clocks recorded: <strong style={{ color: "var(--text)" }}>{d.scc_events ?? "not recorded"}</strong>
+          </span>
+          <span>
+            Recorded more than {d.late_scc_opening_threshold_min ?? "?"} min after they started:{" "}
+            <strong style={{ color: "var(--text)" }}>{d.late_scc_openings ?? "not recorded"}</strong>
+          </span>
         </div>
         {(d.late_scc_opening_events || []).length > 0 && (
           <div className="muted" style={{ marginTop: "0.25rem" }}>
             Late openings:{" "}
             {(d.late_scc_opening_events || [])
-              .map((ev) => `${ev.incident} ${ev.scc_code} +${ev.opening_delay_min} min${ev.reversed ? " (reversed)" : ""}`)
-              .join(" · ")}
+              .map(
+                (ev) =>
+                  `${ev.incident} ${humanEnum(ev.scc_code)} +${ev.opening_delay_min} min${ev.reversed ? " (reversed)" : ""}`
+              )
+              .join("; ")}
           </div>
         )}
-        <div className="muted" style={{ marginTop: "0.25rem" }}>
-          Missing UTILITY_POWER stop clock with confirmed planned power:{" "}
-          <strong style={{ color: "var(--text)" }}>
-            {d.missing_scc_with_confirmed_power == null ? "NOT COMPUTED" : String(d.missing_scc_with_confirmed_power)}
-          </strong>
-          {d.missing_scc_with_confirmed_power == null && d.missing_scc_with_confirmed_power_note
-            ? " · " + d.missing_scc_with_confirmed_power_note
-            : ""}
+        <div className="facts" style={{ marginTop: "0.25rem" }}>
+          <span>
+            Missing utility-power stop clock with confirmed planned power:{" "}
+            <strong style={{ color: "var(--text)" }}>
+              {d.missing_scc_with_confirmed_power == null ? "not computed" : String(d.missing_scc_with_confirmed_power)}
+            </strong>
+          </span>
+          {d.missing_scc_with_confirmed_power == null && d.missing_scc_with_confirmed_power_note ? (
+            <span>{d.missing_scc_with_confirmed_power_note}</span>
+          ) : null}
         </div>
 
         {card.narrative && (
           <>
-            <h4 style={H4}>
-              Narrative {card.narrative_ai_assisted ? <span className="chip accent">AI-ASSISTED</span> : null}
+            <h4 style={H4} className="head-row">
+              Narrative
+              {card.narrative_ai_assisted ? <span className="muted">AI-assisted</span> : null}
             </h4>
             <div className="pre">{card.narrative}</div>
           </>
@@ -486,7 +515,7 @@ export default function ScorecardDetail({
           excluded={excludedOf(selected)}
           sccMinutes={selected.scc_minutes_deducted}
           line={selected}
-          cardTitle={`${title} · ${sv.label}`}
+          cardTitle={[...titleParts, humanEnum(sv.label)]}
           watermark={sv.watermark}
           onClose={closeDrawer}
         />
@@ -495,7 +524,7 @@ export default function ScorecardDetail({
   );
 }
 
-const H4 = { margin: "1.05rem 0 0.5rem", fontSize: "0.95rem", color: "var(--text-bright)" } as const;
+const H4 = { margin: "1.05rem 0 0.5rem", fontSize: "var(--fs-md)", color: "var(--text-bright)" } as const;
 
 const NOTICE = {
   display: "flex",
@@ -519,12 +548,13 @@ const WITHHELD_BOX = {
 function Fact({ label, value, note, small, mono }: { label: string; value: string; note?: string | null; small?: boolean; mono?: boolean }) {
   return (
     <div style={{ border: "1px solid var(--border)", borderRadius: 10, padding: "0.5rem 0.65rem", background: "rgba(8, 16, 30, 0.6)" }}>
-      <div style={{ fontSize: "0.7rem", letterSpacing: "0.06em", textTransform: "uppercase", color: "var(--muted)" }}>{label}</div>
+      <div style={{ fontSize: "var(--fs-xs)", color: "var(--muted)" }}>{label}</div>
       <div
         style={{
           fontFamily: mono ? "var(--mono)" : undefined,
-          fontSize: small ? (mono ? "0.78rem" : "0.95rem") : "1.2rem",
-          fontWeight: 700,
+          fontSize: small ? (mono ? "var(--fs-xs)" : "var(--fs-md)") : "var(--fs-lg)",
+          // Never bold and mono together: an identifier or a measurement is set at 500.
+          fontWeight: mono ? 500 : 600,
           color: "var(--text-bright)",
           wordBreak: "break-word",
         }}
@@ -532,7 +562,7 @@ function Fact({ label, value, note, small, mono }: { label: string; value: strin
         {value}
       </div>
       {note ? (
-        <div className="muted" style={{ fontSize: "0.76rem", marginTop: "0.15rem", wordBreak: "break-word" }}>
+        <div className="muted" style={{ fontSize: "var(--fs-xs)", marginTop: "0.15rem", wordBreak: "break-word" }}>
           {note}
         </div>
       ) : null}

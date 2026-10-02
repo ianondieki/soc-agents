@@ -1,6 +1,17 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { api } from "../api";
-import { agentDisplayName, fmtInt, fmtMs, humanGraph, runChipClass, runStatusWord } from "../lib/agents";
+import {
+  LIFECYCLE_NODES,
+  agentDisplayName,
+  fmtInt,
+  fmtMs,
+  humanEnum,
+  humanGraph,
+  runChipClass,
+  runStatusWord,
+} from "../lib/agents";
+import { IconDot } from "../lib/icons";
 import { fmtTime } from "../lib/time";
 
 /**
@@ -41,9 +52,17 @@ export function RunError({ status, summary }: { status?: string; summary?: strin
   );
 }
 
+/** "ENRICH" → "Enrich": a node id as the rail labels it. */
+function nodeLabel(id: unknown): string {
+  return LIFECYCLE_NODES.find((n) => n.id === id)?.label || humanEnum(id);
+}
+
 export default function Agents({ tick = 0 }: { tick?: number }) {
   const [agents, setAgents] = useState<any[]>([]);
-  const [runs, setRuns] = useState<any[]>([]);
+  // null until the first answer, so loading never reads as "no runs yet".
+  const [runs, setRuns] = useState<any[] | null>(null);
+  const [runsFailed, setRunsFailed] = useState(false);
+  const [retry, setRetry] = useState(0);
   const [stats, setStats] = useState<Record<string, any>>({});
 
   useEffect(() => {
@@ -73,24 +92,40 @@ export default function Agents({ tick = 0 }: { tick?: number }) {
   }, [tick]);
 
   useEffect(() => {
-    api.runs().then(setRuns).catch(console.error);
+    let live = true;
+    const take = (r: any) => {
+      if (!live) return;
+      setRuns(Array.isArray(r) ? r : []);
+      setRunsFailed(false);
+    };
+    api
+      .runs()
+      .then(take)
+      .catch((e) => {
+        console.error(e);
+        if (live) setRunsFailed(true);
+      });
     const id = window.setInterval(() => {
-      api.runs().then(setRuns).catch(() => undefined);
+      api.runs().then(take).catch(() => undefined);
     }, 4000);
-    return () => window.clearInterval(id);
+    return () => {
+      live = false;
+      window.clearInterval(id);
+    };
     // `tick` is the debounced `runs` slice revision: a run start/finish refreshes
     // this list at once, and the 4 s poll stays as the WS-down fallback.
-  }, [tick]);
+  }, [tick, retry]);
 
   return (
     <div>
       <div className="page-head">
         <div>
-          <h1>Agent Observatory</h1>
-          <p className="lead">
-            Twelve agents under one supervisor, each with a mission, a criticality and the tools it is allowed
-            to call. The counts are everything on record; during a storm the run list flips to RUNNING, WAITING
-            HITL and SUCCEEDED as each alarm is processed.
+          <h1>Agent observatory</h1>
+          <p
+            className="lead"
+            title="Each agent has a mission, a criticality and the tools it may call. The counts are everything on record; during a storm the run list moves through running, waiting for a decision and succeeded as each alarm is processed."
+          >
+            Twelve agents under one supervisor: their missions, records and live runs.
           </p>
         </div>
       </div>
@@ -114,13 +149,19 @@ export default function Agents({ tick = 0 }: { tick?: number }) {
                     <span>
                       avg <strong>{fmtMs(s?.avg_ms)}</strong>
                     </span>
-                    <span style={failed ? { color: "#ffb4c0" } : undefined}>
-                      <strong>{fmtInt(failed)}</strong> failed
-                    </span>
+                    {failed ? (
+                      <span className="attn danger">
+                        <IconDot /> <strong>{fmtInt(failed)}</strong> failed
+                      </span>
+                    ) : (
+                      <span>
+                        <strong>{fmtInt(failed)}</strong> failed
+                      </span>
+                    )}
                     {s?.last_step_at && <span>last {fmtTime(s.last_step_at)}</span>}
                   </div>
                   <div className="agent-tags">
-                    {a.node_ids?.length ? `Hops ${a.node_ids.join(", ")}` : "Runs on request"}
+                    {a.node_ids?.length ? `Hops: ${a.node_ids.map(nodeLabel).join(", ")}` : "Runs on request"}
                     {"; "}
                     {a.criticality === "fail_closed" ? "an error stops the run" : "an error fails only its step"}
                     {a.mcp?.length ? `; ${a.mcp.length} tool connection${a.mcp.length === 1 ? "" : "s"} declared` : ""}
@@ -131,20 +172,45 @@ export default function Agents({ tick = 0 }: { tick?: number }) {
           </div>
         </div>
         <div className="panel">
-          <h3>Live / recent runs (EAT)</h3>
-          <div className="list">
-            {runs.length === 0 && (
-              <div className="empty">No runs yet — launch the rain storm from Mission Control.</div>
+          <div className="panel-head">
+            <h3>Live and recent runs</h3>
+            <span className="muted">Times in EAT</span>
+          </div>
+          <div className="list" aria-busy={runs === null || undefined}>
+            {runs === null && runsFailed && (
+              <div className="empty" role="alert">
+                Couldn't load the runs.{" "}
+                <button className="btn sm" onClick={() => setRetry((n) => n + 1)}>
+                  Retry
+                </button>
+              </div>
             )}
-            {runs.slice(0, 15).map((r) => (
+            {runs === null && !runsFailed && (
+              <div className="skeleton-rows" aria-hidden="true">
+                {Array.from({ length: 6 }, (_, i) => (
+                  <span key={i} className="skeleton" />
+                ))}
+              </div>
+            )}
+            {runs !== null && runs.length === 0 && (
+              <div className="empty">
+                No runs yet. Launch the rain storm from <Link to="/">Mission control</Link>.
+              </div>
+            )}
+            {(runs || []).slice(0, 15).map((r) => (
               <div key={r.id} className="row" style={{ cursor: "default" }}>
-                <span className={runChipClass(r.status)}>{runStatusWord(r.status)}</span>
+                {/* A success is the normal outcome, so it is a word; only the other states are chips. */}
+                {String(r.status).toUpperCase() === "SUCCEEDED" ? (
+                  <span className="muted">{runStatusWord(r.status)}</span>
+                ) : (
+                  <span className={runChipClass(r.status)}>{runStatusWord(r.status)}</span>
+                )}
                 <div>
                   <div>
-                    <strong>{humanGraph(r.graph_name)}</strong> <span className="muted">{String(r.trigger || "").toLowerCase()}</span>
+                    <strong>{humanGraph(r.graph_name)}</strong> <span className="muted">{humanEnum(r.trigger)}</span>
                   </div>
                   <div className="muted">
-                    {r.current_node ? `at ${r.current_node}, ` : ""}
+                    {r.current_node ? `at ${nodeLabel(r.current_node)}, ` : ""}
                     {r.steps?.length ?? 0} steps
                   </div>
                   {/* A failed run keeps current_node at the node that broke; error_summary says why.

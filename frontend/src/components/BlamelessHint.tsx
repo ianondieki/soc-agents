@@ -14,16 +14,15 @@
  * does not try to infer one — it names the two validated fields and the vocabulary to use
  * instead, and stops there.
  *
- * 3 a.m. rules (§7.10): the tripped state is an amber chip **with the word REJECTED in it**,
- * never colour alone; nothing animates.
+ * 3 a.m. rules (§7.10): the tripped state is an amber chip **with the word "rejected" in it**,
+ * never colour alone; the untripped rule is a plain label, not a chip; nothing animates.
  */
 export default function BlamelessHint({ tripped = false }: { tripped?: boolean }) {
   return (
     <div className="pir-hint" data-tripped={tripped ? "yes" : "no"}>
       <div className="pir-hint-head">
-        <span className={tripped ? "chip warn" : "chip"}>
-          {tripped ? "REJECTED · BLAMELESS RULE" : "BLAMELESS RULE"}
-        </span>
+        {tripped && <span className="chip warn">rejected</span>}
+        <span className="muted">Blameless rule</span>
         <strong>Describe what the system allowed, not who did it.</strong>
       </div>
       <p className="muted" style={{ margin: "0.4rem 0 0" }}>

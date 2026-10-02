@@ -1,3 +1,4 @@
+import { humanEnum } from "../lib/agents";
 import { isPeriod, SCORECARD_STATUSES } from "./scorecardModel";
 
 /**
@@ -38,7 +39,7 @@ export default function VendorPeriodPicker({
           {vendors.map((v) => (
             <option key={v.code} value={v.code}>
               {v.code}
-              {v.name && v.name !== v.code ? " · " + v.name : ""}
+              {v.name && v.name !== v.code ? " (" + v.name + ")" : ""}
             </option>
           ))}
         </select>
@@ -69,12 +70,12 @@ export default function VendorPeriodPicker({
           <option value="ALL">All I may see</option>
           {SCORECARD_STATUSES.map((s) => (
             <option key={s} value={s}>
-              {s}
+              {humanEnum(s)}
             </option>
           ))}
         </select>
       </label>
-      {periodBad && <span className="chip warn">PERIOD MUST BE YYYY-MM · filter ignored</span>}
+      {periodBad && <span className="chip warn">period must be YYYY-MM; filter ignored</span>}
     </div>
   );
 }

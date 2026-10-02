@@ -1,41 +1,90 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { api } from "../api";
+import { humanEnum } from "../lib/agents";
+
+const COLS = 6;
 
 export default function Problems({ tick }: { tick: number }) {
-  const [rows, setRows] = useState<any[]>([]);
+  // null until the first answer, so loading never reads as "no problems".
+  const [rows, setRows] = useState<any[] | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [retry, setRetry] = useState(0);
+
   useEffect(() => {
-    api.problems().then(setRows).catch(console.error);
-  }, [tick]);
+    let live = true;
+    api
+      .problems()
+      .then((r) => {
+        if (!live) return;
+        setRows(Array.isArray(r) ? r : []);
+        setFailed(false);
+      })
+      .catch((e) => {
+        console.error(e);
+        if (live) setFailed(true);
+      });
+    return () => {
+      live = false;
+    };
+  }, [tick, retry]);
+
   return (
     <div>
-      <h1 className="page-title">Problem Board</h1>
-      <p className="muted">Recurring / chronic sites (power, MW, fibre) across Safaricom regions.</p>
+      <div className="page-head">
+        <div>
+          <h1>Problems</h1>
+          <p className="lead">Sites that keep failing on power, microwave or fibre, across the regions.</p>
+        </div>
+      </div>
       <div className="panel">
-        <table>
-          <thead>
-            <tr>
-              <th>Problem</th>
-              <th>Site</th>
-              <th>Region</th>
-              <th>Count</th>
-              <th>Domain</th>
-              <th>Summary</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((p) => (
-              <tr key={p.id}>
-                <td>{p.problem_number}</td>
-                <td>{p.site_id}</td>
-                <td>{p.region_code}</td>
-                <td>{p.occurrence_count}</td>
-                <td>{p.dominant_failure_domain}</td>
-                <td className="muted">{p.summary}</td>
+        {failed && rows === null ? (
+          <div className="empty" role="alert">
+            Couldn't load the problem records.{" "}
+            <button className="btn sm" onClick={() => setRetry((n) => n + 1)}>
+              Retry
+            </button>
+          </div>
+        ) : (
+          <table>
+            <thead>
+              <tr>
+                <th>Problem</th>
+                <th>Site</th>
+                <th>Region</th>
+                <th>Count</th>
+                <th>Domain</th>
+                <th>Summary</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
-        {rows.length === 0 && <div className="empty">No open problems yet. Repeat a site failure 3× to open one.</div>}
+            </thead>
+            <tbody aria-busy={rows === null || undefined}>
+              {rows === null &&
+                Array.from({ length: 6 }, (_, i) => (
+                  <tr key={"sk-" + i}>
+                    <td colSpan={COLS}>
+                      <div className="skeleton" />
+                    </td>
+                  </tr>
+                ))}
+              {(rows || []).map((p) => (
+                <tr key={p.id}>
+                  <td>{p.problem_number}</td>
+                  <td>{p.site_id}</td>
+                  <td>{p.region_code}</td>
+                  <td>{p.occurrence_count}</td>
+                  <td>{humanEnum(p.dominant_failure_domain)}</td>
+                  <td className="muted">{p.summary}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+        {rows !== null && rows.length === 0 && (
+          <div className="empty">
+            No open problems yet. A site that fails three times opens one; inject repeats from{" "}
+            <Link to="/settings">Settings</Link>.
+          </div>
+        )}
       </div>
     </div>
   );
