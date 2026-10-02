@@ -1,6 +1,7 @@
 import { NavLink, Route, Routes, useLocation, useNavigate } from "react-router-dom";
-import { Suspense, lazy, useCallback, useEffect, useRef, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { api } from "./api";
+import { apiHealthy, subscribeHealth } from "./realtime/apiHealth";
 import { useRealtime } from "./realtime/useRealtime";
 import { RealtimeProvider, useSuppressedCount } from "./realtime/RealtimeContext";
 import {
@@ -15,7 +16,17 @@ import {
   type StormState,
 } from "./lib/demo";
 import { detailOf } from "./lib/apiError";
-import { WAITING_WORD, humanAutonomy, humanEnum, regionName } from "./lib/agents";
+import { WAITING_WORD, autonomyMeaning, humanAutonomy, humanEnum, regionName } from "./lib/agents";
+import {
+  PROJECTOR_MEANING,
+  QUIET_MEANING,
+  applyDisplay,
+  printedLine,
+  readDisplay,
+  recallQuietBeforeProjector,
+  rememberQuietBeforeProjector,
+  usePrinting,
+} from "./lib/display";
 
 // Every page is its own chunk: the first visit downloads the shell and the one page it opened,
 // not all seventeen. A page's own stylesheet (Audit.css, Wallboard.escalation.css…) travels
@@ -162,23 +173,55 @@ function useScrollableRegions(pathname: string, revisions: unknown) {
   }, [pathname, revisions]);
 }
 
-/** Quiet mode's top-bar toggle. Its own component, so the held-back count it names re-renders
- *  this button only, never App. */
+/** Quiet mode's toggle. Its own component, so the held-back count it names re-renders this button
+ *  only, never App. */
 function QuietToggle({ on, onToggle }: { on: boolean; onToggle: () => void }) {
   const suppressed = useSuppressedCount();
   return (
     <button
       type="button"
-      className="btn sm chip-wide"
+      className="btn sm"
       onClick={onToggle}
       aria-pressed={on}
-      title={
-        "Night shift: stop animations and non-critical ticker churn. P1 and P2 tickets and decisions stay live." +
-        (on && suppressed > 0 ? ` ${suppressed} non-critical lines held back.` : "")
-      }
+      title={QUIET_MEANING + (on && suppressed > 0 ? ` ${suppressed} non-critical lines held back.` : "")}
     >
       {on ? "Quiet mode on" : "Quiet mode"}
     </button>
+  );
+}
+
+/** The two display toggles, Quiet mode and Projector: in the top bar from 961 px, inside the Menu
+ *  below it (styles.css shows one pair or the other). What each does is also said in words on
+ *  Settings, since a tablet never shows a title. */
+function DisplayToggles({
+  quiet,
+  onQuiet,
+  projector,
+  onProjector,
+}: {
+  quiet: boolean;
+  onQuiet: () => void;
+  projector: boolean;
+  onProjector: () => void;
+}) {
+  return (
+    <>
+      <QuietToggle on={quiet} onToggle={onQuiet} />
+      <button type="button" className="btn sm" onClick={onProjector} aria-pressed={projector} title={PROJECTOR_MEANING}>
+        Projector
+      </button>
+    </>
+  );
+}
+
+/** "Printed 02 Oct 2026, 15:24 EAT" at the foot of every printed page (a fixed element repeats on
+ *  each sheet); nothing on screen. Re-rendered at the moment of printing. */
+function PrintFooter() {
+  usePrinting();
+  return (
+    <div className="print-footer" aria-hidden="true">
+      {printedLine()}
+    </div>
   );
 }
 
@@ -193,13 +236,6 @@ function prefersReducedMotion(): boolean {
   }
 }
 
-/** What each autonomy level lets the agents do on their own: the top bar's tooltip on "L2 guarded". */
-const AUTONOMY_MEANING: Record<string, string> = {
-  L1_COPILOT: "Autonomy L1: agents draft every ticket and message; a person approves each one before it goes.",
-  L2_GUARDED: "Autonomy L2: agents open tickets and send P3–P4 messages; P1 and P2 wait for a person.",
-  L3_CONDITIONAL: "Autonomy L3: agents send everything except P1 messages, which wait for a person.",
-};
-
 /** How long the rail takes to replay the last run (12 steps at ~100 ms) before "Storm complete". */
 const RAIL_SETTLE_MS = 1400;
 
@@ -207,7 +243,11 @@ export default function App() {
   const [profile, setProfile] = useState<any>(null);
   const [metrics, setMetrics] = useState<any>(null);
   const [session, setSession] = useState<any>({ display_name: "NOC Analyst", role: "noc_analyst" });
-  const [apiOk, setApiOk] = useState(true);
+  // Two consecutive failed calls, any calls, before the page says "API unreachable"
+  // (realtime/apiHealth.ts counts them for every request in one place).
+  const apiOk = useSyncExternalStore(subscribeHealth, apiHealthy);
+  // The metrics call alone failing is not an outage: the KPI strip says its counts are stale.
+  const [metricsFailed, setMetricsFailed] = useState(false);
   const [manualTick, setManualTick] = useState(0);
   const [navOpen, setNavOpen] = useState(false);
   const [guideOpen, setGuideOpen] = useState(false);
@@ -222,15 +262,20 @@ export default function App() {
   connectedRef.current = connected;
 
   // The 8-second heartbeat refetches the metrics only; the lists follow the WS revisions, and
-  // fall back to the heartbeat only while the stream is down (manualTick below).
+  // fall back to the heartbeat only while the stream is down (manualTick below). A failed metrics
+  // call asks one other, small route whether the API is there at all: if it answers, only the
+  // counts are stale; if it fails too, that is the second failure in a row and the page says so.
   const refresh = useCallback(() => {
     api
       .metrics()
       .then((m) => {
         setMetrics(m);
-        setApiOk(true);
+        setMetricsFailed(false);
       })
-      .catch(() => setApiOk(false));
+      .catch(() => {
+        setMetricsFailed(true);
+        api.session().catch(() => undefined);
+      });
   }, []);
   const loadIdentity = useCallback(() => {
     api.profile().then(setProfile).catch(() => undefined);
@@ -238,13 +283,19 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    loadIdentity();
-    refresh();
+    // A tick later, so a mount React undoes at once (its development double mount) asks nothing.
+    const first = window.setTimeout(() => {
+      loadIdentity();
+      refresh();
+    }, 0);
     const id = window.setInterval(() => {
       refresh();
       if (!connectedRef.current) setManualTick((t) => t + 1);
     }, 8000);
-    return () => window.clearInterval(id);
+    return () => {
+      window.clearTimeout(first);
+      window.clearInterval(id);
+    };
   }, [refresh, loadIdentity]);
 
   // Outage recovery: when the stream reconnects or the API answers again, every list refetches
@@ -268,7 +319,13 @@ export default function App() {
   // that can actually move a count (see realtime/renderers.ts).
   useEffect(() => {
     if (revisions.metrics === 0) return; // the mount load is refresh()'s job
-    api.metrics().then(setMetrics).catch(() => undefined);
+    api
+      .metrics()
+      .then((m) => {
+        setMetrics(m);
+        setMetricsFailed(false);
+      })
+      .catch(() => setMetricsFailed(true));
   }, [revisions.metrics]);
 
   // Quiet mode is signalled on <html> so it also covers the standalone
@@ -284,9 +341,39 @@ export default function App() {
     }
   }, [quietMode]);
 
+  // Projector mode: <html data-display="projector">, set before the first paint by index.html.
+  // Switching it on turns quiet mode on too; switching it off gives quiet mode back as it was
+  // (remembered across a reload, as the mode itself is).
+  const [projector, setProjector] = useState(() => readDisplay() === "projector");
+  const toggleProjector = () => {
+    const next = !projector;
+    applyDisplay(next ? "projector" : "standard");
+    setProjector(next);
+    if (next) {
+      rememberQuietBeforeProjector(quietMode);
+      if (!quietMode) setQuietMode(true);
+    } else if (recallQuietBeforeProjector() === false) {
+      setQuietMode(false);
+    }
+  };
+  const toggleQuiet = () => setQuietMode(!quietMode);
+
   // The phone menu closes on every route change.
   useEffect(() => {
     setNavOpen(false);
+  }, [loc.pathname]);
+
+  // With 40 px touch targets the sidebar can be taller than a tablet's screen: keep the current
+  // page's link in view inside it.
+  useEffect(() => {
+    const navEl = document.querySelector<HTMLElement>(".nav");
+    const link = navEl?.querySelector<HTMLElement>("a.active");
+    if (!navEl || !link || navEl.scrollHeight <= navEl.clientHeight + 1) return;
+    const top = link.offsetTop;
+    const bottom = top + link.offsetHeight;
+    if (top < navEl.scrollTop || bottom > navEl.scrollTop + navEl.clientHeight) {
+      navEl.scrollTop = Math.max(0, top - navEl.clientHeight / 2);
+    }
   }, [loc.pathname]);
 
   // A region that scrolls must be reachable from the keyboard (WCAG 2.1.1). Lists, tickers,
@@ -425,8 +512,8 @@ export default function App() {
   const isWall = loc.pathname.startsWith("/wallboard");
   const org = profile?.display_name ? String(profile.display_name).replace(" (demo profile)", "") : "Connecting…";
   const orgMeta = `${humanAutonomy(profile?.autonomy_level)}, ${profile?.shift ? String(profile.shift).toLowerCase() : "day"} shift`;
-  // "L2 guarded", explained once: what the agents may do on their own at this level.
-  const autonomyTitle = AUTONOMY_MEANING[String(profile?.autonomy_level || "L2_GUARDED").toUpperCase()] || orgMeta;
+  // "L2 guarded", explained: what the agents may do on their own at this level (Settings says it too).
+  const autonomyTitle = autonomyMeaning(profile?.autonomy_level) || orgMeta;
   const pending: number | null = typeof metrics?.hitl_pending === "number" ? metrics.hitl_pending : metrics ? 0 : null;
 
   if (isWall) {
@@ -440,6 +527,7 @@ export default function App() {
                 element={
                   <Wallboard
                     metrics={metrics}
+                    metricsStale={metricsFailed}
                     rev={revisions.incidents}
                     signalsRev={revisions.signals}
                   />
@@ -448,6 +536,7 @@ export default function App() {
             </Routes>
           </Suspense>
         </main>
+        <PrintFooter />
       </RealtimeProvider>
     );
   }
@@ -491,6 +580,13 @@ export default function App() {
                 </div>
               </div>
             ))}
+            {/* Below 960 px the display toggles live here, in the Menu, not in the top bar. */}
+            <div className="nav-group nav-display">
+              <div className="nav-group-title">Display</div>
+              <div className="nav-display-row">
+                <DisplayToggles quiet={quietMode} onQuiet={toggleQuiet} projector={projector} onProjector={toggleProjector} />
+              </div>
+            </div>
           </div>
         </nav>
         <div className="main">
@@ -533,21 +629,18 @@ export default function App() {
               >
                 Guided demo
               </button>
-              <QuietToggle on={quietMode} onToggle={() => setQuietMode(!quietMode)} />
+              <span className="topbar-display">
+                <DisplayToggles quiet={quietMode} onQuiet={toggleQuiet} projector={projector} onProjector={toggleProjector} />
+              </span>
             </div>
           </header>
+          {/* Two calls in a row failed: one sentence for the floor. How to start the backend is in
+              docs/RUNBOOK.md ("The UI says API unreachable"), not on this screen. */}
           {!apiOk && (
             <div className="storm-banner danger app-alert" role="alert">
               <div>
                 <strong>API unreachable</strong>
-                {/* One sentence on the floor; the developer's dev-server route lives in the title. */}
-                <div
-                  className="muted"
-                  title="For the UI dev server run `cd frontend && npm run dev` and open http://127.0.0.1:5173, or build the UI and open http://127.0.0.1:8000."
-                >
-                  The page retries every 8 seconds. Start the backend with{" "}
-                  <code>python -m uvicorn noc_agents.main:app --app-dir src --port 8000</code>.
-                </div>
+                <div className="muted">Showing the last data received; the page retries every 8 seconds.</div>
               </div>
             </div>
           )}
@@ -576,6 +669,7 @@ export default function App() {
                 element={
                   <MissionControl
                     metrics={metrics}
+                    metricsStale={metricsFailed}
                     profile={profile}
                     incidentsRev={revisions.incidents + manualTick}
                     hitlRev={revisions.hitl + manualTick}
@@ -640,6 +734,7 @@ export default function App() {
           </main>
         </div>
       </div>
+      <PrintFooter />
     </RealtimeProvider>
   );
 }

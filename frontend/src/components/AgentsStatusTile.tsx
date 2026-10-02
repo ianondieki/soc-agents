@@ -121,10 +121,12 @@ export default function AgentsStatusTile() {
           if (kind !== "unreachable") setReading(null);
           setFailure((prev) => (prev && prev.kind === kind ? prev : { kind, since: Date.now() }));
         });
-    load();
+    // A tick later, so a mount React undoes at once (its development double mount) asks nothing.
+    const first = window.setTimeout(load, 0);
     const id = window.setInterval(load, POLL_MS);
     return () => {
       live = false;
+      window.clearTimeout(first);
       window.clearInterval(id);
     };
   }, [schedulerRev]);

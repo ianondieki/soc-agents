@@ -5,6 +5,33 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#050a14" />
     <title>Kenya NOC Mission Control</title>
+    <!-- Display mode before the first paint (lib/display.ts): ?display=projector (or =standard)
+         sets and stores it, so a TV opened on that link and its Wallboard keep it; otherwise the
+         stored choice. Projector turns quiet mode on; quiet mode is applied here too, so nothing
+         animates before the app has read it. -->
+    <script>
+      (function () {
+        var d = document.documentElement, store = null, mode = null, quiet = null;
+        try { store = window.localStorage; } catch (e) {}
+        try {
+          var q = new URLSearchParams(location.search).get("display");
+          if (q === "projector" || q === "standard") mode = q;
+        } catch (e) {}
+        try {
+          if (mode && store && mode !== store.getItem("noc_display_v1")) {
+            if (mode === "projector") {
+              store.setItem("noc_quiet_before_projector_v1", store.getItem("noc_quiet_mode_v1") === "1" ? "1" : "0");
+              store.setItem("noc_quiet_mode_v1", "1");
+            }
+            store.setItem("noc_display_v1", mode);
+          }
+          if (!mode && store) mode = store.getItem("noc_display_v1");
+          if (store) quiet = store.getItem("noc_quiet_mode_v1");
+        } catch (e) {}
+        if (mode === "projector") d.setAttribute("data-display", "projector");
+        if (quiet === "1" || (quiet === null && mode === "projector")) d.setAttribute("data-quiet", "on");
+      })();
+    </script>
     <!-- The three Sans weights every page sets text in: fetched with the stylesheet, not after it. -->
     <link rel="preload" href="/fonts/ibm-plex-sans-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin />
     <link rel="preload" href="/fonts/ibm-plex-sans-latin-600-normal.woff2" as="font" type="font/woff2" crossorigin />

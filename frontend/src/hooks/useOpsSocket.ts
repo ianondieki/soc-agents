@@ -14,10 +14,15 @@ import { useEffect, useRef, useState } from "react";
  * close schedules another attempt, so a dropped WS degrades to "reconnecting"
  * and the periodic REST refresh keeps the screen populated.
  */
-export function useOpsSocket(onMessage?: (data: any) => void) {
+export function useOpsSocket(onMessage?: (data: any) => void, onOpen?: () => void) {
   const [connected, setConnected] = useState(false);
   const onMessageRef = useRef(onMessage);
   onMessageRef.current = onMessage;
+  // Called the moment a connection opens, before its first frame: the server replays recent
+  // frames on every connect, and the caller needs to know where a connection starts to tell that
+  // replay from live frames (realtime/useRealtime.ts).
+  const onOpenRef = useRef(onOpen);
+  onOpenRef.current = onOpen;
 
   useEffect(() => {
     const proto = window.location.protocol === "https:" ? "wss" : "ws";
@@ -34,7 +39,14 @@ export function useOpsSocket(onMessage?: (data: any) => void) {
         if (alive) retry = window.setTimeout(connect, 2500);
         return;
       }
-      ws.onopen = () => setConnected(true);
+      ws.onopen = () => {
+        try {
+          onOpenRef.current?.();
+        } catch {
+          /* the caller's bookkeeping must never stop the socket */
+        }
+        setConnected(true);
+      };
       ws.onclose = () => {
         setConnected(false);
         if (alive) retry = window.setTimeout(connect, 2000);

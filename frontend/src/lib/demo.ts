@@ -1,5 +1,6 @@
 /** Per-browser-session demo state and the live storm runner. In a plain module, not in a
  *  component file, so App and the pages that read them never import each other. */
+import { noteFailure, noteResponse } from "../realtime/apiHealth";
 
 /** Set once a storm has finished in this browser session; the guide reads "Storm done". Nothing
  *  starts a storm by itself: the presenter's press of Launch is the opening beat. */
@@ -66,11 +67,18 @@ async function call<T>(path: string, init: RequestInit | undefined, timeoutMs: n
   const ctl = new AbortController();
   const timer = window.setTimeout(() => ctl.abort(), timeoutMs);
   try {
-    const r = await fetch(path, {
-      ...init,
-      headers: { "Content-Type": "application/json", ...(init?.headers || {}) },
-      signal: ctl.signal,
-    });
+    let r: Response;
+    try {
+      r = await fetch(path, {
+        ...init,
+        headers: { "Content-Type": "application/json", ...(init?.headers || {}) },
+        signal: ctl.signal,
+      });
+    } catch (e) {
+      noteFailure(path); // the same one tracker as api.ts: two failures in a row is "API unreachable"
+      throw e;
+    }
+    noteResponse(r, path);
     if (!r.ok) {
       const t = await r.text();
       throw new Error(`${r.status}: ${t}`);

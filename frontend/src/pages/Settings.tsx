@@ -1,7 +1,8 @@
 import { memo, useCallback, useEffect, useId, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api";
-import { humanEnum, priorityTitle } from "../lib/agents";
+import { autonomyMeaning, humanEnum, priorityTitle } from "../lib/agents";
+import { PROJECTOR_MEANING, QUIET_MEANING } from "../lib/display";
 import { detailOf, statusOf } from "../lib/apiError";
 import { IconAlert, IconDot } from "../lib/icons";
 import { MOCK_EMAIL_LINE } from "../realtime/renderers";
@@ -226,6 +227,7 @@ function Settings({
   onResumeStorm: () => void;
 }) {
   const sessionId = useId();
+  const autonomyId = useId();
   const emailId = useId();
   const regionsId = useId();
   const stormId = useId();
@@ -327,6 +329,21 @@ function Settings({
       </div>
 
       <div className="stack">
+        {/* What the top bar's tooltips say, in words a tablet can read (a finger never sees a title). */}
+        <section className="panel" aria-labelledby={autonomyId}>
+          <h2 id={autonomyId} className="panel-title">
+            Autonomy and display
+          </h2>
+          <dl className="rail-dl settings-note">
+            <dt>Autonomy</dt>
+            <dd>{autonomyMeaning(profile?.autonomy_level).replace(/^Autonomy\s+/, "")}</dd>
+            <dt>Quiet mode</dt>
+            <dd>{QUIET_MEANING}</dd>
+            <dt>Projector</dt>
+            <dd>{PROJECTOR_MEANING}</dd>
+          </dl>
+        </section>
+
         <section className="panel" aria-labelledby={sessionId}>
           <h2 id={sessionId} className="panel-title">
             Session role (team demo)

@@ -126,10 +126,12 @@ export default function RedactionMissChip() {
           });
         })
         .catch(() => undefined);
-    load();
+    // A tick later, so a mount React undoes at once (its development double mount) asks nothing.
+    const first = window.setTimeout(load, 0);
     const id = window.setInterval(load, AUDIT_POLL_MS);
     return () => {
       live = false;
+      window.clearTimeout(first);
       window.clearInterval(id);
     };
   }, [auditRev]);

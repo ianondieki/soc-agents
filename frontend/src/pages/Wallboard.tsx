@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api } from "../api";
 import CardBoundary from "../components/CardBoundary";
 import RiskStrip from "../components/RiskStrip";
@@ -6,7 +6,7 @@ import AgentsStatusTile from "../components/AgentsStatusTile";
 import RedactionMissChip from "../components/RedactionMissChip";
 import { humanEnum } from "../lib/agents";
 import { labelFor } from "../lib/hitl";
-import { fmtEAT } from "../lib/time";
+import { fmtEAT, parseInstant } from "../lib/time";
 import "./Wallboard.escalation.css";
 
 /**
@@ -63,12 +63,40 @@ const nameOf = (s: unknown) => {
 /** Skeleton bar widths for the cards shown before the first answer. */
 const SKELETON_WIDTHS = ["46%", "78%", "62%", "54%"];
 
+/** The glass's order: P1 first, then P2; within a priority the ticket open longest first. */
+const RANK: Record<string, number> = { P1: 0, P2: 1 };
+function wallOrder(a: any, b: any): number {
+  const r = (RANK[a?.priority] ?? 9) - (RANK[b?.priority] ?? 9);
+  if (r) return r;
+  const ta = parseInstant(a?.created_at)?.getTime() ?? Infinity;
+  const tb = parseInstant(b?.created_at)?.getTime() ?? Infinity;
+  if (ta !== tb) return ta < tb ? -1 : 1;
+  return String(a?.incident_number ?? "").localeCompare(String(b?.incident_number ?? ""));
+}
+
+/** Below this width the Wallboard is a phone looking at the glass: it scrolls like any page. */
+const FIT_MIN_WIDTH = 701;
+
+/** One header figure: a number read from the back of the room, its label small beneath. */
+function Stat({ label, value, tone }: { label: string; value: number | null | undefined; tone?: "p1" | "p2" | "hitl" }) {
+  const n = typeof value === "number" ? value : null;
+  return (
+    <div className={"wb-stat" + (tone && n ? ` ${tone}` : "")}>
+      <dt>{label}</dt>
+      <dd>{n == null ? "—" : n}</dd>
+    </div>
+  );
+}
+
 export default function Wallboard({
   metrics,
+  metricsStale = false,
   rev = 0,
   signalsRev = 0,
 }: {
   metrics: any;
+  /** The metrics call failed while the API still answers: the header counts are the last ones. */
+  metricsStale?: boolean;
   rev?: number;
   /** Debounced `signals` slice revision — see realtime/renderers.ts. */
   signalsRev?: number;
@@ -87,7 +115,9 @@ export default function Wallboard({
       api
         .incidents()
         .then((all) => {
-          setRows(all.filter((i) => ["P1", "P2"].includes(i.priority) && !["CLOSED", "CANCELLED"].includes(i.status)));
+          setRows(
+            all.filter((i) => ["P1", "P2"].includes(i.priority) && !["CLOSED", "CANCELLED"].includes(i.status)).sort(wallOrder)
+          );
           setLastOk(new Date());
           setStale(false);
         })
@@ -102,8 +132,11 @@ export default function Wallboard({
         .hitl()
         .then((tasks) => setRed(redCards(Array.isArray(tasks) ? tasks : [])))
         .catch(() => undefined);
-    load();
-    loadRed();
+    // A tick later, so a mount React undoes at once (its development double mount) asks nothing.
+    const first = window.setTimeout(() => {
+      load();
+      loadRed();
+    }, 0);
     // `rev` is the debounced `incidents` slice revision, so a storm refreshes
     // the wall once per burst instead of once per frame. The 5 s poll stays as
     // the fallback for a dropped WS.
@@ -111,7 +144,10 @@ export default function Wallboard({
       load();
       loadRed();
     }, 5000);
-    return () => window.clearInterval(id);
+    return () => {
+      window.clearTimeout(first);
+      window.clearInterval(id);
+    };
   }, [rev, retry]);
 
   const list = rows || [];
@@ -120,26 +156,112 @@ export default function Wallboard({
   const onGrid = new Set(list.map((i) => String(i.id)));
   const offGrid = red.filter((c) => !c.incident_id || !onGrid.has(c.incident_id));
 
+  // A flag most tiles carry is noise on each tile: said once in the header instead.
+  const decisionOf = (i: any) => Boolean(i.requires_hitl) && !redByIncident.has(String(i.id));
+  const mpesaCount = list.filter((i) => i.mpesa_risk).length;
+  const decisionCount = list.filter(decisionOf).length;
+  const dropMpesa = mpesaCount * 2 > list.length;
+  const dropDecision = decisionCount * 2 > list.length;
+  const tileFlags = (i: any) => ({ mpesa: !dropMpesa && !!i.mpesa_risk, decision: !dropDecision && decisionOf(i) });
+  const anyTileFlag = list.some((i) => {
+    const f = tileFlags(i);
+    return f.mpesa || f.decision;
+  });
+
+  // ---- fit the glass: never a scrollbar on the wall ------------------------------------------
+  // As many whole rows of tiles as fit under the header; when the tickets need more, the last
+  // tile says how many more there are. Tiles are one height (the grid's rows are 1fr), so one
+  // tile measures them all.
+  const gridRef = useRef<HTMLDivElement>(null);
+  const footRef = useRef<HTMLParagraphElement>(null);
+  const [cap, setCap] = useState<number | null>(null);
+  const [viewport, setViewport] = useState(0);
+  useEffect(() => {
+    const on = () => setViewport((v) => v + 1);
+    window.addEventListener("resize", on);
+    // The fonts arriving can change a tile's height.
+    document.fonts?.ready.then(on).catch(() => undefined);
+    // Projector mode changes the type size: measure again when <html data-display> changes.
+    const mo = typeof MutationObserver !== "undefined" ? new MutationObserver(on) : null;
+    mo?.observe(document.documentElement, { attributes: true, attributeFilter: ["data-display"] });
+    return () => {
+      window.removeEventListener("resize", on);
+      mo?.disconnect();
+    };
+  }, []);
+  useLayoutEffect(() => {
+    const g = gridRef.current;
+    if (!g) return;
+    if (window.innerWidth < FIT_MIN_WIDTH) {
+      setCap(null);
+      return;
+    }
+    const tile = g.querySelector<HTMLElement>(".wb-card");
+    if (!tile) return;
+    const cs = window.getComputedStyle(g);
+    const cols = Math.max(1, cs.gridTemplateColumns.split(" ").filter(Boolean).length);
+    const gap = parseFloat(cs.rowGap) || 0;
+    const tileH = tile.getBoundingClientRect().height;
+    const top = g.getBoundingClientRect().top + window.scrollY;
+    const foot = footRef.current;
+    const footH = foot ? foot.getBoundingClientRect().height + (parseFloat(window.getComputedStyle(foot).marginTop) || 0) : 0;
+    const wall = g.parentElement;
+    const padB = wall ? parseFloat(window.getComputedStyle(wall).paddingBottom) || 0 : 0;
+    const avail = window.innerHeight - top - footH - padB;
+    const fitRows = Math.max(1, Math.floor((avail + gap) / (tileH + gap)));
+    const next = cols * fitRows;
+    setCap((c) => (c === next ? c : next));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows, red.length, offGrid.length, viewport, dropMpesa, dropDecision, anyTileFlag, stale, metricsStale]);
+
+  const overflow = cap != null && list.length > cap;
+  const shown = overflow ? list.slice(0, Math.max(1, cap - 1)) : list;
+  const hidden = list.slice(shown.length);
+  const hiddenP1 = hidden.filter((i) => i.priority === "P1").length;
+
   return (
     <div className="wallboard">
       <div className="wb-head">
         <h1>
           NOC WALLBOARD <span className="wb-head-sub">SAFARICOM DEMO</span>
         </h1>
-        <div className="chips">
-          {/* Old tiles on the glass after a failed poll. Before the first answer the grid says so instead. */}
-          {stale && lastOk && (
-            <span className="chip" role="status">
-              Not updating since {fmtEAT(lastOk)}
-            </span>
-          )}
-          <span className="chip">Open {metrics?.open_total ?? "—"}</span>
-          <span className="chip hitl">Decisions {metrics?.hitl_pending ?? 0}</span>
-          {red.length > 0 && <span className="chip bad">ESCALATED {red.length}</span>}
-          <span className="chip">P1 {metrics?.by_priority?.P1 ?? 0}</span>
-          <span className="chip">P2 {metrics?.by_priority?.P2 ?? 0}</span>
+        <div className="wb-head-right">
+          <div className="chips">
+            {/* Old tiles on the glass after a failed poll. Before the first answer the grid says so instead. */}
+            {stale && lastOk && (
+              <span className="chip" role="status">
+                Not updating since {fmtEAT(lastOk)}
+              </span>
+            )}
+            {metricsStale && (
+              <span className="chip" role="status">
+                Counts aren't updating
+              </span>
+            )}
+            {red.length > 0 && <span className="chip bad">ESCALATED {red.length}</span>}
+          </div>
+          <dl className="wb-stats">
+            <Stat label="Open" value={metrics?.open_total} />
+            <Stat label="Decisions" value={metrics ? metrics.hitl_pending ?? 0 : null} tone="hitl" />
+            <Stat label="P1" value={metrics ? metrics.by_priority?.P1 ?? 0 : null} tone="p1" />
+            <Stat label="P2" value={metrics ? metrics.by_priority?.P2 ?? 0 : null} tone="p2" />
+          </dl>
         </div>
       </div>
+      {(dropMpesa || dropDecision) && list.length > 0 && (
+        <div className="wb-flags wb-flags-head">
+          {dropMpesa && (
+            <span className="danger">
+              M‑PESA AT RISK on {mpesaCount} of {list.length} tickets
+            </span>
+          )}
+          {dropDecision && (
+            <span className="hitl">
+              DECISION WAITING on {decisionCount} of {list.length} tickets
+            </span>
+          )}
+        </div>
+      )}
       {/* Platform alarms (§4.6, §9.6, §10.4): "AGENTS OFFLINE" / circuit-open and the red
           redaction-miss chip. Above everything else on the glass; each boundary's fallback is
           null, so a broken alarm component can never blank the P1/P2 grid. */}
@@ -195,7 +317,7 @@ export default function Wallboard({
           </button>
         </div>
       )}
-      <div className="wb-grid" aria-busy={rows === null || undefined}>
+      <div className="wb-grid" ref={gridRef} aria-busy={rows === null || undefined}>
         {rows === null &&
           !stale &&
           Array.from({ length: 4 }, (_, k) => (
@@ -206,10 +328,9 @@ export default function Wallboard({
             </div>
           ))}
         {rows !== null && rows.length === 0 && <div className="empty">No P1/P2 open — quiet glass.</div>}
-        {list.map((i) => {
+        {shown.map((i) => {
           const esc = redByIncident.get(String(i.id));
-          // The escalated line already says a decision is waiting; the flag would say it twice.
-          const decisionFlag = Boolean(i.requires_hitl) && !esc;
+          const flags = tileFlags(i);
           return (
             <div key={i.id} className={`wb-card ${i.priority}${esc ? " escalated" : ""}`}>
               <div className="big wb-line">
@@ -219,7 +340,8 @@ export default function Wallboard({
               <div className="wb-site">{i.site_name}</div>
               <div className="wb-line wb-meta muted">
                 <span className="mono">{i.region_code}</span>
-                {i.failure_domain && <span>{humanEnum(i.failure_domain)}</span>}
+                {/* The domain only when no category says it more exactly on the status line. */}
+                {i.failure_domain && !i.tt_category && <span>{humanEnum(i.failure_domain)}</span>}
                 <span>{i.users_affected?.toLocaleString()} subscribers</span>
               </div>
               <div className="wb-owner">Owner {nameOf(i.assignee_name)}</div>
@@ -227,10 +349,12 @@ export default function Wallboard({
                 <span>{humanEnum(i.status)}</span>
                 {i.tt_category && <span>{humanEnum(i.tt_category)}</span>}
               </div>
-              {(i.mpesa_risk || decisionFlag) && (
+              {/* The flag line is held on every tile while any tile carries a flag, so the tiles
+                  stay one height. */}
+              {anyTileFlag && (
                 <div className="wb-flags">
-                  {i.mpesa_risk && <span className="danger">M‑PESA AT RISK</span>}
-                  {decisionFlag && <span className="hitl">DECISION WAITING</span>}
+                  {flags.mpesa && <span className="danger">M‑PESA AT RISK</span>}
+                  {flags.decision && <span className="hitl">DECISION WAITING</span>}
                 </div>
               )}
               {esc && (
@@ -246,8 +370,17 @@ export default function Wallboard({
             </div>
           );
         })}
+        {overflow && (
+          <a className="wb-card wb-more" href="/incidents">
+            <span className="wb-more-n">+{hidden.length} more</span>
+            <span className="wb-more-what">
+              {hiddenP1 > 0 ? `${hiddenP1} P1 and ${hidden.length - hiddenP1} P2` : "P2"} tickets, opened more recently
+            </span>
+            <span className="wb-more-where">On the Incident board</span>
+          </a>
+        )}
       </div>
-      <p className="wb-foot muted">
+      <p className="wb-foot muted" ref={footRef}>
         <a href="/">Back to Mission control</a>
       </p>
     </div>

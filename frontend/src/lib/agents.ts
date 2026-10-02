@@ -92,6 +92,22 @@ export function humanAutonomy(level: unknown): string {
   return [lvl, ...rest.map((w) => w.toLowerCase())].join(" ");
 }
 
+/** What each autonomy level lets the agents do on their own. Said in two places from this one map:
+ *  the top bar's tooltip on "L2 guarded" and the Settings page's autonomy sentence (a tablet never
+ *  shows a tooltip). */
+const AUTONOMY_MEANING: Readonly<Record<string, string>> = {
+  L1_COPILOT: "Autonomy L1: agents draft every ticket and message; a person approves each one before it goes.",
+  L2_GUARDED: "Autonomy L2: agents open tickets and send P3–P4 messages; P1 and P2 wait for a person.",
+  L3_CONDITIONAL: "Autonomy L3: agents send everything except P1 messages, which wait for a person.",
+};
+
+/** "Autonomy L2: agents open tickets and send P3–P4 messages; P1 and P2 wait for a person." ("" for
+ *  a level this map does not know). The level defaults to L2, the demo's. */
+export function autonomyMeaning(level: unknown): string {
+  const key = String(level || "L2_GUARDED").toUpperCase();
+  return Object.prototype.hasOwnProperty.call(AUTONOMY_MEANING, key) ? AUTONOMY_MEANING[key] : "";
+}
+
 /** "AWAITING_VENDOR" → "awaiting vendor": an enum as a person reads it. A step or message parked on
  *  a person reads `WAITING_WORD` ("waiting for a decision"), a success reads "done", and a message
  *  released to the sender reads "released for sending". */

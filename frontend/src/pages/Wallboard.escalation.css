@@ -4,34 +4,79 @@
  * rules that must beat a styles.css rule (.muted, .wb-card.P1) stay scoped under .wallboard.
  * Weights stay within the 400–600 that are loaded. */
 
-/* Head: the title left, the counts right, on one baseline. */
+/* Head: the title left; the state chips and the four counts right. The counts are numbers read
+   from the back of the room (48 px), each with a small label under it, never chips. */
 .wb-head {
   display: flex;
   flex-wrap: wrap;
   justify-content: space-between;
-  align-items: baseline;
-  gap: var(--s2) var(--s4);
+  align-items: flex-start;
+  gap: var(--s2) var(--s5);
+  margin-bottom: var(--s3);
 }
+.wallboard .wb-head h1 { margin: 0; line-height: 1.2; }
 .wallboard .wb-head-sub { color: var(--muted); font-weight: 500; margin-left: 0.4em; }
+.wb-head-right { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--s3) var(--s6); }
+.wb-stats { display: flex; flex-wrap: wrap; gap: var(--s2) var(--s6); margin: 0; }
+/* The label is first in the DOM ("Open, 68" to a screen reader) and sits under the number. */
+.wb-stat { display: flex; flex-direction: column-reverse; align-items: flex-end; min-width: 2ch; }
+.wb-stat dd {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 48px;
+  font-weight: 500;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-bright);
+}
+.wb-stat dt { margin-top: 6px; font-size: calc(var(--fs-wall) * 0.8); font-weight: 500; line-height: 1.2; color: var(--muted); }
+.wb-stat.p1 dd { color: var(--p1); }
+.wb-stat.p2 dd { color: var(--p2); }
+.wb-stat.hitl dd { color: var(--hitl); }
 
 /* Separate facts as separate spans, never "A · B · C". */
 .wb-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.15rem 0.75em; }
-.wallboard .wb-site { font-size: var(--fs-lg); margin-top: 0.5rem; }
-.wallboard .wb-meta { margin-top: 0.4rem; font-size: var(--fs-base); }
-.wallboard .wb-owner { margin-top: 0.8rem; font-size: var(--fs-base); }
-.wallboard .wb-foot { margin-top: 2rem; }
+.wallboard .wb-foot { margin: var(--s3) 0 0; }
 
-/* What needs a person on this ticket, big enough to read from the back of the room. */
+/* A tile: every line one line high, cut with an ellipsis rather than wrapped, so every tile is
+   the same height and the page can count how many rows fit the glass. Text at --fs-wall. */
+.wallboard .wb-card > * { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wallboard .wb-card > .wb-line { display: block; }
+.wallboard .wb-card > .wb-line > span + span { margin-left: 0.6em; }
+.wallboard .wb-site { margin-top: 0.25rem; font-size: var(--fs-wall); color: var(--text-bright); }
+.wallboard .wb-meta { margin-top: 0.15rem; font-size: var(--fs-wall); }
+.wallboard .wb-owner { margin-top: 0.15rem; font-size: var(--fs-wall); }
+
+/* What needs a person on this ticket, big enough to read from the back of the room. The line is
+   held (one line high) on every tile while any tile carries a flag. */
 .wallboard .wb-flags {
   display: flex;
   flex-wrap: wrap;
   gap: 0.25rem 1rem;
-  margin-top: 0.6rem;
-  font-size: 1.25rem;
+  margin-top: 0.3rem;
+  min-height: 1.3em;
+  font-size: var(--fs-wall);
   font-weight: 600;
 }
+.wallboard .wb-card > .wb-flags { flex-wrap: nowrap; }
 .wallboard .wb-flags .danger { color: var(--danger); }
 .wallboard .wb-flags .hitl { color: var(--hitl); }
+/* A flag more than half the tiles carry, said once under the head instead of on each tile. */
+.wallboard .wb-flags-head { margin: 0 0 var(--s3); min-height: 0; }
+
+/* The last tile when the tickets need more rows than the glass has: how many more, and where. */
+.wallboard .wb-more {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.25rem;
+  border-style: dashed;
+  color: var(--text-bright);
+  text-decoration: none;
+}
+.wallboard .wb-more:hover { border-color: var(--accent); text-decoration: none; }
+.wallboard .wb-more-n { font-size: calc(var(--fs-wall) * 1.6); font-weight: 600; line-height: 1.15; }
+.wallboard .wb-more-what, .wallboard .wb-more-where { color: var(--muted); }
 
 /* Before the first answer: card-shaped skeletons, never an empty "quiet glass". */
 .wb-card-skeleton { display: grid; gap: var(--s3); min-height: 168px; align-content: start; }

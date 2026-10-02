@@ -3,6 +3,8 @@ import { useOpsSocket } from "../hooks/useOpsSocket";
 import { ANY_INCIDENT, EventRouter } from "./EventRouter";
 import { EventFeed } from "./feed";
 import { zeroRevisions, type Revisions, type Slice } from "./renderers";
+import { onFirstAnswer, serverNow } from "./apiHealth";
+import { parseInstant } from "../lib/time";
 
 const INCIDENT_REV_CAP = 500; // prune the per-incident map on a long shift
 const QUIET_KEY = "noc_quiet_mode_v1";
@@ -11,10 +13,51 @@ const CONNECT_GRACE_MS = 3000;
 
 function loadQuietMode(): boolean {
   try {
-    return window.localStorage.getItem(QUIET_KEY) === "1";
+    const stored = window.localStorage.getItem(QUIET_KEY);
+    if (stored === "1" || stored === "0") return stored === "1";
   } catch {
-    return false; // private window / blocked storage
+    /* private window / blocked storage: fall through */
   }
+  // Nothing stored (or storage blocked): what index.html's bootstrap set, which is on for a
+  // `?display=projector` link (projector turns quiet mode on).
+  try {
+    return document.documentElement.getAttribute("data-quiet") === "on";
+  } catch {
+    return false;
+  }
+}
+
+/** How long a new connection's frames wait for the first REST answer before going through. */
+const HOLD_MAX_MS = 10_000;
+/** Frames held at most while waiting (the replay is 15; a storm adds a few dozen a second). */
+const HOLD_CAP = 400;
+
+/** A frame's server time (ms), from either envelope shape; null when it has none. */
+function frameTime(raw: any): number | null {
+  const env = raw && typeof raw === "object" && raw.event && typeof raw.event === "object" ? raw.event : raw;
+  return parseInstant(env?.ts)?.getTime() ?? null;
+}
+
+/**
+ * Where a connection's replay ends. The server sends its recent frames again on every connect;
+ * those predate the connection, and the lists each page loads on mount already include what they
+ * did. A frame stamped before the cut is history: it bumps no revision and draws no run.
+ *
+ *  - The cut is the moment the connection opened, on the server's clock: realtime/apiHealth.ts
+ *    reads that clock from the REST answers' `Date` headers, so a wrong clock on this machine
+ *    changes nothing. The estimate errs early (the header has one-second resolution and the
+ *    answer's travel time is not subtracted), so a frame from the last second or two before the
+ *    connection can still count as live and cost one refetch; a live frame is never history.
+ *  - A connection that opens before any REST answer has arrived (the first seconds on a slow link)
+ *    holds its frames until the first answer gives the server's clock, or for 10 s at most.
+ */
+interface ReplayGate {
+  cut: number | null;
+  holding: boolean;
+  held: any[];
+  openedAt: number;
+  cancelWait: (() => void) | null;
+  timer: number | null;
 }
 
 /** The event stream as the top bar names it: still connecting (the first ~3 s), live, or down
@@ -113,11 +156,76 @@ export function useRealtime(): RealtimeState {
     };
   }, [feed]);
 
-  const handleMessage = useCallback((raw: any) => {
-    routerRef.current?.handle(raw);
+  const gateRef = useRef<ReplayGate>({ cut: null, holding: false, held: [], openedAt: 0, cancelWait: null, timer: null });
+
+  const deliver = useCallback((raw: any) => {
+    const cut = gateRef.current.cut;
+    const at = frameTime(raw);
+    routerRef.current?.handle(raw, { history: cut != null && at != null && at < cut });
   }, []);
 
-  const { connected } = useOpsSocket(handleMessage);
+  const release = useCallback(() => {
+    const g = gateRef.current;
+    g.cancelWait?.();
+    g.cancelWait = null;
+    if (g.timer != null) window.clearTimeout(g.timer);
+    g.timer = null;
+    g.holding = false;
+    const held = g.held;
+    g.held = [];
+    for (const raw of held) deliver(raw);
+  }, [deliver]);
+
+  const handleOpen = useCallback(() => {
+    const g = gateRef.current;
+    // Frames still held from a connection that dropped predate this one as well.
+    if (g.holding) {
+      if (g.cut == null) g.cut = Number.POSITIVE_INFINITY;
+      release();
+    }
+    g.openedAt = Date.now();
+    const now = serverNow();
+    if (now != null) {
+      g.cut = now;
+      return;
+    }
+    g.holding = true;
+    g.cut = null;
+    g.cancelWait = onFirstAnswer(() => {
+      const est = serverNow();
+      g.cut = est != null ? g.openedAt + (est - Date.now()) : g.openedAt;
+      release();
+    });
+    g.timer = window.setTimeout(() => {
+      // No answer in 10 s: this machine's clock is all there is.
+      g.cut = g.openedAt;
+      release();
+    }, HOLD_MAX_MS);
+  }, [release]);
+
+  const handleMessage = useCallback(
+    (raw: any) => {
+      const g = gateRef.current;
+      if (g.holding) {
+        g.held.push(raw);
+        if (g.held.length > HOLD_CAP) g.held.shift();
+        return;
+      }
+      deliver(raw);
+    },
+    [deliver]
+  );
+
+  useEffect(
+    () => () => {
+      const g = gateRef.current;
+      g.cancelWait?.();
+      if (g.timer != null) window.clearTimeout(g.timer);
+    },
+    []
+  );
+
+  const { connected } = useOpsSocket(handleMessage, handleOpen);
 
   // "Connecting" for the first few seconds, so the top bar never flashes red before the first
   // connection has had a chance; "down" once it was live and dropped, or never came up.

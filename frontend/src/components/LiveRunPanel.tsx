@@ -63,6 +63,10 @@ interface EvRun {
   /** When this tab received the first and the last frame. */
   firstAt: number;
   lastAt: number;
+  /** Its first frames never arrived here (no Ingest step): the run started before this tab's
+   *  connection, whose replay is history and draws nothing. A fragment ("7 of 12 steps") is never
+   *  drawn; the stored row from `/runs` draws the run whole. */
+  partial: boolean;
 }
 
 const msOf = (v: unknown): number | null => parseInstant(v)?.getTime() ?? null;
@@ -98,6 +102,7 @@ function groupRuns(frames: NocEvent[]): EvRun[] {
         startedAt: e.ts,
         firstAt: e.receivedAt,
         lastAt: e.receivedAt,
+        partial: true,
       };
       byId.set(runId, r);
       order.push(runId);
@@ -132,6 +137,7 @@ function groupRuns(frames: NocEvent[]): EvRun[] {
         idx.set(p.node, r.steps.length);
         r.steps.push(next);
       } else r.steps[i] = next;
+      if (p.node === "INGEST") r.partial = false;
       if (p.node === "TICKET") r.ticket = true;
       if (p.incident_number) r.incidentNumber = String(p.incident_number);
     } else if (e.type === "agent.run.finished") {
@@ -151,6 +157,7 @@ function groupRuns(frames: NocEvent[]): EvRun[] {
   }
   return order
     .map((id) => byId.get(id)!)
+    .filter((r) => !r.partial)
     .filter((r) => r.steps.length > 0 || r.ticket || r.foldInto || (r.finished && isLifecycleNode(r.failedNode)))
     .reverse();
 }
@@ -319,19 +326,24 @@ export default function LiveRunPanel({
   useEffect(() => {
     if (!own) return;
     let cancelled = false;
-    api
-      .lifecycleRuns()
-      .then((rows) => {
-        if (cancelled) return;
-        setFetched(Array.isArray(rows) ? rows : []);
-        setFetchLoad("ok");
-      })
-      .catch(() => {
-        // A failed refetch after a good one keeps the run on screen.
-        if (!cancelled) setFetchLoad((l) => (l === "ok" ? l : "error"));
-      });
+    // Started a tick later, so a mount that is undone at once (React's development double mount)
+    // sends no request: the runs load once.
+    const t = window.setTimeout(() => {
+      api
+        .lifecycleRuns()
+        .then((rows) => {
+          if (cancelled) return;
+          setFetched(Array.isArray(rows) ? rows : []);
+          setFetchLoad("ok");
+        })
+        .catch(() => {
+          // A failed refetch after a good one keeps the run on screen.
+          if (!cancelled) setFetchLoad((l) => (l === "ok" ? l : "error"));
+        });
+    }, 0);
     return () => {
       cancelled = true;
+      window.clearTimeout(t);
     };
   }, [own, runsRev, retry]);
 
@@ -580,18 +592,24 @@ export default function LiveRunPanel({
           <h2 id={titleId} className="panel-title">
             {title}
           </h2>
-          <span className="mono lr-inc">{shownNumber || ""}</span>
-          <span className="lr-hops">{stepCount != null && stepCount > 0 ? `${stepCount} of 12 steps` : ""}</span>
-          <span className="lr-took">
-            {took != null && pinned && visible.length > 0 ? (
-              <>
-                agents took <span className="mono">{fmtMs(took)}</span>
-              </>
-            ) : null}
+          {/* The run's facts are one group that wraps under the title as a whole; inside it the
+              start time and the state are glued, so a state word never sits alone on a line. */}
+          <span className="lr-run">
+            <span className="mono lr-inc">{shownNumber || ""}</span>
+            <span className="lr-hops">{stepCount != null && stepCount > 0 ? `${stepCount} of 12 steps` : ""}</span>
+            <span className="lr-took">
+              {took != null && pinned && visible.length > 0 ? (
+                <>
+                  agents took <span className="mono">{fmtMs(took)}</span>
+                </>
+              ) : null}
+            </span>
+            <span className="lr-tail">
+              <span className="mono lr-time">{started ? `${started} EAT` : ""}</span>
+              {/* Last, so the room it holds for "waiting for a decision" is the gap before the button. */}
+              <span className="lr-state">{pinnedFold ? <span>folded at Correlate</span> : status ? <RunState status={status} /> : null}</span>
+            </span>
           </span>
-          <span className="mono lr-time">{started ? `${started} EAT` : ""}</span>
-          {/* Last, so the room it holds for "waiting for a decision" is the gap before the button. */}
-          <span className="lr-state">{pinnedFold ? <span>folded at Correlate</span> : status ? <RunState status={status} /> : null}</span>
         </div>
         <div className="lr-actions">
           {onOpen && (

@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api } from "../api";
 import { isStorming, stormCounts, stormStopLine, type StormState } from "../lib/demo";
@@ -6,7 +6,7 @@ import LiveRunPanel, { RunState } from "../components/LiveRunPanel";
 import { MPESA_TITLE, alarmSite, humanEnum, humanGraph, humanStatus, nodeLabel, priorityTitle, regionName, runOutcomeOf, triggerWord } from "../lib/agents";
 import { detailOf } from "../lib/apiError";
 import { IconDot } from "../lib/icons";
-import { labelFor } from "../lib/hitl";
+import { labelFor, sortQueue } from "../lib/hitl";
 import { fmtTime } from "../lib/time";
 // One run-status palette and one error line for both run lists (A-13), so the two pages
 // cannot drift apart again.
@@ -147,6 +147,7 @@ function readTickerView(): TickerView {
 
 function MissionControl({
   metrics,
+  metricsStale = false,
   profile,
   incidentsRev,
   hitlRev,
@@ -158,6 +159,9 @@ function MissionControl({
   onRefresh,
 }: {
   metrics: any;
+  /** The latest metrics call failed while the API still answers: the strip keeps the last counts
+   *  and says they are not updating (nothing else on the page changes). */
+  metricsStale?: boolean;
   /** The operator profile: region names for the rows ("Rift Valley", not "RFT"). */
   profile?: any;
   /** Revision of the incidents slice — see realtime/renderers.ts. */
@@ -261,18 +265,25 @@ function MissionControl({
 
   // Defect #26: one effect per slice instead of one effect for every WS frame.
   // An agent.step.* burst bumps none of these, so the three panels below hold
-  // still while the ticker streams.
+  // still while the ticker streams. Each load starts a tick later, so a mount React undoes at
+  // once (its development double mount) sends nothing: each list loads once on mount. The
+  // socket's replay of old frames on connect bumps no revision (realtime/useRealtime.ts).
   useEffect(() => {
-    loadIncidents();
+    const t = window.setTimeout(loadIncidents, 0);
+    return () => window.clearTimeout(t);
   }, [incidentsRev, loadIncidents]);
   useEffect(() => {
-    loadHitl();
+    const t = window.setTimeout(loadHitl, 0);
+    return () => window.clearTimeout(t);
   }, [hitlRev, loadHitl]);
   useEffect(() => {
-    loadRuns();
+    const t = window.setTimeout(loadRuns, 0);
+    return () => window.clearTimeout(t);
   }, [runsRev, loadRuns]);
 
   const open = incidents.filter((i) => !["CLOSED", "CANCELLED"].includes(i.status));
+  // The order Approvals works the queue in: P1 first, then the card that has waited longest.
+  const queue = useMemo(() => sortQueue(hitl), [hitl]);
   const regions = Object.entries(metrics?.by_region || {});
   const maxRegion = Math.max(1, ...regions.map(([, v]) => Number(v) || 0));
   // A run row names its ticket by INC number when the board has loaded it.
@@ -373,14 +384,25 @@ function MissionControl({
         </div>
       )}
 
-      <div className="kpis">
-        <Kpi label="Open tickets" value={metrics?.open_total} />
-        <Kpi label="P1 critical" value={metrics?.by_priority?.P1} tone="p1" />
-        <Kpi label="P2 major" value={metrics?.by_priority?.P2} tone="p2" />
-        <Kpi label="Decisions waiting" value={metrics?.hitl_pending} tone="hitl" />
-        <Kpi label="Past restore SLA" value={metrics?.sla_risk} tone="warn" />
-        <Kpi label="Vendor silent" value={metrics?.silent_at_risk} tone="warn" />
-        <Kpi label="Open problems" value={metrics?.problems_open} />
+      <div className={"kpi-strip" + (metricsStale ? " stale" : "")}>
+        <div className="kpis">
+          <Kpi label="Open tickets" value={metrics?.open_total} />
+          <Kpi label="P1 critical" value={metrics?.by_priority?.P1} tone="p1" />
+          <Kpi label="P2 major" value={metrics?.by_priority?.P2} tone="p2" />
+          <Kpi label="Decisions waiting" value={metrics?.hitl_pending} tone="hitl" />
+          <Kpi label="Past restore SLA" value={metrics?.sla_risk} tone="warn" />
+          <Kpi label="Vendor silent" value={metrics?.silent_at_risk} tone="warn" />
+          <Kpi label="Open problems" value={metrics?.problems_open} />
+        </div>
+        {/* Only the counts call failed (the API still answers): the figures stay, and say so. */}
+        {metricsStale && (
+          <p className="kpis-note" role="status">
+            <span className="attn warn">
+              <IconDot />
+              Counts aren't updating
+            </span>
+          </p>
+        )}
       </div>
 
       <LiveRunPanel
@@ -467,7 +489,7 @@ function MissionControl({
                 No decisions waiting. Cards land in <Link to="/hitl">Approvals</Link> when an agent needs a person.
               </div>
             )}
-            {hitl.slice(0, PEEK).map((t) => {
+            {queue.slice(0, PEEK).map((t) => {
               // Since v8 a maintenance card has no incident: onOpen(null) was /incidents/null.
               // Those rows open Approvals, where the card itself can be decided.
               const to = t.incident_id ? `/incidents/${t.incident_id}` : "/hitl";

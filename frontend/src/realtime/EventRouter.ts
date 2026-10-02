@@ -110,8 +110,15 @@ export class EventRouter {
     return this.pending.length;
   }
 
-  /** One raw WS frame in. Never throws. */
-  handle(raw: any): void {
+  /**
+   * One raw WS frame in. Never throws.
+   *
+   * `history`: the frame predates this connection (the server replays its recent frames on every
+   * connect). The pages' own loads already include what it did, so it bumps no revision and is not
+   * a run frame (the rail would draw a fragment of an old run from it); it still reaches the
+   * ticker as the recent activity it is.
+   */
+  handle(raw: any, opts: { history?: boolean } = {}): void {
     if (this.disposed) return;
 
     let ev: NocEvent | null = null;
@@ -137,8 +144,10 @@ export class EventRouter {
     }
 
     this.noteReceived();
-    if (this.hooks.onFrame) this.safely(() => this.hooks.onFrame?.(ev as NocEvent));
-    this.safely(() => this.markDirty(ev as NocEvent, spec, critical));
+    if (!opts.history) {
+      if (this.hooks.onFrame) this.safely(() => this.hooks.onFrame?.(ev as NocEvent));
+      this.safely(() => this.markDirty(ev as NocEvent, spec, critical));
+    }
 
     if (!spec.ticker) return;
     if (this.quiet && !critical) {

@@ -1,10 +1,20 @@
+import { noteFailure, noteResponse } from "./realtime/apiHealth";
+
 const BASE = "";
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
-  const r = await fetch(`${BASE}${path}`, {
-    headers: { "Content-Type": "application/json", ...(init?.headers || {}) },
-    ...init,
-  });
+  let r: Response;
+  try {
+    r = await fetch(`${BASE}${path}`, {
+      headers: { "Content-Type": "application/json", ...(init?.headers || {}) },
+      ...init,
+    });
+  } catch (e) {
+    // Every call reports to one tracker: "API unreachable" needs two failures in a row, any calls.
+    noteFailure(path);
+    throw e;
+  }
+  noteResponse(r, path);
   if (!r.ok) {
     const t = await r.text();
     throw new Error(`${r.status}: ${t}`);

@@ -136,7 +136,8 @@
   --p2: #ff9f1a;
   --p3: #f0d000;
   --p4: #8ba3c1;
-  --p1-ink: #ffffff;
+  /* Dark ink on the P1 pill in every mode: white on #ff4d6a is 3.2:1, this is 6.2:1. */
+  --p1-ink: #1a0005;
   --p2-ink: #1a0f00;
   --p3-ink: #1a1500;
   --p4-ink: #0a1220;
@@ -295,6 +296,14 @@ input, select, textarea, button { caret-color: var(--accent); }
 .topbar-live.bad { color: var(--danger); font-weight: 600; }
 .topbar-user { color: var(--muted); white-space: nowrap; }
 @media (max-width: 1100px) { .topbar-user { display: none; } }
+/* Quiet mode and Projector: in the top bar from 961 px, inside the Menu below it. */
+.topbar-display { display: flex; gap: var(--s3); align-items: center; }
+.nav-display { display: none; }
+.nav-display-row { display: flex; flex-wrap: wrap; gap: 0.3rem; }
+@media (max-width: 960px) {
+  .topbar-display { display: none; }
+  .nav-display { display: block; }
+}
 .chips { display: flex; flex-wrap: wrap; gap: var(--s2); align-items: center; }
 
 /* Chips: state, never facts. Neutral by default; a tone means something. */
@@ -393,6 +402,17 @@ button.chip:hover { border-color: var(--accent); color: var(--text-bright); }
 .kpi .value.p2 { color: var(--p2); }
 .kpi .value.hitl { color: var(--hitl); }
 .kpi .value.warn { color: var(--warn); }
+/* Only the counts call failed: the last figures stay, quieter, and one line under them says so. */
+.kpi-strip { margin-bottom: var(--s5); }
+.kpi-strip > .kpis { margin-bottom: 0; }
+.kpi-strip.stale .kpi .value { color: var(--muted-dim); }
+.kpis-note { margin: var(--s2) 0 0; padding: 0 var(--s1); font-size: var(--fs-sm); }
+/* Tablets (701-1100 px): two rows, 4 + 3, every tile full width of its share (no empty slab). */
+@media (min-width: 701px) and (max-width: 1100px) {
+  .kpis { grid-template-columns: repeat(12, minmax(0, 1fr)); }
+  .kpis > .kpi { grid-column: span 3; }
+  .kpis > .kpi:nth-child(n + 5) { grid-column: span 4; }
+}
 
 .grid-2 { display: grid; grid-template-columns: 1.25fr 1fr; gap: var(--s4); }
 /* Two equal columns that stay side by side down to 761 px (Mission control's two lists). */
@@ -714,13 +734,20 @@ td .muted { font-size: var(--fs-xs); }
 @media (max-width: 960px) { .app-alert { margin: var(--s3) var(--s4) 0; } }
 
 /* Wallboard: the one surface where big and bright is the job. */
-.wallboard { min-height: 100vh; background: var(--bg-wall); padding: var(--s5) var(--s6); color: var(--text-bright); }
+.wallboard { min-height: 100vh; background: var(--bg-wall); padding: var(--s5) var(--s6) var(--s4); color: var(--text-bright); }
 .wallboard h1 { font-size: var(--fs-display); margin: 0 0 var(--s4); letter-spacing: -0.02em; font-weight: 600; }
-.wb-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: var(--s4); }
-.wb-card { border-radius: var(--r-lg); padding: var(--s4) var(--s5); border: 2px solid var(--line-strong); background: var(--surface); }
+/* Tiles wide enough for a site name at --fs-wall (17 em of it), every row one height (1fr), so
+   pages/Wallboard.tsx can count the rows that fit the glass and never scroll. */
+.wb-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, calc(var(--fs-wall) * 17)), 1fr));
+  grid-auto-rows: 1fr;
+  gap: var(--s4);
+}
+.wb-card { border-radius: var(--r-lg); padding: var(--s3) var(--s4); border: 2px solid var(--line-strong); background: var(--surface); font-size: var(--fs-wall); line-height: 1.3; min-width: 0; }
 .wb-card.P1 { border-color: var(--p1); }
 .wb-card.P2 { border-color: var(--p2); }
-.wb-card .big { font-size: var(--fs-xl); font-weight: 600; font-family: var(--mono); }
+.wb-card .big { font-size: calc(var(--fs-wall) * 1.2); font-weight: 600; font-family: var(--mono); }
 
 .form-row { display: flex; flex-wrap: wrap; gap: var(--s2); margin-bottom: var(--s3); align-items: center; }
 input, select, textarea {
@@ -1405,22 +1432,30 @@ textarea { width: 100%; min-height: 90px; }
   .rail-dl.two-up { grid-template-columns: fit-content(12rem) minmax(0, 1fr) fit-content(12rem) minmax(0, 1fr); }
   .rail-dl.two-up dd { padding-right: var(--s4); }
 }
-.live-run .panel-head { flex-wrap: wrap; }
+/* The title and the run's facts wrap inside their own box; View ticket keeps the top right. */
+.live-run .panel-head { flex-wrap: nowrap; align-items: flex-start; }
+.live-run .panel-head > .lr-facts { flex: 1 1 0; min-width: 0; }
+.live-run .panel-head > .lr-actions { flex: none; }
 .live-run .panel-head .chips { gap: 0.4rem; }
 /* The live panel's head: every slot holds the width of its longest value from the first paint
    (ticket number, "waiting for a decision", "12 of 12 hops", "agents took 9.99 s", the start
    time), and Open ticket is always laid out (hidden until there is a ticket), so nothing in the
    head moves while a run replays and the head is one height loading, empty and loaded. */
 .lr-facts { flex: 1 1 auto; align-items: center; }
-/* Each slot is one line tall even while empty (an empty flex item has no height, and a phone
-   wraps the slots onto rows of their own), and a state word with its icon does not add a pixel. */
-.lr-facts > span { display: block; height: 1.5em; line-height: 1.5; white-space: nowrap; font-variant-numeric: tabular-nums; }
-.lr-facts > .lr-state > .state { vertical-align: top; }
-.lr-facts > .lr-inc { min-width: 9ch; color: var(--text); }
-.lr-facts > .lr-state { min-width: 12.5em; }
-.lr-facts > .lr-hops { min-width: 7em; }
-.lr-facts > .lr-took { min-width: 10.5em; }
-.lr-facts > .lr-time { min-width: 12ch; }
+/* The run's facts are one group: beside the title when they fit, else under it as a whole. Inside
+   the group the start time and the state are glued (.lr-tail), so the state word never sits
+   alone on a line however narrow the panel. */
+.lr-facts > .lr-run { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s1) var(--s4); min-width: 0; color: var(--muted); font-size: var(--fs-sm); }
+.lr-run .lr-tail { display: flex; flex-wrap: nowrap; align-items: center; gap: var(--s4); }
+/* Each slot is one line tall even while empty (an empty flex item has no height), and a state
+   word with its icon does not add a pixel. */
+.lr-run .lr-inc, .lr-run .lr-hops, .lr-run .lr-took, .lr-run .lr-time, .lr-run .lr-state { display: block; height: 1.5em; line-height: 1.5; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.lr-run .lr-state > .state { vertical-align: top; }
+.lr-run .lr-inc { min-width: 9ch; color: var(--text); }
+.lr-run .lr-state { min-width: 12.5em; }
+.lr-run .lr-hops { min-width: 7em; }
+.lr-run .lr-took { min-width: 10.5em; }
+.lr-run .lr-time { min-width: 12ch; }
 .lr-actions { display: flex; gap: var(--s2); align-items: center; margin-left: auto; }
 .lr-actions .lr-hold { visibility: hidden; }
 /* The rail before the first answer: the twelve hops at their real size, drawn as skeleton blocks. */
@@ -1488,9 +1523,14 @@ textarea { width: 100%; min-height: 90px; }
 }
 /* Phones: a data table scrolls inside its panel instead of widening the page; a long alarm
    chip wraps; a select never exceeds its row. */
-@media (max-width: 700px) {
-  /* Tap targets: every control a thumb reaches is at least 40 px tall. */
+/* Tap targets: every control a finger reaches is at least 40 px tall, on a phone and on any
+   touch screen (an iPad is wider than a phone but has no mouse). */
+@media (max-width: 700px), (pointer: coarse) {
   .btn, .btn.sm, button.chip, .nav-toggle, summary, .nav a, .seg > button, .list-foot a { min-height: 40px; }
+  input:not([type="checkbox"]):not([type="radio"]), select { min-height: 40px; }
+  .nav a, .list-foot a { display: flex; align-items: center; }
+}
+@media (max-width: 700px) {
   .nav-group-links a { display: inline-flex; align-items: center; }
   .panel { overflow-x: auto; }
   .panel > table { min-width: 100%; }
@@ -1518,3 +1558,162 @@ textarea { width: 100%; min-height: 90px; }
 th.num { text-align: right; }
 td.num { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .hop-what { margin: 0.2rem 0 0; font-weight: 400; color: var(--muted); font-size: var(--fs-sm); line-height: 1.45; }
+
+/* ==================================================================== *
+ * Projector mode: <html data-display="projector"> (lib/display.ts;    *
+ * index.html sets it before the first paint from ?display=projector    *
+ * or the stored choice). For a washed-out projector or a TV across the *
+ * room, where 60 % of the contrast is lost: bigger type, brighter      *
+ * muted text at weight 500, heavier panel edges, and space instead of  *
+ * hairlines between rows (a hairline is the first thing to vanish).    *
+ * It turns quiet mode on as well (App.tsx).                            *
+ * ==================================================================== */
+:root[data-display="projector"] {
+  font-size: 18px;
+  --fs-xs: 15px; --fs-sm: 16px; --fs-md: 17px; --fs-base: 18px; --fs-lg: 22px; --fs-xl: 28px;
+  --fs-display: 40px;
+  --fs-wall: 28px; --fs-wall-head: 48px;
+  --text: #fff;
+  --muted: #d6e0ee;
+  --muted-dim: #c3cfe0;
+  --accent: #9ae2fb;
+  --accent-hover: #c2eefd;
+  --hitl: #e2d2ff;
+  --hitl-text: #e2d2ff;
+  --ok: #86f5c0;
+  --ok-hover: #a8f8d2;
+  --warn: #ffdf8a;
+  --danger: #ff7a8f;
+  --danger-text: #ffb4c0;
+  --p1: #ff7a8f;
+  --p1-ink: #1a0005;
+  --panel-line: #6a83ab;
+  --line-strong: #6a83ab;
+  /* Tinted edges at 45-50 % alpha wash out first: lifted to 75 %. */
+  --accent-line: rgba(154, 226, 251, 0.75);
+  --hitl-line: rgba(226, 210, 255, 0.75);
+  --ok-line: rgba(134, 245, 192, 0.75);
+  --warn-line: rgba(255, 223, 138, 0.75);
+  --danger-line: rgba(255, 122, 143, 0.75);
+}
+/* Muted and lead text at 500: a 400 stroke is the next thing a weak projector loses. Low
+   specificity (:where), so a heavier rule on the same element still wins. */
+:root[data-display="projector"] :where(.muted, .lead, .facts, .head-row > span, .ticker-line, .ticker-why, .status,
+  .lr-foot, .lr-run, .topbar-meta, .topbar-live, .topbar-user, .empty, .storm-counts, .storm-progress, .list-stale,
+  .rail-agent, .rail-meta, .rail-dl dd, .agent-stats, .agent-tags, .hop-what, .lane-off-body, .kpis-note,
+  .wb-more-what, .wb-more-where, .wb-head-sub) { font-weight: 500; }
+/* Panels: a 2 px edge in a light slate that survives the wash. */
+:root[data-display="projector"] .panel { border: 2px solid var(--panel-line); }
+:root[data-display="projector"] .topbar { border-bottom: 2px solid var(--panel-line); }
+:root[data-display="projector"] .nav { border-right: 2px solid var(--panel-line); }
+:root[data-display="projector"] .rail-btn { border-width: 2px; }
+/* The KPI strip: separate tiles with an 8 px gap, not hairlines on a shared slab. */
+:root[data-display="projector"] .kpis { gap: 8px; background: transparent; border: 0; border-radius: 0; overflow: visible; }
+:root[data-display="projector"] .kpi { border: 2px solid var(--panel-line); border-radius: var(--r-md); }
+/* Lists and tables: rows 8 px apart instead of a hairline between them. */
+:root[data-display="projector"] .list,
+:root[data-display="projector"] .ticker { display: flex; flex-direction: column; gap: 8px; }
+:root[data-display="projector"] .row,
+:root[data-display="projector"] .ticker-line { border-top: 0; }
+:root[data-display="projector"] .list-foot { border-top: 0; }
+:root[data-display="projector"] table { border-collapse: separate; border-spacing: 0 8px; }
+:root[data-display="projector"] th,
+:root[data-display="projector"] td { border-bottom: 0; }
+/* The state dot (lib/icons IconDot, the one icon drawn with no stroke): a 10 px dot. */
+:root[data-display="projector"] svg[stroke="none"] { transform: scale(1.5625); }
+/* The Wallboard's tiles carry the brighter edge too (P1/P2 keep their colours). */
+:root[data-display="projector"] .wb-card { border-color: var(--panel-line); }
+:root[data-display="projector"] .wb-card.P1 { border-color: var(--p1); }
+:root[data-display="projector"] .wb-card.P2 { border-color: var(--p2); }
+
+/* ==================================================================== *
+ * Print: black on white, no chrome. The nav, top bar, guide, buttons   *
+ * and controls go; the tokens become ink (projector or not); lists and *
+ * scroll boxes open to their full height; rows do not split across     *
+ * pages; every sheet carries "Printed <date time> EAT" (App.tsx        *
+ * PrintFooter, a fixed element, which print repeats on every page).    *
+ * Pages that fold rows away on screen unfold them while printing       *
+ * (lib/display.ts usePrinting).                                        *
+ * ==================================================================== */
+.print-footer { display: none; }
+@media print {
+  @page { margin: 14mm 12mm 18mm; }
+  :root,
+  :root[data-display="projector"] {
+    font-size: 13px;
+    --fs-xs: 0.8rem; --fs-sm: 0.867rem; --fs-md: 0.933rem; --fs-base: 1rem; --fs-lg: 1.2rem; --fs-xl: 1.4rem;
+    --fs-display: 2rem;
+    --fs-wall: 14px; --fs-wall-head: 20px;
+    --bg: #fff; --surface: #fff; --surface-2: #fff; --surface-3: #f0f0f0; --surface-sunk: #fff; --bg-wall: #fff;
+    --line: #c4c4c4; --line-strong: #8a8a8a; --panel-line: #8a8a8a;
+    --text: #000; --text-bright: #000; --muted: #333; --muted-dim: #4d4d4d;
+    --accent: #00506f; --accent-hover: #00506f; --accent-soft: transparent; --accent-line: #8a8a8a; --accent-faint: transparent;
+    --hitl: #4a2a80; --hitl-text: #4a2a80; --hitl-soft: transparent; --hitl-line: #8a8a8a;
+    --ok: #0b5a33; --ok-soft: transparent; --ok-line: #8a8a8a; --ok-faint: transparent;
+    --warn: #6e4600; --warn-soft: transparent; --warn-line: #8a8a8a; --warn-faint: transparent;
+    --danger: #a0001a; --danger-text: #a0001a; --danger-soft: transparent; --danger-line: #8a8a8a;
+    --muted-soft: transparent; --muted-faint: transparent;
+    --p1: #a0001a; --p2: #8a4600; --p3: #615400; --p4: #3d3d3d;
+    color-scheme: light;
+    background: #fff;
+    color: #000;
+  }
+  body { background: #fff !important; color: #000 !important; }
+  /* Chrome and controls: nothing to press on paper. */
+  .nav, .topbar, #guide-bar, .skip-link, .app-alert, .page-actions, .btn, button.chip, .seg, .nav-toggle,
+  .lr-actions, .list-foot, .audit-routine, .audit-more, .wb-foot { display: none !important; }
+  .app { display: block; min-height: 0; }
+  .main { display: block; }
+  .content, .content-narrow { padding: 0; max-width: none; }
+  /* Everything that scrolls on screen opens to its full height; nothing sticks. */
+  .list, .ticker, .table-scroll, .panel, .pre, .hitl-channel-body, .hitl-field-pre {
+    max-height: none !important;
+    overflow: visible !important;
+  }
+  .table-scroll table, .table-wide table { min-width: 0 !important; }
+  .audit-head, .hitl-actions, .topbar, .nav { position: static !important; }
+  .panel { border: 1px solid var(--line-strong); break-inside: auto; }
+  .row, .ticker-line, tr, .kpi, .rail-hop, .storm-banner, .audit-row, .audit-head, li { break-inside: avoid; }
+  h1, h2, h3, .panel-head, .audit-head { break-after: avoid; }
+  /* Priority pills keep their word on paper without a filled background. */
+  .pill { background: none !important; color: #000 !important; border: 1px solid #000; }
+  *, *::before, *::after { animation: none !important; transition: none !important; box-shadow: none !important; text-shadow: none !important; }
+  a { color: inherit; text-decoration: none; }
+  .wallboard { min-height: 0; padding: 0; }
+  /* Text cut to one line on screen is printed whole (an auditor reads the paper, not a hover). */
+  .audit-summary, .audit-actor, .ticker-why, .storm-text .storm-progress, .storm-counts {
+    white-space: normal !important;
+    overflow: visible !important;
+    text-overflow: clip !important;
+    display: block !important;
+    -webkit-line-clamp: unset !important;
+    line-clamp: none !important;
+  }
+  /* Wide drawings fit the sheet instead of running off its edge. */
+  main svg { max-width: 100%; }
+  .sc-arch svg { min-width: 0 !important; }
+  /* The rail's marks: the filled dot does not print (no backgrounds on paper), so the drawn
+     check and the dot's ring carry the state in ink. */
+  .rail-dot { background: none !important; color: #000 !important; }
+  .rail-hop.not_needed .rail-dot { border-style: dashed; }
+  /* The footer sits in a strip every page keeps clear: the content box repeats its bottom
+     padding on each sheet (box-decoration-break: clone), and the fixed footer prints there. */
+  #main, .wallboard {
+    -webkit-box-decoration-break: clone;
+    box-decoration-break: clone;
+    padding-bottom: 9mm !important;
+  }
+  .print-footer {
+    display: block;
+    position: fixed;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    height: 7mm;
+    line-height: 7mm;
+    font-size: 9pt;
+    color: #333;
+    text-align: right;
+    background: #fff;
+  }
+}
