@@ -51,7 +51,7 @@ if (exec 3<>"/dev/tcp/127.0.0.1/${PORT}") 2>/dev/null; then
 fi
 echo
 echo "API + UI:  http://127.0.0.1:${PORT}"
-echo "Mission Control auto-runs the rain storm on an empty board; or click 'Launch heavy-rain storm (live)'."
+echo "Press 'Launch heavy-rain storm (live)' on Mission control to start the demo."
 echo "Managers: open http://127.0.0.1:${PORT}/showcase  ·  Presenters: press 'Guided demo' in the top bar."
 echo
 

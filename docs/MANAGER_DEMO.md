@@ -32,7 +32,7 @@ Point at:
 
 - the rail lighting up hop by hop with milliseconds under each;
 - the live incidents list filling with `INC000001` upwards;
-- the ticker on the right streaming each agent's reasoning;
+- the Agent activity ticker under the lists, one line per agent step;
 - the HITL count rising to four: those are the P2 broadcasts waiting for a person.
 
 The storm absorbs six of the eleven alarms into their parent HUB tickets. That is the
@@ -48,7 +48,7 @@ priority and the assignment in the floor's own words.*
 
 Click **Severity** on the rail: the reasoning reads `users=280000→P2; site_type=HUB floor=P2;
 mpesa_risk=true`. Click **Assign**: `region=RFT; lane=tx_mw; pool=['TETRANET', 'FIELD_ENGINEER']`.
-Point at the lavender **HITL Gate** and **Broadcast** hops: *these are waiting for a human*.
+Point at the lavender **Approval** and **Broadcast** hops: *these are waiting for a decision*.
 Point at "2 later alarms folded in": the duplicates the HUB absorbed.
 
 ## Step 3 — Approve what matters (2 minutes)
@@ -148,9 +148,9 @@ honest list.
 - *The browser shows `{"detail":"Not Found"}` or a page saying the UI is not built*: the API is
   up but `frontend/dist` is missing. Run `cd frontend && npm install && npm run build`, then
   restart, or use the Vite dev server (`npm run dev`, http://127.0.0.1:5173) while the API runs.
-- *Rail does not animate*: the WebSocket chip in the top bar should read LIVE WS. If not,
+- *Rail does not animate*: the top bar should read "Live". If it says "Reconnecting",
   refresh; the page polls as a fallback and the numbers stay right.
-- *Nothing happens on the storm button*: check the API chip; the server log is in the
+- *Nothing happens on the storm button*: the top bar says "API unreachable" when the API is down; the server log is in the
   terminal running `run_all.sh`.
 - *Mission Control already has tickets*: that is fine; the numbers accumulate. For a clean
   board stop the server, delete `data/noc_agents.db`, start again.

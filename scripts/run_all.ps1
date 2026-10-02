@@ -63,7 +63,7 @@ if (-not $env:OPERATOR_PROFILE) { $env:OPERATOR_PROFILE = "safaricom" }
 
 Write-Host ""
 Write-Host "API + UI:  http://127.0.0.1:$Port" -ForegroundColor Green
-Write-Host "Mission Control auto-runs the rain storm on an empty board; or click 'Launch heavy-rain storm (live)'." -ForegroundColor Yellow
+Write-Host "Press 'Launch heavy-rain storm (live)' on Mission control to start the demo." -ForegroundColor Yellow
 Write-Host "Managers: open http://127.0.0.1:$Port/showcase  -  Presenters: press 'Guided demo' in the top bar." -ForegroundColor Yellow
 Write-Host ""
 

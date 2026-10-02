@@ -66,7 +66,7 @@ flowchart LR
 python3 -m venv .venv && .venv/bin/python -m pip install -e ".[dev]"
 (cd frontend && npm install)
 bash scripts/run_all.sh            # or: make demo-up
-# open http://127.0.0.1:8000  — an empty board auto-runs the heavy-rain storm
+# open http://127.0.0.1:8000  — press "Launch heavy-rain storm (live)" on Mission control
 ```
 
 ```powershell
@@ -89,7 +89,7 @@ python -m uvicorn noc_agents.main:app --app-dir src --host 127.0.0.1 --port 8000
 
 # Terminal 2
 cd frontend; npm run dev
-# open http://127.0.0.1:5173  — top bar must show API OK + LIVE WS
+# open http://127.0.0.1:5173  — the top bar must read "Live"
 ```
 
 **Empty board:** Mission Control auto-launches the rain/MW cascade once per browser session.  
