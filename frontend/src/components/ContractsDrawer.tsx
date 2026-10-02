@@ -120,8 +120,8 @@ export default function ContractsDrawer({
         <h2 className="panel-title">Ask the contracts</h2>
         <div className="head-row">
           {incidentId && (
-            <span className="muted" title="Answers are narrowed to this incident's vendor">
-              Incident scope
+            <span className="muted" title="Answers are narrowed to this ticket's vendor">
+              This ticket's vendor only
             </span>
           )}
           <button className="btn sm" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
@@ -144,7 +144,7 @@ export default function ContractsDrawer({
               {busy ? "Asking…" : "Ask"}
             </button>
             <span className="muted">
-              Advisory. Which contracts may answer is decided by your role{incidentId ? " and this incident's vendor" : ""} — never by this form.
+              Advisory. Which contracts may answer is decided by your role{incidentId ? " and this ticket's vendor" : ""} — never by this form.
             </span>
           </div>
 

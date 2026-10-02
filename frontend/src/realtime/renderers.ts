@@ -449,8 +449,8 @@ export function isMock(p: Record<string, any> | null | undefined): boolean {
   return String(p?.mode ?? "").toLowerCase() === "mock";
 }
 
-/** What a mock email did, for the ticker: it was kept, and nothing left the building. */
-export const MOCK_EMAIL_LINE = "Kept in the demo outbox by the mock adapter; not delivered";
+/** What a mock email did, for the ticker and Settings: it was kept, and nothing was delivered. */
+export const MOCK_EMAIL_LINE = "Not delivered: email sending is off in this demo";
 
 const DESCRIBERS: Readonly<Record<string, (p: Record<string, any>) => string>> = {
   // services/notify.record_email_outcome: {incident_number, mode, to, detail, status}. A mock
@@ -493,6 +493,43 @@ const DESCRIBERS: Readonly<Record<string, (p: Record<string, any>) => string>> =
       .filter(Boolean)
       .join(", "),
 };
+
+/** The Approval step parking a run on a person: the moment a decision is needed (no
+ *  `hitl.created` frame announces a broadcast card; the step frame does). */
+export function isDecisionStep(ev: NocEvent): boolean {
+  const p = ev.payload || {};
+  return ev.type === "agent.step.completed" && p.node === "HITL" && String(p.status || "").toUpperCase() === "WAITING_HITL";
+}
+
+/** The moments a shift acts on, which the ticker shows by default: a ticket opened, closed or
+ *  reassigned; an alarm folded into one; a decision needed, approved or rejected; a message sent
+ *  or not delivered; a vendor chase; the storm complete; and every failure. The per-step lines
+ *  are one click away ("Every step"). */
+const KEY_EVENT_TYPES: ReadonlySet<string> = new Set([
+  "incident.created",
+  "incident.merged",
+  "incident.cascade_child",
+  "incident.closed",
+  "incident.reassigned",
+  "hitl.created",
+  "hitl.approved",
+  "hitl.rejected",
+  "email.sent",
+  "email.failed",
+  "outbox.failed",
+  "monitor.chase",
+  "demo.rain_storm.complete",
+  "regulatory.deadline",
+  "scheduler.job_failed",
+  "security.redaction_miss",
+]);
+
+export function isKeyEvent(ev: NocEvent): boolean {
+  if (KEY_EVENT_TYPES.has(ev.type)) return true;
+  if (isDecisionStep(ev)) return true;
+  const st = String(ev.payload?.status || "").toUpperCase();
+  return ev.type.startsWith("agent.") && st === "FAILED";
+}
 
 /** Extra ticker text for one event, or "" — never throws. */
 export function describeEvent(ev: NocEvent): string {

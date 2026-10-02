@@ -111,7 +111,7 @@ const PUBLISH_GATES: { match: RegExp; title: string; fix: string }[] = [
   },
   {
     match: /P0 or P1 action item/i,
-    title: "No P0/P1 action item, and users were affected",
+    title: "No P0/P1 action item, and subscribers were affected",
     fix: "A user-affecting outage that produced no urgent action produced no learning. Add at least one P0 or P1 action item below.",
   },
   {
@@ -123,7 +123,7 @@ const PUBLISH_GATES: { match: RegExp; title: string; fix: string }[] = [
 
 /** §7.7.3 trigger matrix, spelled out — "P1_P2" on its own tells a new analyst nothing. */
 export const PIR_REASON_WORDS: Record<string, string> = {
-  P1_P2: "P1/P2 incident",
+  P1_P2: "P1/P2 ticket",
   HUB_CORE: "HUB or CORE site",
   SLA_BREACH: "SLA breached",
   PROBLEM_LINKED: "linked to a problem record",
@@ -360,7 +360,7 @@ export default function PirEditor({
       setSaveNote(
         res?.already_queued
           ? "A model draft is already queued"
-          : "Model draft queued on the outbox"
+          : "Model draft requested; it appears here when ready"
       );
       adopt(await api.pir(pir.id));
     } catch (e) {
@@ -491,7 +491,7 @@ export default function PirEditor({
           className="btn"
           disabled={published || busy}
           onClick={draftWithModel}
-          title="Queues a redacted model call on the outbox. Draft text only — it changes no status and publishes nothing."
+          title="Asks the model for a draft, with contact details removed first. Draft text only: it changes no status and publishes nothing."
         >
           Draft with model (assist)
         </button>
@@ -665,7 +665,7 @@ export default function PirEditor({
         ))}
       </div>
       {(pir.timeline ?? []).length === 0 && (
-        <div className="empty">No timeline entries were assembled for this incident.</div>
+        <div className="empty">No timeline entries were assembled for this ticket.</div>
       )}
 
       {/* ---- publish ------------------------------------------------------ */}

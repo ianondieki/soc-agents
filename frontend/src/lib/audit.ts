@@ -40,14 +40,18 @@ function capFirst(s: string): string {
   return s ? s[0].toUpperCase() + s.slice(1) : s;
 }
 
-/** "IngestCorrelationAgent" → "Ingest Correlation"; "agent:SupervisorAgent" → "Supervisor";
- *  "outbox.dispatcher" → "Outbox dispatcher"; a person's name is left as written. */
+/** Unattended jobs whose stored name is plumbing: the job that sends released messages is the
+ *  message sender on screen. The stored actor is unchanged ("Recorded as" shows it). */
+const JOB_WORDS: Record<string, string> = { "outbox.dispatcher": "Message sender" };
+
+/** "IngestCorrelationAgent" → "Ingest Correlation"; "agent:SupervisorAgent" → "Approval gate";
+ *  "outbox.dispatcher" → "Message sender"; a person's name is left as written. */
 export function actorLabel(actor: string | null | undefined): string {
   const a = String(actor ?? "").trim();
   if (!a) return "Unknown";
   const kind = actorKind(a);
   if (kind === "agent") return agentDisplayName(a.replace(/^agent:/, ""));
-  if (kind === "job") return capFirst(a.replace(/^job:/, "").replace(/[._]/g, " "));
+  if (kind === "job") return JOB_WORDS[a] || capFirst(a.replace(/^job:/, "").replace(/[._]/g, " "));
   return a;
 }
 
@@ -140,7 +144,19 @@ export type ParsedRationale = { sentence: string; facts: Fact[] };
 
 const FACT = /^([\w ]{1,24})=(.+)$/;
 const DROPPED_KEYS = new Set(["operator"]); // the tenant: the same on every row this operator sees
-const KEY_WORDS: Record<string, string> = { final: "Final priority" };
+const KEY_WORDS: Record<string, string> = {
+  final: "Final priority",
+  users: "Subscribers",
+  users_est: "Subscribers (est.)",
+  users_affected: "Subscribers",
+  // The assignment's keys, in the floor's words: the owner is whoever holds the ticket.
+  primary: "Owner",
+  pool: "Owner pool",
+  "FE support": "Field engineer",
+  fe_support: "Field engineer",
+  RNIO: "Regional office",
+  rnio: "Regional office",
+};
 
 /** "radio_oem" → "Radio OEM", "mpesa_risk" → "M‑PESA risk", "final" → "Final priority". */
 export function humanKey(key: string): string {
@@ -202,7 +218,7 @@ const ENTITY_WORDS: Record<string, string> = {
   incident: "Ticket",
   hitl_task: "Approval",
   problem: "Problem",
-  outbox: "Outbox message",
+  outbox: "Message",
   housekeeping: "Housekeeping run",
   handover: "Handover",
   post_incident_review: "Post-incident review",

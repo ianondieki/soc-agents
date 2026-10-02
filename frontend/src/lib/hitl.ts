@@ -43,7 +43,7 @@
  * build has never heard of. None of them throws. The inbox must never blank.
  */
 
-import { humanEnum } from "./agents";
+import { audienceWord, humanEnum } from "./agents";
 import { detailOf, statusOf } from "./apiError";
 import { parseInstant } from "./time";
 
@@ -130,8 +130,8 @@ export interface TaskTypeSpec {
 
 const BROADCAST: TaskTypeSpec = {
   label: "Broadcast approval",
-  effect: "Approving releases the held broadcast to the dispatcher; the draft below is what leaves.",
-  check: "Read every channel. Wrong wording here reaches customers and cannot be recalled.",
+  effect: "Approving releases the SMS and email for sending, exactly as shown below.",
+  check: "Once approved, it reaches everyone under Goes to and cannot be recalled.",
   channels: true,
   // The four legacy approve calls send `{resolved_by}` alone and must keep
   // working (§2.1 R6), so the server does not require a reason for this type by
@@ -152,7 +152,7 @@ export const TASK_TYPES: Readonly<Record<string, TaskTypeSpec>> = {
   APPROVE_BROADCAST: BROADCAST,
   APPROVE_PRIORITY: {
     label: "Priority change",
-    effect: "Approving re-prices the incident; SLA due times are recomputed from the new priority.",
+    effect: "Approving re-prices the ticket; SLA due times are recomputed from the new priority.",
     check: "Does the impact below justify the proposed priority? A P1 wakes people up.",
     channels: false,
     reasonRequired: true,
@@ -160,7 +160,7 @@ export const TASK_TYPES: Readonly<Record<string, TaskTypeSpec>> = {
   },
   APPROVE_ASSIGNMENT: {
     label: "Assignment change",
-    effect: "Approving moves the ticket to a different owner / MSP pool.",
+    effect: "Approving moves the ticket to a different owner or vendor.",
     check: "Is the proposed owner the vendor that actually holds this site?",
     channels: false,
     reasonRequired: true,
@@ -175,15 +175,15 @@ export const TASK_TYPES: Readonly<Record<string, TaskTypeSpec>> = {
     known: true,
   },
   APPROVE_EXEC_BRIEF: {
-    label: "Executive brief",
-    effect: "Approving sends the brief to the executive distribution list.",
+    label: "Exec brief",
+    effect: "Approving sends the exec brief to the management distribution list.",
     check: "Numbers and next-update time correct; no unconfirmed root cause stated as fact.",
     channels: true,
     reasonRequired: true,
     known: true,
   },
   GENERIC: {
-    label: "Escalation / generic",
+    label: "Escalation",
     effect: "Records the decision only — nothing is transmitted externally.",
     check: "Is the escalation real, and who is picking it up?",
     channels: false,
@@ -194,7 +194,7 @@ export const TASK_TYPES: Readonly<Record<string, TaskTypeSpec>> = {
   // connected, but a mapped row costs nothing and beats the fallback.
   APPROVE_TICKET_SYNC: {
     label: "Ticket sync (external system)",
-    effect: "Approving lets an agent write this incident into the external ticketing system.",
+    effect: "Approving lets an agent write this ticket into the external ticketing system.",
     check: "The fields below are what the external system will receive.",
     channels: false,
     reasonRequired: true,
@@ -227,7 +227,7 @@ export const TASK_TYPES: Readonly<Record<string, TaskTypeSpec>> = {
  */
 export const FALLBACK_TASK_SPEC: TaskTypeSpec = {
   label: "Approval",
-  effect: "This build does not recognise the task type — approve only if you know what it does.",
+  effect: "This build does not recognise this kind of card; approve only if you know what it does.",
   check: "Every field the backend sent is shown below, unchanged.",
   channels: true,
   reasonRequired: true,
@@ -248,7 +248,7 @@ export function isKnownTaskType(taskType: unknown): boolean {
 
 /** `APPROVE_POWER_NOTICE` → `Approve power notice`. Used for unknown types. */
 export function humanizeType(taskType: unknown): string {
-  if (typeof taskType !== "string" || !taskType.trim()) return "Unknown task";
+  if (typeof taskType !== "string" || !taskType.trim()) return "Unknown card";
   const words = clamp(taskType.trim(), 48).replace(/[_\-.]+/g, " ").toLowerCase();
   return words.charAt(0).toUpperCase() + words.slice(1);
 }
@@ -469,7 +469,12 @@ function channelMeta(key: string, v: ChannelValue): string[] {
 
   const audience = own(m, "audience") ?? own(m, "audiences");
   if (audience != null) {
-    const a = clamp(asText(audience), 60);
+    const words = Array.isArray(audience)
+      ? audience.map((x) => (typeof x === "string" ? audienceWord(x) : asText(x))).join(", ")
+      : typeof audience === "string"
+        ? audienceWord(audience)
+        : asText(audience);
+    const a = clamp(words, 60);
     if (a) chips.push(a);
   }
 
@@ -698,7 +703,7 @@ export function factsFor(task: unknown, incident: unknown): Fact[] {
 
   const users = firstNumber(own(inc, "users_affected"));
   if (users != null) {
-    pushFact(facts, "Est. users", users.toLocaleString("en-KE"), users >= 50000 ? { attention: "warn" } : undefined);
+    pushFact(facts, "Subscribers (est.)", users.toLocaleString("en-KE"), users >= 50000 ? { attention: "warn" } : undefined);
   }
 
   pushFact(facts, "Domain", human(own(inc, "failure_domain")));
@@ -711,7 +716,7 @@ export function factsFor(task: unknown, incident: unknown): Fact[] {
     if (listed.length) pushFact(facts, "Services", listed.map(human).join(", "));
   }
 
-  if (mpesaRisk) pushFact(facts, "M‑PESA corridor", "at risk", { attention: "danger" });
+  if (mpesaRisk) pushFact(facts, "M‑PESA", "at risk", { attention: "danger" });
   // Good news in its normal state is not coloured (brief rule 7).
   if (own(inc, "service_affecting") === false) pushFact(facts, "Service affecting", "no");
 
@@ -727,11 +732,13 @@ export function factsFor(task: unknown, incident: unknown): Fact[] {
   const owner = firstString(own(inc, "assignee_name"), own(payload, "assignee"));
   const msp = firstString(own(inc, "responsible_msp"), own(inc, "msp_name"));
   pushFact(facts, "Owner", owner);
-  if (msp && msp.trim().toLowerCase() !== owner.trim().toLowerCase()) pushFact(facts, "MSP", msp);
+  if (msp && msp.trim().toLowerCase() !== owner.trim().toLowerCase()) pushFact(facts, "Vendor", msp);
 
+  // "Goes to": who the approved message reaches, in the floor's words ("regional office (RNIO),
+  // field engineer, vendor (MSP), management"). The check line names this fact.
   const audiences = own(payload, "audiences");
   if (Array.isArray(audiences) && audiences.length) {
-    pushFact(facts, "Audiences", audiences.map(human).join(", "), { wide: true });
+    pushFact(facts, "Goes to", audiences.map((a) => (typeof a === "string" ? audienceWord(a) : asText(a))).join(", "), { wide: true });
   }
 
   return facts;
@@ -752,7 +759,7 @@ export function extraEntries(task: unknown, facts: Fact[]): PayloadEntry[] {
   const shown = (label: string) => facts.find((f) => f.label === label)?.value ?? "";
   const priority = own(payload, "priority");
   if (typeof priority === "string" && priority === own(t, "priority")) skip.add("priority");
-  if (shown("Audiences") && Array.isArray(own(payload, "audiences"))) skip.add("audiences");
+  if (shown("Goes to") && Array.isArray(own(payload, "audiences"))) skip.add("audiences");
   const assignee = asText(own(payload, "assignee")).trim();
   if (assignee && assignee === shown("Owner")) skip.add("assignee");
   // A recognised type shows the alert elsewhere; an unknown one keeps every field it carries.
@@ -775,19 +782,19 @@ export function ageMinutes(createdAt: unknown, now: number = Date.now()): number
 const NBSP = "\u00a0";
 
 /**
- * A wait as a person says it: "16 h 16 m", "4 m", "under a minute"; `""` when unknown.
+ * A wait as a person says it: "16 h 16 min", "4 min", "under a minute"; `""` when unknown.
  * A no-break space keeps each number with its unit, so "16 h" never splits across lines.
  */
 export function fmtWait(mins: number | null): string {
   if (mins == null) return "";
   if (mins < 1) return "under a minute";
-  if (mins < 60) return `${mins}${NBSP}m`;
+  if (mins < 60) return `${mins}${NBSP}min`;
   const h = Math.floor(mins / 60);
   const m = mins % 60;
-  return m ? `${h}${NBSP}h ${m}${NBSP}m` : `${h}${NBSP}h`;
+  return m ? `${h}${NBSP}h ${m}${NBSP}min` : `${h}${NBSP}h`;
 }
 
-/** The card's age: "waiting 16 h 16 m". */
+/** The card's age: "waiting 16 h 16 min". */
 export function fmtAge(mins: number | null): string {
   if (mins == null) return "age unknown";
   return `waiting ${fmtWait(mins)}`;

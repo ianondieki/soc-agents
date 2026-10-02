@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api";
 import LiveRunPanel from "../components/LiveRunPanel";
-import { LIFECYCLE_NODES, WAITING_WORD, fmtInt, fmtMinutes, fmtMs, humanAutonomy, nodeDoes, nodeLabel } from "../lib/agents";
+import { LIFECYCLE_NODES, fmtInt, fmtMinutes, fmtMs, humanAutonomy, nodeDoes, nodeLabel } from "../lib/agents";
 import { fmtEAT } from "../lib/time";
 import "./Showcase.css";
 
@@ -17,7 +17,7 @@ import "./Showcase.css";
  * the never-automated list. Per-agent numbers live on /agents.
  */
 
-/** What a person did for each hop before the agents. The "now" sentence is the hop's own
+/** What a person did for each step before the agents. The "now" sentence is the step's own
  *  `does` in lib/agents.ts, the same sentence the Workflow map prints. */
 const BEFORE: Record<string, string> = {
   INGEST: "Read the alarm off the NMS and work out which site it is.",
@@ -173,9 +173,10 @@ export default function Showcase({
     <div className="showcase">
       <section className="sc-hero" aria-labelledby="sc-title">
         <div className="sc-hero-text">
-          <h1 id="sc-title">One alarm in. Ticket, owner, broadcast, brief and ledger out.</h1>
+          <h1 id="sc-title">Alarm to filled-in ticket in under a second.</h1>
           <p className="sc-lead">
-            <span>Agents do the typing and chasing.</span> <span>People keep every decision that leaves the building.</span>
+            <span>Agents fill every field, choose the vendor, draft the SMS and email, and chase the reply.</span>{" "}
+            <span>P1 and P2 messages wait for a named person, and every step is on record.</span>
           </p>
           <button type="button" className="btn primary" onClick={() => nav("/")}>
             Watch it live on Mission control
@@ -236,7 +237,7 @@ export default function Showcase({
 
       <section className="sc-section sc-two">
         <div>
-          <h2>People keep the decisions</h2>
+          <h2>Where people decide</h2>
           <p className="sc-lead">This deployment runs at {humanAutonomy(autonomy)}; the level is one setting.</p>
           <ol className="sc-ladder">
             {LADDER.map((l) => (
@@ -303,20 +304,16 @@ function Figures({ p, windowHours, waitingNow }: { p: any | null; windowHours: W
 
   const minutesTitle =
     `${fmtMinutes(toil.minutes_saved)} of steps taken over, less ${fmtMinutes(toil.human_minutes_spent)} people spent deciding. ` +
-    "Minutes are the operator profile's estimate of the work by hand, not a stopwatch.";
+    "Minutes by hand are the floor's own estimates, not a stopwatch study.";
 
-  let decisionsLabel: string;
-  if (made > 0) {
-    decisionsLabel = "made by a person" + (waitingNow == null ? "" : waitingNow > 0 ? `; ${fmtInt(waitingNow)} waiting now` : "; none waiting now");
-  } else {
-    decisionsLabel = waitingNow && waitingNow > 0 ? `${fmtInt(waitingNow)} ${WAITING_WORD}` : "nothing leaves the building without one";
-  }
+  // Always both numbers: decided by a person, and waiting now (0 is a real answer).
+  const decisionsLabel = "by a person" + (waitingNow == null ? "" : `; ${fmtInt(waitingNow)} waiting now`);
 
   return (
     <ul className="sc-fig-list" aria-live="polite">
       <li className="sc-fig" title={minutesTitle}>
         <span className="sc-fig-value">{fmtMinutes(Math.max(0, Number(toil.net_minutes_saved) || 0))}</span>{" "}
-        <span className="sc-fig-label">saved, after the time people spent deciding</span>
+        <span className="sc-fig-label">of analyst work saved (estimate, after approval time)</span>
       </li>
       <li className="sc-fig">
         {processed > 0 ? (
@@ -325,7 +322,7 @@ function Figures({ p, windowHours, waitingNow }: { p: any | null; windowHours: W
             {/* Whole numbers a manager can say aloud: "6 of 11 alarms", never "54.5 %". */}
             <span className="sc-fig-label">
               {absorbed > 0
-                ? `${fmtInt(absorbed)} of ${plural(processed, "alarm")} folded into an open ticket`
+                ? `from ${plural(processed, "alarm")}; ${fmtInt(absorbed)} folded into a ticket already open`
                 : `from ${plural(processed, "alarm")}`}
             </span>
           </>
@@ -337,7 +334,7 @@ function Figures({ p, windowHours, waitingNow }: { p: any | null; windowHours: W
         )}
       </li>
       <li className="sc-fig" title={hitl.median_decision_minutes != null ? `A decision takes ${hitl.median_decision_minutes} min on median.` : undefined}>
-        <span className="sc-fig-value">{made > 0 ? plural(made, "decision") : "No decisions yet"}</span>{" "}
+        <span className="sc-fig-value">{fmtInt(made)} decided</span>{" "}
         <span className="sc-fig-label">{decisionsLabel}</span>
       </li>
     </ul>
@@ -354,7 +351,7 @@ function Steps({ p, fresh, failed, windowHours }: { p: any | null; fresh: any | 
   const totalByHand = byNode.reduce((sum, n) => sum + Number(n.toil_minutes_each || 0), 0);
   // One time for one run (the rule the rail and the ticket follow): what the agents worked, the
   // sum of their step times, never started-to-finished, which grows by hours when a person
-  // approves later. Per ticket: each hop's average step time, added up.
+  // approves later. Per ticket: each step's average time, added up.
   const freshNodes: any[] = Array.isArray(fresh?.steps?.by_node) ? fresh.steps.by_node : [];
   const agentMs = freshNodes.length ? freshNodes.reduce((sum, n) => sum + (Number(n.avg_ms) || 0), 0) : null;
   const span = windowHours ? "in the last 24 hours" : "on record";
@@ -369,7 +366,7 @@ function Steps({ p, fresh, failed, windowHours }: { p: any | null; fresh: any | 
           <th scope="col">Before</th>
           <th scope="col">Now</th>
           <th scope="col" className="sc-num">
-            By hand
+            Minutes by hand
           </th>
         </tr>
       </thead>
@@ -404,7 +401,7 @@ function Steps({ p, fresh, failed, windowHours }: { p: any | null; fresh: any | 
         <tr>
           <th scope="row">Per alarm</th>
           <td colSpan={2} className="sc-total-note">
-            Minutes by hand are the operator profile's estimate, not a stopwatch.
+            Minutes by hand are the floor's own estimates, not a stopwatch study.
             {agentMs != null && agentMs > 0 ? ` The agents' own steps take ${fmtMs(agentMs)} per ticket, on average.` : ""}
           </td>
           <td className="sc-num">{minutes(fmtMinutes(totalByHand))}</td>
@@ -418,15 +415,15 @@ function Steps({ p, fresh, failed, windowHours }: { p: any | null; fresh: any | 
  *  Labels are horizontal and sized to their boxes; under 880 px the figure scrolls sideways. */
 function Architecture({ mcp }: { mcp: { agents: number; cards: number; servers: number } | null }) {
   const left = ["NMS and EMS alarm feeds", "Ticketing system", "Site catalogue and CMDB", "Mail and SMS gateways", "Excel shift ledger"];
-  const right = ["Approvals: read and decide", "Wallboard and Mission control", "Exec brief readers", "RNIO, FE and MSP recipients"];
+  const right = ["Approvals: read and decide", "Wallboard and Mission control", "Exec brief readers", "Regional office, engineer, vendor"];
   const rightY = [34, 103, 173, 242];
   return (
     <figure className="sc-arch" tabIndex={0} aria-label="Platform diagram">
       <svg viewBox="0 0 980 292" role="img" aria-labelledby="sc-arch-svg-title sc-arch-svg-desc">
         <title id="sc-arch-svg-title">How the agents sit on the existing platform</title>
         <desc id="sc-arch-svg-desc">
-          Existing systems on the left connect through adapters, mock today and real later, to the agents under one supervisor
-          and an autonomy gate, which hand decisions and messages to people on the right.
+          Existing systems on the left connect through adapters, mock today and real later, to the agents and their
+          approval gate, which hand decisions and messages to people on the right.
         </desc>
         <defs>
           <marker id="sc-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
@@ -464,11 +461,11 @@ function Architecture({ mcp }: { mcp: { agents: number; cards: number; servers: 
 
         <rect x="392" y="34" width="310" height="248" rx="12" className="sc-arch-agents" />
         <text x="547" y="66" textAnchor="middle" className="sc-arch-h">
-          {mcp && mcp.agents > 0 ? `${mcp.agents} agents, one supervisor` : "Agents under one supervisor"}
+          {mcp && mcp.agents > 0 ? `${mcp.agents} agents` : "The agents"}
         </text>
         <rect x="420" y="86" width="254" height="38" rx="8" className="sc-arch-gate" />
         <text x="547" y="110" textAnchor="middle" className="sc-arch-t">
-          Autonomy gate
+          Approval gate
         </text>
         <text x="547" y="156" textAnchor="middle" className="sc-arch-s">
           Every step logs its reason, tools

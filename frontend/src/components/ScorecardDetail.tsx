@@ -290,7 +290,7 @@ export default function ScorecardDetail({
               <Fact label="Inferred restores" value={`${gate.inferred} of ${gate.restored}`} />
               <Fact label="Inferred share" value={gate.pct} />
               <Fact label="Limit" value={gate.threshold} note={gate.yamlPath} />
-              <Fact label="Eligible incidents" value={gate.incidents} />
+              <Fact label="Eligible tickets" value={gate.incidents} />
             </div>
             {gate.bySource.length > 0 && (
               <div className="muted" style={{ marginTop: "0.5rem" }}>
@@ -299,7 +299,7 @@ export default function ScorecardDetail({
             )}
             {gate.inferredIncidents.length > 0 && (
               <div className="muted" style={{ marginTop: "0.25rem" }}>
-                Incidents whose restore was inferred:{" "}
+                Tickets whose restore time was inferred:{" "}
                 <span style={{ fontFamily: "var(--mono)", color: "var(--text)" }}>{gate.inferredIncidents.join(", ")}</span>
               </div>
             )}

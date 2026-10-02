@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { humanStatus } from "../lib/agents";
+import { humanStatus, priorityTitle } from "../lib/agents";
 import { IconCheck, IconDot } from "../lib/icons";
 import { fmtDateTime } from "../lib/time";
 import {
@@ -38,7 +38,7 @@ import { hitlSubject, hitlSubjectIsIncident } from "../lib/hitlSubject";
  * stays reserved, so the reason box keeps its width.
  *
  * DECIDING: Approve and Reject are never disabled buttons. Pressed with an empty reason they
- * say "Add a reason; it goes on the audit row" under the box, mark it `aria-invalid` and put
+ * say "Add a reason; it is kept in the Audit trail" under the box, mark it `aria-invalid` and put
  * focus in it. The button that was pressed says what is happening ("Approving…"); the others
  * are `aria-disabled` meanwhile, so focus never drops to <body>. Once decided, the footer
  * shows the receipt ("Approved by NOC Analyst" and what that did) where the buttons were and
@@ -65,7 +65,7 @@ import { hitlSubject, hitlSubjectIsIncident } from "../lib/hitlSubject";
  */
 const APPROVE_REASON_REQUIRED_IN_UI = true;
 
-const REJECT_REASONS = ["wording", "wrong MSP", "late", "facts not verified"];
+const REJECT_REASONS = ["wording", "wrong vendor", "late", "facts not verified"];
 
 /** The request in flight for this card, if any; each button says its own. */
 export type CardAction = "claim" | "approve" | "reject";
@@ -80,7 +80,7 @@ export interface CardReceipt {
   approved: boolean;
 }
 
-const REASON_NEEDED = "Add a reason; it goes on the audit row";
+const REASON_NEEDED = "Add a reason; it is kept in the Audit trail";
 
 export interface ApprovalCardProps {
   task: any;
@@ -151,6 +151,7 @@ export default function ApprovalCard({
   const trimmed = reason.trim();
   const approveNeedsReason = spec.reasonRequired || APPROVE_REASON_REQUIRED_IN_UI;
   const reasonMsgId = `${headingId}-reason`;
+  const reasonId = `${headingId}-reason-box`;
 
   // The decision lands where the eye is: the receipt replaces the buttons in the sticky footer
   // and takes focus before the buttons leave, so focus never falls to <body>.
@@ -184,7 +185,7 @@ export default function ApprovalCard({
     <article className="hitl-card" aria-labelledby={headingId}>
       <header className="hitl-card-head">
         <span className="hitl-title">
-          <span className={`pill ${priority}`}>{priority}</span>
+          <span className={`pill ${priority}`} title={priorityTitle(priority)}>{priority}</span>
           {/* Since v8 a maintenance card has no incident; say what it IS about (lib/hitlSubject).
               An incident number is an identifier (mono); a maintenance heading is prose. */}
           {/* Focusable from script only: after a failed claim, or when the card above it is decided. */}
@@ -198,7 +199,7 @@ export default function ApprovalCard({
         {!spec.known && (
           <span
             className="chip warn"
-            title="This build has no card for that task_type. Everything the backend sent is shown below, unchanged."
+            title="This build has no layout for this kind of card. Everything the backend sent is shown below, unchanged."
           >
             type not recognised
           </span>
@@ -211,7 +212,7 @@ export default function ApprovalCard({
         {oddStatus && <span className="hitl-type">{oddStatus}</span>}
         <span
           className={late ? "hitl-age late" : "hitl-age"}
-          title="Escalation ladder: a P1 or P2 still unclaimed at 5 minutes nudges the on-duty supervisor, at 15 the duty manager, and at 30 it shows red on the Wallboard."
+          title="Escalation ladder (off in this demo): a P1 or P2 still unclaimed at 5 minutes nudges the shift supervisor, at 15 the duty manager, and at 30 it shows red on the Wallboard."
         >
           {fmtAge(mins)}
         </span>
@@ -251,11 +252,11 @@ export default function ApprovalCard({
             <span
               title={
                 source === "envelope"
-                  ? "Rendered from the canonical alert envelope."
-                  : "Composed draft (pre-envelope). Segment counts below are computed in the browser, not by the backend renderer."
+                  ? "Rendered by the backend, character for character as it will be sent."
+                  : "A draft written before the final rendering. The segment counts below are estimated in the browser."
               }
             >
-              {source === "envelope" ? "Envelope rendering" : "Draft rendering"}
+              {source === "envelope" ? "Exact text as sent" : "Draft; counts estimated here"}
             </span>
             <button
               type="button"
@@ -293,9 +294,9 @@ export default function ApprovalCard({
 
       {channels.length === 0 && spec.channels && (
         <div className="hitl-nochannel">
-          No rendered message text on this task; decide from the facts above and the payload below.
+          No message text on this card; decide from the facts above and the payload below.
           {t.task_type === "APPROVE_BROADCAST" &&
-            " Approving still releases any held broadcast rows, so if you cannot see what they say, reject."}
+            " Approving still releases any held messages for sending, so if you cannot see what they say, reject."}
         </div>
       )}
 
@@ -338,10 +339,15 @@ export default function ApprovalCard({
               {error}
             </div>
           )}
+          {/* A visible label, not a placeholder doing its job: it stays while the reason is typed. */}
+          <label htmlFor={reasonId} className="hitl-reason-label">
+            {approveNeedsReason ? "Reason (kept in the Audit trail)" : "Reason (needed to reject; kept in the Audit trail)"}
+          </label>
           <div className="hitl-decide">
             <div className="hitl-reason-wrap">
               {/* One line that grows with what is typed, so the footer leaves the drafts in view. */}
               <textarea
+                id={reasonId}
                 ref={reasonRef}
                 className="hitl-reason"
                 value={reason}
@@ -349,14 +355,8 @@ export default function ApprovalCard({
                   setReason(e.target.value);
                   if (reasonMissing && e.target.value.trim()) setReasonMissing(false);
                 }}
-                aria-label="Decision reason"
                 aria-invalid={reasonMissing || undefined}
                 aria-describedby={reasonMissing ? reasonMsgId : undefined}
-                placeholder={
-                  approveNeedsReason
-                    ? "Reason for the decision; it goes on the audit row"
-                    : "Reason (needed to reject); it goes on the audit row"
-                }
                 rows={1}
                 tabIndex={receipt ? -1 : undefined}
               />
@@ -425,7 +425,7 @@ export default function ApprovalCard({
                 </button>
               ))}
             </span>
-            {!claimed && <span className="hitl-hint">Claim first so two supervisors do not both act.</span>}
+            {!claimed && <span className="hitl-hint">Claim first so two people do not act on the same card.</span>}
           </div>
         </div>
         {receipt && (

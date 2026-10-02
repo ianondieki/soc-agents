@@ -140,7 +140,7 @@ export default function Pirs({ tick }: { tick: number }) {
       setNote(
         res?.created
           ? "Review opened, " + humanStatus(res.status) + "."
-          : "That incident already had a review; it is selected below."
+          : "That ticket already had a review; it is selected below."
       );
       setSelected(res.id);
       setOpenFor("");
@@ -158,7 +158,7 @@ export default function Pirs({ tick }: { tick: number }) {
         <h1>Post-incident reviews</h1>
         <p
           className="lead"
-          title="Root causes and contributing factors are validated against the people on the incident, and an action item is owned by a role token. A postmortem nobody signed is a document nobody owns."
+          title="Root causes and contributing factors are validated against the people on the ticket, and an action item is owned by a role token. A postmortem nobody signed is a document nobody owns."
         >
           Blameless by rule: a named person signs each review. Times in EAT.
         </p>
@@ -166,7 +166,7 @@ export default function Pirs({ tick }: { tick: number }) {
       {!off && (
         <div className="page-actions">
           <select
-            aria-label="Open a review by hand for a resolved incident"
+            aria-label="Open a review by hand for a resolved ticket"
             value={openFor}
             disabled={busy}
             onChange={(e) => setOpenFor(e.target.value)}
@@ -238,10 +238,10 @@ export default function Pirs({ tick }: { tick: number }) {
         <table>
           <thead>
             <tr>
-              <th>Incident</th>
+              <th>Ticket</th>
               <th>Status</th>
               <th>Why it opened</th>
-              <th>Users</th>
+              <th>Subscribers</th>
               <th>MTTR / adjusted</th>
               <th>Reviewer</th>
               <th>Updated (EAT)</th>
@@ -319,7 +319,7 @@ export default function Pirs({ tick }: { tick: number }) {
         )}
         {loaded && rows.length === 0 && status === "ALL" && (
           <div className="empty">
-            No reviews yet. One opens within 5 minutes of a qualifying incident being restored or closed; open any
+            No reviews yet. One opens within 5 minutes of a qualifying ticket being restored or closed; open any
             other by hand above.
           </div>
         )}

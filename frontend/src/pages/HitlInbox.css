@@ -285,6 +285,8 @@
   gap: var(--s2) var(--s3);
 }
 .hitl-reason-wrap { flex: 1 1 20rem; min-width: 0; }
+/* The reason box's visible label, one quiet line above the box and the buttons. */
+.hitl-reason-label { display: block; margin-bottom: calc(-1 * var(--s1)); font-size: var(--fs-xs); color: var(--muted); }
 /* One line (the height of the buttons beside it) that grows with what is typed. */
 .hitl-reason {
   display: block;

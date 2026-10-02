@@ -134,7 +134,7 @@ export default function Wallboard({
             </span>
           )}
           <span className="chip">Open {metrics?.open_total ?? "—"}</span>
-          <span className="chip hitl">HITL {metrics?.hitl_pending ?? 0}</span>
+          <span className="chip hitl">Decisions {metrics?.hitl_pending ?? 0}</span>
           {red.length > 0 && <span className="chip bad">ESCALATED {red.length}</span>}
           <span className="chip">P1 {metrics?.by_priority?.P1 ?? 0}</span>
           <span className="chip">P2 {metrics?.by_priority?.P2 ?? 0}</span>
@@ -175,7 +175,7 @@ export default function Wallboard({
             <div key={c.id} className="wb-line muted">
               <span>{c.priority ?? "P?"}</span>
               <span>{labelFor(c.task_type)}</span>
-              <span className="mono">{c.incident_number ?? "no incident"}</span>
+              <span className="mono">{c.incident_number ?? "no ticket"}</span>
               {c.unclaimed_minutes != null && <span>unclaimed {c.unclaimed_minutes} min</span>}
               {c.since_eat && <span>red since {c.since_eat}</span>}
             </div>
@@ -184,12 +184,12 @@ export default function Wallboard({
       )}
       {rows === null && !stale && (
         <span className="sr-only" role="status">
-          Loading the P1 and P2 incidents
+          Loading the P1 and P2 tickets
         </span>
       )}
       {rows === null && stale && (
         <div className="empty" role="alert">
-          Couldn't reach the incident list; the wall retries every 5 seconds.{" "}
+          Couldn't reach the ticket list; the wall retries every 5 seconds.{" "}
           <button className="btn sm" onClick={() => setRetry((n) => n + 1)}>
             Retry
           </button>
@@ -220,7 +220,7 @@ export default function Wallboard({
               <div className="wb-line wb-meta muted">
                 <span className="mono">{i.region_code}</span>
                 {i.failure_domain && <span>{humanEnum(i.failure_domain)}</span>}
-                <span>{i.users_affected?.toLocaleString()} users</span>
+                <span>{i.users_affected?.toLocaleString()} subscribers</span>
               </div>
               <div className="wb-owner">Owner {nameOf(i.assignee_name)}</div>
               <div className="wb-line wb-meta muted">
@@ -229,7 +229,7 @@ export default function Wallboard({
               </div>
               {(i.mpesa_risk || decisionFlag) && (
                 <div className="wb-flags">
-                  {i.mpesa_risk && <span className="danger">M‑PESA RISK</span>}
+                  {i.mpesa_risk && <span className="danger">M‑PESA AT RISK</span>}
                   {decisionFlag && <span className="hitl">DECISION WAITING</span>}
                 </div>
               )}

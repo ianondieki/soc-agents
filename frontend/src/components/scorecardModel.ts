@@ -60,8 +60,8 @@ export const NORMALISED_LABEL_DEFAULT = "contract-agreed regional allowance";
  * (SLA compliance 50 % raw, 60 % normalised) and needs no single multiplier.
  */
 export const NORMALISED_EXPLAINER =
-  "Normalised: the line's own formula recomputed with each incident's minutes divided by that incident's region " +
-  "multiplier. Compliance re-judges each incident against its limit, so the figure can be above or below raw. " +
+  "Normalised: the line's own formula recomputed with each ticket's minutes divided by that ticket's region " +
+  "multiplier. Compliance re-judges each ticket against its limit, so the figure can be above or below raw. " +
   "Bands and credits use raw. The line's formula, in its drawer, shows the exact working.";
 /** `services/scorecard.PATH_SEP`: a composite `yaml_path` lists every term a line was judged against. */
 export const PATH_SEP = ";";
@@ -379,10 +379,10 @@ export function valuePair(line: Pick<ScorecardLine, "kpi" | "raw_value" | "norma
 
 /** The region multiplier the line used, or why there is not exactly one. */
 export function multiplierText(value: number | null | undefined): { text: string; title: string } {
-  if (isNum(value)) return { text: "× " + String(value), title: "Every measured incident on this line shares this regional multiplier." };
+  if (isNum(value)) return { text: "× " + String(value), title: "Every measured ticket on this line shares this regional multiplier." };
   return {
     text: "—",
-    title: "No single multiplier: the measured incidents span regions, none were measured, or the KPI takes none.",
+    title: "No single multiplier: the measured tickets span regions, none were measured, or the KPI takes none.",
   };
 }
 
@@ -390,7 +390,7 @@ const KPI_WORDS: Record<string, { label: string; hint: string }> = {
   MTTA_MIN: { label: "MTTA", hint: "median minutes from escalation to the first vendor note" },
   ADJ_MTTR_MIN: { label: "Adjusted MTTR", hint: "median restore minutes, stop-clock minutes deducted" },
   SLA_COMPLIANCE_PCT: { label: "SLA compliance", hint: "restores within the priority's limit" },
-  REPEAT_FAULT_RATE: { label: "Repeat-fault rate", hint: "sites with 2+ same-signature incidents / affected sites" },
+  REPEAT_FAULT_RATE: { label: "Repeat-fault rate", hint: "sites with 2+ same-signature tickets / affected sites" },
   NOTE_COMPLIANCE_PCT: { label: "Note compliance", hint: "note slots with a vendor note" },
   AVAILABILITY_PCT: { label: "Availability", hint: "scheduled uptime less unavailable minutes" },
 };
@@ -477,7 +477,7 @@ export function excludedOf(line: Pick<ScorecardLine, "evidence">): ExcludedIncid
 
 /** `services/scorecard.X_*`, in words. The code is always shown beside the words. */
 const EXCLUSION_WORDS: Record<string, string> = {
-  CANCELLED: "cancelled incident",
+  CANCELLED: "cancelled ticket",
   PLANNED_MAINTENANCE: "planned maintenance",
   UNKNOWN_PRIORITY: "no P1-P4 priority",
   NOT_ESCALATED: "never escalated to the vendor",
@@ -698,7 +698,7 @@ export function cardActions(
 
   let none: string | null = null;
   if (status === "WITHHELD")
-    none = "A WITHHELD card cannot be published or reviewed. A supervisor records the real restore times, then the period is recomputed.";
+    none = "A WITHHELD card cannot be published or reviewed. A shift supervisor records the real restore times, then the period is recomputed.";
   else if (status === "FINAL") none = "A FINAL card takes no further action here. A correction is a new correction period (§7.6.6).";
 
   return { roleMayAct: may, review, publish, finalise, none };
@@ -827,7 +827,7 @@ const CONFLICT_RULES: { match: RegExp; title: string; body: string }[] = [
     // services/scorecard.publish_scorecard, ScorecardGateError
     match: /^WITHHELD|data-quality gate/i,
     title: "Withheld by the data-quality gate",
-    body: "The card cannot be released while the gate fails. A supervisor records the real restore times, then the period is recomputed.",
+    body: "The card cannot be released while the gate fails. A shift supervisor records the real restore times, then the period is recomputed.",
   },
   {
     match: /must record a shadow review|first period for this vendor/i,

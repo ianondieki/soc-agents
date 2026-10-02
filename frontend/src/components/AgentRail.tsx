@@ -18,7 +18,7 @@ import { IconAlert, IconCheck, IconPause } from "../lib/icons";
 
 /**
  * The agent rail: one alarm's path through the twelve agents, drawn as a signal route —
- * twelve hops joined by a line, each hop lit by what its agent did.
+ * twelve steps joined by a line, each step lit by what its agent did.
  *
  * What it gives a shift at a glance: how long each hop took (ms under every lit hop), whether
  * the run is parked on a person (the lavender hop) and what that person decided (the green
@@ -32,9 +32,14 @@ import { IconAlert, IconCheck, IconPause } from "../lib/icons";
  * a run is live the first pending hop after the last done one is drawn as running so the eye has
  * somewhere to rest. Reduced motion and quiet mode stop the pulse.
  *
- * Each hop button's accessible name is its visible text (label, then the measurement or state
- * word) with the state as an sr-only word after the label: no aria-label, so the name always
- * contains what the eye reads.
+ * Each step button's accessible name is its visible text with no aria-label, so the name always
+ * contains what the eye reads. It is read in the order a person needs it: the step, then its state
+ * ("done, 12 ms", "waiting for a decision", "not needed"), then the agent. On screen the agent sits
+ * between the label and the state (CSS `order`); in the DOM it comes last, and the only sr-only
+ * text is a comma after the label plus the state word the measurement leaves unsaid.
+ *
+ * `not_needed` is the Approval step of a P3/P4 alarm that the autonomy level let through: a
+ * neutral dot and the words "not needed", never a green check that reads as a person approving.
  */
 export default function AgentRail({
   steps,
@@ -142,9 +147,17 @@ export default function AgentRail({
           const label = labelOf(n);
           const ms = step?.duration_ms != null ? fmtMs(step.duration_ms) : null;
           const timed = (st === "succeeded" || st === "failed") && ms != null;
-          // The state as words for a screen reader, when the visible meta does not already say it.
-          const srState =
-            st === "succeeded" ? "done" : st === "failed" && timed ? "failed" : st === "pending" ? "pending" : st === "waiting_hitl" ? "for a decision" : "";
+          // The state as words for a screen reader, where the visible meta does not already say
+          // it: before a measurement ("done, 12 ms"), for the pending dash, after "waiting".
+          const srBefore =
+            st === "succeeded" && timed ? "done, " : st === "failed" && timed ? "failed, " : st === "pending" ? (compact ? "pending" : "pending,") : "";
+          // A comma before the agent name, which only the full rail shows: inside the last sr-only
+          // words when there are any, else zero-size punctuation (`.sr-punct`) that adds no space.
+          const srAfter = st === "waiting_hitl" ? ` for a decision${compact ? "" : ","}` : "";
+          // The meta is a flex row, so the comma goes inside its last piece (a flex item is a
+          // block, and a separate one would put a space before the comma).
+          const comma = compact ? null : <span className="sr-punct">,</span>;
+          const showConf = !compact && conf != null && st === "succeeded";
           return (
             <li key={n.id} className={`rail-hop ${st}` + (st === "decided" && step?.decision === "rejected" ? " rejected" : "") + (isSel ? " selected" : "")} data-node={n.id}>
               <button
@@ -170,23 +183,59 @@ export default function AgentRail({
                   {st === "failed" && <IconAlert size={iconSize} />}
                   {st === "waiting_hitl" && <IconPause size={iconSize} />}
                 </span>
-                <span className="rail-label">{label}</span>
-                {srState && <span className="sr-only">, {srState},</span>}{" "}
-                {!compact && <span className="rail-agent">{agentDisplayName(n.agent)}</span>}
+                {/* The commas live inside the inline spans, so the name reads "Ingest, done, 1 ms"
+                    with no space before them. */}
+                <span className="rail-label">
+                  {label}
+                  <span className="sr-punct">,</span>
+                </span>{" "}
                 {/* Words in the sans; only the measurement (ms, %) is mono. */}
                 <span className="rail-meta">
-                  {st === "running" && "running"}
+                  {srBefore && <span className="sr-only">{srBefore}</span>}
+                  {st === "running" && <span>running{comma}</span>}
                   {st === "pending" && <span aria-hidden="true">—</span>}
-                  {st === "skipped" && "skipped"}
-                  {st === "waiting_hitl" && "waiting"}
-                  {st === "decided" && (step?.decision === "rejected" ? "rejected" : "approved")}
-                  {(st === "succeeded" || st === "failed") && (timed ? <span className="mono">{ms}</span> : STATUS_WORD[st])}
-                  {!compact && conf != null && st === "succeeded" && (
-                    <span className="rail-conf mono" title={`confidence ${Math.round(conf * 100)}%`}>
-                      {Math.round(conf * 100)}%
+                  {st === "skipped" && <span>skipped{comma}</span>}
+                  {st === "not_needed" && (
+                    <span>
+                      {STATUS_WORD.not_needed}
+                      {comma}
+                    </span>
+                  )}
+                  {st === "waiting_hitl" && <span>waiting</span>}
+                  {srAfter && <span className="sr-only">{srAfter}</span>}
+                  {st === "decided" && (
+                    <span>
+                      {step?.decision === "rejected" ? "rejected" : "approved"}
+                      {comma}
+                    </span>
+                  )}
+                  {(st === "succeeded" || st === "failed") &&
+                    (timed ? (
+                      <span className="mono">
+                        {ms}
+                        {!showConf && comma}
+                      </span>
+                    ) : (
+                      <span>
+                        {STATUS_WORD[st]}
+                        {!showConf && comma}
+                      </span>
+                    ))}
+                  {showConf && (
+                    <span className="rail-conf mono" title={`confidence ${Math.round(conf! * 100)}%`}>
+                      <span className="sr-only">confidence </span>
+                      {Math.round(conf! * 100)}%{comma}
                     </span>
                   )}
                 </span>
+                {/* Last in the DOM, so a screen reader hears the step and its state first; shown
+                    between the two by `order` in styles.css. */}
+                {!compact && (
+                  <>
+                    {" "}
+                    <span className="rail-agent">{agentDisplayName(n.agent)}</span>
+                  </>
+                )}
               </button>
               {layout === "route" && i < order.length - 1 && <span className={`rail-link ${statuses[i + 1]}`} aria-hidden="true" />}
             </li>
@@ -204,7 +253,10 @@ export default function AgentRail({
           </div>
           {!current && <p className="muted">This agent has not run for this alarm yet.</p>}
           {current && normaliseStatus(current.status) === "skipped" && current.duration_ms == null && !current.rationale && (
-            <p className="muted">Not needed for this alarm: the run ended before this hop.</p>
+            <p className="muted">Not needed for this alarm: the run ended before this step.</p>
+          )}
+          {current && normaliseStatus(current.status) === "not_needed" && (
+            <p className="muted">Not needed: at this autonomy level a P3 or P4 message goes out without a person.</p>
           )}
           {current && (current.rationale || current.output_summary || current.input_summary || current.duration_ms != null) && (
             <dl className="rail-dl">
@@ -299,7 +351,7 @@ function Why({ text }: { text: string | null | undefined }) {
   );
 }
 
-/** A hop's state in the detail: plain words when routine, the drawn icon and colour when not. */
+/** A step's state in the detail: plain words when routine, the drawn icon and colour when not. */
 function HopState({ step }: { step: RailStep }) {
   const status = normaliseStatus(step.status);
   if (status === "waiting_hitl")

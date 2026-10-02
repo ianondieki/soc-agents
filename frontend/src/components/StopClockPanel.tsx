@@ -220,8 +220,8 @@ export default function StopClockPanel({ incidentId }: { incidentId?: string | n
         </div>
         <div className="muted" style={{ alignSelf: "end" }}>
           {view.restored
-            ? "Final for this incident. The scorecard recomputes over its own period."
-            : "Live until the incident is restored."}
+            ? "Final for this ticket. The scorecard recomputes over its own period."
+            : "Live until the ticket is restored."}
         </div>
       </div>
 
@@ -323,7 +323,7 @@ export default function StopClockPanel({ incidentId }: { incidentId?: string | n
         </table>
       )}
       {view.events.length === 0 && (
-        <p className="muted">No stop clock recorded on this incident. The vendor is charged for the whole window.</p>
+        <p className="muted">No stop clock recorded on this ticket. The vendor is charged for the whole window.</p>
       )}
 
       <div className="scc-open">

@@ -213,7 +213,7 @@ export default function HitlInbox({ session, tick }: { session: any; tick: numbe
           const effect =
             action === "approve"
               ? broadcast
-                ? "The held broadcast is released to the dispatcher."
+                ? "The SMS and email are released for sending."
                 : "The change goes ahead."
               : broadcast
                 ? "The drafts are suppressed; nothing is sent."
@@ -294,7 +294,7 @@ export default function HitlInbox({ session, tick }: { session: any; tick: numbe
           <h1 ref={headingRef} tabIndex={-1}>
             Approvals
           </h1>
-          <p className="lead">Claim a card, read what leaves, then approve or reject with a reason.</p>
+          <p className="lead">Each card is a decision for a person: claim it, read what goes out, approve or reject.</p>
         </div>
         <div className="page-actions">
           <button className="btn" onClick={reload}>
@@ -399,8 +399,8 @@ export default function HitlInbox({ session, tick }: { session: any; tick: numbe
                         <span className="hitl-type">{labelFor(t?.task_type)}</span>
                       </header>
                       <p className="hitl-effect">
-                        This task could not be drawn. The raw payload is below; decide from it, or open the
-                        incident.
+                        This card could not be drawn. The raw payload is below; decide from it, or open the
+                        ticket.
                       </p>
                       <pre className="pre hitl-field-pre" tabIndex={0}>
                         {rawPayload(t?.proposed_payload)}

@@ -156,7 +156,7 @@ export default function RiskStrip({ rev = 0 }: RiskStripProps) {
           <span
             className="wb-risk-badge stale"
             title={
-              `The wallboard's own fetch of /api/v1/signals/weather/regions last succeeded ` +
+              `The wallboard's own fetch of /api/v1/signals/weather/regions last answered ` +
               `${fmtAgeShort(Math.floor(feedDownMs / 1000))} ago. The tiles below are the last ` +
               `readings received.` + (feedError ? `\nLast error: ${feedError}` : "")
             }

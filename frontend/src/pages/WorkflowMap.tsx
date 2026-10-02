@@ -32,7 +32,7 @@ export default function WorkflowMap({ profile }: { profile: any }) {
         <div>
           <h1>Workflow map</h1>
           <p className="lead">
-            Every alarm's twelve hops. At {humanAutonomy(profile?.autonomy_level)}, P1 and P2 broadcasts wait for a person.
+            Every alarm's twelve steps. At {humanAutonomy(profile?.autonomy_level)}, P1 and P2 messages wait for a person.
           </p>
         </div>
       </div>
@@ -41,7 +41,7 @@ export default function WorkflowMap({ profile }: { profile: any }) {
           <table>
             <thead>
               <tr>
-                <th scope="col">Hop</th>
+                <th scope="col">Step</th>
                 <th scope="col" className="col-agent">
                   Agent
                 </th>
@@ -88,8 +88,8 @@ export default function WorkflowMap({ profile }: { profile: any }) {
           </table>
         </div>
         <p className="muted">
-          "By hand" is the operator profile's estimate of a person's minutes per hop, the same figure the Showcase page
-          multiplies by the steps the agents completed.
+          By hand: the floor's own estimate of a person's minutes per step, not a stopwatch study. The Showcase
+          multiplies it by the steps the agents completed.
         </p>
       </div>
     </div>

@@ -26,18 +26,18 @@ export interface LifecycleNode {
  *  label always comes from here through `nodeLabel()` so a hop has one name on every page.
  *  `does` is the sentence the Workflow map, the Showcase steps and the Agents page print. */
 export const LIFECYCLE_NODES: readonly LifecycleNode[] = [
-  { id: "INGEST", label: "Ingest", agent: "IngestCorrelationAgent", does: "Normalise the alarm and fingerprint it (site, alarm code, domain)." },
-  { id: "CORRELATE", label: "Correlate", agent: "IngestCorrelationAgent", does: "Fold a repeat or a child site into the open ticket or its parent HUB." },
-  { id: "ENRICH", label: "Enrich", agent: "EnrichmentAgent", does: "Site catalogue: region, RNIO, FE on call, subscribers affected, TT classification." },
-  { id: "SEVERITY", label: "Severity", agent: "SeverityImpactAgent", does: "P4 under 50k users; P3, P2, P1 above; HUB floor P2; CORE floor P1; M‑PESA corridor tag." },
-  { id: "TICKET", label: "Ticket", agent: "TicketingAgent", does: "Allocate the INC number, fill the TT fields, write the narrative and set the SLA clocks." },
-  { id: "ASSIGN", label: "Assign", agent: "DispatchAssignmentAgent", does: "Region × domain matrix: power to Egypro or Tetranet, fibre to Egypro Fibre, radio to the FE." },
-  { id: "HITL", label: "Approval", agent: "SupervisorAgent", does: "Hold P1 and P2 wording for the shift. Nothing external leaves without a named person." },
-  { id: "BROADCAST", label: "Broadcast", agent: "BroadcastCommsAgent", does: "Draft and queue the RNIO, FE and MSP SMS and email through the outbox." },
-  { id: "EXEC_BRIEF", label: "Exec brief", agent: "ExecutiveBriefingAgent", does: "Write the exec brief management reads instead of phoning the NOC." },
-  { id: "LEDGER", label: "Shift ledger", agent: "ShiftLedgerAgent", does: "Append the Excel shift ledger row (EAT)." },
-  { id: "RECURRENCE", label: "Recurrence", agent: "RecurrenceProblemAgent", does: "Count faults at this site in the window; open or update a problem record." },
-  { id: "MONITOR", label: "Monitor", agent: "WorklogMonitorAgent", does: "Set the note-chase and SLA clocks; chase a silent vendor." },
+  { id: "INGEST", label: "Ingest", agent: "IngestCorrelationAgent", does: "Normalises the alarm and fingerprints it (site, alarm code, domain)." },
+  { id: "CORRELATE", label: "Correlate", agent: "IngestCorrelationAgent", does: "Folds a repeat alarm, or a site behind a failed HUB, into the ticket already open." },
+  { id: "ENRICH", label: "Enrich", agent: "EnrichmentAgent", does: "Looks up the region, regional office, on-call field engineer, subscribers and TT category." },
+  { id: "SEVERITY", label: "Severity", agent: "SeverityImpactAgent", does: "P1 from 500k subscribers, P2 from 100k, P3 from 50k; a HUB is at least P2, a CORE site P1; flags M‑PESA risk." },
+  { id: "TICKET", label: "Ticket", agent: "TicketingAgent", does: "Allocates the INC number, fills the TT fields, writes the narrative and sets the SLA clocks." },
+  { id: "ASSIGN", label: "Assign", agent: "DispatchAssignmentAgent", does: "Picks the vendor by region and fault: power to Egypro or Tetranet, fibre to Egypro Fibre, radio to the field engineer." },
+  { id: "HITL", label: "Approval", agent: "SupervisorAgent", does: "Holds every P1 and P2 message until a named person approves it." },
+  { id: "BROADCAST", label: "Broadcast", agent: "BroadcastCommsAgent", does: "Drafts the SMS and email to the regional office, field engineer and vendor." },
+  { id: "EXEC_BRIEF", label: "Exec brief", agent: "ExecutiveBriefingAgent", does: "Writes the exec brief management reads instead of phoning the NOC." },
+  { id: "LEDGER", label: "Shift ledger", agent: "ShiftLedgerAgent", does: "Appends the ticket's row to the Excel shift ledger (EAT)." },
+  { id: "RECURRENCE", label: "Recurrence", agent: "RecurrenceProblemAgent", does: "Counts faults at this site in the window; opens or updates a problem record." },
+  { id: "MONITOR", label: "Monitor", agent: "WorklogMonitorAgent", does: "Sets the SLA clocks and chases a vendor that goes silent." },
 ];
 
 export const LIFECYCLE_NODE_IDS: ReadonlySet<string> = new Set(LIFECYCLE_NODES.map((n) => n.id));
@@ -78,8 +78,10 @@ export function triggerWord(trigger: unknown): string {
   return humanEnum(t);
 }
 
-/** "incident_lifecycle" → "Incident lifecycle". */
+/** "incident_lifecycle" → "Alarm run" (an alarm's run through the twelve steps); any other graph
+ *  humanised: "scorecard_close" → "Scorecard close". */
 export function humanGraph(name: unknown): string {
+  if (name === "incident_lifecycle") return "Alarm run";
   const s = String(name ?? "").replace(/_/g, " ");
   return s ? s[0].toUpperCase() + s.slice(1) : "";
 }
@@ -90,15 +92,24 @@ export function humanAutonomy(level: unknown): string {
   return [lvl, ...rest.map((w) => w.toLowerCase())].join(" ");
 }
 
-/** "AWAITING_VENDOR" → "awaiting vendor": an enum as a person reads it. */
+/** "AWAITING_VENDOR" → "awaiting vendor": an enum as a person reads it. A step or message parked on
+ *  a person reads `WAITING_WORD` ("waiting for a decision"), a success reads "done", and a message
+ *  released to the sender reads "released for sending". */
 export function humanStatus(status: unknown): string {
-  return String(status ?? "").toLowerCase().replace(/_/g, " ");
+  const raw = String(status ?? "");
+  const up = raw.toUpperCase();
+  if (up === "WAITING_HITL" || up === "PENDING_HITL") return WAITING_WORD;
+  if (up === "SUCCEEDED") return "done";
+  if (up === "QUEUED") return "released for sending";
+  return raw.toLowerCase().replace(/_/g, " ");
 }
 
 const ACRONYMS: Record<string, string> = {
   MPESA: "M‑PESA", HUB: "HUB", CORE: "CORE", MSP: "MSP", RNIO: "RNIO", FE: "FE", TX: "TX", MW: "MW", SMS: "SMS",
   NOC: "NOC", SLA: "SLA", EAT: "EAT", CA: "CA", PIR: "PIR", TT: "TT", INC: "INC", OEM: "OEM", RF: "RF", IP: "IP",
-  DWDM: "DWDM", ENODEB: "eNodeB", NODEB: "NodeB", BTS: "BTS", BSC: "BSC", RNC: "RNC", MSC: "MSC", MGW: "MGW", POP: "PoP", GSM: "GSM", LTE: "LTE", VOICE: "voice", DATA: "data", HITL: "HITL",
+  DWDM: "DWDM", ENODEB: "eNodeB", NODEB: "NodeB", BTS: "BTS", BSC: "BSC", RNC: "RNC", MSC: "MSC", MGW: "MGW", POP: "PoP", GSM: "GSM", LTE: "LTE", VOICE: "voice", DATA: "data",
+  // The floor never says HITL: a step that waits for a person waits for an approval.
+  HITL: "approval",
 };
 
 /**
@@ -109,20 +120,81 @@ const ACRONYMS: Record<string, string> = {
 export function humanEnum(value: unknown): string {
   const raw = String(value ?? "").trim();
   if (!raw || /[a-z]/.test(raw)) return raw;
+  if (raw === "WAITING_HITL" || raw === "PENDING_HITL") return WAITING_WORD;
   return raw
     .split(/[_\s]+/)
     .map((w) => (ACRONYMS[w] ? ACRONYMS[w] : /^[A-Z]\d+$/.test(w) ? w : w.toLowerCase()))
     .join(" ");
 }
 
-/** The one phrase for a run or hop that is parked on a person, everywhere in the UI. */
+/** The one phrase for a run or step that is parked on a person, everywhere in the UI. */
 export const WAITING_WORD = "waiting for a decision";
 
-/** The run status as a person reads it. */
+/** What each priority means on this floor, said once: the title of every priority pill. From the
+ *  operator profile's thresholds (P2 from 100,000 subscribers, a HUB at least P2, a CORE site or
+ *  20 child sites down P1). */
+export const PRIORITY_MEANING: Readonly<Record<string, string>> = {
+  P1: "P1: 500k or more subscribers, a CORE site, or 20+ child sites down",
+  P2: "P2: 100k–500k subscribers, or any HUB",
+  P3: "P3: 50k–100k subscribers",
+  P4: "P4: under 50k subscribers",
+};
+
+/** The priority pill's tooltip ("P2: 100k–500k subscribers, or any HUB"); undefined for an unknown level. */
+export function priorityTitle(priority: unknown): string | undefined {
+  const p = String(priority ?? "").toUpperCase();
+  return Object.prototype.hasOwnProperty.call(PRIORITY_MEANING, p) ? PRIORITY_MEANING[p] : undefined;
+}
+
+/** The M‑PESA flag's tooltip, the one place the flag is explained. */
+export const MPESA_TITLE = "M‑PESA at risk: a HUB or CORE site that carries M‑PESA traffic is down.";
+
+/** "SMS", "Email", "WhatsApp": a channel token as the floor writes it. */
+export function channelWord(channel: unknown): string {
+  const c = String(channel ?? "").trim().toUpperCase();
+  if (c === "SMS") return "SMS";
+  if (c === "EMAIL") return "Email";
+  if (c === "WHATSAPP") return "WhatsApp";
+  const h = humanEnum(c);
+  return h ? h[0].toUpperCase() + h.slice(1) : "";
+}
+
+/** Who a message goes to, as the floor says it. The stored audience tokens are unchanged. */
+const AUDIENCE_WORDS: Record<string, string> = {
+  RNIO: "regional office (RNIO)",
+  FIELD_ENGINEER: "field engineer",
+  FE: "field engineer",
+  MSP: "vendor (MSP)",
+  MANAGEMENT: "management",
+  VENDOR_MANAGEMENT: "vendor management",
+  CUSTOMER: "subscribers",
+  PUBLIC: "the public",
+  REGULATOR: "regulator",
+};
+
+/** "FIELD_ENGINEER" → "field engineer", "RNIO" → "regional office (RNIO)". */
+export function audienceWord(audience: unknown): string {
+  const a = String(audience ?? "").trim();
+  const key = a.toUpperCase();
+  if (Object.prototype.hasOwnProperty.call(AUDIENCE_WORDS, key)) return AUDIENCE_WORDS[key];
+  return humanEnum(a);
+}
+
+/** A region's name from the operator profile ("RFT" → "Rift Valley"), or the code when the profile
+ *  has not answered or does not know it. A hyphen in the name is a non-breaking one, so
+ *  "Western‑Nyanza" never splits across two lines of a table cell. */
+export function regionName(code: unknown, profile: any): string {
+  const c = String(code ?? "");
+  const label = c && profile?.regions && typeof profile.regions === "object" ? profile.regions[c]?.label : null;
+  return typeof label === "string" && label.trim() ? label.replace(/-/g, "\u2011") : c;
+}
+
+/** The run status as a person reads it: "done", "waiting for a decision", "failed", "running". */
 export function runStatusWord(status: unknown): string {
   const s = String(status ?? "").toUpperCase();
   if (s === "WAITING_HITL") return WAITING_WORD;
-  return s ? s.toLowerCase() : "";
+  if (s === "SUCCEEDED") return "done";
+  return s ? s.toLowerCase().replace(/_/g, " ") : "";
 }
 
 /**
@@ -139,9 +211,11 @@ export function runOutcome(status: unknown): { word: string; tone: "hitl" | "dan
   return { word: runStatusWord(s), tone: "" };
 }
 
-/** A hop's state on the rail. `decided` is a hop that waited for a person and has been decided
- *  (the backend leaves those step rows at WAITING_HITL; `displaySteps` maps them). */
-export type NodeStatus = "pending" | "running" | "succeeded" | "waiting_hitl" | "decided" | "failed" | "skipped";
+/** A step's state on the rail. `decided` is a step that waited for a person and has been decided
+ *  (the backend leaves those step rows at WAITING_HITL; `displaySteps` maps them). `not_needed` is
+ *  the Approval step of a P3 or P4 alarm, which the autonomy level lets through without a person:
+ *  it ran, but nobody approved anything, so it never reads as a green check. */
+export type NodeStatus = "pending" | "running" | "succeeded" | "waiting_hitl" | "decided" | "not_needed" | "failed" | "skipped";
 
 export interface RailStep {
   node_name: string;
@@ -168,6 +242,7 @@ export function normaliseStatus(raw: unknown): NodeStatus {
   if (s === "succeeded") return "succeeded";
   if (s === "waiting_hitl") return "waiting_hitl";
   if (s === "decided") return "decided";
+  if (s === "not_needed") return "not_needed";
   if (s === "failed") return "failed";
   if (s === "started" || s === "running") return "running";
   if (s === "skipped") return "skipped";
@@ -180,13 +255,20 @@ export const STATUS_WORD: Record<NodeStatus, string> = {
   succeeded: "done",
   waiting_hitl: WAITING_WORD,
   decided: "approved",
+  not_needed: "not needed",
   failed: "failed",
   skipped: "skipped",
 };
 
-/** "IngestCorrelationAgent" → "Ingest Correlation": the agent name as a person reads it. */
+/** Agents whose class name says the wrong thing on screen. The step that holds P1 and P2 messages
+ *  for a person is the Approval gate: "Supervisor" is the person on shift, never an agent. */
+const AGENT_NAMES: Record<string, string> = { SupervisorAgent: "Approval gate" };
+
+/** "IngestCorrelationAgent" → "Ingest Correlation", "SupervisorAgent" → "Approval gate": the agent
+ *  name as a person reads it. The backend class names are unchanged. */
 export function agentDisplayName(name: string | undefined | null): string {
   if (!name) return "";
+  if (Object.prototype.hasOwnProperty.call(AGENT_NAMES, name)) return AGENT_NAMES[name];
   return name.replace(/Agent$/, "").replace(/([a-z])([A-Z])/g, "$1 $2");
 }
 
@@ -245,15 +327,15 @@ export function fmtInt(n: number | null | undefined): string {
   return n.toLocaleString("en-KE");
 }
 
-/** "3 h 16 m", "4 m", "35 s": a wait, as a person says it. */
+/** "3 h 16 min", "4 min", "35 s": a wait, as a person says it. */
 export function fmtWait(ms: number | null | undefined): string {
   if (ms == null || !Number.isFinite(ms) || ms < 0) return "—";
   const s = Math.round(ms / 1000);
   if (s < 60) return `${s} s`;
   const m = Math.floor(s / 60);
-  if (m < 60) return `${m} m`;
+  if (m < 60) return `${m} min`;
   const h = Math.floor(m / 60);
-  if (h < 48) return `${h} h ${m % 60} m`;
+  if (h < 48) return `${h} h ${m % 60} min`;
   return `${Math.floor(h / 24)} d ${h % 24} h`;
 }
 
@@ -293,6 +375,37 @@ export function foldOf(
   return { into: m[2], site: alarmSite(steps), kind: /merged/i.test(m[1]) ? "repeat" : "child" };
 }
 
+/**
+ * The Approval step of an alarm whose priority the autonomy level lets through (P3, P4 at L2): it
+ * finished at once with "auto-approved under autonomy policy" / "P3 allowed auto-broadcast at
+ * L2_GUARDED". Nobody approved anything, so it reads "not needed", never a green check.
+ */
+export function isApprovalNotNeeded(step: RailStep | null | undefined): boolean {
+  if (!step || step.node_name !== "HITL" || normaliseStatus(step.status) !== "succeeded") return false;
+  return /auto-approved|auto-broadcast|allowed/i.test(`${step.output_summary ?? ""} ${step.rationale ?? ""}`);
+}
+
+/** The INC number a run opened, read from its Ticket step ("created INC000063 category=…"). */
+export function ticketNumberOf(run: { steps?: RailStep[] | null } | null | undefined): string | null {
+  const t = (run?.steps || []).find((s) => s && s.node_name === "TICKET");
+  const m = /\b([A-Z]{2,}\d{3,})\b/.exec(String(t?.output_summary ?? ""));
+  return m ? m[1] : null;
+}
+
+/**
+ * What a run did, for a run row: it opened a ticket ("INC000004 opened"), folded into one
+ * ("folded into INC000004"), or neither yet. `ticket` is the INC number when known.
+ */
+export function runOutcomeOf(
+  run: { steps?: RailStep[] | null; graph_name?: string | null } | null | undefined
+): { kind: "opened" | "folded" | "other"; ticket: string | null } {
+  if (run?.graph_name && run.graph_name !== "incident_lifecycle") return { kind: "other", ticket: null };
+  if (opensTicket(run)) return { kind: "opened", ticket: ticketNumberOf(run) };
+  const fold = foldOf(run);
+  if (fold) return { kind: "folded", ticket: fold.into };
+  return { kind: "other", ticket: null };
+}
+
 function msOf(value: unknown): number | null {
   const d = parseInstant(value);
   return d ? d.getTime() : null;
@@ -307,8 +420,10 @@ function msOf(value: unknown): number | null {
  *   never left.
  * - The Approval hop carries `waited_ms`: from the hop parking the run to the decision (the run's
  *   finished_at), or to `now` while it still waits.
- * - A finished run that folded into an open ticket at Correlate draws the hops it never reached
+ * - A finished run that folded into an open ticket at Correlate draws the steps it never reached
  *   as skipped, not as "pending" grey dashes that look stalled.
+ * - The Approval step of a P3 or P4 alarm, let through by the autonomy level, reads "not needed"
+ *   (`isApprovalNotNeeded`): a green check and "2 ms" would read as a person approving in 2 ms.
  */
 export function displaySteps(
   run: { status?: string | null; steps?: RailStep[] | null; finished_at?: string | null } | null | undefined,
@@ -320,6 +435,10 @@ export function displaySteps(
   const rejected = status === "CANCELLED";
   const decidedAt = msOf(run?.finished_at);
   for (const s of steps) {
+    if (isApprovalNotNeeded(s)) {
+      s.status = "NOT_NEEDED";
+      continue;
+    }
     if (normaliseStatus(s.status) !== "waiting_hitl") continue;
     if (s.node_name === "HITL") {
       const parkedAt = msOf(s.finished_at);

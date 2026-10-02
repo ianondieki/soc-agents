@@ -1,4 +1,5 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { priorityTitle } from "../lib/agents";
 import { Link } from "react-router-dom";
 import { api } from "../api";
 import { statusOf } from "../lib/apiError";
@@ -432,7 +433,7 @@ function Block({
 function BlockTitle({ block, incident, parent }: { block: AuditBlock; incident?: IncidentLite; parent?: IncidentLite }) {
   const ticket = (inc: IncidentLite, label?: string) => (
     <>
-      {inc.priority && <span className={`pill ${inc.priority}`}>{inc.priority}</span>}
+      {inc.priority && <span className={`pill ${inc.priority}`} title={priorityTitle(inc.priority)}>{inc.priority}</span>}
       <span className="audit-inc">{inc.incident_number}</span>
       {label && <span className="audit-site">{label}</span>}
       <span className="audit-site">{inc.site_id}</span>
@@ -446,7 +447,7 @@ function BlockTitle({ block, incident, parent }: { block: AuditBlock; incident?:
       ) : (
         <>
           <span className="audit-inc">Ticket</span>
-          <span className="audit-site">not in the incident list</span>
+          <span className="audit-site">not in the ticket list</span>
         </>
       );
     case "folded":

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api";
-import { humanEnum } from "../lib/agents";
+import { humanEnum, priorityTitle } from "../lib/agents";
 import { detailOf } from "../lib/apiError";
 import { IconAlert, IconDot, IconPause } from "../lib/icons";
 import { fmtDateTime } from "../lib/time";
@@ -63,7 +63,7 @@ export default function ShiftDesk({ tick }: { tick: number }) {
       <div className="page-head">
         <div>
           <h1>Shift desk</h1>
-          <p className="lead">The day and night ledger; the handover goes to the shift lead as an approval card.</p>
+          <p className="lead">The day and night ledger; the handover goes to the shift supervisor as an approval card.</p>
         </div>
         <div className="page-actions">
           {handoverError && (
@@ -106,7 +106,7 @@ export default function ShiftDesk({ tick }: { tick: number }) {
                 <div key={i} className="row static" style={ONE_COL}>
                   <div className="row-main">
                     <div className="row-title">
-                      <span className={`pill ${r.priority}`}>{r.priority}</span>
+                      <span className={`pill ${r.priority}`} title={priorityTitle(r.priority)}>{r.priority}</span>
                       <span className="row-id">{r.incident_number}</span>
                       <span className="mono muted">{site.code}</span>
                     </div>
@@ -126,7 +126,7 @@ export default function ShiftDesk({ tick }: { tick: number }) {
             <thead>
               <tr>
                 <th>Time (EAT)</th>
-                <th>Incident</th>
+                <th>Ticket</th>
                 <th>Priority</th>
                 <th>Site</th>
                 <th>Region</th>
@@ -150,7 +150,7 @@ export default function ShiftDesk({ tick }: { tick: number }) {
                     <td className="muted mono">{fmtDateTime(r.row_written_at)}</td>
                     <td className="mono">{r.incident_number}</td>
                     <td>
-                      <span className={`pill ${r.priority}`}>{r.priority}</span>
+                      <span className={`pill ${r.priority}`} title={priorityTitle(r.priority)}>{r.priority}</span>
                     </td>
                     <td>
                       <span className="mono">{site.code}</span>
@@ -176,7 +176,7 @@ export default function ShiftDesk({ tick }: { tick: number }) {
 }
 
 /**
- * The handover just generated: where it is (waiting for the shift lead, or queued), the
+ * The handover just generated: where it is (waiting for the shift supervisor, or released), the
  * watchlist it carries as a table, and the email text exactly as it will leave. A mock or
  * queued email is never called "sent".
  */
@@ -201,7 +201,7 @@ function Handover({ h }: { h: any }) {
         <div className="note-form-actions">
           <span className="attn hitl">
             <IconPause />
-            <span>Waiting for the shift lead in Approvals; nothing is sent until it is approved.</span>
+            <span>Waiting for the shift supervisor in Approvals; nothing is sent until it is approved.</span>
           </span>
           <Link className="btn sm" to="/hitl">
             Open Approvals
@@ -215,13 +215,13 @@ function Handover({ h }: { h: any }) {
           </span>
         </p>
       ) : (
-        <p className="muted">Queued in the outbox{to.length ? ` for ${to.join(", ")}` : ""}.</p>
+        <p className="muted">Released for sending{to.length ? ` to ${to.join(", ")}` : ""}.</p>
       )}
       {rows.length > 0 ? (
         <table>
           <thead>
             <tr>
-              <th>Incident</th>
+              <th>Ticket</th>
               <th>Priority</th>
               <th>Site</th>
               <th>Region</th>
@@ -235,7 +235,7 @@ function Handover({ h }: { h: any }) {
               <tr key={r.incident_number || i}>
                 <td className="mono">{r.incident_number}</td>
                 <td>
-                  <span className={`pill ${r.priority}`}>{r.priority}</span>
+                  <span className={`pill ${r.priority}`} title={priorityTitle(r.priority)}>{r.priority}</span>
                 </td>
                 <td className="mono">{r.site_id}</td>
                 <td className="mono">{r.region_code}</td>
@@ -258,7 +258,7 @@ function Handover({ h }: { h: any }) {
         <p className="muted">Nothing open to hand over.</p>
       )}
       <details>
-        <summary>Email text, as it will be sent</summary>
+        <summary>Email text, exactly as it will leave</summary>
         <div className="pre">{h?.body}</div>
       </details>
     </div>

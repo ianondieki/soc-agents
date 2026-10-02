@@ -418,7 +418,7 @@ export function fmtAgeLong(ageS: number | null): string {
   if (mins < 60) return `${mins} minute${mins === 1 ? "" : "s"}`;
   const h = Math.floor(mins / 60);
   const m = mins % 60;
-  return m ? `${h}h ${m}m` : `${h} hour${h === 1 ? "" : "s"}`;
+  return m ? `${h} h ${m} min` : `${h} hour${h === 1 ? "" : "s"}`;
 }
 
 /* ------------------------------------------------------------------ *
@@ -467,6 +467,6 @@ export function tileTitle(r: RegionRisk, s: Staleness): string {
   if (r.capAlertIds.length) lines.push(`KMD CAP alerts: ${r.capAlertIds.join(", ")}`);
   const pl = precisionLabel(r);
   if (pl) lines.push(`Backtested ${pl}.`);
-  lines.push("Advisory only — weather never changes an incident priority (spec §7.3).");
+  lines.push("Advisory only — weather never changes a ticket's priority (spec §7.3).");
   return lines.join("\n");
 }

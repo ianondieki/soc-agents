@@ -1,9 +1,10 @@
 import { memo, useCallback, useEffect, useId, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api";
-import { humanEnum } from "../lib/agents";
+import { humanEnum, priorityTitle } from "../lib/agents";
 import { detailOf, statusOf } from "../lib/apiError";
 import { IconAlert, IconDot } from "../lib/icons";
+import { MOCK_EMAIL_LINE } from "../realtime/renderers";
 import "./Settings.css";
 
 /** `route` names the MSP the assignment matrix should pick, shown beside the label. */
@@ -93,7 +94,7 @@ const PRESETS: { label: string; route?: string; body: Record<string, unknown> }[
     },
   },
   {
-    label: "Cascade child under Westlands HUB",
+    label: "Child site under Westlands HUB (folds in)",
     body: {
       site_id: "SFC-NBIW-ENB-CBD07",
       site_name: "Upper Hill eNodeB 07",
@@ -132,7 +133,7 @@ const PRESETS: { label: string; route?: string; body: Record<string, unknown> }[
  * nothing. It decides which name is RECORDED as the actor, and what the role-aware pages say.
  */
 const ROLES: { value: string; label: string }[] = [
-  { value: "noc_analyst", label: "the floor: incidents, notes, timeline" },
+  { value: "noc_analyst", label: "the floor: tickets, notes, timeline" },
   { value: "shift_supervisor", label: "closes and reverses stop clocks, computes scorecards" },
   { value: "duty_manager", label: "approves, publishes and finalises" },
   { value: "management", label: "reads everything, including unreleased scorecards" },
@@ -190,13 +191,13 @@ function siteType(v: unknown): string {
   return humanEnum(raw);
 }
 
-/** The test email's outcome, without the env-var names the server puts there. A mock adapter
- *  kept the message and delivered nothing, so its wording never says "sent". */
+/** The test email's outcome, without the env-var names the server puts there. With sending off,
+ *  the message was kept and nothing was delivered, so its wording never says "sent". */
 function testMailWords(r: any): { ok: boolean; text: string } {
   const mode = typeof r?.mode === "string" ? r.mode : "";
   const to: string[] = Array.isArray(r?.to) ? r.to.filter((x: unknown) => typeof x === "string") : [];
   if (mode === "smtp" && r?.ok !== false) return { ok: true, text: to.length ? `Sent to ${to.join(", ")}` : "Sent" };
-  if (mode === "mock") return { ok: true, text: "Kept in the demo outbox by the mock adapter; not delivered" };
+  if (mode === "mock") return { ok: true, text: MOCK_EMAIL_LINE };
   return { ok: false, text: "Couldn't send the test email" };
 }
 
@@ -388,7 +389,7 @@ function Settings({
                     "SMTP ready (Gmail)"
                   ) : (
                     <span className="attn warn">
-                      <IconDot /> Mock only: mail is kept in the outbox, not delivered
+                      <IconDot /> Email sending is off in this demo: messages are kept, not delivered
                     </span>
                   )}
                 </dd>
@@ -425,12 +426,12 @@ function Settings({
 
         <section className="panel" aria-labelledby={regionsId}>
           <h2 id={regionsId} className="panel-title">
-            Regions and MSP map
+            Regions and vendor map
           </h2>
           <p className="muted settings-note">
-            About 7,000 sites and 50M+ subscribers in six Safaricom regions. Power: NBI_E and MTK to Egypro, RFT and
-            WNY to Tetranet. Radio: NBI_W and CST to Huawei. Fibre: Egypro Fibre, Soliton (Mt Kenya), Camusat, Ecta,
-            Adrian, Alan Dick.
+            About 7,000 sites and 50M+ subscribers in six Safaricom regions. Power: Nairobi East and Mt Kenya to
+            Egypro, Rift Valley and Western-Nyanza to Tetranet. Radio: Nairobi West and Coast to Huawei. Fibre: Egypro
+            Fibre, Soliton (Mt Kenya), Camusat, Ecta, Adrian, Alan Dick.
           </p>
           {profile?.regions && typeof profile.regions === "object" ? (
             <ul className="settings-regions">
@@ -486,7 +487,7 @@ function Settings({
             <h2 id={injectId} className="panel-title">
               Single-event inject
             </h2>
-            <span className="muted">Each one opens an INC ticket</span>
+            <span className="muted">Each one sends one alarm through the agents</span>
           </div>
           <ul className="settings-inject">
             {PRESETS.map((p) => (
@@ -522,11 +523,11 @@ function Settings({
                 ) : (
                   last.incident_number && <span className="mono">{last.incident_number}</span>
                 )}
-                {last.priority && <span className={`pill ${last.priority}`}>{last.priority}</span>}
-                {(last.responsible_msp || last.msp_name) && <span>MSP {last.responsible_msp || last.msp_name}</span>}
+                {last.priority && <span className={`pill ${last.priority}`} title={priorityTitle(last.priority)}>{last.priority}</span>}
+                {(last.responsible_msp || last.msp_name) && <span>Vendor {last.responsible_msp || last.msp_name}</span>}
                 {last.fe_name && (
                   <span>
-                    FE <span className="mono">{last.fe_name}</span>
+                    Field engineer <span className="mono">{last.fe_name}</span>
                   </span>
                 )}
               </>

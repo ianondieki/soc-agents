@@ -102,7 +102,7 @@ export default function EarlierAtThisSite({ siteId }: { siteId?: string | null }
     ? "History could not be loaded. The rest of this page is unaffected."
     : data == null
       ? "Loading…"
-      : `No earlier resolved incidents recorded at this site in the last ${data.lookback_days} days.`;
+      : `No earlier resolved tickets recorded at this site in the last ${data.lookback_days} days.`;
 
   return (
     <div className="panel" style={{ marginTop: "1rem" }}>
@@ -137,7 +137,7 @@ export default function EarlierAtThisSite({ siteId }: { siteId?: string | null }
       )}
 
       <p className="muted" style={{ marginTop: "0.6rem" }}>
-        Advisory only — prior incidents at this site. Nothing here sets the priority, the
+        Advisory only — earlier tickets at this site. Nothing here sets the priority, the
         assignment or the SLA on this ticket.
       </p>
     </div>

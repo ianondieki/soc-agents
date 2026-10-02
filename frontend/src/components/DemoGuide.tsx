@@ -18,7 +18,7 @@ import "./DemoGuide.css";
  *
  * App owns the storm and the counts; this component only reads them:
  *  - `storming` / `stormDone`: step 1 reads "Storm running" while it runs and offers
- *    "Storm done · Next" once it has finished (or any incident is open);
+ *    "Storm done · Next" once it has finished (or any ticket is open);
  *  - `latestIncidentId`: the ticket step 2 opens (falls back to `firstIncidentId`);
  *  - `pendingCount`: the count on step 3's button;
  *  - `approvedSinceOpen`: step 3 shows a check, and Next turns primary, once the presenter has
@@ -161,13 +161,14 @@ export default function DemoGuide({
     }
   };
 
+  // Each step's spoken text is at most 45 words and ends with what to look at.
   const steps: GuideStep[] = [
     {
       title: "Heavy rain hits three regions",
       say:
-        "Press Launch heavy-rain storm (live) on Mission control. Eleven alarms arrive from Rift, Mt Kenya and Nairobi East in " +
-        "about twenty seconds; watch each hop light up on the rail as its agent finishes its part. Child sites " +
-        "fold under their HUB majors instead of opening duplicate tickets.",
+        "Heavy rain hits Rift Valley, Mt Kenya and Nairobi East: eleven alarms in twenty seconds. Sites behind a " +
+        "failed HUB fold into its ticket instead of opening duplicates. Watch the panel under the numbers: each of " +
+        "the twelve steps lights up as its agent finishes.",
       action: storming || stormDone ? undefined : { label: "Launch the storm", run: launch },
       onPage: (p) => p === "/",
       status: storming ? "Storm running" : undefined,
@@ -177,9 +178,9 @@ export default function DemoGuide({
     {
       title: "Read what the agents decided",
       say:
-        "Open the ticket. Every field a NOC analyst used to type is already filled, and every hop says why: the " +
-        "subscriber thresholds, the HUB floor, the region-by-domain MSP matrix. Select a hop for its reasoning; " +
-        "the Audit trail keeps each one.",
+        "This is the ticket the agents opened. Every field an analyst used to type is filled: priority, vendor, " +
+        "field engineer, expected resolution. Each step records why. Look at the two blocks under the fields: why " +
+        "this priority, and why this owner.",
       action: incidentId
         ? { label: "Open the latest ticket", run: () => nav(`/incidents/${incidentId}`) }
         : { label: "Open Incident board", run: () => nav("/incidents") },
@@ -188,8 +189,9 @@ export default function DemoGuide({
     {
       title: "Approve what matters",
       say:
-        "A P2 broadcast never leaves without a person. Approvals shows the SMS and the email exactly as they will " +
-        "be sent, with the facts beside them. Claim, read, give a reason, approve.",
+        "A P1 or P2 message never leaves without a named person. The card shows the SMS and email exactly as they " +
+        "will be sent. Claim it, give a reason, approve. Watch the card name who approved it, and the count in the " +
+        "top bar drop.",
       action: { label: pendingCount > 0 ? `Open Approvals (${pendingCount})` : "Open Approvals", run: () => nav("/hitl") },
       onPage: (p) => p.startsWith("/hitl"),
       done: approvedSinceOpen > 0,
@@ -197,16 +199,18 @@ export default function DemoGuide({
     {
       title: "Hand the shift over",
       say:
-        "The ledger is already written. Generate the handover: owners, priorities and what the night shift must " +
-        "watch. It goes to the shift lead as an approval card before anything is sent.",
+        "Each ticket wrote its row in the shift ledger as it opened. Generate the handover: every open ticket with " +
+        "its owner and priority. Nothing is sent until the shift supervisor approves it. Look at the preview: the " +
+        "email exactly as it will leave.",
       action: { label: "Open Shift desk", run: () => nav("/shift") },
       onPage: (p) => p.startsWith("/shift"),
     },
     {
       title: "Show the numbers",
       say:
-        "Hours of toil taken off the floor, alarms folded into an open ticket before they became duplicates, and " +
-        "every decision that leaves the building kept with a person.",
+        "Everything on this page is read from the running system. Top right: analyst hours saved, by the floor's " +
+        "own estimate; alarms folded into a ticket already open; decisions people made. Then scroll to the twelve " +
+        "steps, before and now.",
       action: { label: "Open Showcase", run: () => nav("/showcase") },
       onPage: (p) => p.startsWith("/showcase"),
     },

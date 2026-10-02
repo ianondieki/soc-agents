@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api";
 import { isLaneOff } from "../lib/apiError";
+import { humanStatus } from "../lib/agents";
 import { IconAlert } from "../lib/icons";
 import { fmtDateTime, parseInstant } from "../lib/time";
 import { useIncidentRevision } from "../realtime/RealtimeContext";
@@ -182,10 +183,10 @@ export default function RegulatoryCountdown({ incidentId }: { incidentId?: strin
           {sig == null
             ? "Significance could not be evaluated."
             : sig.significant
-              ? "The significance rule matches this incident (" +
+              ? "The significance rule matches this ticket (" +
                 (sig.rule_matched || "rule") +
-                "), but no clock is open yet. Opening one is a supervisor decision; viewing this page never opens one."
-              : "The significance rule does not match this incident, so no statutory notice is due."}
+                "), but no clock is open yet. Opening one is a shift supervisor's decision; viewing this page never opens one."
+              : "The significance rule does not match this ticket, so no statutory notice is due."}
         </span>
       </div>
     );
@@ -206,12 +207,12 @@ export default function RegulatoryCountdown({ incidentId }: { incidentId?: strin
             <div className="reg-failed-body">
               {kindName(n.kind)} was approved
               {n.approved_by ? " by " + n.approved_by : ""}
-              {n.approved_at ? " at " + fmtDateTime(n.approved_at) + " EAT" : ""} and released to
-              the outbox, but it <strong>did not go out</strong>. Nothing has reached the regulator.
+              {n.approved_at ? " at " + fmtDateTime(n.approved_at) + " EAT" : ""} and released for
+              sending, but it <strong>did not go out</strong>. Nothing has reached the regulator.
             </div>
             <div className="reg-failed-facts">
               <span>
-                Dispatcher outcome: <strong>{d.outbox_status || "unknown"}</strong>
+                Sending outcome: <strong>{d.outbox_status ? humanStatus(d.outbox_status) : "unknown"}</strong>
                 {d.at ? " at " + fmtDateTime(d.at) + " EAT" : ""}
               </span>
               {d.error ? (
@@ -227,7 +228,7 @@ export default function RegulatoryCountdown({ incidentId }: { incidentId?: strin
               ) : null}
             </div>
             <div className="reg-failed-do">
-              Until it is re-sent, the regulator has not been notified. A supervisor re-sends through{" "}
+              Until it is re-sent, the regulator has not been notified. A shift supervisor re-sends through{" "}
               <code>POST /api/v1/regulatory/{"{id}"}/send</code> — a failed attempt may be retried, and a
               send after the deadline must carry the reason for the delay.
             </div>
@@ -237,7 +238,7 @@ export default function RegulatoryCountdown({ incidentId }: { incidentId?: strin
 
       <div className="panel-head">
         <h2 className="panel-title">Regulatory clock</h2>
-        <span className="muted">times in EAT</span>
+        <span className="muted">Times in EAT</span>
       </div>
 
       <div className="reg-list">

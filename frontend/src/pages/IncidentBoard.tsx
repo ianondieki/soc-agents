@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api } from "../api";
-import { humanEnum, humanStatus } from "../lib/agents";
+import { MPESA_TITLE, humanEnum, humanStatus, priorityTitle, regionName } from "../lib/agents";
 import { IconDot } from "../lib/icons";
 import { ONE_COL, useNarrow } from "../lib/layout";
 
@@ -12,7 +12,7 @@ const COLS = 8;
 // The phone-layout helpers moved to lib/layout.ts; re-exported here so older imports still work.
 export { NARROW_QUERY, ONE_COL, useNarrow } from "../lib/layout";
 
-export default function IncidentBoard({ tick }: { tick: number }) {
+export default function IncidentBoard({ tick, profile }: { tick: number; profile?: any }) {
   // null until the first answer: loading is a state of its own, never an empty board.
   const [rows, setRows] = useState<any[] | null>(null);
   const [failed, setFailed] = useState(false);
@@ -51,7 +51,7 @@ export default function IncidentBoard({ tick }: { tick: number }) {
 
   const mpesa = (i: any, word: string) =>
     i.mpesa_risk ? (
-      <span className="attn danger">
+      <span className="attn danger" title={MPESA_TITLE}>
         <IconDot /> {word}
       </span>
     ) : null;
@@ -68,7 +68,7 @@ export default function IncidentBoard({ tick }: { tick: number }) {
             <option value="">All regions</option>
             {REGIONS.map((r) => (
               <option key={r} value={r}>
-                {r}
+                {regionName(r, profile)}
               </option>
             ))}
           </select>
@@ -85,7 +85,7 @@ export default function IncidentBoard({ tick }: { tick: number }) {
       <div className="panel">
         {failed && rows === null ? (
           <div className="empty" role="alert">
-            Couldn't load the incident board.{" "}
+            Couldn't load the tickets.{" "}
             <button className="btn sm" onClick={() => setRetry((n) => n + 1)}>
               Retry
             </button>
@@ -104,7 +104,9 @@ export default function IncidentBoard({ tick }: { tick: number }) {
               <Link key={i.id} to={`/incidents/${i.id}`} className="row" style={ONE_COL}>
                 <div className="row-main">
                   <div className="row-title">
-                    <span className={`pill ${i.priority}`}>{i.priority}</span>
+                    <span className={`pill ${i.priority}`} title={priorityTitle(i.priority)}>
+                      {i.priority}
+                    </span>
                     <span className="row-id">{i.incident_number}</span>
                     <span className="mono muted">{i.site_id}</span>
                   </div>
@@ -123,11 +125,11 @@ export default function IncidentBoard({ tick }: { tick: number }) {
             <thead>
               <tr>
                 <th>Priority</th>
-                <th>Incident</th>
+                <th>Ticket</th>
                 <th>Site</th>
                 <th>Region</th>
                 <th>Domain</th>
-                <th>Owner</th>
+                <th title="Whoever holds the ticket now: the vendor, the field engineer or the NOC queue">Owner</th>
                 <th>Status</th>
                 <th>M‑PESA</th>
               </tr>
@@ -144,7 +146,9 @@ export default function IncidentBoard({ tick }: { tick: number }) {
               {(rows || []).map((i) => (
                 <tr key={i.id} onClick={() => nav(`/incidents/${i.id}`)}>
                   <td>
-                    <span className={`pill ${i.priority}`}>{i.priority}</span>
+                    <span className={`pill ${i.priority}`} title={priorityTitle(i.priority)}>
+                      {i.priority}
+                    </span>
                   </td>
                   <td>
                     {/* The link is the keyboard's way in; the row click stays for the mouse. */}
@@ -156,7 +160,7 @@ export default function IncidentBoard({ tick }: { tick: number }) {
                     <span className="mono">{i.site_id}</span>
                     <div className="muted">{i.site_name}</div>
                   </td>
-                  <td className="mono">{i.region_code}</td>
+                  <td title={i.region_code}>{regionName(i.region_code, profile)}</td>
                   <td>{humanEnum(i.failure_domain)}</td>
                   <td>{i.assignee_name}</td>
                   <td className="status">{humanStatus(i.status)}</td>
@@ -168,7 +172,7 @@ export default function IncidentBoard({ tick }: { tick: number }) {
         )}
         {rows !== null && rows.length === 0 && filtered && (
           <div className="empty">
-            No incidents match these filters.{" "}
+            No tickets match these filters.{" "}
             <button className="btn sm" onClick={clearFilters}>
               Clear filters
             </button>
@@ -176,7 +180,7 @@ export default function IncidentBoard({ tick }: { tick: number }) {
         )}
         {rows !== null && rows.length === 0 && !filtered && (
           <div className="empty">
-            No incidents yet. Launch the storm from <Link to="/">Mission control</Link> to open some.
+            No tickets yet. Launch the storm from <Link to="/">Mission control</Link> to open some.
           </div>
         )}
       </div>

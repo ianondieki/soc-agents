@@ -214,7 +214,7 @@ export default function LineDrawer({
           </div>
 
           <h3 style={SUBHEAD} className="head-row">
-            Excluded incidents
+            Excluded tickets
             <span className="muted">
               {excluded.length} listed, {line.excluded_incidents} counted
             </span>
@@ -223,7 +223,7 @@ export default function LineDrawer({
             <table>
               <thead>
                 <tr>
-                  <th>Incident</th>
+                  <th>Ticket</th>
                   <th>Why excluded</th>
                   <th>Code</th>
                 </tr>
@@ -241,7 +241,7 @@ export default function LineDrawer({
               </tbody>
             </table>
           ) : (
-            <div className="muted">No incident was excluded from this line.</div>
+            <div className="muted">No ticket was excluded from this line.</div>
           )}
 
           <h3 style={SUBHEAD} className="head-row">

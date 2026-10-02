@@ -4,8 +4,11 @@ import { api } from "../api";
 import AgentRail from "../components/AgentRail";
 import { RunState } from "../components/LiveRunPanel";
 import {
+  MPESA_TITLE,
   WAITING_WORD,
   agentDisplayName,
+  audienceWord,
+  channelWord,
   countAbsorbed,
   displaySteps,
   fmtMs,
@@ -14,6 +17,7 @@ import {
   humanStatus,
   nodeLabel,
   pickCreatingRun,
+  priorityTitle,
   sumDurations,
 } from "../lib/agents";
 import { detailOf } from "../lib/apiError";
@@ -128,6 +132,17 @@ function timelineHead(t: any): { title: string; sub: string; state: ReactNode } 
       sub: isAgent || !role ? "note" : `${humanEnum(role)} note`,
       state: null,
     };
+  }
+  if (kind === "broadcast") {
+    // Stored as "EMAIL → FIELD_ENGINEER": read as "Email to field engineer".
+    const m = /^\s*([A-Za-z_]+)\s*→\s*([A-Za-z_]+)\s*$/.exec(raw);
+    if (m) {
+      return {
+        title: `${channelWord(m[1])} to ${audienceWord(m[2])}`,
+        sub: "",
+        state: t.status ? <span className="muted">{humanStatus(t.status)}</span> : null,
+      };
+    }
   }
   return {
     title: arrowsToWords(raw),
@@ -352,7 +367,7 @@ function Workspace({ id, session }: { id: string | undefined; session: any }) {
       setReassignReason("");
       load();
     } catch (e: any) {
-      setActionMsg({ tone: "danger", text: `Reassign failed: ${detailOf(e)}` });
+      setActionMsg({ tone: "danger", text: `Couldn't reassign: ${detailOf(e)}` });
     } finally {
       setReassignBusy(false);
     }
@@ -361,20 +376,28 @@ function Workspace({ id, session }: { id: string | undefined; session: any }) {
   if (!inc) {
     return loadFailed ? (
       <div className="empty" role="alert">
-        Couldn't load this incident.{" "}
+        Couldn't load this ticket.{" "}
         <button className="btn sm" onClick={load}>
           Retry
         </button>
       </div>
     ) : (
-      <Skeleton rows={8} label="Loading the incident" />
+      <Skeleton rows={8} label="Loading the ticket" />
     );
   }
 
   const hitlState = String(inc.hitl_state || "").toUpperCase();
   const waiting = Boolean(inc.requires_hitl) && hitlState === "PENDING";
   const decided = Boolean(inc.requires_hitl) && (hitlState === "APPROVED" || hitlState === "REJECTED");
+  // The site class word the backend gives, only when it says something: never "standard", and
+  // never a priority's own word on a ticket of another priority ("P1 critical" and "P2 major" are
+  // what those words mean on this floor, so a P2 never reads "Critical site").
   const siteClass = String(inc.site_class || "").toUpperCase();
+  const showClass =
+    !!siteClass &&
+    siteClass !== "STANDARD" &&
+    !(siteClass === "CRITICAL" && inc.priority !== "P1") &&
+    !(siteClass === "MAJOR" && inc.priority !== "P2");
   const dash = "—";
   const restored = inc.restored_at ? `restored ${fmtDateTime(inc.restored_at)}` : "";
   const resolution = [inc.resolution_code ? capFirst(humanEnum(inc.resolution_code)) : "", restored]
@@ -404,14 +427,14 @@ function Workspace({ id, session }: { id: string | undefined; session: any }) {
     ["Failure time", fmtDateTime(inc.failure_time)],
     ["Escalated", fmtDateTime(inc.escalated_at)],
     ["Expected resolution", fmtDateTime(inc.expected_resolution_at)],
-    ["Responsible MSP", inc.responsible_msp || inc.msp_name || dash],
+    ["Vendor", inc.responsible_msp || inc.msp_name || dash],
     ["Field engineer", inc.fe_name ? <span className="mono wrap">{inc.fe_name}</span> : dash],
     ["Radio OEM", humanEnum(inc.radio_oem) || dash],
     ["Vendor TT ref", inc.vendor_tt_ref ? <span className="mono wrap">{inc.vendor_tt_ref}</span> : dash],
-    ["MSP progress", inc.msp_percent_complete != null ? `${inc.msp_percent_complete}%` : dash],
+    ["Vendor progress", inc.msp_percent_complete != null ? `${inc.msp_percent_complete}%` : dash],
     ["Resolution", resolution || dash],
-    ["MSP root cause", inc.msp_root_cause || dash],
-    ["MSP action", inc.msp_action_taken || dash],
+    ["Vendor root cause", inc.msp_root_cause || dash],
+    ["Vendor action", inc.msp_action_taken || dash],
   ];
 
   return (
@@ -419,7 +442,10 @@ function Workspace({ id, session }: { id: string | undefined; session: any }) {
       <div className="page-head">
         <div>
           <h1>
-            <span className={`pill ${inc.priority}`}>{inc.priority}</span> {inc.incident_number}
+            <span className={`pill ${inc.priority}`} title={priorityTitle(inc.priority)}>
+              {inc.priority}
+            </span>{" "}
+            {inc.incident_number}
           </h1>
           <p className="lead facts">
             <span>{capFirst(humanStatus(inc.status))}</span>
@@ -428,8 +454,8 @@ function Workspace({ id, session }: { id: string | undefined; session: any }) {
               <span className="mono">{inc.region_code}</span>
               {inc.county ? `,${NB}${inc.county}` : ""}
             </span>
-            {siteClass && siteClass !== "STANDARD" && <span>{`${capFirst(humanEnum(siteClass))}${NB}site`}</span>}
-            <span>{`est.${NB}${inc.users_affected?.toLocaleString() ?? dash}${NB}users`}</span>
+            {showClass && <span>{`${capFirst(humanEnum(siteClass))}${NB}site`}</span>}
+            <span>{`${inc.users_affected?.toLocaleString() ?? dash}${NB}subscribers${NB}(est.)`}</span>
             <span>
               {`owner${NB}`}
               {inc.assignee_name}
@@ -445,8 +471,8 @@ function Workspace({ id, session }: { id: string | undefined; session: any }) {
         </div>
         <div className="page-actions">
           {inc.mpesa_risk && (
-            <span className="attn danger">
-              <IconDot /> M‑PESA corridor at risk
+            <span className="attn danger" title={MPESA_TITLE}>
+              <IconDot /> M‑PESA at risk
             </span>
           )}
           {waiting && <span className="chip hitl">{WAITING_WORD}</span>}
@@ -521,12 +547,12 @@ function Workspace({ id, session }: { id: string | undefined; session: any }) {
           </div>
         ) : noRuns ? (
           <p className="muted">
-            No agent run is recorded for this ticket, so there are no hops to show. It was opened outside the
+            No agent run is recorded for this ticket, so there are no steps to show. It was opened outside the
             alarm pipeline.
           </p>
         ) : (
           <>
-            <p className="muted">Select a hop for the agent's reasoning, what it produced and the tools it called.</p>
+            <p className="muted">Select a step for the agent's reasoning, what it produced and the tools it called.</p>
             <AgentRail steps={railSteps} nodes={wf?.nodes} caption="This ticket's run" loading={runs === null} runStatus={creating?.status} />
           </>
         )}
@@ -573,18 +599,18 @@ function Workspace({ id, session }: { id: string | undefined; session: any }) {
                   setReassigning(true);
                 }}
               >
-                Reassign MSP
+                Reassign vendor
               </button>
             )}
           </div>
           {reassigning && (
-            <div className="note-form" role="group" aria-label="Reassign to another MSP">
+            <div className="note-form" role="group" aria-label="Reassign to another vendor">
               <div className="note-form-row">
                 <label>
-                  MSP to reassign to
+                  Vendor to reassign to
                   <input
                     autoFocus
-                    aria-label="MSP to reassign to"
+                    aria-label="Vendor to reassign to"
                     placeholder="e.g. Camusat"
                     value={reassignMsp}
                     disabled={reassignBusy}
@@ -629,7 +655,7 @@ function Workspace({ id, session }: { id: string | undefined; session: any }) {
                 <label>
                   Vendor TT ref
                   <input
-                    aria-label="Vendor TT ref (MSP)"
+                    aria-label="Vendor TT ref"
                     value={vendorRef}
                     onChange={(e) => setVendorRef(e.target.value)}
                   />
@@ -647,13 +673,13 @@ function Workspace({ id, session }: { id: string | undefined; session: any }) {
               </div>
               <div className="note-form-row">
                 <label>
-                  MSP root cause
-                  <input aria-label="MSP root cause" value={mspRoot} onChange={(e) => setMspRoot(e.target.value)} />
+                  Vendor root cause
+                  <input aria-label="Vendor root cause" value={mspRoot} onChange={(e) => setMspRoot(e.target.value)} />
                 </label>
                 <label>
-                  MSP action taken
+                  Vendor action taken
                   <input
-                    aria-label="MSP action taken"
+                    aria-label="Vendor action taken"
                     value={mspAction}
                     onChange={(e) => setMspAction(e.target.value)}
                   />

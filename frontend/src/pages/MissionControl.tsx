@@ -3,14 +3,15 @@ import { Link, useNavigate } from "react-router-dom";
 import { api } from "../api";
 import { isStorming, stormCounts, stormStopLine, type StormState } from "../lib/demo";
 import LiveRunPanel, { RunState } from "../components/LiveRunPanel";
-import { humanEnum, humanGraph, humanStatus, nodeLabel, triggerWord } from "../lib/agents";
+import { MPESA_TITLE, alarmSite, humanEnum, humanGraph, humanStatus, nodeLabel, priorityTitle, regionName, runOutcomeOf, triggerWord } from "../lib/agents";
+import { detailOf } from "../lib/apiError";
 import { IconDot } from "../lib/icons";
 import { labelFor } from "../lib/hitl";
 import { fmtTime } from "../lib/time";
 // One run-status palette and one error line for both run lists (A-13), so the two pages
 // cannot drift apart again.
 import { RunError } from "../components/RunError";
-import { describeEvent, isMock, type NocEvent } from "../realtime/renderers";
+import { describeEvent, isDecisionStep, isKeyEvent, isMock, type NocEvent } from "../realtime/renderers";
 import { TICKER_MAX } from "../realtime/feed";
 import { useQuietMode, useSuppressedCount, useTickerEvents } from "../realtime/RealtimeContext";
 import { hitlSubject } from "../lib/hitlSubject";
@@ -109,12 +110,14 @@ const EVENT_WORDS: Record<string, string> = {
   "regulatory.deadline": "Regulatory deadline",
   "scheduler.job_failed": "Job failed",
   "security.redaction_miss": "Redaction miss",
-  "monitor.chase": "Vendor chased",
+  "monitor.chase": "Vendor chase",
   "demo.rain_storm.complete": "Storm complete",
 };
 
 function eventWord(e: NocEvent): string {
   const type = e.type;
+  // The Approval step parking a run on a person is the moment a decision is needed.
+  if (isDecisionStep(e)) return "Decision needed";
   // A mock adapter stored the message and sent nothing: neither the head nor the line says "sent".
   if ((type === "email.sent" || type === "email.failed") && isMock(e.payload)) return "Email stored";
   if (EVENT_WORDS[type]) return EVENT_WORDS[type];
@@ -130,8 +133,21 @@ const showsRunState = (e: NocEvent) => e.type.startsWith("agent.");
 /** "5 tickets opened", "1 alarm folded". */
 const count = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
+/** The ticker's two views: the moments a shift acts on (default), or every agent step. */
+type TickerView = "key" | "all";
+const TICKER_VIEW_KEY = "noc_ticker_view_v1";
+
+function readTickerView(): TickerView {
+  try {
+    return sessionStorage.getItem(TICKER_VIEW_KEY) === "all" ? "all" : "key";
+  } catch {
+    return "key";
+  }
+}
+
 function MissionControl({
   metrics,
+  profile,
   incidentsRev,
   hitlRev,
   runsRev,
@@ -142,6 +158,8 @@ function MissionControl({
   onRefresh,
 }: {
   metrics: any;
+  /** The operator profile: region names for the rows ("Rift Valley", not "RFT"). */
+  profile?: any;
   /** Revision of the incidents slice — see realtime/renderers.ts. */
   incidentsRev: number;
   hitlRev: number;
@@ -167,6 +185,15 @@ function MissionControl({
   const [hitlLoad, setHitlLoad] = useState<Load>("loading");
   const [runsLoad, setRunsLoad] = useState<Load>("loading");
   const [chase, setChase] = useState<{ text: string; bad: boolean } | null>(null);
+  const [tickerView, setTickerView] = useState<TickerView>(readTickerView);
+  const chooseTickerView = (v: TickerView) => {
+    setTickerView(v);
+    try {
+      sessionStorage.setItem(TICKER_VIEW_KEY, v);
+    } catch {
+      /* storage blocked: the choice lasts until the page is left */
+    }
+  };
 
   // Flash a row only when it is new on the board. The ids on the first good answer are the
   // board as found, not news, so they seed the set and nothing flashes on arrival.
@@ -252,13 +279,16 @@ function MissionControl({
   const incNumber = new Map<string, string>(incidents.map((i) => [i.id, i.incident_number]));
   const pendingDecisions = typeof metrics?.hitl_pending === "number" ? metrics.hitl_pending : hitlLoad === "ok" ? hitl.length : 0;
 
-  // A storm start retires whatever the banner was saying (an SLA chase result): while it runs
+  // A storm start retires whatever the banner was saying (a vendor chase result): while it runs
   // the per-alarm progress line is the only thing worth reading.
   useEffect(() => {
     if (storming) setChase(null);
   }, [storming]);
 
   const showStorm = storm.phase !== "idle" && !(chase && !storming);
+  // The ticker: the moments a shift acts on by default, every agent step one click away.
+  const keyOnly = tickerView === "key";
+  const tickerLines = keyOnly ? events.filter(isKeyEvent) : events;
   const counts = stormCounts(storm);
 
   return (
@@ -266,16 +296,16 @@ function MissionControl({
       <div className="page-head">
         <div>
           <h1>Mission control</h1>
-          <p className="lead">Every alarm runs the twelve agents; the rail follows the newest ticket.</p>
+          <p className="lead">Every alarm goes through twelve agent steps; the panel below follows the newest ticket.</p>
         </div>
         <div className="page-actions">
           <button
             className="btn storm"
             disabled={storming}
             onClick={onLaunchStorm}
-            title="Drops microwave hops in Rift, Mt Kenya and Nairobi East and cascades child sites under their HUB majors."
+            title="Fails microwave links in Rift Valley, Mt Kenya and Nairobi East; the sites behind each HUB go down with it."
           >
-            {storming ? "Storm in progress…" : "Launch heavy-rain storm (live)"}
+            {storming ? "Storm running…" : "Launch heavy-rain storm (live)"}
           </button>
           <button
             className="btn"
@@ -283,15 +313,22 @@ function MissionControl({
             onClick={async () => {
               try {
                 const r = await api.monitorTick();
-                setChase({ text: `Worklog monitor chased ${r.chased} ticket${r.chased === 1 ? "" : "s"} for silence.`, bad: false });
+                const n = Number(r?.chased) || 0;
+                setChase({
+                  text:
+                    n > 0
+                      ? `Chased the vendor on ${n} ticket${n === 1 ? "" : "s"} with no update.`
+                      : "No vendor needed a chase: every open ticket has a recent update.",
+                  bad: false,
+                });
               } catch (e: any) {
-                setChase({ text: `SLA chase failed: ${e?.message || e}`, bad: true });
+                setChase({ text: `Couldn't chase vendors: ${detailOf(e)}`, bad: true });
               }
               onRefresh?.();
               loadLists();
             }}
           >
-            Run SLA chase
+            Chase silent vendors
           </button>
         </div>
       </div>
@@ -330,14 +367,14 @@ function MissionControl({
       {!showStorm && chase && (
         <div className={"storm-banner" + (chase.bad ? " danger" : "")} role={chase.bad ? "alert" : "status"}>
           <div className="storm-text">
-            <strong className="storm-title">SLA chase</strong>
+            <strong className="storm-title">Vendor chase</strong>
             <div className="storm-progress">{chase.text}</div>
           </div>
         </div>
       )}
 
       <div className="kpis">
-        <Kpi label="Open incidents" value={metrics?.open_total} />
+        <Kpi label="Open tickets" value={metrics?.open_total} />
         <Kpi label="P1 critical" value={metrics?.by_priority?.P1} tone="p1" />
         <Kpi label="P2 major" value={metrics?.by_priority?.P2} tone="p2" />
         <Kpi label="Decisions waiting" value={metrics?.hitl_pending} tone="hitl" />
@@ -360,17 +397,17 @@ function MissionControl({
         <div className="panel">
           <div className="panel-head">
             <div className="head-row">
-              <h2 className="panel-title">Live incidents</h2>
+              <h2 className="panel-title">Live tickets</h2>
               {(incLoad === "ok" || incLoad === "stale") && <span>{open.length} open</span>}
             </div>
           </div>
           <div className="list peek">
             {incLoad === "loading" && incidents.length === 0 && <SkeletonRows />}
-            {incLoad === "error" && <ListError what="the incidents" onRetry={loadIncidents} />}
+            {incLoad === "error" && <ListError what="the tickets" onRetry={loadIncidents} />}
             {incLoad === "stale" && <StaleNote />}
             {incLoad === "ok" && open.length === 0 && !storming && (
               <div className="empty">
-                No open incidents. Launch the storm above, or see closed tickets on the <Link to="/incidents">Incident board</Link>.
+                No open tickets. Launch the storm above, or see closed ones on the <Link to="/incidents">Incident board</Link>.
               </div>
             )}
             {incLoad !== "loading" && open.length === 0 && storming && (
@@ -382,7 +419,9 @@ function MissionControl({
                 className={"row" + (fresh.has(i.id) ? " flash" : "")}
                 onClick={(e) => !fromLink(e) && onOpen(i.id)}
               >
-                <span className={`pill ${i.priority}`}>{i.priority}</span>
+                <span className={`pill ${i.priority}`} title={priorityTitle(i.priority)}>
+                  {i.priority}
+                </span>
                 <div className="row-main">
                   <div className="row-title">
                     <Link className="row-id" to={`/incidents/${i.id}`}>
@@ -391,12 +430,12 @@ function MissionControl({
                     <span>{i.site_name || i.site_id}</span>
                   </div>
                   <div className="facts">
-                    {i.region_code && <span className="mono">{i.region_code}</span>}
+                    {i.region_code && <span title={i.region_code}>{regionName(i.region_code, profile)}</span>}
                     {i.failure_domain && <span>{humanEnum(i.failure_domain)}</span>}
                     {(i.responsible_msp || i.assignee_name) && <span>{i.responsible_msp || i.assignee_name}</span>}
-                    {i.child_sites_down ? <span>{i.child_sites_down} child sites</span> : null}
+                    {i.child_sites_down ? <span>{i.child_sites_down} child sites down</span> : null}
                     {i.mpesa_risk ? (
-                      <span className="attn danger">
+                      <span className="attn danger" title={MPESA_TITLE}>
                         <IconDot />
                         M‑PESA at risk
                       </span>
@@ -408,7 +447,7 @@ function MissionControl({
             ))}
           </div>
           {(incLoad === "ok" || incLoad === "stale") && (
-            <ShowAll to="/incidents" total={open.length} what="open incidents on the Incident board" />
+            <ShowAll to="/incidents" total={open.length} what="open tickets on the Incident board" />
           )}
         </div>
 
@@ -436,10 +475,16 @@ function MissionControl({
                 <div
                   key={t.id}
                   className="row split"
-                  title={t.incident_id ? undefined : "Not about an incident: opens Approvals"}
+                  title={t.incident_id ? undefined : "Not about a ticket: opens Approvals"}
                   onClick={(e) => !fromLink(e) && (t.incident_id ? onOpen(t.incident_id) : navigate("/hitl"))}
                 >
-                  {t.priority ? <span className={`pill ${t.priority}`}>{t.priority}</span> : <span />}
+                  {t.priority ? (
+                    <span className={`pill ${t.priority}`} title={priorityTitle(t.priority)}>
+                      {t.priority}
+                    </span>
+                  ) : (
+                    <span />
+                  )}
                   {/* One line: what (INC number), which decision, who holds it; the site on the right. */}
                   <div className="row-main">
                     <div className="row-title">
@@ -462,34 +507,51 @@ function MissionControl({
       <div className="grid-3 align-start">
         <div className="panel">
           <div className="panel-head">
+            {/* The title says which view is on; the control beside it switches. */}
             <div className="head-row">
-              <h2 className="panel-title">Agent activity</h2>
+              <h2 className="panel-title">{keyOnly ? "Key events" : "Every step"}</h2>
               {quietMode ? (
                 <>
-                  <span>{events.length >= TICKER_MAX ? `latest ${TICKER_MAX} critical` : `${events.length} critical`}</span>
+                  <span>{`${tickerLines.length} critical`}</span>
                   <span>{suppressed} held back</span>
                 </>
+              ) : keyOnly ? (
+                <span>{`${tickerLines.length} of ${events.length >= TICKER_MAX ? `the latest ${TICKER_MAX}` : events.length}`}</span>
               ) : (
                 <span>{events.length >= TICKER_MAX ? `latest ${TICKER_MAX}` : `${events.length} events`}</span>
               )}
-              <span>times in EAT</span>
+              <span>Times in EAT</span>
+            </div>
+            <div className="seg" role="group" aria-label="Agent activity to show">
+              <button type="button" aria-pressed={keyOnly} onClick={() => chooseTickerView("key")}>
+                Key events
+              </button>
+              <button type="button" aria-pressed={!keyOnly} onClick={() => chooseTickerView("all")}>
+                Every step
+              </button>
             </div>
           </div>
           <div className="ticker peek">
-            {events.length === 0 && (
+            {tickerLines.length === 0 && (
               <div className="empty">
                 {quietMode
-                  ? "Quiet mode: only P1 and P2 incidents, decisions and delivery failures appear here."
-                  : "Waiting for the agent stream. Each alarm appears here as it moves through Ingest, Correlate, Enrich, Severity, Ticket and Assign."}
+                  ? "Quiet mode: only P1 and P2 tickets, decisions and delivery failures appear here."
+                  : events.length > 0 && keyOnly
+                    ? "No key events in the latest lines. Every step shows each agent's work."
+                    : keyOnly
+                      ? "Waiting for the agent stream. Tickets opened, alarms folded, decisions and messages appear here."
+                      : "Waiting for the agent stream. Each alarm appears here as it moves through Ingest, Correlate, Enrich, Severity, Ticket and Assign."}
               </div>
             )}
-            {events.slice(0, PEEK).map((e) => {
+            {tickerLines.slice(0, PEEK).map((e) => {
               const p = e.payload || {};
               const st = String(p.status || "").toUpperCase();
               const base = p.rationale || p.output || p.detail;
               // A describer replaces a raw detail written for a developer (realtime/renderers.ts).
               const described = describeEvent(e).replace(/^—\s*/, "");
               const why = described || (base ? String(base).slice(0, 160) : "");
+              // "Decision needed" already says what the step and its state would.
+              const decision = isDecisionStep(e);
               return (
                 <div key={e.uid} className="ticker-line">
                   <span className="ticker-time">{fmtTime(e.ts)}</span>
@@ -504,8 +566,8 @@ function MissionControl({
                         ) : (
                           <span className="mono">{p.incident_number}</span>
                         ))}
-                      {p.node && <span>{nodeLabel(p.node)}</span>}
-                      {showsRunState(e) && !ROUTINE_STEP.has(st) && <RunState status={st} routine={false} />}
+                      {p.node && !decision && <span>{nodeLabel(p.node)}</span>}
+                      {showsRunState(e) && !decision && !ROUTINE_STEP.has(st) && <RunState status={st} routine={false} />}
                     </div>
                     {why && <div className="ticker-why">{why}</div>}
                   </div>
@@ -513,14 +575,14 @@ function MissionControl({
               );
             })}
           </div>
-          <ShowAll to="/audit" total={events.length} what="agent steps and decisions" label="Show all in Audit trail" />
+          <ShowAll to="/audit" total={tickerLines.length} what="agent steps and decisions" label="Show all in Audit trail" />
         </div>
 
         <div className="panel">
           <div className="panel-head">
             <div className="head-row">
               <h2 className="panel-title">Recent agent runs</h2>
-              <span>times in EAT</span>
+              <span>Times in EAT</span>
             </div>
           </div>
           <div className="list peek">
@@ -530,6 +592,20 @@ function MissionControl({
             {runs.slice(0, PEEK).map((r) => {
               const inc = r.incident_id ? incNumber.get(r.incident_id) : undefined;
               const trigger = triggerWord(r.trigger);
+              // What the run did: "INC000004 opened", "folded into INC000004", or, for a run
+              // still on its way or another kind of job, its name.
+              const did = runOutcomeOf(r);
+              const ticket = did.ticket || inc || null;
+              const site = alarmSite(r.steps);
+              const to = r.incident_id ? `/incidents/${r.incident_id}` : null;
+              const ticketLink = (label: string) =>
+                to ? (
+                  <Link className="row-id" to={to}>
+                    {label}
+                  </Link>
+                ) : (
+                  <span className="row-id">{label}</span>
+                );
               return (
                 <div
                   key={r.id}
@@ -539,17 +615,29 @@ function MissionControl({
                   <span className="muted dim mono">{fmtTime(r.started_at)}</span>
                   <div className="row-main">
                     <div className="row-title">
-                      {r.incident_id && (
-                        <Link className={inc ? "row-id" : "link"} to={`/incidents/${r.incident_id}`}>
-                          {inc || "Open ticket"}
-                        </Link>
+                      {did.kind === "opened" ? (
+                        <span>
+                          {ticketLink(ticket || "Ticket")} opened
+                        </span>
+                      ) : did.kind === "folded" ? (
+                        <span>folded into {ticketLink(ticket || "an open ticket")}</span>
+                      ) : (
+                        <>
+                          {to && ticket && ticketLink(ticket)}
+                          <span>{humanGraph(r.graph_name)}</span>
+                          {site && !ticket && <span className="mono">{site}</span>}
+                          {trigger && <span className="muted">{trigger}</span>}
+                        </>
                       )}
-                      <span>{humanGraph(r.graph_name)}</span>
-                      {trigger && <span className="muted">{trigger}</span>}
                     </div>
                     {/* The state sits on the second line, so a long word never squeezes the title. */}
                     <div className="facts">
-                      {r.current_node ? <span>at {nodeLabel(r.current_node)}</span> : r.steps ? <span>{r.steps.length} steps</span> : null}
+                      {/* Where a running run is; for any other, how many steps it took. */}
+                      {String(r.status || "").toUpperCase() === "RUNNING" && r.current_node ? (
+                        <span>at {nodeLabel(r.current_node)}</span>
+                      ) : r.steps ? (
+                        <span>{r.steps.length} steps</span>
+                      ) : null}
                       <RunState status={r.status} routine={false} />
                     </div>
                     {/* Same A-13 fix as the Agent Observatory: FAILED is red with its word, never green. */}
@@ -561,20 +649,20 @@ function MissionControl({
             {runsLoad === "ok" && runs.length === 0 && <div className="empty">Runs appear as the storm executes.</div>}
           </div>
           {(runsLoad === "ok" || runsLoad === "stale") && (
-            <ShowAll to="/agents" total={runs.length} what="agent runs in the Agent observatory" label="Show recent runs" />
+            <ShowAll to="/agents" total={runs.length} what="agent runs" label="Show all in Agent observatory" />
           )}
         </div>
 
         <div className="panel">
-          <h2 className="panel-title">Open incidents by region</h2>
+          <h2 className="panel-title">Open tickets by region</h2>
           {metrics == null ? (
             <SkeletonRows rows={4} />
           ) : regions.length === 0 ? (
-            <div className="empty">Region load appears when incidents are open.</div>
+            <div className="empty">Region load appears when tickets are open.</div>
           ) : (
             <div className="region-bars">
               {regions.map(([k, v]) => (
-                <div key={k} className="region-bar-row">
+                <div key={k} className="region-bar-row" title={regionName(k, profile)}>
                   <span className="muted mono">{k}</span>
                   <div className="region-bar-track">
                     {/* Grows with transform, not width: a compositor animation, no layout. */}

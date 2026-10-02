@@ -27,7 +27,7 @@ export default function BlamelessHint({ tripped = false }: { tripped?: boolean }
       </div>
       <p className="muted" style={{ margin: "0.4rem 0 0" }}>
         <strong>Root causes</strong> and <strong>contributing factors</strong> are checked
-        against the people recorded on this incident. Write the role, not the person —{" "}
+        against the people recorded on this ticket. Write the role, not the person —{" "}
         <code>RNIO</code>, <code>FE</code>, <code>MSP_POWER</code>. The same rule applies to an
         action item&rsquo;s owner, which must be a role token (§7.7.6): an action outlives
         whoever is on shift tonight.

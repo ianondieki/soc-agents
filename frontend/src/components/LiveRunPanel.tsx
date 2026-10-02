@@ -35,7 +35,7 @@ import type { NocEvent } from "../realtime/renderers";
  * the stored run is all there is. An unfinished frame run whose last frame is more than 10 s old
  * is stale and never reads "running".
  *
- * Every slot in the head (ticket, state, hops, the time the agents took, start time, Open ticket)
+ * Every slot in the head (ticket, state, steps, the time the agents took, start time, View ticket)
  * holds its width from the first paint, so nothing in the head moves while a run plays. Clicking a
  * hop pins the run on screen; "Follow live", in the hop's detail, lets go.
  */
@@ -267,7 +267,7 @@ function usePrefersReducedMotion(): boolean {
 }
 
 /**
- * A run's status as text: muted words when routine ("succeeded"), the drawn icon and the state
+ * A run's status as text: muted words when routine ("done"), the drawn icon and the state
  * colour when it is worth a look (waiting for a decision, failed). Never a chip.
  */
 export function RunState({ status, routine = true }: { status: unknown; routine?: boolean }) {
@@ -482,8 +482,15 @@ export default function LiveRunPanel({
 
   const replaying = !!replay && !!pinned && replay.runId === pinned.runId;
   const visible = replaying ? ordered.slice(0, replay!.shown) : ordered;
+  // During a replay the steps shown so far are mapped too, so a P3/P4 Approval never flashes a
+  // green check before it settles on "not needed".
   const railSteps = useMemo(
-    () => (replaying ? visible : pinned ? displaySteps({ status: pinned.status, steps: pinned.steps, finished_at: pinned.finishedAt }) : []),
+    () =>
+      replaying
+        ? displaySteps({ status: "RUNNING", steps: visible })
+        : pinned
+          ? displaySteps({ status: pinned.status, steps: pinned.steps, finished_at: pinned.finishedAt })
+          : [],
     // `visible` is derived from these
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [replaying, replay?.shown, pinned]
@@ -508,9 +515,9 @@ export default function LiveRunPanel({
   }, [stored, evRuns, pinned]);
 
   const pinnedFold = pinned && pinned.done && !opensTicket(pinned) ? foldOf(pinned) : null;
-  // A folded run is not "2 of 12 hops, succeeded": it reads "folded" and its unreached hops are
+  // A folded run is not "2 of 12 steps, done": it reads "folded" and its unreached steps are
   // drawn skipped (displaySteps).
-  const hops = pinned && !pinnedFold ? visible.length : null;
+  const stepCount = pinned && !pinnedFold ? visible.length : null;
   const took = pinned ? sumDurations(visible) : null;
   const started = pinned?.startedAt ? fmtTime(pinned.startedAt, "") : "";
   const openId = pinned?.incidentId || null;
@@ -540,7 +547,7 @@ export default function LiveRunPanel({
       </span>
     );
   } else if (!pinned && load === "ok") {
-    foot = <span>No alarm has been through the agents yet. Launch the storm and watch each hop light up.</span>;
+    foot = <span>No alarm has been through the agents yet. Launch the storm and watch each step light up.</span>;
   } else if (pinnedFold) {
     foot = (
       <span>
@@ -561,7 +568,7 @@ export default function LiveRunPanel({
       ) : (
         <span className="state danger" title={s.error || undefined}>
           <IconAlert />
-          {s.site ? <span className="mono">{s.site}</span> : "An alarm"} failed at {nodeLabel(s.node) || "a hop"}
+          {s.site ? <span className="mono">{s.site}</span> : "An alarm"} failed at {nodeLabel(s.node) || "a step"}
         </span>
       );
   }
@@ -574,7 +581,7 @@ export default function LiveRunPanel({
             {title}
           </h2>
           <span className="mono lr-inc">{shownNumber || ""}</span>
-          <span className="lr-hops">{hops != null && hops > 0 ? `${hops} of 12 hops` : ""}</span>
+          <span className="lr-hops">{stepCount != null && stepCount > 0 ? `${stepCount} of 12 steps` : ""}</span>
           <span className="lr-took">
             {took != null && pinned && visible.length > 0 ? (
               <>
@@ -595,7 +602,7 @@ export default function LiveRunPanel({
               tabIndex={openId ? undefined : -1}
               aria-hidden={openId ? undefined : true}
             >
-              Open ticket
+              View ticket
             </button>
           )}
         </div>
@@ -610,7 +617,7 @@ export default function LiveRunPanel({
         onSelect={(node) => onSelect(node)}
         detailAction={
           frozenId ? (
-            <button type="button" className="btn sm" onClick={followLive} title="Let the rail move on to the newest ticket again">
+            <button type="button" className="btn sm" onClick={followLive} title="Let the panel move on to the newest ticket again">
               Follow live
             </button>
           ) : null

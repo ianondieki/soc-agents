@@ -229,7 +229,7 @@ export default function Scorecards({ session }: { session: Session }) {
                 disabled={computing}
                 onChange={(e) => setComputeVendor(e.target.value)}
               >
-                <option value="">every vendor with incidents</option>
+                <option value="">every vendor with tickets</option>
                 {vendorOptions.map((v) => (
                   <option key={v.code} value={v.code}>
                     {v.code}

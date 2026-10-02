@@ -15,7 +15,7 @@ import {
   type StormState,
 } from "./lib/demo";
 import { detailOf } from "./lib/apiError";
-import { WAITING_WORD, humanAutonomy, humanEnum } from "./lib/agents";
+import { WAITING_WORD, humanAutonomy, humanEnum, regionName } from "./lib/agents";
 
 // Every page is its own chunk: the first visit downloads the shell and the one page it opened,
 // not all seventeen. A page's own stylesheet (Audit.css, Wallboard.escalation.css…) travels
@@ -173,7 +173,7 @@ function QuietToggle({ on, onToggle }: { on: boolean; onToggle: () => void }) {
       onClick={onToggle}
       aria-pressed={on}
       title={
-        "Night shift: stop animations and non-critical ticker churn. P1 and P2 incidents and decisions stay live." +
+        "Night shift: stop animations and non-critical ticker churn. P1 and P2 tickets and decisions stay live." +
         (on && suppressed > 0 ? ` ${suppressed} non-critical lines held back.` : "")
       }
     >
@@ -193,7 +193,14 @@ function prefersReducedMotion(): boolean {
   }
 }
 
-/** How long the rail takes to replay the last run (12 hops at ~100 ms) before "Storm complete". */
+/** What each autonomy level lets the agents do on their own: the top bar's tooltip on "L2 guarded". */
+const AUTONOMY_MEANING: Record<string, string> = {
+  L1_COPILOT: "Autonomy L1: agents draft every ticket and message; a person approves each one before it goes.",
+  L2_GUARDED: "Autonomy L2: agents open tickets and send P3–P4 messages; P1 and P2 wait for a person.",
+  L3_CONDITIONAL: "Autonomy L3: agents send everything except P1 messages, which wait for a person.",
+};
+
+/** How long the rail takes to replay the last run (12 steps at ~100 ms) before "Storm complete". */
 const RAIL_SETTLE_MS = 1400;
 
 export default function App() {
@@ -294,6 +301,8 @@ export default function App() {
   const stormRun = useRef<{ running: boolean; templates: any[] | null; next: number }>({ running: false, templates: null, next: 0 });
   const quietRef = useRef(quietMode);
   quietRef.current = quietMode;
+  const profileRef = useRef<any>(profile);
+  profileRef.current = profile;
   const storming = isStorming(storm);
 
   const runStormFrom = useCallback(
@@ -322,7 +331,7 @@ export default function App() {
             const text =
               r.outcome === "opened"
                 ? `Alarm ${i} of ${n}: ${inc.incident_number || "a ticket"} opened at ${r.site}` +
-                  `${inc.region_code ? ` (${inc.region_code})` : ""}, ${humanEnum(inc.failure_domain) || "fault"}${owner ? `, owner ${owner}` : ""}.`
+                  `${inc.region_code ? ` (${regionName(inc.region_code, profileRef.current)})` : ""}, ${humanEnum(inc.failure_domain) || "fault"}${owner ? `, owner ${owner}` : ""}.`
                 : `Alarm ${i} of ${n}: ${r.site} folded into ${r.into || "an open ticket"} at Correlate.`;
             setStorm((s) => ({
               ...s,
@@ -416,6 +425,8 @@ export default function App() {
   const isWall = loc.pathname.startsWith("/wallboard");
   const org = profile?.display_name ? String(profile.display_name).replace(" (demo profile)", "") : "Connecting…";
   const orgMeta = `${humanAutonomy(profile?.autonomy_level)}, ${profile?.shift ? String(profile.shift).toLowerCase() : "day"} shift`;
+  // "L2 guarded", explained once: what the agents may do on their own at this level.
+  const autonomyTitle = AUTONOMY_MEANING[String(profile?.autonomy_level || "L2_GUARDED").toUpperCase()] || orgMeta;
   const pending: number | null = typeof metrics?.hitl_pending === "number" ? metrics.hitl_pending : metrics ? 0 : null;
 
   if (isWall) {
@@ -487,7 +498,7 @@ export default function App() {
             <div className="topbar-left">
               <span className="topbar-org">
                 <span className="topbar-id">{org}</span>
-                <span className="topbar-meta chip-wide" title={orgMeta}>
+                <span className="topbar-meta chip-wide" title={autonomyTitle}>
                   {orgMeta}
                 </span>
               </span>
@@ -496,7 +507,7 @@ export default function App() {
               <span
                 className={"topbar-live" + (!apiOk || link === "down" ? " bad" : "")}
                 role="status"
-                title={!apiOk ? "The API is not answering" : "WebSocket to the agent event stream"}
+                title={!apiOk ? "The API is not answering" : "Live updates from the agents"}
               >
                 {!apiOk ? "API unreachable" : link === "live" ? "Live" : link === "connecting" ? "Connecting…" : "Reconnecting"}
               </span>
@@ -565,6 +576,7 @@ export default function App() {
                 element={
                   <MissionControl
                     metrics={metrics}
+                    profile={profile}
                     incidentsRev={revisions.incidents + manualTick}
                     hitlRev={revisions.hitl + manualTick}
                     runsRev={revisions.runs + manualTick}
@@ -582,7 +594,7 @@ export default function App() {
               />
               <Route
                 path="/incidents"
-                element={<IncidentBoard tick={revisions.incidents + manualTick} />}
+                element={<IncidentBoard tick={revisions.incidents + manualTick} profile={profile} />}
               />
               <Route path="/incidents/:id" element={<IncidentWorkspace session={session} />} />
               <Route path="/hitl" element={<HitlInbox session={session} tick={revisions.hitl + manualTick} />} />

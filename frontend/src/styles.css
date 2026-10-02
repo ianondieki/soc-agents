@@ -234,6 +234,9 @@ input, select, textarea, button { caret-color: var(--accent); }
   white-space: nowrap;
   border: 0;
 }
+/* Punctuation for a screen reader inside an accessible name ("Ingest, done, 1 ms"): zero-size
+   inline text, so it is read without adding a space before it or any width on screen. */
+.sr-punct { font-size: 0; }
 
 /* ---------------------------------------------------------------- layout */
 .app { display: grid; grid-template-columns: var(--nav-w) 1fr; min-height: 100vh; }
@@ -1335,9 +1338,11 @@ textarea { width: 100%; min-height: 90px; }
 }
 .rail-dot svg { display: block; }
 .rail-label { font-size: var(--fs-xs); font-weight: 600; color: var(--text); white-space: nowrap; }
-.rail-agent { font-size: var(--fs-xs); color: var(--muted-dim); white-space: nowrap; }
+/* The agent comes last in the DOM (a screen reader hears the step, its state, then the agent) and
+   sits between the label and the state on screen. */
+.rail-agent { font-size: var(--fs-xs); color: var(--muted-dim); white-space: nowrap; order: 1; }
 /* The hop's state in words (sans); only the measurement inside it (`.mono`: ms, %) is mono. */
-.rail-meta { font-size: var(--fs-xs); color: var(--muted-dim); display: flex; gap: 0.35rem; white-space: nowrap; }
+.rail-meta { font-size: var(--fs-xs); color: var(--muted-dim); display: flex; gap: 0.35rem; white-space: nowrap; order: 2; }
 .rail-conf { color: var(--muted); }
 .rail-hop.succeeded .rail-dot { background: var(--ok); border-color: var(--ok); }
 .rail-hop.succeeded .rail-btn { border-color: var(--ok-line); }
@@ -1352,6 +1357,9 @@ textarea { width: 100%; min-height: 90px; }
 .rail-hop.decided.rejected .rail-btn { border-color: var(--danger-line, var(--danger)); }
 .rail-hop.decided.rejected .rail-meta { color: var(--danger-text); }
 .rail-hop.skipped .rail-btn { opacity: 0.6; border-style: dashed; }
+/* A P3/P4 Approval the autonomy level let through: it ran, nobody decided anything. A neutral
+   filled dot and the words "not needed", never the green check of an approval. */
+.rail-hop.not_needed .rail-dot { background: var(--muted-dim); border-color: var(--muted-dim); }
 .rail-hop.failed .rail-dot { background: var(--p1); border-color: var(--p1); color: var(--text-bright); }
 .rail-hop.failed .rail-btn { border-color: var(--p1); }
 .rail-hop.running .rail-dot { border-color: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft); animation: pulse 1.6s ease-in-out infinite; }
@@ -1361,7 +1369,7 @@ textarea { width: 100%; min-height: 90px; }
 .rail-hop.selected .rail-btn { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); opacity: 1; }
 .rail-link { width: 22px; height: 2px; background: var(--border); position: relative; overflow: hidden; flex: none; }
 .rail-hop[data-wrap="1"] .rail-link { visibility: hidden; }
-.rail-link.succeeded, .rail-link.waiting_hitl, .rail-link.decided, .rail-link.failed { background: var(--border-bright); }
+.rail-link.succeeded, .rail-link.waiting_hitl, .rail-link.decided, .rail-link.not_needed, .rail-link.failed { background: var(--border-bright); }
 .rail-link.running::after {
   content: "";
   position: absolute;
@@ -1410,7 +1418,7 @@ textarea { width: 100%; min-height: 90px; }
 .lr-facts > .lr-state > .state { vertical-align: top; }
 .lr-facts > .lr-inc { min-width: 9ch; color: var(--text); }
 .lr-facts > .lr-state { min-width: 12.5em; }
-.lr-facts > .lr-hops { min-width: 6.4em; }
+.lr-facts > .lr-hops { min-width: 7em; }
 .lr-facts > .lr-took { min-width: 10.5em; }
 .lr-facts > .lr-time { min-width: 12ch; }
 .lr-actions { display: flex; gap: var(--s2); align-items: center; margin-left: auto; }

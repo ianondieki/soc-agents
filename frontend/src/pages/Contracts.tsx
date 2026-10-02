@@ -152,7 +152,7 @@ export default function Contracts() {
         <div className="panel" style={{ marginTop: "1rem" }}>
           <div className="panel-head">
             <h2 className="panel-title">Clause search</h2>
-            {incidentId && <span className="muted">Narrowed to incident {incidentId.slice(0, 8)}…</span>}
+            {incidentId && <span className="muted">Narrowed to ticket {incidentId.slice(0, 8)}…</span>}
           </div>
           <div style={{ display: "flex", gap: "0.5rem" }}>
             <input

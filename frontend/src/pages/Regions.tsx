@@ -26,6 +26,7 @@
  */
 
 import { Fragment, useCallback, useEffect, useId, useState } from "react";
+import { priorityTitle } from "../lib/agents";
 import { api } from "../api";
 import { IconDot } from "../lib/icons";
 import { fmtDateTime } from "../lib/time";
@@ -51,17 +52,19 @@ const STATUS_WORD: Record<string, string> = {
 
 const STATUS_HINT: Record<string, string> = {
   ALERT: "Open P1, or a live storm/flood flag over the region.",
-  WATCH: "Open P2, or an incident already past its restore SLA.",
-  STALE: "No incidents worth flagging, and no fresh signal either. We are blind here, not calm.",
+  WATCH: "Open P2, or a ticket already past its restore SLA.",
+  STALE: "No tickets worth flagging, and no fresh signal either. We are blind here, not calm.",
   CALM: "Nothing open, and at least one outside-world signal is fresh.",
 };
 
 const PRIORITIES = ["P1", "P2", "P3", "P4"] as const;
+/** The four outside-world feeds, named as the floor says them: CAP alerts are flood warnings,
+ *  KPLC notices are Kenya Power notices. */
 const FEEDS: { key: string; name: string }[] = [
   { key: "weather", name: "Weather" },
-  { key: "flood", name: "Flood" },
-  { key: "cap", name: "CAP" },
-  { key: "kplc", name: "KPLC" },
+  { key: "flood", name: "Flood forecast" },
+  { key: "cap", name: "Flood warnings" },
+  { key: "kplc", name: "Kenya Power notices" },
 ];
 
 function num(value: unknown, fallback = 0): number {
@@ -134,17 +137,17 @@ function Counts({ region }: { region: any }) {
         // Colour is spent only on a count that is not zero: a red "P1 0" on six quiet
         // regions would make the one real P1 invisible.
         return (
-          <div key={p} className={n > 0 ? undefined : "zero"} title={`${p} incidents open now`}>
-            <dt>{n > 0 ? <span className={`pill ${p}`}>{p}</span> : p}</dt>
+          <div key={p} className={n > 0 ? undefined : "zero"} title={`${p} tickets open now`}>
+            <dt>{n > 0 ? <span className={`pill ${p}`} title={priorityTitle(p)}>{p}</span> : p}</dt>
             <dd>{n}</dd>
           </div>
         );
       })}
-      <div title="Open incidents, any priority">
+      <div title="Open tickets, any priority">
         <dt>Open</dt>
         <dd>{total}</dd>
       </div>
-      <div className={sla > 0 ? undefined : "zero"} title="Open incidents already past their restore SLA">
+      <div className={sla > 0 ? undefined : "zero"} title="Open tickets already past their restore SLA">
         <dt>Past SLA</dt>
         <dd>
           {sla > 0 ? (
@@ -213,10 +216,10 @@ function RegionCard({ region, allBlind }: { region: any; allBlind: boolean }) {
           {typeof rate === "number" && Number.isFinite(rate) ? (
             <>
               <span className="mono">{pct(rate)}</span>, {num(region.repeat_faults_30d)} of{" "}
-              {num(region.incidents_30d)} {num(region.incidents_30d) === 1 ? "incident" : "incidents"}
+              {num(region.incidents_30d)} {num(region.incidents_30d) === 1 ? "ticket" : "tickets"}
             </>
           ) : (
-            "No incidents in the window"
+            "No tickets in the window"
           )}
         </dd>
         <dt>Open problems</dt>
@@ -372,7 +375,7 @@ export default function Regions({ tick }: { tick: number }) {
           <span className="attn warn">
             <IconDot />
             {allBlind
-              ? "No live feed from weather, flood, CAP or KPLC; counts come from the ticket store."
+              ? "No live feed from weather, flood warnings or Kenya Power notices; counts come from the ticket store."
               : `${blind} of ${regions.length} regions have no live feed; their counts come from the ticket store.`}
           </span>
         </p>

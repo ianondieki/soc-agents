@@ -123,7 +123,7 @@ export default function Maintenance({ tick }: { tick: number }) {
         <h1>Maintenance</h1>
         <p
           className="lead"
-          title="Windows take live customers off air on purpose, so two people sign off: the programme (approve schedule, per task) and the night itself (approve maintenance window, per window). Both are approved on Approvals."
+          title="Windows take live subscribers off air on purpose, so two people sign off: the programme (approve schedule, per task) and the night itself (approve maintenance window, per window). Both are approved on Approvals."
         >
           Planned windows and their tasks; two people sign off each. Times in EAT.
         </p>

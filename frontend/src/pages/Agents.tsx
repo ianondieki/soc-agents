@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api";
 import { RunState } from "../components/LiveRunPanel";
-import { agentDisplayName, fmtInt, fmtMs, humanGraph, nodeLabel, runOutcome, runStatusWord } from "../lib/agents";
+import { agentDisplayName, alarmSite, fmtInt, fmtMs, humanGraph, nodeLabel, runOutcome, runOutcomeOf, runStatusWord } from "../lib/agents";
 import { IconDot } from "../lib/icons";
 import { fmtTime } from "../lib/time";
 import { ONE_COL } from "../lib/layout";
@@ -12,7 +12,7 @@ import { RunError } from "../components/RunError";
 // this page's chunk); re-exported here so older imports still work.
 export { RunError } from "../components/RunError";
 
-/** How a run was started, when it was not the ordinary alarm event ("Incident lifecycle" needs no "event"). */
+/** How a run was started, when it was not the ordinary alarm event ("Alarm run" needs no "event"). */
 const TRIGGER_WORDS: Record<string, string> = { SCHEDULE: "scheduled", REQUEST: "on request" };
 
 function Skeleton({ rows }: { rows: number }) {
@@ -107,9 +107,9 @@ export default function Agents({ tick = 0 }: { tick?: number }) {
           <h1>Agent observatory</h1>
           <p
             className="lead"
-            title="Each agent has a mission, a criticality and the tools it may call. The counts are everything on record; during a storm the run list moves through running, waiting for a decision and succeeded as each alarm is processed."
+            title="Each agent has a mission, a criticality and the tools it may call. The counts are everything on record; during a storm the run list moves through running, waiting for a decision and done as each alarm is processed."
           >
-            Twelve agents under one supervisor: their missions, records and live runs.
+            The twelve agents: their missions, records and live runs.
           </p>
         </div>
       </div>
@@ -130,13 +130,13 @@ export default function Agents({ tick = 0 }: { tick?: number }) {
             {(agents || []).map((a) => {
               const s = stats[a.name];
               const failed = s?.failed || 0;
-              const hops: string[] = (a.node_ids || []).map(nodeLabel);
+              const steps: string[] = (a.node_ids || []).map(nodeLabel);
               return (
                 <div key={a.name} className="row static" style={ONE_COL}>
                   <div className="row-main">
                     <div className="head-row">
                       <h3 className="panel-title">{agentDisplayName(a.name)}</h3>
-                      <span>{hops.length ? hops.join(", ") : "runs on request"}</span>
+                      <span>{steps.length ? steps.join(", ") : "runs on request"}</span>
                     </div>
                     <p className="hop-what">{a.mission}</p>
                     <div className="agent-stats">
@@ -197,6 +197,17 @@ export default function Agents({ tick = 0 }: { tick?: number }) {
             )}
             {(runs || []).slice(0, 15).map((r) => {
               const trigger = TRIGGER_WORDS[String(r.trigger || "").toUpperCase()];
+              // What the run did: "INC000004 opened", "folded into INC000004", else its name.
+              const did = runOutcomeOf(r);
+              const site = alarmSite(r.steps);
+              const ticketLink = (label: string) =>
+                r.incident_id ? (
+                  <Link className="row-id" to={`/incidents/${r.incident_id}`}>
+                    {label}
+                  </Link>
+                ) : (
+                  <span className="row-id">{label}</span>
+                );
               return (
                 // Time first: every clock reads HH:MM:SS in mono, so the titles start at one x;
                 // the state sits at the right, as on Mission control.
@@ -204,11 +215,20 @@ export default function Agents({ tick = 0 }: { tick?: number }) {
                   <span className="muted dim mono">{fmtTime(r.started_at)}</span>
                   <div className="row-main">
                     <div className="row-title">
-                      <span>{humanGraph(r.graph_name)}</span>
-                      {trigger && <span className="muted">{trigger}</span>}
+                      {did.kind === "opened" ? (
+                        <span>{ticketLink(did.ticket || "Ticket")} opened</span>
+                      ) : did.kind === "folded" ? (
+                        <span>folded into {ticketLink(did.ticket || "an open ticket")}</span>
+                      ) : (
+                        <>
+                          <span>{humanGraph(r.graph_name)}</span>
+                          {site && <span className="mono">{site}</span>}
+                          {trigger && <span className="muted">{trigger}</span>}
+                        </>
+                      )}
                     </div>
                     <div className="facts">
-                      {r.current_node && <span>at {nodeLabel(r.current_node)}</span>}
+                      {String(r.status || "").toUpperCase() === "RUNNING" && r.current_node && <span>at {nodeLabel(r.current_node)}</span>}
                       <span>
                         <span className="mono">{r.steps?.length ?? 0}</span> steps
                       </span>
