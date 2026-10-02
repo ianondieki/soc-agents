@@ -178,8 +178,8 @@ export default function Scorecards({ session }: { session: Session }) {
       return (
         <div>
           {heading}
-          <LaneOff title="Vendor scorecards are off" flag="SCORECARDS_ENABLED">
-            every <code>/scorecards</code> route answers 404 and the <code>scorecard_close</code> job does nothing.
+          <LaneOff title="Vendor scorecards are off in this demo" flag="SCORECARDS_ENABLED">
+            score each vendor's month against its contract terms, line by line
           </LaneOff>
         </div>
       );

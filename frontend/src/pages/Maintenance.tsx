@@ -135,7 +135,9 @@ export default function Maintenance({ tick }: { tick: number }) {
     return (
       <div>
         {head}
-        <LaneOff title="Planned maintenance is off" flag="MAINTENANCE_ENABLED" />
+        <LaneOff title="Maintenance is off in this demo" flag="MAINTENANCE_ENABLED">
+          plan maintenance windows and their tasks, each signed off by two people
+        </LaneOff>
       </div>
     );
   }

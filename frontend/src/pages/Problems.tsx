@@ -45,14 +45,14 @@ export default function Problems({ tick }: { tick: number }) {
               Retry
             </button>
           </div>
-        ) : (
+        ) : rows !== null && rows.length === 0 ? null : (
           <table>
             <thead>
               <tr>
                 <th>Problem</th>
                 <th>Site</th>
                 <th>Region</th>
-                <th>Count</th>
+                <th className="num">Count</th>
                 <th>Domain</th>
                 <th>Summary</th>
               </tr>
@@ -68,10 +68,10 @@ export default function Problems({ tick }: { tick: number }) {
                 ))}
               {(rows || []).map((p) => (
                 <tr key={p.id}>
-                  <td>{p.problem_number}</td>
-                  <td>{p.site_id}</td>
-                  <td>{p.region_code}</td>
-                  <td>{p.occurrence_count}</td>
+                  <td className="mono">{p.problem_number}</td>
+                  <td className="mono">{p.site_id}</td>
+                  <td className="mono">{p.region_code}</td>
+                  <td className="num">{p.occurrence_count}</td>
                   <td>{humanEnum(p.dominant_failure_domain)}</td>
                   <td className="muted">{p.summary}</td>
                 </tr>

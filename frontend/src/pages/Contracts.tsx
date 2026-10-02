@@ -116,8 +116,8 @@ export default function Contracts() {
       </div>
 
       {off && (
-        <LaneOff title="Contracts assistant is off" flag="CONTRACTS_ENABLED">
-          no contract is indexed and nothing can be asked.
+        <LaneOff title="The contracts assistant is off in this demo" flag="CONTRACTS_ENABLED">
+          search contract clauses and get cited, advisory answers
         </LaneOff>
       )}
 

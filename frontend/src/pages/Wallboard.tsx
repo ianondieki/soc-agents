@@ -4,6 +4,7 @@ import CardBoundary from "../components/CardBoundary";
 import RiskStrip from "../components/RiskStrip";
 import AgentsStatusTile from "../components/AgentsStatusTile";
 import RedactionMissChip from "../components/RedactionMissChip";
+import { fmtEAT } from "../lib/time";
 import "./Wallboard.escalation.css";
 
 /**
@@ -46,6 +47,12 @@ function redCards(tasks: any[]): RedCard[] {
   return out;
 }
 
+/** "APPROVE_BROADCAST" → "APPROVE BROADCAST": the glass keeps its capitals, not the underscores. */
+const words = (s: unknown) => String(s ?? "").replace(/_/g, " ");
+
+/** Skeleton bar widths for the cards shown before the first answer. */
+const SKELETON_WIDTHS = ["46%", "78%", "62%", "54%"];
+
 export default function Wallboard({
   metrics,
   rev = 0,
@@ -56,8 +63,14 @@ export default function Wallboard({
   /** Debounced `signals` slice revision — see realtime/renderers.ts. */
   signalsRev?: number;
 }) {
-  const [rows, setRows] = useState<any[]>([]);
+  // null until the first answer: the glass never says "quiet" before it has asked.
+  const [rows, setRows] = useState<any[] | null>(null);
   const [red, setRed] = useState<RedCard[]>([]);
+  // When the incident poll last answered, and whether the latest one failed: a wall that has
+  // stopped updating must say so instead of showing old tiles as if they were live.
+  const [lastOk, setLastOk] = useState<Date | null>(null);
+  const [stale, setStale] = useState(false);
+  const [retry, setRetry] = useState(0);
 
   useEffect(() => {
     const load = () =>
@@ -65,10 +78,12 @@ export default function Wallboard({
         .incidents()
         .then((all) => {
           setRows(all.filter((i) => ["P1", "P2"].includes(i.priority) && !["CLOSED", "CANCELLED"].includes(i.status)));
+          setLastOk(new Date());
+          setStale(false);
         })
-        // A failed poll leaves the last good rows on the glass rather than
-        // blanking the wall.
-        .catch(() => undefined);
+        // A failed poll leaves the last good rows on the glass rather than blanking the
+        // wall, and raises the "Not updating" chip.
+        .catch(() => setStale(true));
     // The ladder's red state rides on the pending inbox. A role the inbox refuses (403), or
     // the ladder being off (no card ever carries the mark), both leave the wall exactly as it
     // was: the last good list stays, and an empty list shows nothing extra.
@@ -87,18 +102,27 @@ export default function Wallboard({
       loadRed();
     }, 5000);
     return () => window.clearInterval(id);
-  }, [rev]);
+  }, [rev, retry]);
 
+  const list = rows || [];
   const redByIncident = new Map<string, RedCard>();
   for (const c of red) if (c.incident_id && !redByIncident.has(c.incident_id)) redByIncident.set(c.incident_id, c);
-  const onGrid = new Set(rows.map((i) => String(i.id)));
+  const onGrid = new Set(list.map((i) => String(i.id)));
   const offGrid = red.filter((c) => !c.incident_id || !onGrid.has(c.incident_id));
 
   return (
     <div className="wallboard">
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-        <h1>NOC WALLBOARD · SAFARICOM DEMO</h1>
+      <div className="wb-head">
+        <h1>
+          NOC WALLBOARD <span className="wb-head-sub">SAFARICOM DEMO</span>
+        </h1>
         <div className="chips">
+          {/* Old tiles on the glass after a failed poll. Before the first answer the grid says so instead. */}
+          {stale && lastOk && (
+            <span className="chip" role="status">
+              Not updating since {fmtEAT(lastOk)}
+            </span>
+          )}
           <span className="chip">Open {metrics?.open_total ?? "—"}</span>
           <span className="chip hitl">HITL {metrics?.hitl_pending ?? 0}</span>
           {red.length > 0 && <span className="chip bad">ESCALATED {red.length}</span>}
@@ -133,49 +157,88 @@ export default function Wallboard({
           any, so the default glass is byte-for-byte what it was. */}
       {offGrid.length > 0 && (
         <div className="wb-escalation-strip" role="alert">
-          DECISION WAITING · UNCLAIMED PAST T+30
+          <div className="wb-line">
+            <span>DECISION WAITING</span>
+            <span>UNCLAIMED PAST T+30</span>
+          </div>
           {offGrid.map((c) => (
-            <div key={c.id} className="muted">
-              {c.priority ?? "P?"} · {c.task_type} · {c.incident_number ?? "no incident"}
-              {c.unclaimed_minutes != null ? ` · unclaimed ${c.unclaimed_minutes} min` : ""}
-              {c.since_eat ? ` · red since ${c.since_eat}` : ""}
+            <div key={c.id} className="wb-line muted">
+              <span>{c.priority ?? "P?"}</span>
+              <span>{words(c.task_type)}</span>
+              <span className="mono">{c.incident_number ?? "no incident"}</span>
+              {c.unclaimed_minutes != null && <span>unclaimed {c.unclaimed_minutes} min</span>}
+              {c.since_eat && <span>red since {c.since_eat}</span>}
             </div>
           ))}
         </div>
       )}
-      <div className="wb-grid">
-        {rows.length === 0 && <div className="empty">No P1/P2 open — quiet glass.</div>}
-        {rows.map((i) => {
+      {rows === null && !stale && (
+        <span className="sr-only" role="status">
+          Loading the P1 and P2 incidents
+        </span>
+      )}
+      {rows === null && stale && (
+        <div className="empty" role="alert">
+          Couldn't reach the incident list; the wall retries every 5 seconds.{" "}
+          <button className="btn sm" onClick={() => setRetry((n) => n + 1)}>
+            Retry
+          </button>
+        </div>
+      )}
+      <div className="wb-grid" aria-busy={rows === null || undefined}>
+        {rows === null &&
+          !stale &&
+          Array.from({ length: 4 }, (_, k) => (
+            <div key={"sk-" + k} className="wb-card wb-card-skeleton" aria-hidden="true">
+              {SKELETON_WIDTHS.map((w, j) => (
+                <span key={j} className="skeleton" style={{ width: w }} />
+              ))}
+            </div>
+          ))}
+        {rows !== null && rows.length === 0 && <div className="empty">No P1/P2 open — quiet glass.</div>}
+        {list.map((i) => {
           const esc = redByIncident.get(String(i.id));
+          // The escalated line already says a decision is waiting; the flag would say it twice.
+          const decisionFlag = Boolean(i.requires_hitl) && !esc;
           return (
             <div key={i.id} className={`wb-card ${i.priority}${esc ? " escalated" : ""}`}>
-              <div className="big">
-                {i.priority} · {i.incident_number}
+              <div className="big wb-line">
+                <span>{i.priority}</span>
+                <span>{i.incident_number}</span>
               </div>
-              <div style={{ fontSize: "1.2rem", marginTop: "0.5rem" }}>{i.site_name}</div>
-              <div className="muted" style={{ marginTop: "0.4rem", fontSize: "1rem" }}>
-                {i.region_code} · {String(i.failure_domain || "").toLowerCase()} · {i.users_affected?.toLocaleString()} users
+              <div className="wb-site">{i.site_name}</div>
+              <div className="wb-line wb-meta muted">
+                <span className="mono">{i.region_code}</span>
+                {i.failure_domain && <span>{String(i.failure_domain).toLowerCase()}</span>}
+                <span>{i.users_affected?.toLocaleString()} users</span>
               </div>
-              <div style={{ marginTop: "0.8rem", fontSize: "1.05rem" }}>Owner: {i.assignee_name}</div>
-              <div className="muted">
-                {String(i.status || "").replace(/_/g, " ")}
-                {i.mpesa_risk ? " · M-PESA RISK" : ""}
-                {i.requires_hitl ? " · DECISION WAITING" : ""}
-                {i.tt_category ? ` · ${String(i.tt_category).replace(/_/g, " ")}` : ""}
+              <div className="wb-owner">Owner {i.assignee_name}</div>
+              <div className="wb-line wb-meta muted">
+                <span>{words(i.status)}</span>
+                {i.tt_category && <span>{words(i.tt_category)}</span>}
               </div>
+              {(i.mpesa_risk || decisionFlag) && (
+                <div className="wb-flags">
+                  {i.mpesa_risk && <span className="danger">M‑PESA RISK</span>}
+                  {decisionFlag && <span className="hitl">DECISION WAITING</span>}
+                </div>
+              )}
               {esc && (
-                <div className="wb-escalated-line">
-                  DECISION WAITING · {esc.task_type} UNCLAIMED
-                  {esc.unclaimed_minutes != null ? ` ${esc.unclaimed_minutes} MIN` : ""}
-                  {esc.since_eat ? ` · RED SINCE ${esc.since_eat}` : ""}
+                <div className="wb-escalated-line wb-line">
+                  <span>DECISION WAITING</span>
+                  <span>
+                    {words(esc.task_type)} UNCLAIMED
+                    {esc.unclaimed_minutes != null ? ` ${esc.unclaimed_minutes} MIN` : ""}
+                  </span>
+                  {esc.since_eat && <span>RED SINCE {esc.since_eat}</span>}
                 </div>
               )}
             </div>
           );
         })}
       </div>
-      <p className="muted" style={{ marginTop: "2rem" }}>
-        <a href="/">← Back to Mission Control</a>
+      <p className="wb-foot muted">
+        <a href="/">Back to Mission control</a>
       </p>
     </div>
   );

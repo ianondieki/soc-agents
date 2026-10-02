@@ -138,7 +138,7 @@ export default function Pirs({ tick }: { tick: number }) {
       const res = await api.openPirForIncident(openFor);
       setNote(
         res?.created
-          ? "Review opened (" + res.status + ")."
+          ? "Review opened, " + humanStatus(res.status) + "."
           : "That incident already had a review; it is selected below."
       );
       setSelected(res.id);
@@ -189,8 +189,8 @@ export default function Pirs({ tick }: { tick: number }) {
     return (
       <div className="content-narrow">
         {head}
-        <LaneOff title="Post-incident reviews are off" flag="PIR_ENABLED">
-          no review is opened and the <code>pir_autoopen</code> job does nothing.
+        <LaneOff title="Post-incident reviews are off in this demo" flag="PIR_ENABLED">
+          open a blameless review after every P1 and P2 and track its action items
         </LaneOff>
       </div>
     );
@@ -307,8 +307,8 @@ export default function Pirs({ tick }: { tick: number }) {
         )}
         {loaded && rows.length === 0 && status === "ALL" && (
           <div className="empty">
-            No reviews yet. The <code>pir_autoopen</code> job opens one every 5 minutes for incidents that were
-            restored or closed and match the trigger matrix; open any other by hand above.
+            No reviews yet. One opens within 5 minutes of a qualifying incident being restored or closed; open any
+            other by hand above.
           </div>
         )}
       </div>

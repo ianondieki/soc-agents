@@ -1,27 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../api";
-import AgentRail from "../components/AgentRail";
-import { LIFECYCLE_NODES, agentDisplayName, fmtInt, fmtMs, humanAutonomy } from "../lib/agents";
+import { LIFECYCLE_NODES, agentDisplayName, fmtInt, fmtMs, humanAutonomy, nodeDoes, nodeLabel } from "../lib/agents";
 
 /**
- * The training view of the lifecycle: the rail with every hop lit, and under it what each
- * hop does, how long a person spends on it by hand (the operator profile's estimate) and
- * when it stops for one. New joiners read this before their first storm.
+ * The training view of the lifecycle: what each hop does, how long a person spends on it by
+ * hand (the operator profile's estimate) and how often the agents have run it. New joiners read
+ * this before their first storm. There is no rail here: a rail with every hop lit would show
+ * work that never ran, and the table already lists the hops in order.
  */
-const WHAT: Record<string, string> = {
-  INGEST: "Normalise the alarm and fingerprint it (site, alarm code, domain).",
-  CORRELATE: "Fold a repeat or a child site into the open ticket or its parent HUB.",
-  ENRICH: "Site catalogue: region, RNIO, FE on call, subscribers affected, TT classification.",
-  SEVERITY: "P4 under 50k users; P3, P2, P1 above; HUB floor P2; CORE floor P1; M‑PESA corridor tag.",
-  TICKET: "Allocate the INC number, fill the TT fields, write the narrative and set the SLA clocks.",
-  ASSIGN: "Region × domain matrix: power to Egypro or Tetranet, fibre to Egypro Fibre, radio to the FE.",
-  HITL: "Hold P1 and P2 wording for the shift. Nothing external leaves without a named person.",
-  BROADCAST: "Draft and queue the RNIO, FE and MSP SMS and e-mail through the outbox.",
-  EXEC_BRIEF: "Write the status brief management reads instead of phoning the NOC.",
-  LEDGER: "Append the Excel shift ledger row (EAT).",
-  RECURRENCE: "Count faults at this site in the window; open or update a problem record.",
-  MONITOR: "Set the note-chase and SLA clocks; chase a silent vendor.",
-};
 
 export default function WorkflowMap({ profile }: { profile: any }) {
   const [p, setP] = useState<any | null>(null);
@@ -32,9 +18,7 @@ export default function WorkflowMap({ profile }: { profile: any }) {
     () =>
       (p?.steps?.by_node?.length ? p.steps.by_node : LIFECYCLE_NODES).map((n: any) => ({
         id: n.node || n.id,
-        label: n.label,
         agent: n.agent,
-        status: n.node === "HITL" || n.id === "HITL" ? "waiting_hitl" : "succeeded",
       })),
     [p]
   );
@@ -52,52 +36,60 @@ export default function WorkflowMap({ profile }: { profile: any }) {
           </p>
         </div>
       </div>
-      <div className="panel" style={{ marginBottom: "1rem" }}>
-        <AgentRail steps={null} nodes={nodes} caption="The lifecycle" layout="grid" />
-      </div>
-      <div className="panel table-scroll table-wide">
-        <table>
-          <thead>
-            <tr>
-              <th scope="col">Hop</th>
-              <th scope="col" className="col-agent">
-                Agent
-              </th>
-              <th scope="col" className="col-what">
-                What it does
-              </th>
-              <th scope="col" style={{ textAlign: "right" }}>
-                By hand
-              </th>
-              <th scope="col" style={{ textAlign: "right" }}>
-                Runs
-              </th>
-              <th scope="col" style={{ textAlign: "right" }}>
-                Avg
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {nodes.map((n: any) => (
-              <tr key={n.id}>
-                <td>
-                  <strong>{n.label}</strong>
-                  <p className="hop-what phone-only">{WHAT[n.id] || ""}</p>
-                </td>
-                <td className="muted col-agent">{agentDisplayName(n.agent)}</td>
-                <td className="col-what">{WHAT[n.id] || ""}</td>
-                <td className="num">
-                  {n.id === "HITL" ? "stays human" : toil[n.id] != null ? `${toil[n.id]} min` : "—"}
-                </td>
-                <td className="num">{fmtInt(byNode[n.id]?.steps ?? 0)}</td>
-                <td className="num">{fmtMs(byNode[n.id]?.avg_ms)}</td>
+      <div className="panel stack">
+        <div className="table-scroll table-wide">
+          <table>
+            <thead>
+              <tr>
+                <th scope="col">Hop</th>
+                <th scope="col" className="col-agent">
+                  Agent
+                </th>
+                <th scope="col" className="col-what">
+                  What it does
+                </th>
+                <th scope="col" className="num">
+                  By hand
+                </th>
+                <th scope="col" className="num">
+                  Runs
+                </th>
+                <th scope="col" className="num">
+                  Avg
+                </th>
               </tr>
-            ))}
-          </tbody>
-        </table>
-        <p className="muted" style={{ marginTop: "0.75rem" }}>
-          "By hand" is the operator profile's estimate (<code>productivity.toil_minutes</code>), the same figure the
-          Showcase page multiplies by the steps the agents completed.
+            </thead>
+            <tbody>
+              {nodes.map((n: any) => (
+                <tr key={n.id}>
+                  <td>
+                    <strong>{nodeLabel(n.id)}</strong>
+                    <p className="hop-what phone-only">{nodeDoes(n.id)}</p>
+                  </td>
+                  <td className="muted col-agent">{agentDisplayName(n.agent)}</td>
+                  <td className="col-what">{nodeDoes(n.id)}</td>
+                  <td className="num">
+                    {n.id === "HITL" ? (
+                      // Words, not a measurement: the sans, not the cell's mono.
+                      <span className="muted" style={{ fontFamily: "var(--font)" }}>
+                        stays human
+                      </span>
+                    ) : toil[n.id] != null ? (
+                      `${toil[n.id]} min`
+                    ) : (
+                      "—"
+                    )}
+                  </td>
+                  <td className="num">{fmtInt(byNode[n.id]?.steps ?? 0)}</td>
+                  <td className="num">{fmtMs(byNode[n.id]?.avg_ms)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <p className="muted">
+          "By hand" is the operator profile's estimate of a person's minutes per hop, the same figure the Showcase page
+          multiplies by the steps the agents completed.
         </p>
       </div>
     </div>
