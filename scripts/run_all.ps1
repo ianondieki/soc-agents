@@ -47,8 +47,12 @@ if ($busy) {
 if (-not $NoBuild) {
   Write-Host "== Building UI ==" -ForegroundColor Cyan
   Set-Location frontend
+  # npm install is a no-op when node_modules already matches package-lock.json; it only
+  # fetches when a pull added a dependency (the self-hosted fonts, for example).
+  npm install --no-audit --no-fund
+  if ($LASTEXITCODE -ne 0) { Set-Location $Root; exit $LASTEXITCODE }
   npm run build
-  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+  if ($LASTEXITCODE -ne 0) { Set-Location $Root; exit $LASTEXITCODE }
   Set-Location $Root
 }
 

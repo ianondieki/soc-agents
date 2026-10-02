@@ -28,7 +28,9 @@ echo "Python: $PY"
 
 if [ "${NO_BUILD:-0}" != "1" ]; then
   echo "== Building UI =="
-  (cd frontend && npm run build)
+  # npm install is a no-op when node_modules already matches package-lock.json; it only
+  # fetches when a pull added a dependency (the self-hosted fonts, for example).
+  (cd frontend && npm install --no-audit --no-fund && npm run build)
 fi
 
 # Demo posture: slow the agents down just enough to watch, keep every external channel
