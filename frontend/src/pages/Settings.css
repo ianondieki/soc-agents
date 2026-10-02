@@ -1,0 +1,28 @@
+/* Settings (route /settings). Owned by pages/Settings.tsx; loaded after styles.css and built
+   only from its tokens and primitives (.panel, .stack, .rail-dl, .row.static, .facts, .state). */
+
+.settings-note { margin: var(--s2) 0 0; max-width: 75ch; line-height: 1.5; }
+.panel-title + .settings-note { margin-top: 0; }
+
+/* A button with its outcome beside it (sent, stored, failed). */
+.settings-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2) var(--s3); margin-top: var(--s3); }
+.stack > .settings-actions { margin-top: var(--s2); }
+
+/* Region map: the code in a fixed first column so every name starts at one x. */
+.settings-regions { list-style: none; margin: var(--s3) 0 0; padding: 0; }
+.settings-regions > .row { grid-template-columns: 4.5rem minmax(0, 1fr); align-items: baseline; padding-left: 0; padding-right: 0; }
+.settings-regions > .row > .mono { font-size: var(--fs-sm); color: var(--text-bright); }
+.head-row > .settings-region-name,
+.head-row > .settings-inject-label { color: var(--text); font-size: var(--fs-md); }
+.settings-regions .row-main .muted { font-size: var(--fs-xs); }
+
+/* Inject rows: the label takes the width, the small button (and a failure beside it) the end. */
+.settings-inject { list-style: none; margin: 0; padding: 0; }
+.settings-inject > .row { grid-template-columns: minmax(0, 1fr) auto; padding-left: 0; padding-right: 0; }
+.settings-inject-act { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--s2) var(--s3); }
+.settings-last { margin: var(--s3) 0 0; }
+.settings-last:empty { margin: 0; }
+
+@media (max-width: 600px) {
+  .settings-regions > .row { grid-template-columns: 1fr; gap: var(--s1); }
+}

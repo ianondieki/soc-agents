@@ -21,8 +21,6 @@
 .hitl-summary > span { white-space: nowrap; }
 /* Nothing to say (empty queue, socket up, no decision yet): no gap above the empty state. */
 .hitl-summary:not(:has(> :not(:empty))) { margin-bottom: 0; }
-/* The one "needs attention" treatment: a dot in the state colour, the words in --text-bright. */
-.hitl-attn { display: inline-flex; align-items: center; gap: 6px; color: var(--text-bright); }
 /* The last decision's outcome, on the right; wraps to its own line on a phone. */
 .hitl-summary > .hitl-done {
   margin-left: auto;
@@ -33,8 +31,6 @@
   white-space: normal;
 }
 .hitl-ok { flex: none; color: var(--ok); }
-.hitl-dot { flex: none; color: var(--danger); }
-.hitl-dot.warn { color: var(--warn); }
 
 /* ---------------------------------------------------------------- list */
 /*
@@ -106,38 +102,47 @@
 }
 .hitl-check { display: block; color: var(--text); }
 /* Focus never lands under the sticky footer; on a short viewport the footer stops sticking. */
-.hitl-card :focus-visible { scroll-margin-bottom: 16rem; }
+.hitl-card :focus-visible { scroll-margin-bottom: 9rem; }
 @media (max-height: 560px) {
   .hitl-actions { position: static; }
 }
 
 /* ---------------------------------------------------------------- facts */
-/* The justification as a definition grid between two hairlines: one glance, no boxes. */
+/* The justification as a definition grid between two hairlines: one glance, no boxes. Two rows
+ * at 1280 px for a broadcast (each fact said once), so the drafts start above the footer. */
 .hitl-facts {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(min(9rem, 100%), 1fr));
   gap: var(--s3) var(--s4);
-  margin: 0 0 var(--s4);
-  padding: var(--s3) 0;
+  margin: 0 0 var(--s3);
+  padding: var(--s2) 0;
   border-top: 1px solid var(--line);
   border-bottom: 1px solid var(--line);
 }
 .hitl-fact { min-width: 0; }
+/* The audiences read as one line: two columns wherever the grid has two. */
+@media (min-width: 360px) {
+  .hitl-fact.wide { grid-column: span 2; }
+}
 .hitl-fact dt {
   color: var(--muted-dim);
   font-size: var(--fs-xs);
-  line-height: 1.4;
+  line-height: 1.35;
 }
 .hitl-fact dd {
   margin: 2px 0 0;
   color: var(--text);
   font-size: var(--fs-md);
   font-weight: 400;
-  line-height: 1.4;
+  line-height: 1.35;
   overflow-wrap: anywhere;
 }
-.hitl-fact dd.mono { font-family: var(--mono); font-size: var(--fs-sm); }
-.hitl-fact dd.attn { display: flex; align-items: center; gap: 6px; color: var(--text-bright); }
+.hitl-fact dd.mono { font-family: var(--mono); font-size: var(--fs-sm); overflow-wrap: normal; }
+/* The shared .attn (dot in the state colour, words in --text-bright), as a block in the grid. */
+.hitl-fact dd.attn { display: flex; }
+
+/* Payload fields the facts do not cover (a GENERIC escalation's reason and detail). */
+.rail-dl.hitl-extra { margin: 0 0 var(--s4); font-size: var(--fs-md); }
 
 /* ---------------------------------------------------------------- what goes out */
 .hitl-section-head {
@@ -145,12 +150,11 @@
   flex-wrap: wrap;
   align-items: baseline;
   gap: var(--s1) var(--s4);
-  margin: 0 0 var(--s3);
+  margin: 0 0 var(--s2);
   color: var(--muted);
   font-size: var(--fs-sm);
 }
-.hitl-section-head h3,
-.hitl-fields h3 {
+.hitl-section-head h3 {
   margin: 0;
   color: var(--text);
   font-size: var(--fs-md);
@@ -178,14 +182,14 @@
   flex-wrap: wrap;
   align-items: baseline;
   gap: 2px var(--s4);
-  margin-bottom: var(--s2);
+  margin-bottom: var(--s1);
   color: var(--muted);
   font-size: var(--fs-sm);
   font-variant-numeric: tabular-nums;
 }
 .hitl-channel-name { color: var(--text); font-weight: 500; }
 .hitl-channel-subject {
-  margin-bottom: var(--s2);
+  margin-bottom: var(--s1);
   color: var(--text-bright);
   font-size: var(--fs-md);
   font-weight: 600;
@@ -203,23 +207,19 @@
 .hitl-nochannel {
   margin-bottom: var(--s4);
   padding: var(--s3) var(--s4);
-  border: 1px dashed rgba(242, 193, 78, 0.45);
+  border: 1px dashed var(--warn-line);
   border-radius: var(--r-md);
   color: var(--warn);
   font-size: var(--fs-md);
 }
 
-/* ---------------------------------------------------------------- task fields, raw payload */
-.hitl-fields { margin-bottom: var(--s3); }
-.hitl-fields h3 { margin-bottom: var(--s2); }
-.hitl-fields table { font-size: var(--fs-md); }
-.hitl-field-key { width: 12rem; color: var(--muted); }
+/* ---------------------------------------------------------------- raw payload */
 .hitl-field-pre { margin: 0; max-height: 18rem; overflow: auto; overflow-wrap: anywhere; }
 
+/* The marker (chevron, no browser triangle) is the global `summary` rule in styles.css. */
 .hitl-raw { margin-bottom: var(--s3); }
 .hitl-raw summary {
   width: fit-content;
-  cursor: pointer;
   color: var(--muted);
   font-size: var(--fs-sm);
 }
@@ -228,9 +228,9 @@
 
 /* ---------------------------------------------------------------- errors */
 .hitl-error {
-  border: 1px solid rgba(255, 92, 116, 0.5);
+  border: 1px solid var(--danger-line);
   background: var(--danger-soft);
-  color: #ffb4c0;
+  color: var(--danger-text);
   border-radius: var(--r-md);
   padding: var(--s2) var(--s3);
   font-size: var(--fs-md);
@@ -260,7 +260,7 @@
   flex-direction: column;
   gap: var(--s2);
   margin: var(--s3) calc(-1 * var(--s4)) calc(-1 * var(--s4));
-  padding: var(--s3) var(--s4) var(--s4);
+  padding: var(--s3) var(--s4);
   background: var(--surface);
   border-top: 1px solid var(--line);
   border-radius: 0 0 calc(var(--r-lg) - 1px) calc(var(--r-lg) - 1px);
@@ -271,13 +271,17 @@
   align-items: flex-end;
   gap: var(--s2) var(--s3);
 }
+/* One line (the height of the buttons beside it) that grows with what is typed. */
 .hitl-reason {
   flex: 1 1 20rem;
   width: auto;
   min-width: 0;
   min-height: 0;
+  max-height: 8rem;
   resize: vertical;
   font-size: var(--fs-md);
+  line-height: 1.35;
+  field-sizing: content;
 }
 .hitl-buttons { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2); }
 .hitl-reason-quick { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2); }
@@ -298,21 +302,7 @@
 }
 .hitl-skel-cols > div { display: flex; flex-direction: column; gap: var(--s2); }
 
-.hitl-state { padding: var(--s5) var(--s4); }
-.hitl-state p { margin: 0; max-width: 70ch; color: var(--muted); font-size: var(--fs-md); }
-.hitl-state .hitl-state-title {
-  margin-bottom: var(--s1);
-  color: var(--text);
-  font-size: var(--fs-base);
-  font-weight: 600;
-}
-.hitl-state .btn { margin-top: var(--s3); }
-.hitl-state a {
-  color: var(--accent);
-  text-decoration: underline;
-  text-underline-offset: 3px;
-  text-decoration-color: rgba(70, 198, 242, 0.5);
-}
+/* Error and empty states are the shared .empty and .empty[role="alert"] in styles.css. */
 
 .hitl-sr {
   position: absolute;
@@ -335,7 +325,6 @@
   }
   .hitl-created { margin-left: 0; }
   .hitl-hint { margin-left: 0; }
-  .hitl-field-key { width: 7.5rem; }
   .hitl-buttons .btn { min-height: 44px; }
 }
 

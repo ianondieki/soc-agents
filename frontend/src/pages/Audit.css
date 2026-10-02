@@ -35,33 +35,12 @@
   cursor: pointer;
   text-decoration: underline;
   text-underline-offset: 3px;
-  text-decoration-color: rgba(70, 198, 242, 0.45);
+  text-decoration-color: var(--accent-line);
 }
 .audit-link:hover { color: var(--text-bright); text-decoration-color: currentColor; }
 .audit-stale { color: var(--warn); }
 
-.audit-seg {
-  display: inline-flex;
-  border: 1px solid var(--line-strong);
-  border-radius: var(--r-sm);
-  overflow: hidden;
-}
-.audit-seg button {
-  background: transparent;
-  border: 0;
-  margin: 0;
-  color: var(--muted);
-  font: inherit;
-  font-size: var(--fs-sm);
-  font-weight: 500;
-  line-height: 1.4;
-  padding: 5px 12px;
-  cursor: pointer;
-}
-.audit-seg button + button { border-left: 1px solid var(--line-strong); }
-.audit-seg button:hover { background: var(--surface-3); color: var(--text-bright); }
-.audit-seg button[aria-pressed="true"] { background: var(--accent-soft); color: var(--text-bright); font-weight: 600; }
-.audit-seg button:focus-visible { outline-offset: -2px; border-radius: 0; }
+/* The view toggle is the shared .seg (styles.css). */
 
 /* The panel: no padding, and never a scroll box (a scroll box would stop the heads sticking). */
 .panel.audit-panel { padding: 0; overflow: visible; }
@@ -172,9 +151,11 @@
 .audit-sentence { margin-left: var(--s3); }
 .audit-fact { margin-left: var(--s4); }
 .audit-fact-k { color: var(--muted-dim); }
+/* The outcome word sits on the row's baseline: plain inline text (an inline-flex box took its
+   baseline from the icon and rode 2 px high), the icon on the same baseline with no offset. */
 .audit-outcome { text-align: right; white-space: nowrap; }
-.audit-out { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-sm); font-weight: 600; }
-.audit-out svg { flex: none; align-self: center; }
+.audit-out { display: inline; font-size: var(--fs-sm); font-weight: 600; white-space: nowrap; }
+.audit-out svg { margin-right: 6px; vertical-align: baseline; }
 .audit-out.hitl { color: var(--hitl); }
 .audit-out.danger { color: var(--danger); }
 .audit-out.warn { color: var(--warn); }
@@ -248,18 +229,8 @@
 .audit-record-copy { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
 .audit-record-hint { color: var(--muted); font-size: var(--fs-xs); white-space: nowrap; }
 
-/* States */
-.audit-state {
-  display: grid;
-  justify-items: center;
-  gap: var(--s3);
-  padding: var(--s6) var(--s4);
-  text-align: center;
-  color: var(--text);
-}
-.audit-state p { margin: 0; }
-.audit-state-hint { color: var(--muted); font-size: var(--fs-sm); }
-.audit-state-hint a { color: var(--accent); text-decoration: underline; text-underline-offset: 3px; }
+/* States: error, empty and no-match are the shared .empty (styles.css). */
+.audit-nomatch .btn { margin-left: var(--s2); }
 .audit-skel-row {
   display: grid;
   grid-template-columns: 5.5rem 11rem minmax(0, 1fr) 10rem;

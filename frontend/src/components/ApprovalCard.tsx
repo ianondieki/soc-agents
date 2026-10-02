@@ -1,15 +1,15 @@
-import { useId, useMemo, useState } from "react";
+import { Fragment, useId, useMemo, useState } from "react";
 import { humanStatus } from "../lib/agents";
 import { IconDot } from "../lib/icons";
 import { fmtDateTime } from "../lib/time";
 import {
   ageMinutes,
   channelsFor,
+  extraEntries,
   factsFor,
   fmtAge,
   labelFor,
   ladderBreached,
-  payloadEntries,
   rawPayload,
   renderingSource,
   specFor,
@@ -28,12 +28,18 @@ import { hitlSubject, hitlSubjectIsIncident } from "../lib/hitlSubject";
  * decision controls. The footer (reason, Claim / Approve / Reject) is sticky to
  * the bottom of the viewport inside its card, and the channel bodies cap at
  * 11rem until "Full text", so the controls stay on screen while the drafts are
- * read, even at 1280 x 650. A failed request shows in that footer, next to the
- * button that caused it.
+ * read. Each fact is said once (no MSP that equals the owner, no "HUB major" or
+ * status line, no task-fields table repeating the payload), so on the first
+ * card at 1280 x 650 the SMS body sits above the footer. A failed request shows
+ * in that footer, next to the button that caused it.
+ *
+ * "Claimed by you" is said once, by the head chip: once a card is claimed the
+ * Claim button goes (it could only be disabled) and the page does not toast it.
  *
  * DEGRADATION RULES — nothing here may blank the inbox:
  *  - unknown `task_type` → `specFor` returns the fallback spec and the card
- *    still renders, labelled "not recognised", with every payload field shown;
+ *    still renders, labelled "not recognised", with every payload field listed
+ *    and the raw payload open;
  *  - missing / malformed `proposed_payload` → the channel list is empty and the
  *    card says so instead of throwing;
  *  - `incident` absent (the facts fetch failed, or the incident is filtered out)
@@ -91,7 +97,7 @@ export default function ApprovalCard({
   const label = labelFor(t.task_type);
   const channels = useMemo(() => channelsFor(payload), [payload]);
   const facts = useMemo(() => factsFor(t, incident), [t, incident]);
-  const entries = useMemo(() => payloadEntries(payload), [payload]);
+  const entries = useMemo(() => extraEntries(t, facts), [t, facts]);
   const source = renderingSource(payload);
 
   const headingId = useId();
@@ -149,18 +155,24 @@ export default function ApprovalCard({
         <span className="hitl-created">raised {fmtDateTime(t.created_at)}</span>
       </header>
 
+      {/* The check sentence sits with what it is about: the channel heading when there are
+          channels to read, else under the effect. */}
       <p className="hitl-effect">
         {spec.effect}
-        {spec.check && <span className="hitl-check">{spec.check}</span>}
+        {spec.check && channels.length === 0 && <span className="hitl-check">{spec.check}</span>}
       </p>
 
       {facts.length > 0 && (
         <dl className="hitl-facts">
           {facts.map((f) => (
-            <div key={f.label} className="hitl-fact">
+            <div key={f.label} className={f.wide ? "hitl-fact wide" : "hitl-fact"}>
               <dt>{f.label}</dt>
-              <dd className={[f.attention ? "attn" : "", f.mono ? "mono" : ""].filter(Boolean).join(" ") || undefined}>
-                {f.attention && <IconDot className="hitl-dot" />}
+              <dd
+                className={
+                  [f.attention ? `attn ${f.attention}` : "", f.mono ? "mono" : ""].filter(Boolean).join(" ") || undefined
+                }
+              >
+                {f.attention && <IconDot />}
                 {f.value}
               </dd>
             </div>
@@ -172,9 +184,7 @@ export default function ApprovalCard({
         <div role="group" className="hitl-out" aria-labelledby={`${headingId}-out`}>
           <div className="hitl-section-head">
             <h3 id={`${headingId}-out`}>What goes out</h3>
-            <span>
-              {channels.length} channel{channels.length === 1 ? "" : "s"}
-            </span>
+            {spec.check && <span className="hitl-check-inline">{spec.check}</span>}
             <span
               title={
                 source === "envelope"
@@ -220,37 +230,35 @@ export default function ApprovalCard({
 
       {channels.length === 0 && spec.channels && (
         <div className="hitl-nochannel">
-          No rendered message text on this task — decide from the fields below.
+          No rendered message text on this task; decide from the facts above and the payload below.
           {t.task_type === "APPROVE_BROADCAST" &&
             " Approving still releases any held broadcast rows, so if you cannot see what they say, reject."}
         </div>
       )}
 
+      {/* Payload fields the card does not show elsewhere: none for a broadcast; a GENERIC
+          escalation's reason, detail and suggested action; every field of an unrecognised type. */}
       {entries.length > 0 && (
-        <div role="group" className="hitl-fields" aria-labelledby={`${headingId}-fields`}>
-          <h3 id={`${headingId}-fields`}>Task fields</h3>
-          <table>
-            <tbody>
-              {entries.map((e) => (
-                <tr key={e.key}>
-                  <td className="hitl-field-key">{e.label}</td>
-                  <td>
-                    {e.long ? (
-                      <pre className="pre hitl-field-pre" tabIndex={0} data-keep-tab="">
-                        {e.value}
-                      </pre>
-                    ) : (
-                      e.value
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <dl className="rail-dl hitl-extra">
+          {entries.map((e) => (
+            <Fragment key={e.key}>
+              <dt>{e.label}</dt>
+              <dd>
+                {e.long ? (
+                  <pre className="pre hitl-field-pre" tabIndex={0} data-keep-tab="">
+                    {e.value}
+                  </pre>
+                ) : (
+                  e.value
+                )}
+              </dd>
+            </Fragment>
+          ))}
+        </dl>
       )}
 
-      <details className="hitl-raw">
+      {/* An unrecognised type opens it: "every field the backend sent, unchanged". */}
+      <details className="hitl-raw" open={!spec.known}>
         <summary>Raw proposed payload</summary>
         <pre className="pre hitl-field-pre" tabIndex={0} data-keep-tab="">
           {rawPayload(payload)}
@@ -266,6 +274,7 @@ export default function ApprovalCard({
           </div>
         )}
         <div className="hitl-decide">
+          {/* One line that grows with what is typed, so the footer leaves the drafts in view. */}
           <textarea
             className="hitl-reason"
             value={reason}
@@ -276,12 +285,15 @@ export default function ApprovalCard({
                 ? "Decision reason — required, goes on the audit row"
                 : "Decision reason (required to reject)"
             }
-            rows={2}
+            rows={1}
           />
           <div className="hitl-buttons">
-            <button className="btn" onClick={onClaim} disabled={busy || Boolean(claimed)}>
-              {claimed ? (claimedByMe ? "Claimed by you" : `Held by ${claimed}`) : "Claim"}
-            </button>
+            {/* The head chip already says who holds a claimed card; the button only exists to claim. */}
+            {!claimed && (
+              <button className="btn" onClick={onClaim} disabled={busy}>
+                Claim
+              </button>
+            )}
             <button
               className="btn good"
               onClick={() => onApprove(trimmed)}

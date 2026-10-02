@@ -30,10 +30,14 @@ import "./HitlInbox.css";
  * the incident facts that justify the decision (§6.5), and an inline reason that
  * lands on the audit row.
  *
- * STATES: skeleton cards until the first answer; "Couldn't load" + Retry when the
- * first load (or a refetch of an empty queue) fails; a one-line warning + Retry
- * above the last good list when a refetch fails; an empty state that says
- * nothing is waiting for a decision.
+ * STATES: skeleton cards until the first answer; "Couldn't load" + Retry (the
+ * shared `.empty[role=alert]`) when the first load (or a refetch of an empty
+ * queue) fails; a one-line warning + Retry above the last good list when a
+ * refetch fails; an empty state that says nothing is waiting for a decision.
+ *
+ * OUTCOMES: an approve or reject is confirmed in the summary row (the card is
+ * gone, so the page says what happened). A claim is not: the card's own chip
+ * turns to "claimed by you", so the confirmation is spoken to screen readers only.
  *
  * REFRESH: the page is driven by `tick` (`revisions.hitl` from the WS renderer
  * table, so a burst of `agent.step.*` frames costs nothing here and a
@@ -47,11 +51,13 @@ import "./HitlInbox.css";
 const DISCONNECTED_POLL_MS = 15000;
 
 type LoadError = { text: string; detail: string };
+/** The last decision's outcome; `shown: false` is announced but not drawn. */
+type Outcome = { text: string; shown: boolean };
 
 export default function HitlInbox({ session, tick }: { session: any; tick: number }) {
   const [tasks, setTasks] = useState<any[]>([]);
   const [incidents, setIncidents] = useState<Record<string, any>>({});
-  const [msg, setMsg] = useState("");
+  const [msg, setMsg] = useState<Outcome | null>(null);
   // False until the first answer (rows or an error), so the list can show skeleton cards
   // instead of a misleading "nothing waiting".
   const [loaded, setLoaded] = useState(false);
@@ -130,7 +136,7 @@ export default function HitlInbox({ session, tick }: { session: any; tick: numbe
   const who = session?.display_name || "Supervisor";
 
   const act = useCallback(
-    async (id: string, run: () => Promise<any>, okMsg: string) => {
+    async (id: string, run: () => Promise<any>, okMsg: string, shown = true) => {
       setBusyId(id);
       setErrors((prev) => {
         if (!prev[id]) return prev;
@@ -140,9 +146,9 @@ export default function HitlInbox({ session, tick }: { session: any; tick: numbe
       });
       try {
         await run();
-        setMsg(okMsg);
+        setMsg({ text: okMsg, shown });
       } catch (e) {
-        setMsg("");
+        setMsg(null);
         setErrors((prev) => ({
           ...prev,
           [id]: {
@@ -199,18 +205,21 @@ export default function HitlInbox({ session, tick }: { session: any; tick: numbe
           </>
         )}
         {!connected && (
-          <span className="hitl-attn" title="No WebSocket. The queue is being polled instead.">
-            <IconDot className="hitl-dot warn" />
+          <span className="attn warn" title="No WebSocket. The queue is being polled instead.">
+            <IconDot />
             Live updates are down; checking every {DISCONNECTED_POLL_MS / 1000}&nbsp;s
           </span>
         )}
         <span className="hitl-done" role="status">
-          {msg && (
-            <>
-              <IconCheck className="hitl-ok" />
-              {msg}
-            </>
-          )}
+          {msg &&
+            (msg.shown ? (
+              <>
+                <IconCheck className="hitl-ok" />
+                {msg.text}
+              </>
+            ) : (
+              <span className="hitl-sr">{msg.text}</span>
+            ))}
         </span>
       </div>
 
@@ -249,22 +258,22 @@ export default function HitlInbox({ session, tick }: { session: any; tick: numbe
       )}
 
       {loaded && tasks.length === 0 && loadError && (
-        <div className="panel hitl-state" title={loadError.detail}>
-          <p className="hitl-state-title">Couldn't load the approvals queue.</p>
-          <p>{loadError.text}</p>
-          <button className="btn" onClick={reload}>
-            Retry
-          </button>
+        <div className="panel">
+          <div className="empty" role="alert" title={loadError.detail}>
+            Couldn't load the approvals queue. {loadError.text}
+            <button className="btn sm" onClick={reload}>
+              Retry
+            </button>
+          </div>
         </div>
       )}
 
       {loaded && tasks.length === 0 && !loadError && (
-        <div className="panel hitl-state">
-          <p className="hitl-state-title">Nothing is waiting for a decision.</p>
-          <p>
-            Cards arrive here when an agent holds a broadcast or a change for a person.{" "}
-            <Link to="/">Watch Mission control</Link>
-          </p>
+        <div className="panel">
+          <div className="empty">
+            Nothing is waiting for a decision. Cards arrive here when an agent holds a broadcast or a change for
+            a person. <Link to="/">Watch Mission control</Link>
+          </div>
         </div>
       )}
 
@@ -319,7 +328,7 @@ export default function HitlInbox({ session, tick }: { session: any; tick: numbe
                   busy={busyId === id}
                   error={err?.text || ""}
                   errorDetail={err?.detail}
-                  onClaim={() => act(id, () => api.claim(id, who), `Claimed ${subject}`)}
+                  onClaim={() => act(id, () => api.claim(id, who), `Claimed ${subject}`, false)}
                   onApprove={(reason) =>
                     act(
                       id,

@@ -226,7 +226,7 @@ export default function Audit({ tick }: { tick: number }) {
             </span>
           )}
         </p>
-        <div className="audit-seg" role="group" aria-label="Rows to show">
+        <div className="seg" role="group" aria-label="Rows to show">
           <button type="button" aria-pressed={view === "all"} onClick={() => chooseView("all")}>
             Every step
           </button>
@@ -240,8 +240,8 @@ export default function Audit({ tick }: { tick: number }) {
         {load === "loading" ? (
           <SkeletonRows />
         ) : load === "error" ? (
-          <div className="audit-state" role="alert">
-            <p>{forbidden ? "Your role cannot read the audit trail." : "Couldn't load the audit trail."}</p>
+          <div className="empty" role="alert">
+            {forbidden ? "Your role cannot read the audit trail." : "Couldn't load the audit trail."}
             {!forbidden && (
               <button type="button" className="btn sm" onClick={retry}>
                 Retry
@@ -249,15 +249,13 @@ export default function Audit({ tick }: { tick: number }) {
             )}
           </div>
         ) : rows.length === 0 ? (
-          <div className="audit-state">
-            <p>Nothing has happened yet.</p>
-            <p className="audit-state-hint">
-              Run an alarm from <Link to="/">Mission control</Link>; every agent step lands here.
-            </p>
+          <div className="empty">
+            Nothing has happened yet. Run an alarm from <Link to="/">Mission control</Link>; every agent step lands
+            here.
           </div>
         ) : filtered.length === 0 ? (
-          <div className="audit-state">
-            <p>No entries match.</p>
+          <div className="empty audit-nomatch">
+            No entries match.
             <button type="button" className="btn sm" onClick={clearFilters}>
               Clear filters
             </button>
@@ -506,15 +504,18 @@ function Row({ d, showTime }: { d: DisplayRow; showTime: boolean }) {
           {actorLabel(r.actor)}
           {who === "job" && <span className="audit-job"> (job)</span>}
         </span>
+        {/* Expanded, the row keeps only the step name: the sentence and the facts are printed
+            once, in full, in the detail below. */}
         <span className="audit-summary">
           <span className="audit-step">{rowTitle(r)}</span>
           {d.count > 1 && <span className="audit-times">×{d.count}</span>}
-          {parsed.sentence && <span className="audit-sentence">{parsed.sentence}</span>}
-          {parsed.facts.slice(0, 3).map((f, i) => (
-            <span key={`${f.key}-${i}`} className="audit-fact">
-              <span className="audit-fact-k">{f.label}</span> {f.value}
-            </span>
-          ))}
+          {!open && parsed.sentence && <span className="audit-sentence">{parsed.sentence}</span>}
+          {!open &&
+            parsed.facts.slice(0, 3).map((f, i) => (
+              <span key={`${f.key}-${i}`} className="audit-fact">
+                <span className="audit-fact-k">{f.label}</span> {f.value}
+              </span>
+            ))}
         </span>
         <span className="audit-outcome">{outcome && <OutcomeMark outcome={outcome} />}</span>
       </button>
@@ -539,6 +540,9 @@ function RowDetail({
   const [copied, setCopied] = useState<"" | "done" | "select">("");
   const iso = parseInstant(r.ts)?.toISOString() ?? String(r.ts);
   const record = [iso, r.actor, r.action, r.entity_type + (r.entity_id ? `:${r.entity_id}` : "")].join("  ") + (r.rationale ? `\n${r.rationale}` : "");
+  // When the stored reason IS the sentence printed above (no facts were split out), printing it
+  // again here would say it twice; Copy still carries it, exactly as stored.
+  const rawWhy = r.rationale && r.rationale.trim() !== sentence.trim() ? r.rationale : "";
 
   useEffect(() => {
     if (copied !== "done") return;
@@ -595,7 +599,7 @@ function RowDetail({
           <span>{r.actor}</span>
           <span>{r.action}</span>
           <span>{iso}</span>
-          {r.rationale && <span className="audit-record-why">{r.rationale}</span>}
+          {rawWhy && <span className="audit-record-why">{rawWhy}</span>}
         </div>
         <div className="audit-record-copy">
           <button type="button" className="btn sm" onClick={copy}>

@@ -219,8 +219,8 @@ export const TASK_TYPES: Readonly<Record<string, TaskTypeSpec>> = {
 
 /**
  * A task type this build has never seen. Deliberately *permissive*: it still
- * tries the channel extraction (a future type may well carry renderings) and it
- * always shows the raw payload table underneath, so an unknown type degrades to
+ * tries the channel extraction (a future type may well carry renderings), lists every
+ * payload field underneath and opens the raw payload, so an unknown type degrades to
  * "everything the backend sent, unstyled but readable" rather than to a blank.
  * A reason is required because nobody can tell you what you just approved.
  */
@@ -375,7 +375,7 @@ const CHANNEL_ORDER = ["sms", "email", "whatsapp", "inapp", "in_app", "ledger", 
 const FLAT_CHANNEL_KEYS = ["sms", "email", "whatsapp", "inapp", "in_app"];
 
 /**
- * Top-level payload keys the card shows elsewhere, so the fields table does not
+ * Top-level payload keys the card shows elsewhere, so the field list does not
  * repeat them.
  *
  * `ledger` is deliberately NOT here even though it is in `CHANNEL_ORDER`: a flat
@@ -643,15 +643,18 @@ export interface Fact {
   value: string;
   /**
    * Set only on the three facts that change how fast a supervisor must act: the M-PESA
-   * corridor at risk, a HUB major, and 50 000 or more users. The card gives those the one
-   * "needs attention" treatment (a dot in the state colour); every other fact is plain text.
+   * corridor at risk (danger), a HUB major (warn, on the site type) and 50 000 or more users
+   * (warn). The card gives those the one "needs attention" treatment (a dot in the state
+   * colour); every other fact is plain text.
    */
-  attention?: "danger";
+  attention?: "danger" | "warn";
   /** An identifier (the site code): drawn in the mono face. */
   mono?: boolean;
+  /** A list that reads on one line (the audiences): takes two grid columns where there are two. */
+  wide?: boolean;
 }
 
-function pushFact(out: Fact[], label: string, value: unknown, extra?: Pick<Fact, "attention" | "mono">): void {
+function pushFact(out: Fact[], label: string, value: unknown, extra?: Pick<Fact, "attention" | "mono" | "wide">): void {
   if (value == null || value === "") return;
   const text = clamp(asText(value), 120);
   if (!text) return;
@@ -683,7 +686,10 @@ export function factsFor(task: unknown, incident: unknown): Fact[] {
   const siteName = firstString(own(inc, "site_name"));
   pushFact(facts, "Site", siteName);
   pushFact(facts, "Site code", siteId, { mono: true });
-  pushFact(facts, "Site type", human(firstString(own(inc, "site_type"))));
+  // A HUB major is said by the site type (with the attention dot) and "N child sites down";
+  // a separate "HUB major: yes" fact repeated it.
+  const hubMajor = own(inc, "is_hub_major") === true;
+  pushFact(facts, "Site type", human(firstString(own(inc, "site_type"))), hubMajor ? { attention: "warn" } : undefined);
 
   const region = firstString(own(inc, "region_code"));
   const county = firstString(own(inc, "county"));
@@ -691,18 +697,22 @@ export function factsFor(task: unknown, incident: unknown): Fact[] {
 
   const users = firstNumber(own(inc, "users_affected"));
   if (users != null) {
-    pushFact(facts, "Est. users", users.toLocaleString("en-KE"), users >= 50000 ? { attention: "danger" } : undefined);
+    pushFact(facts, "Est. users", users.toLocaleString("en-KE"), users >= 50000 ? { attention: "warn" } : undefined);
   }
 
   pushFact(facts, "Domain", human(own(inc, "failure_domain")));
 
+  // The M-PESA corridor is its own fact when it is at risk, so Services does not list it again.
+  const mpesaRisk = own(inc, "mpesa_risk") === true;
   const services = own(inc, "services_impacted");
-  if (Array.isArray(services) && services.length) pushFact(facts, "Services", services.map(human).join(", "));
+  if (Array.isArray(services) && services.length) {
+    const listed = mpesaRisk ? services.filter((s) => !(typeof s === "string" && /^MPESA/i.test(s))) : services;
+    if (listed.length) pushFact(facts, "Services", listed.map(human).join(", "));
+  }
 
-  if (own(inc, "mpesa_risk") === true) pushFact(facts, "M‑PESA corridor", "at risk", { attention: "danger" });
+  if (mpesaRisk) pushFact(facts, "M‑PESA corridor", "at risk", { attention: "danger" });
   // Good news in its normal state is not coloured (brief rule 7).
   if (own(inc, "service_affecting") === false) pushFact(facts, "Service affecting", "no");
-  if (own(inc, "is_hub_major") === true) pushFact(facts, "HUB major", "yes", { attention: "danger" });
 
   const children = firstNumber(own(inc, "child_sites_down"));
   if (children != null && children > 0) pushFact(facts, "Child sites down", String(children));
@@ -710,15 +720,42 @@ export function factsFor(task: unknown, incident: unknown): Fact[] {
   const recurrence = firstNumber(own(inc, "recurrence_count"));
   if (recurrence != null && recurrence > 1) pushFact(facts, "Recurrence", `${recurrence} times`);
 
-  // Owner and MSP are names or codes as the floor wrote them: never humanised.
-  pushFact(facts, "Owner", firstString(own(inc, "assignee_name"), own(payload, "assignee")));
-  pushFact(facts, "MSP", firstString(own(inc, "responsible_msp"), own(inc, "msp_name")));
-  pushFact(facts, "Status", human(own(inc, "status")));
+  // Owner and MSP are names or codes as the floor wrote them: never humanised. The MSP is
+  // printed only when it is not the owner (an MSP-owned ticket said the same name twice).
+  // The incident status is left out: the card is about the decision, not the ticket's state.
+  const owner = firstString(own(inc, "assignee_name"), own(payload, "assignee"));
+  const msp = firstString(own(inc, "responsible_msp"), own(inc, "msp_name"));
+  pushFact(facts, "Owner", owner);
+  if (msp && msp.trim().toLowerCase() !== owner.trim().toLowerCase()) pushFact(facts, "MSP", msp);
 
   const audiences = own(payload, "audiences");
-  if (Array.isArray(audiences) && audiences.length) pushFact(facts, "Audiences", audiences.map(human).join(", "));
+  if (Array.isArray(audiences) && audiences.length) {
+    pushFact(facts, "Audiences", audiences.map(human).join(", "), { wide: true });
+  }
 
   return facts;
+}
+
+/**
+ * The payload fields the card does not already show, for the short field list under the
+ * facts. A broadcast's `priority` (the pill), `audiences` and `assignee` (facts) and its
+ * internal `alert_id` are left out, so for a broadcast the list is empty; a GENERIC
+ * escalation still shows its reason, detail and suggested action, and an unrecognised type
+ * every field it carries. The raw payload disclosure always holds everything, unchanged.
+ */
+export function extraEntries(task: unknown, facts: Fact[]): PayloadEntry[] {
+  const t = isPlainObject(task) ? task : {};
+  const payload = own(t, "proposed_payload");
+  if (!isPlainObject(payload)) return payloadEntries(payload);
+  const skip = new Set(HANDLED_PAYLOAD_KEYS);
+  const shown = (label: string) => facts.find((f) => f.label === label)?.value ?? "";
+  const priority = own(payload, "priority");
+  if (typeof priority === "string" && priority === own(t, "priority")) skip.add("priority");
+  if (shown("Audiences") && Array.isArray(own(payload, "audiences"))) skip.add("audiences");
+  const assignee = asText(own(payload, "assignee")).trim();
+  if (assignee && assignee === shown("Owner")) skip.add("assignee");
+  if (typeof own(payload, "alert_id") === "string") skip.add("alert_id");
+  return payloadEntries(payload, skip);
 }
 
 /* ------------------------------------------------------------------ *
