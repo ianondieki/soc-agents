@@ -4,6 +4,8 @@ import {
   STATUS_WORD,
   agentDisplayName,
   fmtMs,
+  isLifecycleNode,
+  nodeLabel,
   normaliseStatus,
   stepsByNode,
   type NodeStatus,
@@ -49,7 +51,10 @@ export default function AgentRail({
    *  numbered cards with no connectors, for the training view where nothing is moving. */
   layout?: "route" | "grid";
 }) {
-  const order = nodes && nodes.length > 0 ? nodes : (LIFECYCLE_NODES as { id: string; label: string; agent: string; status?: string }[]);
+  const order: readonly { id: string; label: string; agent: string; status?: string }[] = nodes && nodes.length > 0 ? nodes : LIFECYCLE_NODES;
+  // One name per hop on every page: the twelve take theirs from nodeLabel(); a node outside the
+  // twelve keeps the label it was given, humanised if it has none.
+  const labelOf = (n: { id: string; label?: string }) => (isLifecycleNode(n.id) ? nodeLabel(n.id) : n.label || nodeLabel(n.id));
   const byNode = useMemo(() => stepsByNode(steps), [steps]);
   const [internal, setInternal] = useState<string | null>(null);
   const selected = selectedNode === undefined ? internal : selectedNode;
@@ -109,13 +114,14 @@ export default function AgentRail({
           const step = byNode[n.id];
           const isSel = selected === n.id;
           const conf = typeof step?.confidence === "number" ? step.confidence : null;
+          const label = labelOf(n);
           return (
             <li key={n.id} className={`rail-hop ${st}` + (isSel ? " selected" : "")} data-node={n.id}>
               <button
                 type="button"
                 className="rail-btn"
                 aria-pressed={isSel}
-                aria-label={`${n.label}: ${STATUS_WORD[st]}${step?.duration_ms != null ? `, ${fmtMs(step.duration_ms)}` : ""}`}
+                aria-label={`${label}: ${STATUS_WORD[st]}${step?.duration_ms != null ? `, ${fmtMs(step.duration_ms)}` : ""}`}
                 onClick={() => {
                   const next = isSel ? null : n.id;
                   if (selectedNode === undefined) setInternal(next);
@@ -132,16 +138,18 @@ export default function AgentRail({
                   {st === "failed" && <IconAlert size={compact ? 10 : 12} />}
                   {st === "waiting_hitl" && <IconPause size={compact ? 10 : 12} />}
                 </span>
-                <span className="rail-label">{n.label}</span>
+                <span className="rail-label">{label}</span>
                 {!compact && <span className="rail-agent">{agentDisplayName(n.agent)}</span>}
+                {/* Words in the sans; only the measurement (ms, %) is mono. */}
                 <span className="rail-meta" title={st === "waiting_hitl" ? STATUS_WORD[st] : undefined}>
                   {st === "running" && "running"}
                   {st === "pending" && "—"}
                   {st === "skipped" && "skipped"}
                   {st === "waiting_hitl" && "waiting"}
-                  {(st === "succeeded" || st === "failed") && (step?.duration_ms != null ? fmtMs(step.duration_ms) : STATUS_WORD[st])}
+                  {(st === "succeeded" || st === "failed") &&
+                    (step?.duration_ms != null ? <span className="mono">{fmtMs(step.duration_ms)}</span> : STATUS_WORD[st])}
                   {!compact && conf != null && st === "succeeded" && (
-                    <span className="rail-conf" title={`confidence ${Math.round(conf * 100)}%`}>
+                    <span className="rail-conf mono" title={`confidence ${Math.round(conf * 100)}%`}>
                       {Math.round(conf * 100)}%
                     </span>
                   )}
@@ -155,7 +163,7 @@ export default function AgentRail({
       {selected && (
         <div className="rail-detail" role="region" aria-live="polite">
           <div className="rail-detail-head">
-            <strong>{currentMeta?.label || selected}</strong>
+            <strong>{currentMeta ? labelOf(currentMeta) : nodeLabel(selected)}</strong>
             <span className="muted">{agentDisplayName(currentMeta?.agent || current?.agent_name)}</span>
             {current?.status && <HopState status={normaliseStatus(current.status)} />}
             {current?.duration_ms != null && <span className="muted mono">{fmtMs(current.duration_ms)}</span>}

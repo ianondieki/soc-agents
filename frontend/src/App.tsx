@@ -5,7 +5,7 @@ import { useRealtime } from "./realtime/useRealtime";
 import { RealtimeProvider } from "./realtime/RealtimeContext";
 import DemoGuide from "./components/DemoGuide";
 import { AUTO_STORM_KEY } from "./lib/demo";
-import { humanAutonomy, humanEnum } from "./lib/agents";
+import { WAITING_WORD, humanAutonomy, humanEnum } from "./lib/agents";
 import MissionControl from "./pages/MissionControl";
 import IncidentBoard from "./pages/IncidentBoard";
 import IncidentWorkspace from "./pages/IncidentWorkspace";
@@ -308,7 +308,7 @@ export default function App() {
                 onClick={() => nav("/hitl")}
                 title="Open Approvals"
               >
-                {pending == null ? "Approvals" : pending > 0 ? `${pending} waiting for a decision` : "No decisions waiting"}
+                {pending == null ? "Approvals" : pending > 0 ? `${pending} ${WAITING_WORD}` : "No decisions waiting"}
               </button>
               <span className="topbar-user chip-wide">{session.display_name}</span>
               <button
@@ -335,13 +335,16 @@ export default function App() {
             </div>
           </header>
           {!apiOk && (
-            <div className="storm-banner danger" role="alert" style={{ margin: "var(--s3) var(--s5) 0" }}>
+            <div className="storm-banner danger app-alert" role="alert">
               <div>
                 <strong>API unreachable</strong>
-                <div className="muted">
-                  Start the backend with <code>python -m uvicorn noc_agents.main:app --app-dir src --port 8000</code>. For
-                  the UI dev server run <code>cd frontend && npm run dev</code> and open <code>http://127.0.0.1:5173</code>,
-                  or build the UI and open <code>http://127.0.0.1:8000</code>.
+                {/* One sentence on the floor; the developer's dev-server route lives in the title. */}
+                <div
+                  className="muted"
+                  title="For the UI dev server run `cd frontend && npm run dev` and open http://127.0.0.1:5173, or build the UI and open http://127.0.0.1:8000."
+                >
+                  The page retries every 8 seconds. Start the backend with{" "}
+                  <code>python -m uvicorn noc_agents.main:app --app-dir src --port 8000</code>.
                 </div>
               </div>
             </div>

@@ -1,3 +1,4 @@
+import { humanEnum, humanStatus } from "../lib/agents";
 import { fmtDateTime } from "../lib/time";
 
 /**
@@ -402,12 +403,15 @@ export function isCriticalEvent(ev: NocEvent, spec?: RendererSpec): boolean {
 
 /* ------------------------------------------------------------ ticker text --
  * The generic ticker line reads `incident_number`, `node`, `agent`, `status`
- * and one of `rationale`/`output`/`detail`. None of the five payloads below
- * carries the fields that make them worth reading (the failed job's name, the
- * deadline, the pattern counts), so each gets a describer built from what the
- * backend actually sends — grep the `type="…"` string in src/noc_agents/ for
- * the publisher. The result is appended to the generic line, never replaces
- * it, and a describer that throws or gets an odd payload yields "".
+ * and one of `rationale`/`output`/`detail`. None of the payloads below carries
+ * the fields that make them worth reading (the failed job's name, the
+ * deadline, the pattern counts), or its `detail` is written for a developer
+ * (the mock email names environment variables), so each gets a describer built
+ * from what the backend actually sends — grep the `type="…"` string in
+ * src/noc_agents/ for the publisher. Mission control prints the description in
+ * place of the raw detail; the stored event is never changed. A describer that
+ * throws or gets an odd payload yields "" and the generic line stands.
+ * Sentence case throughout: the ticker shouts nothing ("overdue", not "OVERDUE").
  *
  * `security.redaction_miss` is described from counts and JSON paths only: the
  * payload never carries the matched value (§9.5) and this text must not grow a
@@ -424,29 +428,43 @@ function span(minutes: unknown): string {
   return h ? `${h} h ${m % 60} min` : `${m} min`;
 }
 
+/** True when a mock adapter stored the message instead of sending it. */
+function isMock(p: Record<string, any>): boolean {
+  return String(p.mode ?? "").toLowerCase() === "mock";
+}
+
 const DESCRIBERS: Readonly<Record<string, (p: Record<string, any>) => string>> = {
+  // services/notify.record_email_outcome: {incident_number, mode, to, detail, status}. A mock
+  // send's detail names env vars ("No DEMO_EMAIL_TO / GMAIL_ADDRESS — …") or lists the
+  // addresses it would have used; the floor reads what happened, not how to configure it.
+  "email.sent": (p) => {
+    if (isMock(p)) return "Email stored, not sent (mock)";
+    const n = Array.isArray(p.to) ? p.to.length : 0;
+    return n ? `Sent to ${n} recipient${n === 1 ? "" : "s"}` : "";
+  },
+  "email.failed": (p) => (isMock(p) ? "Email stored, not sent (mock)" : ""),
   // services/pir.open_pir: {incident_number, opened_reason, pir_id, status}
-  "pir.opened": (p) => `review opened, trigger ${p.opened_reason ?? "?"}`,
+  "pir.opened": (p) => `Review opened, trigger ${humanEnum(p.opened_reason) || "?"}`,
   // services/regulatory._deadline_event: {notification_id, kind, status, incident_number,
   // threshold_hours, due_at, due_at_eat, minutes_remaining, overdue, hitl_task_id}
   "regulatory.deadline": (p) =>
-    `${p.kind ?? "notice"}, ${p.overdue ? `OVERDUE by ${span(p.minutes_remaining)}` : `${span(p.minutes_remaining)} left`}` +
+    `${humanEnum(p.kind) || "notice"}, ${p.overdue ? `overdue by ${span(p.minutes_remaining)}` : `${span(p.minutes_remaining)} left`}` +
     `, due ${fmtDateTime(p.due_at)} EAT, ${num(p.threshold_hours)} h threshold`,
   // scheduler/loop.py: {job, run_id, error, consecutive_failures, circuit_open}
   "scheduler.job_failed": (p) =>
-    `job ${p.job ?? "?"}, ${p.circuit_open ? "CIRCUIT OPEN" : "failed"} after ${num(p.consecutive_failures)} failures` +
+    `Job ${humanStatus(p.job) || "?"}, ${p.circuit_open ? "circuit open" : "failed"} after ${num(p.consecutive_failures)} failures` +
     (p.error ? `, ${String(p.error).slice(0, 90)}` : ""),
   // services/housekeeping.RedactionHit.as_payload: {outbox_id, kind, incident_number, sent_at,
   // email_matches, phone_matches, paths, note}
   "security.redaction_miss": (p) =>
-    `REDACTION MISS, SENT ${p.kind ?? "message"}, ${num(p.email_matches)} e-mail / ${num(p.phone_matches)} MSISDN pattern(s)` +
+    `Redaction miss in a sent ${humanEnum(p.kind) || "message"}: ${num(p.email_matches)} email and ${num(p.phone_matches)} MSISDN patterns` +
     (Array.isArray(p.paths) && p.paths.length ? ` at ${p.paths.slice(0, 3).join(", ")}` : ""),
   // NO PUBLISHER YET (Phase 6): the one describer built from the spec, not from code — §7.4.2's
   // {region_code, product_hint, zscore, count, bucket_start}. Every field is optional here, so a
   // producer that ships a different shape degrades to "complaint surge", never to a throw.
   "complaint.surge": (p) =>
     [
-      "complaint surge",
+      "Complaint surge",
       p.region_code,
       p.product_hint,
       p.count != null ? `${num(p.count)} complaints` : null,

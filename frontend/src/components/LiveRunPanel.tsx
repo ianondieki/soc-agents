@@ -99,20 +99,28 @@ export default function LiveRunPanel({
 }) {
   const [stored, setStored] = useState<any | null>(null);
   const [storedIncident, setStoredIncident] = useState<any | null>(null);
+  // "loading" until the first answer from the stored runs, so the panel shows skeletons instead
+  // of claiming nothing has run; "error" only while no answer has ever arrived (a failed refetch
+  // after a good one keeps the run that is on screen).
+  const [load, setLoad] = useState<"loading" | "ok" | "error">("loading");
+  const [retry, setRetry] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
     api
       .lifecycleRuns()
       .then((runs) => {
-        if (cancelled || !Array.isArray(runs)) return;
-        setStored(runs[0] || null);
+        if (cancelled) return;
+        setStored(Array.isArray(runs) ? runs[0] || null : null);
+        setLoad("ok");
       })
-      .catch(() => undefined);
+      .catch(() => {
+        if (!cancelled) setLoad((l) => (l === "ok" ? l : "error"));
+      });
     return () => {
       cancelled = true;
     };
-  }, [runsRev]);
+  }, [runsRev, retry]);
 
   useEffect(() => {
     const id = stored?.incident_id;
@@ -138,6 +146,7 @@ export default function LiveRunPanel({
   const incidentNumber = useLive ? eventRun!.incidentNumber : storedIncident?.incident_number || null;
   const incidentId = useLive ? eventRun!.incidentId : stored?.incident_id || null;
   const elapsed = useLive ? sumDurations(steps) : stored?.finished_at && stored?.started_at ? Math.max(0, +new Date(stored.finished_at) - +new Date(stored.started_at)) : sumDurations(steps);
+  // Frames on the socket are an answer too: a live run draws even before the stored list loads.
   const nothing = steps.length === 0 && !stored;
 
   return (
@@ -160,10 +169,26 @@ export default function LiveRunPanel({
           </button>
         )}
       </div>
-      {nothing ? (
-        <div className="empty">No alarm has been through the agents yet. Launch the storm and this rail lights up hop by hop.</div>
-      ) : (
+      {!nothing ? (
         <AgentRail steps={steps} live={live} compact={compact} caption={title} />
+      ) : load === "loading" ? (
+        <div role="status">
+          <span className="sr-only">Loading the latest run</span>
+          <div className="skeleton-rows rail-skeleton" aria-hidden="true">
+            {Array.from({ length: 12 }, (_, i) => (
+              <span key={i} className="skeleton" />
+            ))}
+          </div>
+        </div>
+      ) : load === "error" ? (
+        <div className="empty" role="alert">
+          Couldn't load the latest run.{" "}
+          <button type="button" className="btn sm" onClick={() => setRetry((n) => n + 1)}>
+            Retry
+          </button>
+        </div>
+      ) : (
+        <div className="empty">No alarm has been through the agents yet. Launch the storm and this rail lights up hop by hop.</div>
       )}
     </div>
   );

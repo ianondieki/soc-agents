@@ -3,7 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { api } from "../api";
 import { AUTO_STORM_KEY } from "../lib/demo";
 import LiveRunPanel, { RunState } from "../components/LiveRunPanel";
-import { humanEnum, humanGraph, humanStatus, nodeLabel } from "../lib/agents";
+import { humanEnum, humanGraph, humanStatus, nodeLabel, triggerWord } from "../lib/agents";
 import { IconDot } from "../lib/icons";
 import { labelFor } from "../lib/hitl";
 import { fmtTime } from "../lib/time";
@@ -14,16 +14,35 @@ import { describeEvent, type NocEvent } from "../realtime/renderers";
 import { hitlSubject } from "../lib/hitlSubject";
 
 /** One figure of the strip. Colour only when the number is worth a look; zero stays quiet. */
-function Kpi({ label, value, tone }: { label: string; value: number | undefined; tone?: string }) {
+function Kpi({ label, value, tone }: { label: string; value: number | undefined; tone?: "p1" | "p2" | "hitl" | "warn" }) {
   const n = typeof value === "number" ? value : null;
   return (
     <div className="kpi">
       <div className="label">{label}</div>
-      <div className={"value" + (n === 0 ? " zero" : "")} style={tone && n ? { color: tone } : undefined}>
-        {n == null ? "—" : n}
-      </div>
+      <div className={"value" + (n === 0 ? " zero" : tone && n ? ` ${tone}` : "")}>{n == null ? "—" : n}</div>
     </div>
   );
+}
+
+/** Each list on this page shows its first few rows in full; the rest are one link away. */
+const PEEK = 5;
+
+/** "Show all 12" under a list, only when the list has more than it shows. */
+function ShowAll({ to, total, what, label }: { to: string; total: number; what: string; label?: string }) {
+  if (total <= PEEK) return null;
+  return (
+    <div className="list-foot">
+      <Link className="link" to={to}>
+        {label || `Show all ${total}`}
+        <span className="sr-only"> {what}</span>
+      </Link>
+    </div>
+  );
+}
+
+/** A row opens its ticket on a click anywhere, except on a link inside it (which already went). */
+function fromLink(e: { target: EventTarget | null }): boolean {
+  return e.target instanceof Element && !!e.target.closest("a");
 }
 
 type Load = "loading" | "ok" | "error";
@@ -72,8 +91,8 @@ const EVENT_WORDS: Record<string, string> = {
   "hitl.claimed": "Card claimed",
   "hitl.approved": "Approved",
   "hitl.rejected": "Rejected",
-  "email.sent": "E-mail sent",
-  "email.failed": "E-mail failed",
+  "email.sent": "Email sent",
+  "email.failed": "Email failed",
   "outbox.failed": "Delivery failed",
   "external_signal.updated": "Signal updated",
   "power_notice.new": "Power notice",
@@ -86,7 +105,10 @@ const EVENT_WORDS: Record<string, string> = {
   "demo.rain_storm.complete": "Storm complete",
 };
 
-function eventWord(type: string): string {
+function eventWord(e: NocEvent): string {
+  const type = e.type;
+  // A mock adapter stored the message and sent nothing: the head must not say "sent".
+  if (type.startsWith("email.") && String(e.payload?.mode ?? "").toLowerCase() === "mock") return "Email";
   if (EVENT_WORDS[type]) return EVENT_WORDS[type];
   const s = String(type || "event").replace(/[._]+/g, " ").trim();
   return s ? s[0].toUpperCase() + s.slice(1) : "Event";
@@ -202,6 +224,9 @@ export default function MissionControl({
 
   const open = incidents.filter((i) => !["CLOSED", "CANCELLED"].includes(i.status));
   const maxRegion = Math.max(1, ...Object.values(metrics?.by_region || { x: 1 }).map(Number));
+  const regions = Object.entries(metrics?.by_region || {});
+  // A run row names its ticket by INC number when the board has loaded it.
+  const incNumber = new Map<string, string>(incidents.map((i) => [i.id, i.incident_number]));
 
   // Auto-run storm once when board is empty so first visit always has live demo data
   useEffect(() => {
@@ -234,7 +259,7 @@ export default function MissionControl({
   const bannerBad = !storming && (!!stormErr || !!chase?.bad);
 
   return (
-    <div>
+    <div className="stack">
       <div className="page-head">
         <div>
           <h1>Mission control</h1>
@@ -269,7 +294,7 @@ export default function MissionControl({
       </div>
 
       {bannerText && (
-        <div className={"storm-banner" + (bannerBad ? " danger" : "")}>
+        <div className={"storm-banner" + (bannerBad ? " danger" : "")} role={bannerBad ? "alert" : undefined}>
           <div>
             {storming && <span className="live-dot" aria-hidden="true" />}
             <strong>{storming ? "Heavy-rain storm" : stormErr ? "The storm stopped" : "Scenario status"}</strong>
@@ -281,19 +306,19 @@ export default function MissionControl({
 
       <div className="kpis">
         <Kpi label="Open incidents" value={metrics?.open_total} />
-        <Kpi label="P1 critical" value={metrics?.by_priority?.P1} tone="var(--p1)" />
-        <Kpi label="P2 major" value={metrics?.by_priority?.P2} tone="var(--p2)" />
-        <Kpi label="Decisions waiting" value={metrics?.hitl_pending} tone="var(--hitl)" />
-        <Kpi label="Past restore SLA" value={metrics?.sla_risk} tone="var(--warn)" />
-        <Kpi label="Vendor silent" value={metrics?.silent_at_risk} tone="var(--warn)" />
+        <Kpi label="P1 critical" value={metrics?.by_priority?.P1} tone="p1" />
+        <Kpi label="P2 major" value={metrics?.by_priority?.P2} tone="p2" />
+        <Kpi label="Decisions waiting" value={metrics?.hitl_pending} tone="hitl" />
+        <Kpi label="Past restore SLA" value={metrics?.sla_risk} tone="warn" />
+        <Kpi label="Vendor silent" value={metrics?.silent_at_risk} tone="warn" />
         <Kpi label="Open problems" value={metrics?.problems_open} />
       </div>
 
-      <div style={{ marginBottom: "var(--s4)" }}>
-        <LiveRunPanel events={events} runsRev={runsRev} onOpen={onOpen} />
-      </div>
+      <LiveRunPanel events={events} runsRev={runsRev} onOpen={onOpen} />
 
-      <div className="grid-3">
+      {/* The two lists a shift acts on sit side by side, wide enough for one-line approval rows;
+          the two agent logs and the region load follow. */}
+      <div className="grid-2 even">
         <div className="panel">
           <div className="panel-head">
             <div className="head-row">
@@ -301,31 +326,36 @@ export default function MissionControl({
               {incLoad === "ok" && <span>{open.length} open</span>}
             </div>
           </div>
-          <div className="list">
+          <div className="list peek">
             {incLoad === "loading" && incidents.length === 0 && <SkeletonRows />}
             {incLoad === "error" && <ListError what="the incidents" onRetry={loadIncidents} />}
             {incLoad === "ok" && open.length === 0 && !storming && (
               <div className="empty">
-                No open incidents. Launch the heavy-rain storm above, or see closed tickets on the{" "}
-                <Link to="/incidents">Incident board</Link>.
+                No open incidents. Launch the storm above, or see closed tickets on the <Link to="/incidents">Incident board</Link>.
               </div>
             )}
-            {open.length === 0 && storming && (
+            {incLoad !== "loading" && open.length === 0 && storming && (
               <div className="empty">
                 <span className="live-dot" aria-hidden="true" />
                 Agents are opening tickets; this list fills as they do.
               </div>
             )}
-            {open.map((i) => (
-              <div key={i.id} className={"row" + (fresh.has(i.id) ? " flash" : "")} onClick={() => onOpen(i.id)}>
+            {open.slice(0, PEEK).map((i) => (
+              <div
+                key={i.id}
+                className={"row" + (fresh.has(i.id) ? " flash" : "")}
+                onClick={(e) => !fromLink(e) && onOpen(i.id)}
+              >
                 <span className={`pill ${i.priority}`}>{i.priority}</span>
                 <div className="row-main">
                   <div className="row-title">
-                    <span className="row-id">{i.incident_number}</span>
+                    <Link className="row-id" to={`/incidents/${i.id}`}>
+                      {i.incident_number}
+                    </Link>
                     <span>{i.site_name || i.site_id}</span>
                   </div>
                   <div className="facts">
-                    {i.region_code && <span>{i.region_code}</span>}
+                    {i.region_code && <span className="mono">{i.region_code}</span>}
                     {i.failure_domain && <span>{humanEnum(i.failure_domain)}</span>}
                     {(i.responsible_msp || i.assignee_name) && <span>{i.responsible_msp || i.assignee_name}</span>}
                     {i.child_sites_down ? <span>{i.child_sites_down} child sites</span> : null}
@@ -341,8 +371,56 @@ export default function MissionControl({
               </div>
             ))}
           </div>
+          {incLoad === "ok" && <ShowAll to="/incidents" total={open.length} what="open incidents on the Incident board" />}
         </div>
 
+        <div className="panel">
+          <div className="panel-head">
+            <div className="head-row">
+              <h2 className="panel-title">Approvals</h2>
+              {hitlLoad === "ok" && <span>{hitl.length} waiting</span>}
+            </div>
+          </div>
+          <div className="list peek">
+            {hitlLoad === "loading" && hitl.length === 0 && <SkeletonRows rows={4} />}
+            {hitlLoad === "error" && <ListError what="the approvals" onRetry={loadHitl} />}
+            {hitlLoad === "ok" && hitl.length === 0 && (
+              <div className="empty">
+                No decisions waiting. Cards land in <Link to="/hitl">Approvals</Link> when an agent needs a person.
+              </div>
+            )}
+            {hitl.slice(0, PEEK).map((t) => {
+              // Since v8 a maintenance card has no incident: onOpen(null) was /incidents/null.
+              // Those rows open Approvals, where the card itself can be decided.
+              const to = t.incident_id ? `/incidents/${t.incident_id}` : "/hitl";
+              return (
+                <div
+                  key={t.id}
+                  className="row split"
+                  title={t.incident_id ? undefined : "Not about an incident: opens Approvals"}
+                  onClick={(e) => !fromLink(e) && (t.incident_id ? onOpen(t.incident_id) : navigate("/hitl"))}
+                >
+                  {t.priority ? <span className={`pill ${t.priority}`}>{t.priority}</span> : <span />}
+                  {/* One line: what (INC number), which decision, who holds it; the site on the right. */}
+                  <div className="row-main">
+                    <div className="row-title">
+                      <Link className={t.incident_number ? "row-id" : undefined} to={to}>
+                        {hitlSubject(t)}
+                      </Link>
+                      <span>{labelFor(t.task_type)}</span>
+                      <span className="muted">{t.claimed_by ? `claimed by ${t.claimed_by}` : "unclaimed"}</span>
+                    </div>
+                  </div>
+                  <span className="muted dim mono">{t.site_id}</span>
+                </div>
+              );
+            })}
+          </div>
+          {hitlLoad === "ok" && <ShowAll to="/hitl" total={hitl.length} what="decisions in Approvals" />}
+        </div>
+      </div>
+
+      <div className="grid-3 align-start">
         <div className="panel">
           <div className="panel-head">
             <div className="head-row">
@@ -358,7 +436,7 @@ export default function MissionControl({
               <span>times in EAT</span>
             </div>
           </div>
-          <div className="ticker">
+          <div className="ticker peek">
             {events.length === 0 && (
               <div className="empty">
                 {quietMode
@@ -366,10 +444,11 @@ export default function MissionControl({
                   : "Waiting for the agent stream. Each alarm appears here as it moves through Ingest, Correlate, Enrich, Severity, Ticket and Assign."}
               </div>
             )}
-            {events.map((e, idx) => {
+            {events.slice(0, PEEK).map((e, idx) => {
               const p = e.payload || {};
               const st = String(p.status || "").toUpperCase();
               const base = p.rationale || p.output || p.detail;
+              // A describer replaces a raw detail written for a developer (realtime/renderers.ts).
               const described = describeEvent(e).replace(/^—\s*/, "");
               const why = described || (base ? String(base).slice(0, 160) : "");
               return (
@@ -377,8 +456,15 @@ export default function MissionControl({
                   <span className="ticker-time">{fmtTime(e.ts)}</span>
                   <div>
                     <div className="ticker-head">
-                      <span className="ticker-what">{eventWord(e.type)}</span>
-                      {p.incident_number && <span className="mono">{p.incident_number}</span>}
+                      <span className="ticker-what">{eventWord(e)}</span>
+                      {p.incident_number &&
+                        (e.incidentId ? (
+                          <Link className="mono" to={`/incidents/${e.incidentId}`}>
+                            {p.incident_number}
+                          </Link>
+                        ) : (
+                          <span className="mono">{p.incident_number}</span>
+                        ))}
                       {p.node && <span>{nodeLabel(p.node)}</span>}
                       {!ROUTINE_STEP.has(st) && <RunState status={st} routine={false} />}
                     </div>
@@ -388,67 +474,9 @@ export default function MissionControl({
               );
             })}
           </div>
+          <ShowAll to="/audit" total={events.length} what="agent steps and decisions" label="Show all in Audit trail" />
         </div>
 
-        <div className="panel">
-          <div className="panel-head">
-            <div className="head-row">
-              <h2 className="panel-title">Approvals</h2>
-              {hitlLoad === "ok" && <span>{hitl.length} waiting</span>}
-            </div>
-          </div>
-          <div className="list">
-            {hitlLoad === "loading" && hitl.length === 0 && <SkeletonRows rows={4} />}
-            {hitlLoad === "error" && <ListError what="the approvals" onRetry={loadHitl} />}
-            {hitlLoad === "ok" && hitl.length === 0 && (
-              <div className="empty">
-                No decisions waiting. Cards land in <Link to="/hitl">Approvals</Link> when an agent needs a person.
-              </div>
-            )}
-            {hitl.slice(0, 12).map((t) => (
-              // Since v8 a maintenance card has no incident: onOpen(null) was /incidents/null.
-              // Those rows open Approvals, where the card itself can be decided.
-              <div
-                key={t.id}
-                className="row"
-                title={t.incident_id ? undefined : "Not about an incident: opens Approvals"}
-                onClick={() => (t.incident_id ? onOpen(t.incident_id) : navigate("/hitl"))}
-              >
-                {t.priority ? <span className={`pill ${t.priority}`}>{t.priority}</span> : <span />}
-                <div className="row-main">
-                  <div className="row-title">
-                    <span className={t.incident_number ? "row-id" : undefined}>{hitlSubject(t)}</span>
-                  </div>
-                  <div className="facts">
-                    <span>{labelFor(t.task_type)}</span>
-                    <span>{t.claimed_by ? `claimed by ${t.claimed_by}` : "unclaimed"}</span>
-                  </div>
-                </div>
-                <span className="muted dim mono">{t.site_id}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      <div className="grid-2" style={{ marginTop: "var(--s4)", alignItems: "start" }}>
-        <div className="panel">
-          <h2 className="panel-title">Open incidents by region</h2>
-          <div className="region-bars">
-            {Object.entries(metrics?.by_region || {}).length === 0 && (
-              <div className="empty">Region load appears when incidents are open.</div>
-            )}
-            {Object.entries(metrics?.by_region || {}).map(([k, v]) => (
-              <div key={k} className="region-bar-row">
-                <span className="muted">{k}</span>
-                <div className="region-bar-track">
-                  <div className="region-bar-fill" style={{ width: `${(Number(v) / maxRegion) * 100}%` }} />
-                </div>
-                <span className="muted mono">{String(v)}</span>
-              </div>
-            ))}
-          </div>
-        </div>
         <div className="panel">
           <div className="panel-head">
             <div className="head-row">
@@ -456,33 +484,64 @@ export default function MissionControl({
               <span>times in EAT</span>
             </div>
           </div>
-          <div className="list" style={{ maxHeight: 220 }}>
+          <div className="list peek">
             {runsLoad === "loading" && runs.length === 0 && <SkeletonRows rows={4} />}
             {runsLoad === "error" && <ListError what="the agent runs" onRetry={loadRuns} />}
-            {runs.slice(0, 10).map((r) => (
-              <div
-                key={r.id}
-                className="row"
-                style={{ cursor: r.incident_id ? "pointer" : "default" }}
-                onClick={() => r.incident_id && onOpen(r.incident_id)}
-              >
-                <span className="muted dim mono">{fmtTime(r.started_at)}</span>
-                <div className="row-main">
-                  <div className="row-title">
-                    <span>{humanGraph(r.graph_name)}</span>
-                    {r.trigger && <span className="muted">{humanEnum(r.trigger)}</span>}
+            {runs.slice(0, PEEK).map((r) => {
+              const inc = r.incident_id ? incNumber.get(r.incident_id) : undefined;
+              const trigger = triggerWord(r.trigger);
+              return (
+                <div
+                  key={r.id}
+                  className={"row" + (r.incident_id ? "" : " static")}
+                  onClick={(e) => r.incident_id && !fromLink(e) && onOpen(r.incident_id)}
+                >
+                  <span className="muted dim mono">{fmtTime(r.started_at)}</span>
+                  <div className="row-main">
+                    <div className="row-title">
+                      {r.incident_id && (
+                        <Link className={inc ? "row-id" : "link"} to={`/incidents/${r.incident_id}`}>
+                          {inc || "Open ticket"}
+                        </Link>
+                      )}
+                      <span>{humanGraph(r.graph_name)}</span>
+                      {trigger && <span className="muted">{trigger}</span>}
+                    </div>
+                    {/* The state sits on the second line, so a long word never squeezes the title. */}
+                    <div className="facts">
+                      {r.current_node ? <span>at {nodeLabel(r.current_node)}</span> : r.steps ? <span>{r.steps.length} steps</span> : null}
+                      <RunState status={r.status} routine={false} />
+                    </div>
+                    {/* Same A-13 fix as the Agent Observatory: FAILED is red with its word, never green. */}
+                    <RunError status={r.status} summary={r.error_summary} />
                   </div>
-                  <div className="facts">
-                    {r.current_node ? <span>at {nodeLabel(r.current_node)}</span> : r.steps ? <span>{r.steps.length} steps</span> : null}
-                  </div>
-                  {/* Same A-13 fix as the Agent Observatory: FAILED is red with its word, never green. */}
-                  <RunError status={r.status} summary={r.error_summary} />
                 </div>
-                <RunState status={r.status} routine={false} />
-              </div>
-            ))}
+              );
+            })}
             {runsLoad === "ok" && runs.length === 0 && <div className="empty">Runs appear as the storm executes.</div>}
           </div>
+          {runsLoad === "ok" && <ShowAll to="/agents" total={runs.length} what="agent runs in the Agent observatory" />}
+        </div>
+
+        <div className="panel">
+          <h2 className="panel-title">Open incidents by region</h2>
+          {metrics == null ? (
+            <SkeletonRows rows={4} />
+          ) : regions.length === 0 ? (
+            <div className="empty">Region load appears when incidents are open.</div>
+          ) : (
+            <div className="region-bars">
+              {regions.map(([k, v]) => (
+                <div key={k} className="region-bar-row">
+                  <span className="muted mono">{k}</span>
+                  <div className="region-bar-track">
+                    <div className="region-bar-fill" style={{ width: `${(Number(v) / maxRegion) * 100}%` }} />
+                  </div>
+                  <span className="muted mono">{String(v)}</span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     </div>

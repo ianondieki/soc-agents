@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { GUIDE_STEP_KEY } from "../lib/demo";
 
@@ -44,11 +44,36 @@ export default function DemoGuide({
     }
   }, [step]);
 
+  // While the panel is open, <html data-guide="on"> and --guide-h (its height) let the CSS keep
+  // the Approvals decision footer clear of it (styles.css, "Guided demo").
+  const panelRef = useRef<HTMLElement>(null);
+  useLayoutEffect(() => {
+    const root = document.documentElement;
+    if (!open) {
+      root.removeAttribute("data-guide");
+      root.style.removeProperty("--guide-h");
+      return;
+    }
+    root.setAttribute("data-guide", "on");
+    const el = panelRef.current;
+    const measure = () => {
+      if (el) root.style.setProperty("--guide-h", `${Math.ceil(el.getBoundingClientRect().height)}px`);
+    };
+    measure();
+    const ro = typeof ResizeObserver !== "undefined" && el ? new ResizeObserver(measure) : null;
+    if (ro && el) ro.observe(el);
+    return () => {
+      ro?.disconnect();
+      root.removeAttribute("data-guide");
+      root.style.removeProperty("--guide-h");
+    };
+  }, [open]);
+
   if (!open) return null;
 
   const steps: GuideStep[] = [
     {
-      title: "Start the storm",
+      title: "Heavy rain hits three regions",
       say:
         "Heavy rain hits Rift, Mt Kenya and Nairobi East: microwave hops drop and child sites cascade under " +
         "their HUB majors. Eleven alarms arrive in about twenty seconds. Watch the rail on Mission control: " +
@@ -66,7 +91,7 @@ export default function DemoGuide({
     {
       title: "Approve what matters",
       say:
-        "A P2 broadcast never leaves without a person. Approvals shows the SMS and the e-mail exactly as " +
+        "A P2 broadcast never leaves without a person. Approvals shows the SMS and the email exactly as " +
         "they will be sent, with the facts beside them. Claim, read, approve.",
       action: { label: "Open Approvals", run: () => nav("/hitl") },
     },
@@ -85,7 +110,7 @@ export default function DemoGuide({
   const current = steps[i];
 
   return (
-    <aside className="guide" role="dialog" aria-label="Guided demo">
+    <aside className="guide" role="dialog" aria-label="Guided demo" ref={panelRef}>
       <div className="guide-head">
         <strong>Guided demo</strong>
         <span className="muted">

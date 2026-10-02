@@ -10,21 +10,32 @@
  * (`pickCreatingRun`), while still counting the merges it absorbed.
  */
 
+/** A lifecycle hop: its node id, the one label every page shows for it, the agent that runs
+ *  it and what it does, in one sentence. */
+export interface LifecycleNode {
+  id: string;
+  label: string;
+  agent: string;
+  does: string;
+}
+
 /** The twelve lifecycle nodes in execution order. Mirrors `orchestrator/registry.py`
- *  NODE_CARDS; the live list from `/workflow` or `/agents` wins when present. */
-export const LIFECYCLE_NODES: readonly { id: string; label: string; agent: string }[] = [
-  { id: "INGEST", label: "Ingest", agent: "IngestCorrelationAgent" },
-  { id: "CORRELATE", label: "Correlate", agent: "IngestCorrelationAgent" },
-  { id: "ENRICH", label: "Enrich", agent: "EnrichmentAgent" },
-  { id: "SEVERITY", label: "Severity", agent: "SeverityImpactAgent" },
-  { id: "TICKET", label: "Ticket", agent: "TicketingAgent" },
-  { id: "ASSIGN", label: "Assign", agent: "DispatchAssignmentAgent" },
-  { id: "HITL", label: "HITL gate", agent: "SupervisorAgent" },
-  { id: "BROADCAST", label: "Broadcast", agent: "BroadcastCommsAgent" },
-  { id: "EXEC_BRIEF", label: "Exec brief", agent: "ExecutiveBriefingAgent" },
-  { id: "LEDGER", label: "Shift ledger", agent: "ShiftLedgerAgent" },
-  { id: "RECURRENCE", label: "Recurrence", agent: "RecurrenceProblemAgent" },
-  { id: "MONITOR", label: "Monitor", agent: "WorklogMonitorAgent" },
+ *  NODE_CARDS; the live list from `/workflow` or `/agents` wins for order and status, but the
+ *  label always comes from here through `nodeLabel()` so a hop has one name on every page.
+ *  `does` is the sentence the Workflow map, the Showcase steps and the Agents page print. */
+export const LIFECYCLE_NODES: readonly LifecycleNode[] = [
+  { id: "INGEST", label: "Ingest", agent: "IngestCorrelationAgent", does: "Normalise the alarm and fingerprint it (site, alarm code, domain)." },
+  { id: "CORRELATE", label: "Correlate", agent: "IngestCorrelationAgent", does: "Fold a repeat or a child site into the open ticket or its parent HUB." },
+  { id: "ENRICH", label: "Enrich", agent: "EnrichmentAgent", does: "Site catalogue: region, RNIO, FE on call, subscribers affected, TT classification." },
+  { id: "SEVERITY", label: "Severity", agent: "SeverityImpactAgent", does: "P4 under 50k users; P3, P2, P1 above; HUB floor P2; CORE floor P1; M‑PESA corridor tag." },
+  { id: "TICKET", label: "Ticket", agent: "TicketingAgent", does: "Allocate the INC number, fill the TT fields, write the narrative and set the SLA clocks." },
+  { id: "ASSIGN", label: "Assign", agent: "DispatchAssignmentAgent", does: "Region × domain matrix: power to Egypro or Tetranet, fibre to Egypro Fibre, radio to the FE." },
+  { id: "HITL", label: "Approval", agent: "SupervisorAgent", does: "Hold P1 and P2 wording for the shift. Nothing external leaves without a named person." },
+  { id: "BROADCAST", label: "Broadcast", agent: "BroadcastCommsAgent", does: "Draft and queue the RNIO, FE and MSP SMS and email through the outbox." },
+  { id: "EXEC_BRIEF", label: "Exec brief", agent: "ExecutiveBriefingAgent", does: "Write the exec brief management reads instead of phoning the NOC." },
+  { id: "LEDGER", label: "Shift ledger", agent: "ShiftLedgerAgent", does: "Append the Excel shift ledger row (EAT)." },
+  { id: "RECURRENCE", label: "Recurrence", agent: "RecurrenceProblemAgent", does: "Count faults at this site in the window; open or update a problem record." },
+  { id: "MONITOR", label: "Monitor", agent: "WorklogMonitorAgent", does: "Set the note-chase and SLA clocks; chase a silent vendor." },
 ];
 
 export const LIFECYCLE_NODE_IDS: ReadonlySet<string> = new Set(LIFECYCLE_NODES.map((n) => n.id));
@@ -35,12 +46,21 @@ export function isLifecycleNode(id: unknown): boolean {
   return typeof id === "string" && LIFECYCLE_NODE_IDS.has(id);
 }
 
-/** "EXEC_BRIEF" → "Exec brief": a node id as the rail labels it; unknown ids are humanised. */
+/**
+ * The one name of a hop, everywhere (rail, Showcase, Workflow map, Agents, Audit trail):
+ * "EXEC_BRIEF" → "Exec brief", "HITL" → "Approval". Unknown ids (a scheduler job's node) are
+ * humanised, so a new node still reads as words.
+ */
 export function nodeLabel(id: unknown): string {
   const hit = LIFECYCLE_NODES.find((n) => n.id === id);
   if (hit) return hit.label;
   const s = humanEnum(id);
   return s ? s[0].toUpperCase() + s.slice(1) : "";
+}
+
+/** What a hop does, in one sentence ("" for a node that is not one of the twelve). */
+export function nodeDoes(id: unknown): string {
+  return LIFECYCLE_NODES.find((n) => n.id === id)?.does ?? "";
 }
 
 /** Run statuses that mean the run has decided what it was going to decide. */
@@ -54,6 +74,16 @@ export function runChipClass(status: unknown): string {
   if (s === "SUCCEEDED") return "chip ok";
   if (s === "FAILED") return "chip danger";
   return "chip";
+}
+
+/** How a run was started, as a word worth printing: "" for the ordinary alarm event ("Incident
+ *  lifecycle" needs no "event"), "scheduled", "on request", or the trigger humanised. */
+export function triggerWord(trigger: unknown): string {
+  const t = String(trigger ?? "").toUpperCase();
+  if (!t || t === "EVENT") return "";
+  if (t === "SCHEDULE") return "scheduled";
+  if (t === "REQUEST") return "on request";
+  return humanEnum(t);
 }
 
 /** "incident_lifecycle" → "Incident lifecycle". */
@@ -76,7 +106,7 @@ export function humanStatus(status: unknown): string {
 const ACRONYMS: Record<string, string> = {
   MPESA: "M‑PESA", HUB: "HUB", CORE: "CORE", MSP: "MSP", RNIO: "RNIO", FE: "FE", TX: "TX", MW: "MW", SMS: "SMS",
   NOC: "NOC", SLA: "SLA", EAT: "EAT", CA: "CA", PIR: "PIR", TT: "TT", INC: "INC", OEM: "OEM", RF: "RF", IP: "IP",
-  DWDM: "DWDM", ENODEB: "eNodeB", NODEB: "NodeB", GSM: "GSM", LTE: "LTE", VOICE: "voice", DATA: "data", HITL: "HITL",
+  DWDM: "DWDM", ENODEB: "eNodeB", NODEB: "NodeB", BTS: "BTS", BSC: "BSC", RNC: "RNC", MSC: "MSC", MGW: "MGW", POP: "PoP", GSM: "GSM", LTE: "LTE", VOICE: "voice", DATA: "data", HITL: "HITL",
 };
 
 /**
