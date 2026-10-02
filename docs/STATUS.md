@@ -83,6 +83,13 @@ and switch on with environment flags. The suite is green (3,208 tests), the UI b
    server gzips, the build ships one chunk per route, the fonts are preloaded. Lighthouse
    (mobile profile) on the four main routes: performance 48–68 → 96–99, layout shift
    0.4 → 0, LCP 4–5 s → about 2 s.
+11. **Words and the room (2 October, fourth round).** One word for one thing on every
+   screen (step, decision, ticket, vendor, subscribers; the gate agent is the "Approval
+   gate"; no HITL, outbox or dispatcher on screen) and no claim the system does not keep
+   (P1 and P2 wait for a person; P3 and P4 go). A Projector mode for a weak projector or a
+   TV; tap targets on iPads; a Wallboard that fits the screen; a print stylesheet; an
+   approvals queue that puts P1 first with one card open at a time; audit search that
+   reaches the server; an API banner that needs two real failures before it goes red.
 
 ## What is not done (honest list)
 

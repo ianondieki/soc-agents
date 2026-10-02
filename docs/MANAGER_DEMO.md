@@ -11,8 +11,12 @@ presenter from narrating code.
    (`/hitl`). Two windows make the "a person approves it" moment visible.
 3. If the board is not empty, go to Settings and note the storm button on Mission Control will
    add to it; a clean start is `rm data/noc_agents.db` before step 1.
-4. Press **Guided demo** in the top bar. The panel follows you from page to page.
-5. Internet is optional. Without it the UI falls back to the system font; nothing else changes.
+4. Press **Guided demo** in the top bar. A bar under the top bar follows you from page to page;
+   each step has a short spoken text behind **Say** and ends with where to look.
+5. On a projector or a TV, press **Projector** in the top bar (or open the address with
+   `?display=projector`): bigger type, stronger colours, no animation. It also works on the
+   Wallboard, which fits the screen and never scrolls.
+6. Internet is not needed: the fonts ship with the app and nothing on screen calls out.
 
 ## The story in one sentence
 
@@ -55,9 +59,10 @@ Point at "2 later alarms folded in": the duplicates the HUB absorbed.
 
 In the second window, the Approvals page.
 
-Say: *A P2 broadcast never leaves without a named person. The card shows the SMS and the e-mail
-exactly as they will be sent, with the facts beside them. One person claims it so two
-supervisors cannot both act; a reason is required and lands on the audit row.*
+Say: *A P1 or P2 message never leaves without a named person. The card shows the SMS and the
+e-mail exactly as they will be sent, with the facts beside them. One person claims it so two
+supervisors cannot both act; a reason is required and lands on the audit row.* The queue puts
+the P1s first and keeps one card open; the others are one-line rows.
 
 Claim, type a reason, approve. Back on Mission Control the HITL count drops and the ticket's
 run flips from "waiting for a human" to done. With a Gmail app password configured the e-mail
