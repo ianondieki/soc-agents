@@ -21,18 +21,18 @@ This document describes all **12 agents** (11 of them wired into the incident wo
 
 | Agent | Mission | Criticality | Model tier | Trigger | Autonomy | Graph nodes | MCP cards |
 |---|---|---|---|---|---|---|---|
-| SupervisorAgent | Routes lifecycle and HITL gates | fail_closed | claude-fable-5-1 | EVENT | A0 | HITL | 0 |
-| IngestCorrelationAgent | Normalize + dedupe alarms | fail_closed | none | EVENT | A0 | INGEST, CORRELATE | 5 |
-| EnrichmentAgent | Site/region CMDB + user estimate | fail_closed | none | EVENT | A0 | ENRICH | 2 |
-| SeverityImpactAgent | P1–P4 + HUB floors + M-PESA tag | fail_closed | none | EVENT | A0 | SEVERITY | 0 |
-| TicketingAgent | Unique INC + narrative fields | fail_closed | claude-fable-5-1 | EVENT | A0 | TICKET | 3 |
-| DispatchAssignmentAgent | FE vs MSP matrix | fail_closed | none | EVENT | A0 | ASSIGN | 2 |
-| BroadcastCommsAgent | RNIO/FE/MSP notifications | fail_closed | claude-opus-5 | EVENT | A1 | BROADCAST | 2 |
-| ExecutiveBriefingAgent | Exec brief to cut phone spam | fail_soft | claude-opus-5 | EVENT | A1 | EXEC_BRIEF | 2 |
-| ShiftLedgerAgent | Excel shift ledger | fail_soft | none | EVENT | A0 | LEDGER | 3 |
-| RecurrenceProblemAgent | Chronic site problems | fail_soft | claude-fable-5-1 | EVENT | A0 | RECURRENCE | 3 |
-| WorklogMonitorAgent | Notes + SLA watch | fail_soft | claude-opus-5 | SCHEDULE | A0 | MONITOR | 3 |
-| ShiftHandoverAgent | Day/night handover package | fail_soft | claude-opus-5 | REQUEST | A1 | — (not in the graph) | 4 |
+| SupervisorAgent | Holds every P1 and P2 message until a named person approves it. | fail_closed | claude-fable-5-1 | EVENT | A0 | HITL | 0 |
+| IngestCorrelationAgent | Reads each alarm and folds repeats and child sites into a ticket already open. | fail_closed | none | EVENT | A0 | INGEST, CORRELATE | 5 |
+| EnrichmentAgent | Looks up the site and its region, and estimates how many subscribers are affected. | fail_closed | none | EVENT | A0 | ENRICH | 2 |
+| SeverityImpactAgent | Sets P1–P4 from subscribers affected; a HUB is at least P2; flags M‑PESA at risk. | fail_closed | none | EVENT | A0 | SEVERITY | 0 |
+| TicketingAgent | Opens the ticket under a new INC number, fills in every field and starts the SLA clocks. | fail_closed | claude-fable-5-1 | EVENT | A0 | TICKET | 3 |
+| DispatchAssignmentAgent | Chooses the vendor or field engineer by region and fault type. | fail_closed | none | EVENT | A0 | ASSIGN | 2 |
+| BroadcastCommsAgent | Drafts the SMS and email to the regional office, field engineer and vendor. | fail_closed | claude-opus-5 | EVENT | A1 | BROADCAST | 2 |
+| ExecutiveBriefingAgent | Writes the exec brief that management reads instead of phoning the NOC. | fail_soft | claude-opus-5 | EVENT | A1 | EXEC_BRIEF | 2 |
+| ShiftLedgerAgent | Writes each new ticket's row in the Excel shift ledger. | fail_soft | none | EVENT | A0 | LEDGER | 3 |
+| RecurrenceProblemAgent | Counts repeat faults at the site and opens or updates its problem record. | fail_soft | claude-fable-5-1 | EVENT | A0 | RECURRENCE | 3 |
+| WorklogMonitorAgent | Watches the work notes and SLA clocks, and chases a vendor that goes silent. | fail_soft | claude-opus-5 | SCHEDULE | A0 | MONITOR | 3 |
+| ShiftHandoverAgent | Builds the day or night shift handover; nothing is sent until a person approves it. | fail_soft | claude-opus-5 | REQUEST | A1 | — (not in the graph) | 4 |
 
 `fail_closed` means an exception in that agent fails the whole incident run; `fail_soft` means it fails only that step and the run continues. Autonomy is `A0` (proposes, a human commits), `A1` (acts, a human can intervene) or `A2` (acts unattended). Trigger is what starts the agent: an `EVENT` (an incoming alarm), a `SCHEDULE` (the Phase 1 scheduler) or a `REQUEST` (a human asks). Full detail per agent in section 6.
 
@@ -101,7 +101,7 @@ One subsection per agent, in registry order — which is also the order `GET /ap
 
 ### 6.1 SupervisorAgent
 
-*Routes lifecycle and HITL gates*
+*Holds every P1 and P2 message until a named person approves it.*
 
 | Field | Value |
 |---|---|
@@ -123,7 +123,7 @@ One subsection per agent, in registry order — which is also the order `GET /ap
 
 ### 6.2 IngestCorrelationAgent
 
-*Normalize + dedupe alarms*
+*Reads each alarm and folds repeats and child sites into a ticket already open.*
 
 | Field | Value |
 |---|---|
@@ -253,7 +253,7 @@ One subsection per agent, in registry order — which is also the order `GET /ap
 
 ### 6.3 EnrichmentAgent
 
-*Site/region CMDB + user estimate*
+*Looks up the site and its region, and estimates how many subscribers are affected.*
 
 | Field | Value |
 |---|---|
@@ -320,7 +320,7 @@ One subsection per agent, in registry order — which is also the order `GET /ap
 
 ### 6.4 SeverityImpactAgent
 
-*P1–P4 + HUB floors + M-PESA tag*
+*Sets P1–P4 from subscribers affected; a HUB is at least P2; flags M‑PESA at risk.*
 
 | Field | Value |
 |---|---|
@@ -342,7 +342,7 @@ One subsection per agent, in registry order — which is also the order `GET /ap
 
 ### 6.5 TicketingAgent
 
-*Unique INC + narrative fields*
+*Opens the ticket under a new INC number, fills in every field and starts the SLA clocks.*
 
 | Field | Value |
 |---|---|
@@ -430,7 +430,7 @@ One subsection per agent, in registry order — which is also the order `GET /ap
 
 ### 6.6 DispatchAssignmentAgent
 
-*FE vs MSP matrix*
+*Chooses the vendor or field engineer by region and fault type.*
 
 | Field | Value |
 |---|---|
@@ -497,7 +497,7 @@ One subsection per agent, in registry order — which is also the order `GET /ap
 
 ### 6.7 BroadcastCommsAgent
 
-*RNIO/FE/MSP notifications*
+*Drafts the SMS and email to the regional office, field engineer and vendor.*
 
 | Field | Value |
 |---|---|
@@ -564,7 +564,7 @@ One subsection per agent, in registry order — which is also the order `GET /ap
 
 ### 6.8 ExecutiveBriefingAgent
 
-*Exec brief to cut phone spam*
+*Writes the exec brief that management reads instead of phoning the NOC.*
 
 | Field | Value |
 |---|---|
@@ -631,7 +631,7 @@ One subsection per agent, in registry order — which is also the order `GET /ap
 
 ### 6.9 ShiftLedgerAgent
 
-*Excel shift ledger*
+*Writes each new ticket's row in the Excel shift ledger.*
 
 | Field | Value |
 |---|---|
@@ -719,7 +719,7 @@ One subsection per agent, in registry order — which is also the order `GET /ap
 
 ### 6.10 RecurrenceProblemAgent
 
-*Chronic site problems*
+*Counts repeat faults at the site and opens or updates its problem record.*
 
 | Field | Value |
 |---|---|
@@ -807,7 +807,7 @@ One subsection per agent, in registry order — which is also the order `GET /ap
 
 ### 6.11 WorklogMonitorAgent
 
-*Notes + SLA watch*
+*Watches the work notes and SLA clocks, and chases a vendor that goes silent.*
 
 | Field | Value |
 |---|---|
@@ -895,7 +895,7 @@ One subsection per agent, in registry order — which is also the order `GET /ap
 
 ### 6.12 ShiftHandoverAgent
 
-*Day/night handover package*
+*Builds the day or night shift handover; nothing is sent until a person approves it.*
 
 | Field | Value |
 |---|---|

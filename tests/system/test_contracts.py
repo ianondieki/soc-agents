@@ -57,18 +57,18 @@ NODE_AGENTS = [
 NODE_STATUS_VOCABULARY = {"succeeded", "waiting_hitl", "running", "failed", "pending"}
 
 AGENT_CATALOG = [
-    ("SupervisorAgent", "Routes lifecycle and HITL gates"),
-    ("IngestCorrelationAgent", "Normalize + dedupe alarms"),
-    ("EnrichmentAgent", "Site/region CMDB + user estimate"),
-    ("SeverityImpactAgent", "P1–P4 + HUB floors + M-PESA tag"),
-    ("TicketingAgent", "Unique INC + narrative fields"),
-    ("DispatchAssignmentAgent", "FE vs MSP matrix"),
-    ("BroadcastCommsAgent", "RNIO/FE/MSP notifications"),
-    ("ExecutiveBriefingAgent", "Exec brief to cut phone spam"),
-    ("ShiftLedgerAgent", "Excel shift ledger"),
-    ("RecurrenceProblemAgent", "Chronic site problems"),
-    ("WorklogMonitorAgent", "Notes + SLA watch"),
-    ("ShiftHandoverAgent", "Day/night handover package"),
+    ("SupervisorAgent", "Holds every P1 and P2 message until a named person approves it."),
+    ("IngestCorrelationAgent", "Reads each alarm and folds repeats and child sites into a ticket already open."),
+    ("EnrichmentAgent", "Looks up the site and its region, and estimates how many subscribers are affected."),
+    ("SeverityImpactAgent", "Sets P1–P4 from subscribers affected; a HUB is at least P2; flags M‑PESA at risk."),
+    ("TicketingAgent", "Opens the ticket under a new INC number, fills in every field and starts the SLA clocks."),
+    ("DispatchAssignmentAgent", "Chooses the vendor or field engineer by region and fault type."),
+    ("BroadcastCommsAgent", "Drafts the SMS and email to the regional office, field engineer and vendor."),
+    ("ExecutiveBriefingAgent", "Writes the exec brief that management reads instead of phoning the NOC."),
+    ("ShiftLedgerAgent", "Writes each new ticket's row in the Excel shift ledger."),
+    ("RecurrenceProblemAgent", "Counts repeat faults at the site and opens or updates its problem record."),
+    ("WorklogMonitorAgent", "Watches the work notes and SLA clocks, and chases a vendor that goes silent."),
+    ("ShiftHandoverAgent", "Builds the day or night shift handover; nothing is sent until a person approves it."),
 ]
 
 STEP_KEYS = {

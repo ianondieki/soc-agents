@@ -218,7 +218,7 @@ _QDRANT: dict[str, Any] = dict(
 AGENT_PROFILES: tuple[AgentProfile, ...] = (
     AgentProfile(
         "SupervisorAgent",
-        "Routes lifecycle and HITL gates",
+        "Holds every P1 and P2 message until a named person approves it.",
         FAIL_CLOSED,
         "claude-fable-5-1",
         ("create_hitl_task",),
@@ -232,7 +232,7 @@ AGENT_PROFILES: tuple[AgentProfile, ...] = (
     ),
     AgentProfile(
         "IngestCorrelationAgent",
-        "Normalize + dedupe alarms",
+        "Reads each alarm and folds repeats and child sites into a ticket already open.",
         FAIL_CLOSED,
         "none",
         ("normalize_event", "find_open_by_fingerprint", "link_parent_hub"),
@@ -294,7 +294,7 @@ AGENT_PROFILES: tuple[AgentProfile, ...] = (
     ),
     AgentProfile(
         "EnrichmentAgent",
-        "Site/region CMDB + user estimate",
+        "Looks up the site and its region, and estimates how many subscribers are affected.",
         FAIL_CLOSED,
         "none",
         ("lookup_site", "estimate_users_affected", "classify_tt"),
@@ -339,7 +339,7 @@ AGENT_PROFILES: tuple[AgentProfile, ...] = (
     ),
     AgentProfile(
         "SeverityImpactAgent",
-        "P1–P4 + HUB floors + M-PESA tag",
+        "Sets P1–P4 from subscribers affected; a HUB is at least P2; flags M‑PESA at risk.",
         FAIL_CLOSED,
         "none",
         ("priority_engine",),
@@ -353,7 +353,7 @@ AGENT_PROFILES: tuple[AgentProfile, ...] = (
     ),
     AgentProfile(
         "TicketingAgent",
-        "Unique INC + narrative fields",
+        "Opens the ticket under a new INC number, fills in every field and starts the SLA clocks.",
         FAIL_CLOSED,
         "claude-fable-5-1",
         ("create_incident",),
@@ -417,7 +417,7 @@ AGENT_PROFILES: tuple[AgentProfile, ...] = (
     ),
     AgentProfile(
         "DispatchAssignmentAgent",
-        "FE vs MSP matrix",
+        "Chooses the vendor or field engineer by region and fault type.",
         FAIL_CLOSED,
         "none",
         ("assign_incident",),
@@ -446,7 +446,7 @@ AGENT_PROFILES: tuple[AgentProfile, ...] = (
     ),
     AgentProfile(
         "BroadcastCommsAgent",
-        "RNIO/FE/MSP notifications",
+        "Drafts the SMS and email to the regional office, field engineer and vendor.",
         FAIL_CLOSED,
         "claude-opus-5",
         ("draft_broadcast", "send_sms", "send_email"),
@@ -475,7 +475,7 @@ AGENT_PROFILES: tuple[AgentProfile, ...] = (
     ),
     AgentProfile(
         "ExecutiveBriefingAgent",
-        "Exec brief to cut phone spam",
+        "Writes the exec brief that management reads instead of phoning the NOC.",
         FAIL_SOFT,
         "claude-opus-5",
         ("upsert_status_brief",),
@@ -502,7 +502,7 @@ AGENT_PROFILES: tuple[AgentProfile, ...] = (
     ),
     AgentProfile(
         "ShiftLedgerAgent",
-        "Excel shift ledger",
+        "Writes each new ticket's row in the Excel shift ledger.",
         FAIL_SOFT,
         "none",
         ("append_excel_row",),
@@ -564,7 +564,7 @@ AGENT_PROFILES: tuple[AgentProfile, ...] = (
     ),
     AgentProfile(
         "RecurrenceProblemAgent",
-        "Chronic site problems",
+        "Counts repeat faults at the site and opens or updates its problem record.",
         FAIL_SOFT,
         "claude-fable-5-1",
         ("count_recurrence", "create_or_update_problem"),
@@ -606,7 +606,7 @@ AGENT_PROFILES: tuple[AgentProfile, ...] = (
     ),
     AgentProfile(
         "WorklogMonitorAgent",
-        "Notes + SLA watch",
+        "Watches the work notes and SLA clocks, and chases a vendor that goes silent.",
         FAIL_SOFT,
         "claude-opus-5",
         ("flag_sla_watch",),
@@ -639,7 +639,7 @@ AGENT_PROFILES: tuple[AgentProfile, ...] = (
     ),
     AgentProfile(
         "ShiftHandoverAgent",
-        "Day/night handover package",
+        "Builds the day or night shift handover; nothing is sent until a person approves it.",
         FAIL_SOFT,
         "claude-opus-5",
         ("build_handover", "send_handover_email"),
