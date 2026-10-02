@@ -56,7 +56,7 @@ import "./HitlInbox.css";
  * suppress it.
  */
 
-const DISCONNECTED_POLL_MS = 15000;
+const DISCONNECTED_POLL_MS = 8000; // App's nudge while the stream is down
 /** How long a decided card shows its receipt before it folds away. */
 const RECEIPT_MS = 1200;
 /** The fold itself (HitlInbox.css `.hitl-slot`); skipped under quiet mode and reduced motion. */
@@ -135,20 +135,17 @@ export default function HitlInbox({ session, tick }: { session: any; tick: numbe
 
   useEffect(load, [tick, load]);
 
-  // Degraded mode: no socket, no revisions, so poll. Costs nothing while the
-  // socket is up because the effect only arms when `connected` is false.
-  useEffect(() => {
-    if (connected) return;
-    const id = window.setInterval(load, DISCONNECTED_POLL_MS);
-    return () => window.clearInterval(id);
-  }, [connected, load]);
+  // Degraded mode: App nudges every list every 8 s while the socket is down (manualTick), so
+  // the page keeps no poll of its own.
 
   const who = session?.display_name || "Supervisor";
 
   /** Focus for the card now at `index` in the list: its Claim, else its heading; the page
    *  heading when the queue is empty. Never <body>. */
   const focusCardAt = useCallback((index: number) => {
-    const slots = listRef.current ? Array.from(listRef.current.querySelectorAll<HTMLElement>(".hitl-slot:not(.folding)")) : [];
+    const slots = listRef.current
+      ? Array.from(listRef.current.querySelectorAll<HTMLElement>(".hitl-slot:not(.folding)")).filter((el) => !el.querySelector(".hitl-actions.decided"))
+      : [];
     const slot = slots[Math.min(index, slots.length - 1)];
     const target = slot?.querySelector<HTMLElement>(".hitl-claim") || slot?.querySelector<HTMLElement>(".hitl-card h2");
     (target || headingRef.current)?.focus();

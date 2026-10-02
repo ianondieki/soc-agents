@@ -12,7 +12,6 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
   return r.json();
 }
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export const api = {
   profile: () => req<any>("/api/v1/profile"),

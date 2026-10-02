@@ -1348,6 +1348,9 @@ textarea { width: 100%; min-height: 90px; }
 .rail-hop.decided .rail-dot { background: var(--ok); border-color: var(--ok); }
 .rail-hop.decided .rail-btn { border-color: var(--ok-line); }
 .rail-hop.decided .rail-meta { color: var(--ok); }
+.rail-hop.decided.rejected .rail-dot { background: var(--danger); border-color: var(--danger); }
+.rail-hop.decided.rejected .rail-btn { border-color: var(--danger-line, var(--danger)); }
+.rail-hop.decided.rejected .rail-meta { color: var(--danger-text); }
 .rail-hop.skipped .rail-btn { opacity: 0.6; border-style: dashed; }
 .rail-hop.failed .rail-dot { background: var(--p1); border-color: var(--p1); color: var(--text-bright); }
 .rail-hop.failed .rail-btn { border-color: var(--p1); }

@@ -60,7 +60,7 @@ const techList = (v: unknown) =>
 const shortTime = (ts: unknown) => fmtDateTime(ts, "").replace(/(\d{2}:\d{2}):\d{2}$/, "$1");
 
 /** A stored UTC timestamp inside a sentence ("SLA ack due 2026-10-02 05:16:22.085241"). */
-const STORED_INSTANT = /\b\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?\b/g;
+const STORED_INSTANT = /\b\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?\b/g;
 
 /** Stored text as the page prints it: every embedded timestamp in EAT, like the rest of the page.
  *  The stored row is untouched. */

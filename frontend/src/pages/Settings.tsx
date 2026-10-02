@@ -477,7 +477,7 @@ function Settings({
             <span role="status" className="muted">
               {stormProg}
             </span>
-            {stormErr && !storming && <Failed text={`The storm stopped. ${stormErr}`} detail={stormErr} />}
+            {stormErr && !storming && <Failed text={stormErr} detail={stormErr} />}
           </div>
         </section>
 

@@ -51,11 +51,14 @@ function redCards(tasks: any[]): RedCard[] {
 
 /** A vendor or owner enum as a name on the glass: "EGYPRO_FIBRE" → "Egypro Fibre", "FIELD_ENGINEER"
  *  → "Field Engineer"; acronyms humanEnum keeps (MSP, RNIO) stay as they are. */
-const nameOf = (s: unknown) =>
-  humanEnum(s)
+const nameOf = (s: unknown) => {
+  const raw = String(s ?? "").trim();
+  if (!/^[A-Z]+(_[A-Z]+)+$/.test(raw)) return raw; // an id or a name as written: NOC-QUEUE, ATC, FE-RFT-01
+  return humanEnum(raw)
     .split(" ")
     .map((w) => (/^[a-z]/.test(w) ? w[0].toUpperCase() + w.slice(1) : w))
     .join(" ");
+};
 
 /** Skeleton bar widths for the cards shown before the first answer. */
 const SKELETON_WIDTHS = ["46%", "78%", "62%", "54%"];

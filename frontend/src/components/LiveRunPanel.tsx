@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
+import { type ReactNode, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api";
 import AgentRail from "./AgentRail";
 import {
@@ -306,8 +306,6 @@ export default function LiveRunPanel({
   onOpen?: (incidentId: string) => void;
   title?: string;
   compact?: boolean;
-  /** @deprecated The panel reads the frame feed from RealtimeContext; this prop is ignored. */
-  events?: NocEvent[];
 }) {
   const titleId = useId();
   const isLifecycle = (r: any) => !!r && (!r.graph_name || r.graph_name === "incident_lifecycle");
@@ -351,22 +349,35 @@ export default function LiveRunPanel({
   if (seen.current == null) seen.current = new Set(evRuns.map((r) => r.runId));
 
   // A stale frame run must stop reading "running" even if nothing else re-renders the panel.
+  const frozenIdRef = useRef<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
-  const newestEv = evRuns[0];
+  // The run the panel will draw: the frozen one, else the newest ticket run, else the newest.
+  const watchedEv = (frozenIdRef.current && evRuns.find((r) => r.runId === frozenIdRef.current)) || evRuns.find((r) => r.ticket) || evRuns[0];
   useEffect(() => {
-    if (!newestEv || newestEv.finished) return;
-    const wait = Math.max(0, STALE_MS - (Date.now() - newestEv.lastAt)) + 50;
+    if (!watchedEv || watchedEv.finished) return;
+    const wait = Math.max(0, STALE_MS - (Date.now() - watchedEv.lastAt)) + 50;
     const t = window.setTimeout(() => setNow(Date.now()), wait);
     return () => window.clearTimeout(t);
-  }, [newestEv?.runId, newestEv?.lastAt, newestEv?.finished]);
+  }, [watchedEv?.runId, watchedEv?.lastAt, watchedEv?.finished]);
 
   // INC numbers: frames carry them; a stored run only has the incident id.
   const numbers = useRef(new Map<string, string>());
   for (const r of evRuns) if (r.incidentId && r.incidentNumber && r.ticket) numbers.current.set(r.incidentId, r.incidentNumber);
 
+  // A pin whose run vanished from both sources (a reseeded board) is released after render.
+  const frozenGone = useRef(false);
+  useEffect(() => {
+    if (frozenGone.current) {
+      frozenGone.current = false;
+      setFrozenId(null);
+      setSelected(null);
+    }
+  });
+
   // Pinned by a click on a hop: the run stays on screen until "Follow live".
   const [selected, setSelected] = useState<string | null>(null);
   const [frozenId, setFrozenId] = useState<string | null>(null);
+  frozenIdRef.current = frozenId;
 
   const pinned: RunView | null = useMemo(() => {
     const t = Math.max(now, Date.now());
@@ -376,6 +387,7 @@ export default function LiveRunPanel({
       const ev = evRuns.find((r) => r.runId === frozenId);
       if (ev) return fromEvents(ev, t);
       if (st) return fromStored(st);
+      frozenGone.current = true; // released below, after render
     }
     const storedTicket = stored.find(opensTicket) ?? null;
     const evTicket = evRuns.find((r) => r.ticket) ?? null;
@@ -440,7 +452,9 @@ export default function LiveRunPanel({
 
   // A run is replayed once, when its frames arrive live after the panel mounted: whichever source
   // the panel is drawing it from by then (the stored row can overtake the frames by a moment).
-  useEffect(() => {
+  // A layout effect, so the replay's first frame commits before the browser can paint the
+  // finished run even once.
+  useLayoutEffect(() => {
     if (!pinned) return;
     const id = pinned.runId;
     const known = seen.current!;

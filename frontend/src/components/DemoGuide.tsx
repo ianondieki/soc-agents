@@ -165,7 +165,7 @@ export default function DemoGuide({
     {
       title: "Heavy rain hits three regions",
       say:
-        "Press Launch the storm on Mission control. Eleven alarms arrive from Rift, Mt Kenya and Nairobi East in " +
+        "Press Launch heavy-rain storm (live) on Mission control. Eleven alarms arrive from Rift, Mt Kenya and Nairobi East in " +
         "about twenty seconds; watch each hop light up on the rail as its agent finishes its part. Child sites " +
         "fold under their HUB majors instead of opening duplicate tickets.",
       action: storming || stormDone ? undefined : { label: "Launch the storm", run: launch },

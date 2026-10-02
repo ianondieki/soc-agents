@@ -146,7 +146,7 @@ export default function AgentRail({
           const srState =
             st === "succeeded" ? "done" : st === "failed" && timed ? "failed" : st === "pending" ? "pending" : st === "waiting_hitl" ? "for a decision" : "";
           return (
-            <li key={n.id} className={`rail-hop ${st}` + (isSel ? " selected" : "")} data-node={n.id}>
+            <li key={n.id} className={`rail-hop ${st}` + (st === "decided" && step?.decision === "rejected" ? " rejected" : "") + (isSel ? " selected" : "")} data-node={n.id}>
               <button
                 type="button"
                 className="rail-btn"
@@ -165,7 +165,8 @@ export default function AgentRail({
                   </span>
                 )}
                 <span className="rail-dot" aria-hidden="true">
-                  {(st === "succeeded" || st === "decided") && <IconCheck size={iconSize} />}
+                  {(st === "succeeded" || (st === "decided" && step?.decision !== "rejected")) && <IconCheck size={iconSize} />}
+                  {st === "decided" && step?.decision === "rejected" && <IconAlert size={iconSize} />}
                   {st === "failed" && <IconAlert size={iconSize} />}
                   {st === "waiting_hitl" && <IconPause size={iconSize} />}
                 </span>
