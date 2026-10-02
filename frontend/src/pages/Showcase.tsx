@@ -1,36 +1,38 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api";
-import AgentRail from "../components/AgentRail";
 import LiveRunPanel from "../components/LiveRunPanel";
-import ToilBars from "../components/ToilBars";
-import { agentDisplayName, fmtInt, fmtMinutes, fmtMs, humanAutonomy } from "../lib/agents";
+import { LIFECYCLE_NODES, WAITING_WORD, fmtInt, fmtMinutes, fmtMs, humanAutonomy, nodeLabel } from "../lib/agents";
+import { fmtEAT } from "../lib/time";
 import type { NocEvent } from "../realtime/renderers";
 import "./Showcase.css";
 
 /**
- * The page for the people who decide: what the agents do to an alarm, how they sit on
- * the platform the NOC already runs, where the humans stay, and what it saved — every
- * number read live from the same database the floor works in.
+ * The page for the people who decide, read in a minute: what the agents do to an alarm, what
+ * it saved, how they sit on the platform the NOC already runs, and where people stay. Every
+ * figure is read live from `api.productivity(windowHours)`; nothing on the page is a constant
+ * dressed as a measurement.
  *
- * Mode: persuade. The one loud element is the live rail in the hero; everything under it
- * is set quietly so the numbers and the diagram carry the argument.
+ * Each idea appears once: the live rail, the three figures, the twelve steps (with the
+ * minutes by hand folded in as a column and a total), the platform diagram, the ladder and
+ * the never-automated list. Per-agent numbers live on /agents.
  */
 
-/** What each hop does, in the floor's words, and what a person used to do instead. */
-const HOP_STORY: Record<string, { does: string; instead: string }> = {
-  INGEST: { does: "Normalises the alarm: site, domain, technology, fingerprint.", instead: "Read the alarm off the NMS and work out which site it is." },
-  CORRELATE: { does: "Finds an open ticket or a parent HUB and folds the alarm into it.", instead: "Search the ticket queue before raising a duplicate." },
-  ENRICH: { does: "Looks up the site, region, RNIO and on-call FE; estimates subscribers affected.", instead: "Open the CMDB and the on-call sheet; guess the impact." },
-  SEVERITY: { does: "Applies the P1–P4 thresholds, the HUB and CORE floors, the M‑PESA corridor tag.", instead: "Judge the priority, argue it later." },
-  TICKET: { does: "Allocates the INC number and fills every ticket field and the narrative.", instead: "Type the ticket into the UI, field by field." },
-  ASSIGN: { does: "Routes to the MSP or FE from the region-by-domain matrix and stamps the escalation.", instead: "Remember who covers power in Rift tonight." },
-  HITL: { does: "Holds P1 and P2 wording for a person; lets P3 and P4 go.", instead: "Nothing changes here: the decision stays human." },
-  BROADCAST: { does: "Drafts and addresses the RNIO, FE and MSP SMS and e-mail.", instead: "Write the broadcast, find the numbers, send." },
-  EXEC_BRIEF: { does: "Writes and refreshes the status brief managers read instead of calling.", instead: "Answer the phone, again." },
-  LEDGER: { does: "Appends the shift ledger row.", instead: "Update the Excel sheet." },
-  RECURRENCE: { does: "Counts the site's recent faults and opens a problem record when it is chronic.", instead: "Notice, eventually, that this mast keeps failing." },
-  MONITOR: { does: "Sets the note-chase and SLA clocks and chases silence.", instead: "Set a reminder; forget it at shift change." },
+/** What a person did for each hop before the agents. The "now" sentence is the hop's own
+ *  `does` in lib/agents.ts, the same sentence the Workflow map prints. */
+const BEFORE: Record<string, string> = {
+  INGEST: "Read the alarm off the NMS and work out which site it is.",
+  CORRELATE: "Search the ticket queue before raising a duplicate.",
+  ENRICH: "Open the CMDB and the on-call sheet; guess the impact.",
+  SEVERITY: "Judge the priority, argue it later.",
+  TICKET: "Type the ticket into the UI, field by field.",
+  ASSIGN: "Remember who covers power in Rift tonight.",
+  HITL: "Nothing changes here: the decision stays human.",
+  BROADCAST: "Write the broadcast, find the numbers, send.",
+  EXEC_BRIEF: "Answer the phone, again.",
+  LEDGER: "Update the Excel sheet.",
+  RECURRENCE: "Notice, eventually, that this mast keeps failing.",
+  MONITOR: "Set a reminder; forget it at shift change.",
 };
 
 const LADDER = [
@@ -38,6 +40,16 @@ const LADDER = [
   { level: "L2_GUARDED", label: "L2 guarded", text: "HUB and CORE tickets open on their own; P3 and P4 broadcasts go; P1 and P2 wait for a person." },
   { level: "L3_CONDITIONAL", label: "L3 conditional", text: "Only P1 waits. Note chasing and the handover run unattended. Still never a live network change." },
 ];
+
+function nodeDoes(id: string): string {
+  return LIFECYCLE_NODES.find((n) => n.id === id)?.does || "";
+}
+
+function plural(n: number, word: string): string {
+  return `${fmtInt(n)} ${n === 1 ? word : `${word}s`}`;
+}
+
+type Window = 0 | 24;
 
 export default function Showcase({
   profile,
@@ -51,48 +63,66 @@ export default function Showcase({
   runsRev: number;
 }) {
   const nav = useNavigate();
-  const [windowHours, setWindowHours] = useState<0 | 24>(0);
+  const [windowHours, setWindowHours] = useState<Window>(0);
   const [p, setP] = useState<any | null>(null);
-  const [agents, setAgents] = useState<any[]>([]);
   const [err, setErr] = useState("");
+  const [retry, setRetry] = useState(0);
+  // null until `api.agents()` answers: the tool-connection sentence and the agent count are
+  // drawn only from a real answer, never from a default.
+  const [agents, setAgents] = useState<any[] | null>(null);
+  const lastKey = useRef("");
+  const fired = useRef(0); // rollups requested
+  const applied = useRef(0); // the newest request whose answer is on screen
+  const mounted = useRef(false);
 
   useEffect(() => {
-    // `runsRev` moves with every processed alarm (and again from the storm's own tick), so the
-    // fetch trails the burst by a moment and a storm costs one rollup per alarm, not several.
-    let cancelled = false;
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    // `runsRev` moves with every processed alarm (and again from the storm's own tick), so a
+    // refresh trails the burst by a moment and a storm costs one rollup per pause, not one per
+    // alarm. A new window or a Retry answers at once.
+    const key = `${windowHours}:${retry}`;
+    const delay = key === lastKey.current ? 600 : 0;
+    lastKey.current = key;
     const t = window.setTimeout(() => {
+      const mine = ++fired.current;
       api
         .productivity(windowHours)
         .then((d) => {
-          if (cancelled) return;
+          // A newer refresh may already be queued; this answer is still newer than the one on
+          // screen, so it is shown rather than dropped (a busy storm never starves the page).
+          if (!mounted.current || mine < applied.current) return;
+          applied.current = mine;
           setP(d);
           setErr("");
         })
-        .catch((e) => !cancelled && setErr(String(e?.message || e)));
-    }, 600);
-    return () => {
-      cancelled = true;
-      window.clearTimeout(t);
-    };
-  }, [windowHours, runsRev]);
+        .catch((e) => {
+          if (mounted.current && mine === fired.current) setErr(String(e?.message || e));
+        });
+    }, delay);
+    return () => window.clearTimeout(t);
+  }, [windowHours, runsRev, retry]);
 
   useEffect(() => {
-    api.agents().then((a) => setAgents(Array.isArray(a) ? a : [])).catch(() => undefined);
+    let cancelled = false;
+    api
+      .agents()
+      .then((a) => {
+        if (!cancelled) setAgents(Array.isArray(a) ? a : []);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  const toilRows = useMemo(
-    () =>
-      (p?.steps?.by_node || []).map((n: any) => ({
-        key: n.node,
-        label: n.label,
-        value: Number(n.minutes_saved || 0),
-        note: n.steps ? `${n.toil_minutes_each} min × ${n.succeeded + n.waiting_hitl}` : "no steps yet",
-        title: `${n.label}: ${n.minutes_saved} min saved (${n.toil_minutes_each} min by hand, ${n.succeeded + n.waiting_hitl} done)`,
-      })),
-    [p]
-  );
-
   const mcp = useMemo(() => {
+    if (!agents) return null;
     let cards = 0;
     const servers = new Set<string>();
     const writeGated = new Set<string>();
@@ -103,114 +133,92 @@ export default function Showcase({
         if ((m?.write_tools || []).length > 0 && m?.hitl_task_type) writeGated.add(m.hitl_task_type);
       }
     }
-    return { cards, servers: servers.size, writeGated: writeGated.size };
+    return { agents: agents.length, cards, servers: servers.size, writeGated: writeGated.size };
   }, [agents]);
 
+  const retryNow = () => {
+    setErr("");
+    setRetry((r) => r + 1);
+  };
+
+  // The figures belong to one window; an answer for the other window is not shown under this one.
+  const fresh = p && Number(p.window_hours) === windowHours ? p : null;
   const autonomy = String(profile?.autonomy_level || p?.autonomy_level || "L2_GUARDED");
-  const hours = p?.toil?.hours_saved;
-  const alarms = p?.alarms;
+  const waitingNow: number | null =
+    typeof metrics?.hitl_pending === "number" ? metrics.hitl_pending : typeof fresh?.hitl?.pending === "number" ? fresh.hitl.pending : null;
 
   return (
     <div className="showcase">
-      <section className="sc-hero">
+      <section className="sc-hero" aria-labelledby="sc-title">
         <div className="sc-hero-text">
-          <h1>One alarm in. Ticket, owner, broadcast, brief and ledger out.</h1>
+          <h1 id="sc-title">One alarm in. Ticket, owner, broadcast, brief and ledger out.</h1>
           <p className="sc-lead">
-            Twelve agents sit on the NOC platform {profile?.display_name ? `${profile.display_name.replace(" (demo profile)", "")} ` : ""}
-            already runs. They do the typing, the matrix lookups and the chasing. People keep every decision that leaves
-            the building.
+            <span>Agents do the typing and chasing.</span> <span>People keep every decision that leaves the building.</span>
           </p>
-          <div className="sc-hero-actions">
-            <button className="btn primary" onClick={() => nav("/")}>
-              Watch it live on Mission control
+          <button type="button" className="btn primary" onClick={() => nav("/")}>
+            Watch it live on Mission control
+          </button>
+        </div>
+
+        <div className="sc-figures">
+          <div className="seg" role="group" aria-label="Numbers window">
+            <button type="button" aria-pressed={windowHours === 24} onClick={() => setWindowHours(24)}>
+              Last 24 h
             </button>
-            <span className="sc-window" role="group" aria-label="Numbers window">
-              <button className="btn sm" onClick={() => setWindowHours(24)} aria-pressed={windowHours === 24}>
-                Last 24 h
+            <button type="button" aria-pressed={windowHours === 0} onClick={() => setWindowHours(0)}>
+              All time
+            </button>
+          </div>
+          {err && !fresh ? (
+            <div className="empty sc-alert" role="alert" title={err}>
+              <span>Couldn't load the numbers.</span>
+              <button type="button" className="btn sm" onClick={retryNow}>
+                Retry
               </button>
-              <button className="btn sm" onClick={() => setWindowHours(0)} aria-pressed={windowHours === 0}>
-                All time
-              </button>
-            </span>
-          </div>
+            </div>
+          ) : (
+            <>
+              {err && fresh && (
+                <div className="empty sc-alert" role="alert" title={err}>
+                  <span>Couldn't refresh; these are from {fmtEAT(fresh.generated_at)}.</span>
+                  <button type="button" className="btn sm" onClick={retryNow}>
+                    Retry
+                  </button>
+                </div>
+              )}
+              <Figures p={fresh} windowHours={windowHours} waitingNow={waitingNow} />
+            </>
+          )}
         </div>
-        <div className="sc-numbers" aria-live="polite">
-          <div className="sc-number">
-            <span className="sc-number-value">{hours == null ? "—" : hours < 1 ? fmtMinutes(p?.toil?.minutes_saved) : `${hours < 10 ? hours.toFixed(1) : Math.round(hours)} h`}</span>
-            <span className="sc-number-label">of floor toil taken over, by the operator's own estimate</span>
-          </div>
-          <div className="sc-number">
-            <span className="sc-number-value">
-              {fmtInt(alarms?.processed)} to {fmtInt(alarms?.incidents_created)}
-            </span>
-            <span className="sc-number-label">
-              alarms into tickets{alarms?.noise_reduction_pct != null ? `; ${alarms.noise_reduction_pct}% absorbed as duplicates or cascades` : ""}
-            </span>
-          </div>
-          <div className="sc-number">
-            <span className="sc-number-value">{fmtInt(p?.hitl?.raised)}</span>
-            <span className="sc-number-label">
-              decisions asked of a person{p?.hitl?.pending ? `, ${p.hitl.pending} waiting now` : ""}; nothing external sent without one
-            </span>
-          </div>
-        </div>
-        {err && <div className="hitl-error">Numbers unavailable: {err}</div>}
       </section>
 
-      <LiveRunPanel events={events} runsRev={runsRev} onOpen={(id) => nav(`/incidents/${id}`)} title="The newest alarm, hop by hop" compact={false} />
+      <div className="sc-hero-rail">
+        <LiveRunPanel events={events} runsRev={runsRev} onOpen={(id) => nav(`/incidents/${id}`)} compact />
+      </div>
 
-      <section className="sc-section">
-        <h2>What changed for the floor</h2>
-        <p className="sc-lead">
-          The twelve steps a NOC analyst does for every service-affecting alarm, and who does them now. Minutes are the
-          operator profile's estimate of the manual work, not a stopwatch.
-        </p>
-        <ol className="sc-steps">
-          {(p?.steps?.by_node || []).map((n: any, idx: number) => {
-            const story = HOP_STORY[n.node] || { does: "", instead: "" };
-            const human = n.node === "HITL";
-            return (
-              <li key={n.node} className={"sc-step" + (human ? " human" : "")}>
-                <span className="sc-step-no">{idx + 1}</span>
-                <div className="sc-step-name">
-                  <strong>{n.label}</strong>
-                  <span className="muted">{agentDisplayName(n.agent)}</span>
-                </div>
-                <div className="sc-step-now">
-                  <span className="sc-k">Now</span>
-                  {story.does}
-                </div>
-                <div className="sc-step-before">
-                  <span className="sc-k">Before</span>
-                  {story.instead}
-                </div>
-                <div className="sc-step-min">
-                  <span>{human ? "stays human" : `${n.toil_minutes_each} min by hand`}</span>
-                  <span className="muted">{n.steps ? `${n.steps} runs, ${fmtMs(n.avg_ms)}${n.failed ? `, ${n.failed} failed` : ""}` : "not run yet"}</span>
-                </div>
-              </li>
-            );
-          })}
-        </ol>
+      <section className="sc-section" aria-labelledby="sc-steps-title">
+        <h2 id="sc-steps-title">What changed for the floor</h2>
+        <p className="sc-lead">The twelve steps of every service-affecting alarm, before and now.</p>
+        <Steps p={p} fresh={fresh} failed={!!err && !p} windowHours={windowHours} />
       </section>
 
-      <section className="sc-section">
-        <h2>How it sits on what you already run</h2>
-        <p className="sc-lead">
-          Nothing is replaced. Alarms still come from the NMS, tickets still live in the ticket system, the ledger is still
-          Excel and the broadcasts still leave through the same mail and SMS gateways. The agents read and write through
-          adapters; today's adapters are mocks, the interfaces are the real ones.
-        </p>
-        <Architecture autonomy={autonomy} agentsCount={agents.length || 12} mcp={mcp} />
+      <section className="sc-section" aria-labelledby="sc-arch-title">
+        <h2 id="sc-arch-title">How it sits on the platform</h2>
+        <p className="sc-lead">Nothing is replaced: agents work through adapters to what you already run.</p>
+        <Architecture mcp={mcp} />
       </section>
 
       <section className="sc-section sc-two">
         <div>
           <h2>People keep the decisions</h2>
-          <p className="sc-lead">The autonomy level is one setting. This deployment runs at {humanAutonomy(autonomy)}.</p>
+          <p className="sc-lead">This deployment runs at {humanAutonomy(autonomy)}; the level is one setting.</p>
           <ol className="sc-ladder">
             {LADDER.map((l) => (
-              <li key={l.level} className={"sc-rung" + (l.level === autonomy ? " current" : "")} aria-current={l.level === autonomy ? "true" : undefined}>
+              <li
+                key={l.level}
+                className={"sc-rung" + (l.level === autonomy ? " current" : "")}
+                aria-current={l.level === autonomy ? "true" : undefined}
+              >
                 <strong>{l.label}</strong>
                 <span>{l.text}</span>
               </li>
@@ -224,194 +232,253 @@ export default function Showcase({
             <li>Overriding a priority or disputing an assignment.</li>
             <li>Sending the shift handover.</li>
             <li>Any change to a live network element. There is no such tool to call.</li>
-            <li>Approving an agent's write into another system: {mcp.writeGated || "every"} gated write type{mcp.writeGated === 1 ? "" : "s"}, each behind a named approval.</li>
+            <li>
+              {mcp && mcp.writeGated > 0
+                ? `Any write into another system: ${plural(mcp.writeGated, "write type")}, each behind a named approval.`
+                : "Any write into another system; each one waits for a named approval."}
+            </li>
           </ul>
-          <p className="muted">
-            {fmtInt(metrics?.hitl_pending ?? p?.hitl?.pending)} approval{(metrics?.hitl_pending ?? p?.hitl?.pending) === 1 ? "" : "s"} waiting in the inbox right now
-            {p?.hitl?.median_decision_minutes != null ? `; a decision takes ${p.hitl.median_decision_minutes} min on median` : ""}.
-          </p>
         </div>
       </section>
 
-      <section className="sc-section">
-        <h2>Where the minutes go</h2>
-        <p className="sc-lead">
-          {fmtInt(p?.steps?.total)} agent steps {windowHours ? "in the last 24 hours" : "on record"}, {fmtInt(p?.ticket_fields?.auto_filled)} ticket
-          fields filled ({p?.ticket_fields?.per_incident ?? "—"} per ticket), {fmtInt(p?.broadcasts?.drafted)} broadcasts drafted,{" "}
-          {fmtInt(p?.records?.exec_briefs)} executive briefs and {fmtInt(p?.records?.ledger_rows)} ledger rows written. A full run takes{" "}
-          {fmtMs(p?.pipeline_ms?.median)} on median.
-        </p>
-        <ToilBars rows={toilRows} unit="minutes" caption="Minutes of manual work taken over, by step" />
-        <p className="muted sc-footnote">
-          {p?.toil?.assumptions?.note} Edit <code>productivity.toil_minutes</code> in the operator profile to use your floor's
-          own numbers; the page recalculates. Decided approvals are charged back at {p?.toil?.assumptions?.human_minutes?.hitl_decision ?? 2} min
-          each: {fmtMinutes(p?.toil?.human_minutes_spent)} so far, net {fmtMinutes(p?.toil?.net_minutes_saved)} saved.
-        </p>
-      </section>
-
-      <section className="sc-section">
-        <h2>Each agent, by the numbers</h2>
-        <div className="panel table-scroll">
-          <table className="sc-table">
-            <thead>
-              <tr>
-                <th scope="col">Agent</th>
-                <th scope="col">Does</th>
-                <th scope="col">Hops</th>
-                <th scope="col" style={{ textAlign: "right" }}>
-                  Steps
-                </th>
-                <th scope="col" style={{ textAlign: "right" }}>
-                  Failed
-                </th>
-                <th scope="col" style={{ textAlign: "right" }}>
-                  Avg
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {(p?.agents || []).map((a: any) => (
-                <tr key={a.name}>
-                  <td>
-                    <strong>{agentDisplayName(a.name)}</strong>
-                  </td>
-                  <td className="muted">{a.mission}</td>
-                  <td className="muted">{a.nodes?.length ? a.nodes.join(", ") : "on request"}</td>
-                  <td style={{ textAlign: "right", fontFamily: "var(--mono)" }}>{fmtInt(a.steps)}</td>
-                  <td style={{ textAlign: "right", fontFamily: "var(--mono)", color: a.failed ? "#ffb4c0" : undefined }}>{fmtInt(a.failed)}</td>
-                  <td style={{ textAlign: "right", fontFamily: "var(--mono)" }}>{fmtMs(a.avg_ms)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      <section className="sc-section sc-two">
-        <div>
-          <h2>Adding the next agent</h2>
-          <ol className="sc-plain">
-            <li>Write one module that exposes <code>run(state, ctx)</code> and <code>input_summary(state, ctx)</code>.</li>
-            <li>Add one card to the registry: its node, its agent profile, whether a failure stops the run.</li>
-            <li>Write the tests from the acceptance rows. The rail, the audit trail and this page pick it up unchanged.</li>
-          </ol>
-          <p className="muted">
-            {mcp.cards} external tool connections are already declared across {mcp.servers} systems (monitoring, CMDB,
-            ticketing, on-call, chat, documents), each read-only or behind a named approval; none is switched on in this
-            demo.
-          </p>
-        </div>
-        <div>
-          <h2>Try it yourself</h2>
-          <p className="sc-lead">Everything on this page is read from the running system. The storm is repeatable.</p>
-          <div className="sc-hero-actions">
-            <button className="btn primary" onClick={() => nav("/")}>
-              Mission control
-            </button>
-            <button className="btn" onClick={() => nav("/hitl")}>
-              Approvals
-            </button>
-            <button className="btn" onClick={() => nav("/agents")}>
-              Agent observatory
-            </button>
-          </div>
-          <div style={{ marginTop: "1rem" }}>
-            <AgentRail steps={null} nodes={(p?.steps?.by_node || []).map((n: any) => ({ id: n.node, label: n.label, agent: n.agent, status: "succeeded" }))} compact caption="The twelve hops" />
-          </div>
-        </div>
-      </section>
+      <div className="sc-try">
+        <p>Try it yourself: launch the storm on Mission control, then approve or reject the held broadcasts.</p>
+        <button type="button" className="btn" onClick={() => nav("/hitl")}>
+          Open Approvals
+        </button>
+      </div>
     </div>
   );
 }
 
-/** The platform diagram: existing systems on the left, agents in the middle, people on the right. */
-function Architecture({ autonomy, agentsCount, mcp }: { autonomy: string; agentsCount: number; mcp: { cards: number; servers: number } }) {
-  const left = ["NMS and EMS alarm feeds", "Ticketing system", "Site catalogue and CMDB", "Mail and SMS gateways", "Excel shift ledger"];
-  const right = ["Approvals: claim, read, approve", "Wallboard and Mission control", "Executive brief readers", "RNIO, FE and MSP recipients"];
+/** The three figures, in the sans, each a value and one line that says what it counts. */
+function Figures({ p, windowHours, waitingNow }: { p: any | null; windowHours: Window; waitingNow: number | null }) {
+  if (!p) {
+    return (
+      <ul className="sc-fig-list" aria-busy="true" aria-label="Loading the numbers">
+        {[0, 1, 2].map((i) => (
+          <li key={i} className="sc-fig">
+            <span className="skeleton sc-skel-value" />
+            <span className="skeleton sc-skel-label" />
+          </li>
+        ))}
+      </ul>
+    );
+  }
+
+  const toil = p.toil || {};
+  const alarms = p.alarms || {};
+  const hitl = p.hitl || {};
+  const processed = Number(alarms.processed || 0);
+  const created = Number(alarms.incidents_created || 0);
+  const pct = alarms.noise_reduction_pct;
+  const made = Number(hitl.approved || 0) + Number(hitl.rejected || 0);
+  const span = windowHours ? "in the last 24 hours" : "on record";
+
+  const minutesTitle =
+    `${fmtMinutes(toil.minutes_saved)} of steps taken over, less ${fmtMinutes(toil.human_minutes_spent)} people spent deciding. ` +
+    "Minutes are the operator profile's estimate of the work by hand, not a stopwatch.";
+
+  let decisionsLabel: string;
+  if (made > 0) {
+    decisionsLabel = "made by a person" + (waitingNow == null ? "" : waitingNow > 0 ? `; ${fmtInt(waitingNow)} waiting now` : "; none waiting now");
+  } else {
+    decisionsLabel = waitingNow && waitingNow > 0 ? `${fmtInt(waitingNow)} ${WAITING_WORD}` : "nothing leaves the building without one";
+  }
+
   return (
-    <figure className="sc-arch">
-      <svg viewBox="0 0 980 360" role="img" aria-labelledby="arch-title arch-desc">
-        <title id="arch-title">How the agents sit on the existing platform</title>
-        <desc id="arch-desc">
-          Existing systems on the left connect through adapters to a layer of {agentsCount} agents under one supervisor, which
-          hands decisions to people on the right.
+    <ul className="sc-fig-list" aria-live="polite">
+      <li className="sc-fig" title={minutesTitle}>
+        <span className="sc-fig-value">{fmtMinutes(toil.net_minutes_saved)}</span>{" "}
+        <span className="sc-fig-label">saved, after the time people spent deciding</span>
+      </li>
+      <li className="sc-fig">
+        {processed > 0 ? (
+          <>
+            <span className="sc-fig-value">{plural(created, "ticket")}</span>{" "}
+            <span className="sc-fig-label">
+              from {plural(processed, "alarm")}
+              {pct != null && Number(alarms.absorbed) > 0 ? `; ${pct}% folded into an open ticket` : ""}
+            </span>
+          </>
+        ) : (
+          <>
+            <span className="sc-fig-value">No alarms yet</span>{" "}
+            <span className="sc-fig-label">{windowHours ? span : "launch the storm on Mission control"}</span>
+          </>
+        )}
+      </li>
+      <li className="sc-fig" title={hitl.median_decision_minutes != null ? `A decision takes ${hitl.median_decision_minutes} min on median.` : undefined}>
+        <span className="sc-fig-value">{made > 0 ? plural(made, "decision") : "No decisions yet"}</span>{" "}
+        <span className="sc-fig-label">{decisionsLabel}</span>
+      </li>
+    </ul>
+  );
+}
+
+/** The twelve steps, before and now, with the minutes by hand as a column and a total. */
+function Steps({ p, fresh, failed, windowHours }: { p: any | null; fresh: any | null; failed: boolean; windowHours: Window }) {
+  // The live node list wins; until it answers, the registry order keeps the copy on screen and
+  // only the minutes wait.
+  const byNode: any[] = Array.isArray(p?.steps?.by_node) && p.steps.by_node.length ? p.steps.by_node : [];
+  const live = new Map<string, any>(byNode.map((n) => [String(n.node), n]));
+  const ids: string[] = byNode.length ? byNode.map((n) => String(n.node)) : LIFECYCLE_NODES.map((n) => n.id);
+  const totalByHand = byNode.reduce((sum, n) => sum + Number(n.toil_minutes_each || 0), 0);
+  const median = fresh?.pipeline_ms?.median;
+  const span = windowHours ? "in the last 24 hours" : "on record";
+
+  const minutes = (content: string) => (p ? content : failed ? "—" : <span className="skeleton sc-skel-min" aria-hidden="true" />);
+
+  return (
+    <table className="sc-steps">
+      <thead>
+        <tr>
+          <th scope="col">Step</th>
+          <th scope="col">Before</th>
+          <th scope="col">Now</th>
+          <th scope="col" className="sc-num">
+            By hand
+          </th>
+        </tr>
+      </thead>
+      <tbody>
+        {ids.map((id, i) => {
+          const n = live.get(id);
+          const human = id === "HITL";
+          const each = Number(n?.toil_minutes_each || 0);
+          const fn = fresh ? (fresh.steps?.by_node || []).find((x: any) => x.node === id) : null;
+          const done = fn ? Number(fn.succeeded || 0) + Number(fn.waiting_hitl || 0) : null;
+          return (
+            <tr key={id} className={human ? "human" : undefined}>
+              <th scope="row">
+                <span className="sc-step-no">{i + 1}</span>
+                {nodeLabel(id)}
+              </th>
+              <td className="sc-before" data-label="Before">
+                {BEFORE[id] || ""}
+              </td>
+              <td data-label="Now">{nodeDoes(id)}</td>
+              <td
+                className="sc-num"
+                title={done != null && !human ? `${fmtInt(done)} × ${fmtMinutes(each)} = ${fmtMinutes(fn.minutes_saved)} taken over ${span}` : undefined}
+              >
+                {minutes(human ? "stays human" : fmtMinutes(each))}
+              </td>
+            </tr>
+          );
+        })}
+      </tbody>
+      <tfoot>
+        <tr>
+          <th scope="row">Per alarm</th>
+          <td colSpan={2} className="sc-total-note">
+            Minutes by hand are the operator profile's estimate, not a stopwatch.
+            {median != null ? ` The agents take ${fmtMs(median)} on median.` : ""}
+          </td>
+          <td className="sc-num">{minutes(fmtMinutes(totalByHand))}</td>
+        </tr>
+      </tfoot>
+    </table>
+  );
+}
+
+/** The platform diagram: existing systems on the left, adapters, the agents, people on the right.
+ *  Labels are horizontal and sized to their boxes; under 880 px the figure scrolls sideways. */
+function Architecture({ mcp }: { mcp: { agents: number; cards: number; servers: number } | null }) {
+  const left = ["NMS and EMS alarm feeds", "Ticketing system", "Site catalogue and CMDB", "Mail and SMS gateways", "Excel shift ledger"];
+  const right = ["Approvals: read and decide", "Wallboard and Mission control", "Exec brief readers", "RNIO, FE and MSP recipients"];
+  const rightY = [34, 103, 173, 242];
+  return (
+    <figure className="sc-arch" tabIndex={0} aria-label="Platform diagram">
+      <svg viewBox="0 0 980 292" role="img" aria-labelledby="sc-arch-svg-title sc-arch-svg-desc">
+        <title id="sc-arch-svg-title">How the agents sit on the existing platform</title>
+        <desc id="sc-arch-svg-desc">
+          Existing systems on the left connect through adapters, mock today and real later, to the agents under one supervisor
+          and an autonomy gate, which hand decisions and messages to people on the right.
         </desc>
         <defs>
-          <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-            <path d="M0 0 L10 5 L0 10 z" fill="var(--muted-dim)" />
+          <marker id="sc-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0 0 L10 5 L0 10 z" className="sc-arch-head" />
           </marker>
         </defs>
-        {/* left column */}
-        <text x="20" y="28" className="sc-arch-h">
-          What you already run
+
+        <text x="1" y="18" className="sc-arch-h">
+          Existing systems
         </text>
-        {left.map((t, i) => (
-          <g key={t} transform={`translate(20, ${48 + i * 58})`}>
-            <rect width="250" height="42" rx="9" className="sc-arch-box" />
-            <text x="14" y="26" className="sc-arch-t">
-              {t}
+        {left.map((t, i) => {
+          const y = 34 + i * 52;
+          return (
+            <g key={t}>
+              <rect x="1" y={y} width="219" height="40" rx="8" className="sc-arch-box" />
+              <text x="15" y={y + 25} className="sc-arch-t">
+                {t}
+              </text>
+              <line x1="221" y1={y + 20} x2="261" y2={y + 20} className="sc-arch-line" markerStart="url(#sc-arr)" markerEnd="url(#sc-arr)" />
+            </g>
+          );
+        })}
+
+        <rect x="262" y="34" width="90" height="248" rx="10" className="sc-arch-adapt" />
+        <text x="307" y="142" textAnchor="middle" className="sc-arch-t strong">
+          Adapters
+        </text>
+        <text x="307" y="162" textAnchor="middle" className="sc-arch-s">
+          mock today,
+        </text>
+        <text x="307" y="178" textAnchor="middle" className="sc-arch-s">
+          real later
+        </text>
+        <line x1="353" y1="158" x2="391" y2="158" className="sc-arch-line" markerStart="url(#sc-arr)" markerEnd="url(#sc-arr)" />
+
+        <rect x="392" y="34" width="310" height="248" rx="12" className="sc-arch-agents" />
+        <text x="547" y="66" textAnchor="middle" className="sc-arch-h">
+          {mcp && mcp.agents > 0 ? `${mcp.agents} agents, one supervisor` : "Agents under one supervisor"}
+        </text>
+        <rect x="420" y="86" width="254" height="38" rx="8" className="sc-arch-gate" />
+        <text x="547" y="110" textAnchor="middle" className="sc-arch-t">
+          Autonomy gate
+        </text>
+        <text x="547" y="156" textAnchor="middle" className="sc-arch-s">
+          Every step logs its reason, tools
+        </text>
+        <text x="547" y="173" textAnchor="middle" className="sc-arch-s">
+          and timing in the audit trail
+        </text>
+        {mcp &&
+          (mcp.cards > 0 ? (
+            <>
+              <text x="547" y="207" textAnchor="middle" className="sc-arch-s">
+                {`${fmtInt(mcp.cards)} tool connections to ${fmtInt(mcp.servers)} systems,`}
+              </text>
+              <text x="547" y="224" textAnchor="middle" className="sc-arch-s">
+                read-only or behind an approval;
+              </text>
+              <text x="547" y="241" textAnchor="middle" className="sc-arch-s">
+                none switched on in this demo
+              </text>
+            </>
+          ) : (
+            <text x="547" y="215" textAnchor="middle" className="sc-arch-s">
+              No external tool connections declared
             </text>
-            <line x1="250" y1="21" x2="318" y2="21" className="sc-arch-line" markerEnd="url(#arr)" markerStart="url(#arr)" />
-          </g>
-        ))}
-        {/* adapters */}
-        <g transform="translate(320, 48)">
-          <rect width="96" height="274" rx="10" className="sc-arch-adapt" />
-          <text x="48" y="140" className="sc-arch-t" textAnchor="middle" transform="rotate(-90 48 140)">
-            adapters: mock today, real later
-          </text>
-        </g>
-        {/* agents */}
-        <g transform="translate(440, 48)">
-          <rect width="280" height="274" rx="12" className="sc-arch-agents" />
-          <text x="140" y="34" className="sc-arch-h" textAnchor="middle">
-            {agentsCount} agents, one supervisor
-          </text>
-          <text x="140" y="60" className="sc-arch-s" textAnchor="middle">
-            ingest, correlate, enrich, severity, ticket,
-          </text>
-          <text x="140" y="78" className="sc-arch-s" textAnchor="middle">
-            assign, broadcast, brief, ledger, recurrence,
-          </text>
-          <text x="140" y="96" className="sc-arch-s" textAnchor="middle">
-            monitor, handover
-          </text>
-          <rect x="24" y="118" width="232" height="40" rx="8" className="sc-arch-gate" />
-          <text x="140" y="143" className="sc-arch-t" textAnchor="middle">
-            autonomy {humanAutonomy(autonomy)}
-          </text>
-          <text x="140" y="188" className="sc-arch-s" textAnchor="middle">
-            every step records its reason, its tools
-          </text>
-          <text x="140" y="206" className="sc-arch-s" textAnchor="middle">
-            and its timing in the audit trail
-          </text>
-          <text x="140" y="240" className="sc-arch-s" textAnchor="middle">
-            {mcp.cards} tool connections declared across {mcp.servers} systems,
-          </text>
-          <text x="140" y="258" className="sc-arch-s" textAnchor="middle">
-            read-only or behind a named approval
-          </text>
-        </g>
-        <line x1="416" y1="185" x2="438" y2="185" className="sc-arch-line" markerEnd="url(#arr)" markerStart="url(#arr)" />
-        {/* right column */}
-        <text x="760" y="28" className="sc-arch-h">
+          ))}
+
+        <text x="742" y="18" className="sc-arch-h">
           People
         </text>
-        {right.map((t, i) => (
-          <g key={t} transform={`translate(760, ${48 + i * 70})`}>
-            <line x1="-40" y1="21" x2="-2" y2="21" className="sc-arch-line" markerEnd="url(#arr)" />
-            <rect width="200" height="42" rx="9" className={"sc-arch-box" + (i === 0 ? " human" : "")} />
-            <text x="12" y="26" className="sc-arch-t">
-              {t}
-            </text>
-          </g>
-        ))}
+        {right.map((t, i) => {
+          const y = rightY[i];
+          return (
+            <g key={t}>
+              <line x1="703" y1={y + 20} x2="741" y2={y + 20} className="sc-arch-line" markerEnd="url(#sc-arr)" />
+              <rect x="742" y={y} width="237" height="40" rx="8" className={"sc-arch-box" + (i === 0 ? " human" : "")} />
+              <text x="756" y={y + 25} className="sc-arch-t">
+                {t}
+              </text>
+            </g>
+          );
+        })}
       </svg>
-      <figcaption className="muted">
-        Arrows are reads and writes through adapter interfaces. A write into another system is never made by a model; the
-        orchestrator makes it after a person approves the matching card.
-      </figcaption>
     </figure>
   );
 }

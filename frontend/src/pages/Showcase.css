@@ -1,93 +1,183 @@
-/* Showcase, the manager page. Owned by pages/Showcase.tsx; loaded after styles.css. */
+/* Showcase, the manager page. Owned by pages/Showcase.tsx. It is injected BEFORE styles.css
+   (main.tsx imports App first), so a rule here that overrides a global one is scoped under a
+   Showcase class to win on specificity, never on source order.
 
-/* Showcase */
+   One authored page, about three screens at 1280 x 650. The loud part is the hero: a balanced
+   headline, three live figures and the newest alarm on the rail. Everything under it is set
+   quietly on hairlines: one table, one diagram, two short lists, one closing row. */
+
 .showcase { max-width: 1120px; }
-.sc-hero { display: grid; grid-template-columns: 1.3fr 1fr; gap: 1.5rem; align-items: start; margin-bottom: 1rem; }
-.sc-hero h1 {
-  font-size: clamp(1.6rem, 2.6vw, 2.35rem);
-  line-height: 1.12;
-  letter-spacing: -0.03em;
-  margin: 0 0 0.75rem;
-  color: var(--text-bright);
-  max-width: 22ch;
-}
-.sc-lead { color: var(--muted); font-size: 0.98rem; max-width: 64ch; line-height: 1.55; margin: 0 0 0.9rem; }
-.sc-hero-actions { display: flex; flex-wrap: wrap; gap: 0.55rem; align-items: center; }
-.sc-window { display: inline-flex; gap: 0.35rem; margin-left: 0.25rem; }
-.sc-numbers { display: grid; gap: 0; border-top: 1px solid var(--line); }
-.sc-number { padding: var(--s3) 0; border-bottom: 1px solid var(--line); }
-.sc-number-value {
-  display: block;
-  font-family: var(--mono);
-  font-size: 1.9rem;
-  font-weight: 500;
-  color: var(--text-bright);
-  letter-spacing: -0.02em;
-  font-variant-numeric: tabular-nums;
-  line-height: 1.1;
-}
-.sc-number-label { display: block; color: var(--muted); font-size: 0.82rem; margin-top: 0.3rem; line-height: 1.4; }
-.sc-section { margin-top: var(--s7); padding-top: var(--s5); border-top: 1px solid var(--line); }
-.sc-section h2 { margin: 0 0 var(--s2); font-size: 1.25rem; font-weight: 600; letter-spacing: -0.02em; color: var(--text-bright); }
-.sc-two { display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; }
-.sc-steps { list-style: none; margin: var(--s3) 0 0; padding: 0; border-top: 1px solid var(--line); }
-.sc-step {
+
+/* ---------------------------------------------------------------- hero */
+.sc-hero {
   display: grid;
-  grid-template-columns: 2rem 11rem 1fr 1fr 9rem;
-  gap: var(--s2) var(--s4);
+  grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
+  gap: var(--s5) var(--s6);
   align-items: start;
+}
+.sc-hero h1 {
+  margin: 0 0 var(--s3);
+  max-width: 600px;
+  font-size: var(--fs-display);
+  font-weight: 600;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+  color: var(--text-bright);
+  text-wrap: balance;
+}
+.sc-lead {
+  margin: 0 0 var(--s3);
+  max-width: 70ch;
+  color: var(--muted);
+  font-size: var(--fs-md);
+  line-height: 1.5;
+  text-wrap: pretty;
+}
+/* Two sentences, two lines: each sentence balances on its own, so neither ends on one word. */
+.sc-hero .sc-lead { margin-bottom: var(--s5); font-size: var(--fs-base); }
+.sc-hero .sc-lead > span { display: block; text-wrap: balance; }
+
+/* The figures: the window control sits directly above the numbers it changes. */
+.sc-figures { min-width: 0; }
+.sc-figures > .seg { margin-bottom: var(--s3); }
+.sc-fig-list { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line); }
+.sc-fig { padding: var(--s2) 0 var(--s3); border-bottom: 1px solid var(--line); }
+.sc-fig-value {
+  display: block;
+  font-size: var(--fs-display);
+  font-weight: 500;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+  color: var(--text-bright);
+  font-variant-numeric: tabular-nums;
+}
+.sc-fig-label { display: block; margin-top: 2px; color: var(--muted); font-size: var(--fs-sm); line-height: 1.45; text-wrap: pretty; }
+.sc-fig .skeleton.sc-skel-value { height: 28px; width: 7rem; margin: 5px 0 7px; }
+.sc-fig .skeleton.sc-skel-label { width: 16rem; max-width: 100%; margin: 5px 0 2px; }
+.sc-figures .empty.sc-alert {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s2) var(--s3);
+  margin-bottom: var(--s3);
   padding: var(--s3) 0;
-  border-bottom: 1px solid var(--line);
-}
-.sc-step-no { font-family: var(--mono); color: var(--muted-dim); font-size: 0.78rem; padding-top: 2px; }
-.sc-step-name { display: flex; flex-direction: column; gap: 1px; }
-.sc-step-name strong { color: var(--text-bright); }
-.sc-step-name .muted { font-size: 0.78rem; }
-.sc-step-now, .sc-step-before { font-size: 0.86rem; line-height: 1.45; }
-.sc-step-before { color: var(--muted); }
-.sc-k { display: block; font-weight: 600; color: var(--muted-dim); font-size: var(--fs-xs); margin-bottom: 1px; }
-.sc-step-min { font-family: var(--mono); font-size: 0.78rem; color: var(--accent); display: flex; flex-direction: column; gap: 2px; }
-.sc-step.human .sc-step-min { color: var(--hitl); }
-.sc-step-min .muted { font-family: var(--mono); font-size: 0.7rem; }
-@media (max-width: 900px) {
-  .sc-step { grid-template-columns: 2rem 1fr; }
-  .sc-step-now, .sc-step-before, .sc-step-min { grid-column: 2; }
-}
-.sc-ladder { list-style: none; margin: 0.5rem 0 0; padding: 0; display: grid; gap: 0.5rem; }
-.sc-rung { display: grid; gap: 0.15rem; padding: var(--s2) var(--s3); border-radius: var(--r-md); border: 1px solid transparent; opacity: 0.7; }
-.sc-rung.current { opacity: 1; border-color: rgba(70, 198, 242, 0.45); background: var(--accent-soft); }
-.sc-rung strong { color: var(--text-bright); }
-.sc-rung span { font-size: 0.86rem; color: var(--muted); }
-.sc-never, .sc-plain { margin: 0.5rem 0 0; padding-left: 1.2rem; }
-.sc-never li, .sc-plain li { margin-bottom: 0.45rem; font-size: 0.92rem; line-height: 1.45; }
-.sc-footnote { font-size: 0.8rem; margin-top: 0.75rem; max-width: 80ch; line-height: 1.5; }
-.sc-table th, .sc-table td { font-size: 0.86rem; }
-.sc-arch { margin: 0.5rem 0 0; }
-.sc-arch svg { width: 100%; height: auto; display: block; }
-.sc-arch-box { fill: rgba(8, 16, 30, 0.95); stroke: var(--border-bright); }
-.sc-arch-box.human { stroke: var(--hitl); }
-.sc-arch-adapt { fill: rgba(62, 203, 255, 0.06); stroke: var(--border); stroke-dasharray: 4 4; }
-.sc-arch-agents { fill: rgba(62, 203, 255, 0.08); stroke: var(--accent); }
-.sc-arch-gate { fill: rgba(196, 161, 255, 0.12); stroke: var(--hitl); }
-.sc-arch-line { stroke: var(--muted-dim); stroke-width: 1.5; }
-.sc-arch-h { fill: var(--text-bright); font-size: 15px; font-weight: 700; font-family: var(--font); }
-.sc-arch-t { fill: var(--text); font-size: 13px; font-family: var(--font); }
-.sc-arch-s { fill: var(--muted); font-size: 12px; font-family: var(--font); }
-.sc-arch figcaption { font-size: 0.8rem; margin-top: 0.5rem; }
-@media (max-width: 900px) {
-  .sc-hero, .sc-two { grid-template-columns: 1fr; }
-  .sc-hero h1 { max-width: none; }
+  text-align: left;
 }
 
-/* Toil bars */
-.toil { margin: 0.75rem 0 0; }
-.toil-cap { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; font-size: 0.84rem; color: var(--muted); margin-bottom: 0.5rem; }
-.toil-toggle { padding: 0.3rem 0.6rem; font-size: 0.76rem; }
-.toil-bars { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.4rem; }
-.toil-row { display: grid; grid-template-columns: 9rem 1fr 10rem; gap: 0.6rem; align-items: center; font-size: 0.84rem; }
-.toil-label { color: var(--text); }
-.toil-track { height: 10px; border-radius: 4px; background: rgba(8, 16, 30, 0.9); border: 1px solid var(--border); overflow: hidden; display: block; }
-.toil-fill { display: block; height: 100%; border-radius: 0 4px 4px 0; background: var(--accent); opacity: 0.85; transition: width 0.4s ease; }
-.toil-value { font-family: var(--mono); font-size: 0.8rem; color: var(--text); white-space: nowrap; }
-.toil-table td, .toil-table th { font-size: 0.84rem; }
-@media (max-width: 600px) { .toil-row { grid-template-columns: 6.5rem 1fr 6rem; } }
+/* The hero rail: compact tiles, no agent subtitle, no confidence figure (it lives in the
+   hop detail). `compact` already hides both; the rule keeps it so if the rail changes. */
+.sc-hero-rail { margin-top: var(--s5); }
+.sc-hero-rail .rail-agent,
+.sc-hero-rail .rail-conf { display: none; }
+
+/* ---------------------------------------------------------------- sections */
+.sc-section { margin-top: var(--s6); padding-top: var(--s4); border-top: 1px solid var(--line); }
+.sc-section h2 {
+  margin: 0 0 var(--s1);
+  font-size: var(--fs-lg);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--text-bright);
+}
+.sc-two { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s5) var(--s6); }
+
+/* The twelve steps: one header row, Before muted, Now in the text colour, minutes by hand as
+   plain text on the right, a total underneath. */
+.sc-steps { margin-top: var(--s2); }
+.sc-steps th,
+.sc-steps td { padding: 6px var(--s4) 6px 0; line-height: 1.45; }
+.sc-steps thead th { padding-top: 0; padding-bottom: 6px; border-bottom-color: var(--line-strong); }
+.sc-steps tbody th,
+.sc-steps tfoot th { white-space: nowrap; color: var(--text-bright); font-size: var(--fs-sm); font-weight: 600; }
+.sc-step-no { display: inline-block; min-width: 1.75em; color: var(--muted-dim); font-weight: 400; font-variant-numeric: tabular-nums; }
+.sc-steps td { font-size: var(--fs-sm); color: var(--text); text-wrap: pretty; }
+.sc-steps td.sc-before { color: var(--muted); }
+.sc-steps .sc-num { padding-right: 0; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.sc-steps tr.human .sc-num { color: var(--hitl); }
+.sc-steps tfoot th,
+.sc-steps tfoot td { border-top: 1px solid var(--line-strong); border-bottom: 0; padding-top: var(--s2); }
+.sc-steps tfoot td.sc-num { color: var(--text-bright); font-weight: 600; }
+.sc-steps td.sc-total-note { color: var(--muted); }
+.sc-steps .skeleton.sc-skel-min { display: inline-block; width: 3rem; vertical-align: middle; }
+
+/* The platform diagram. Under 880 px of room it scrolls sideways inside its figure. */
+.sc-arch { margin: var(--s3) 0 0; overflow-x: auto; }
+.sc-arch svg { display: block; width: 100%; min-width: 880px; height: auto; }
+.sc-arch-box { fill: var(--surface-2); stroke: var(--line-strong); }
+.sc-arch-box.human { stroke: var(--hitl); }
+.sc-arch-adapt { fill: var(--accent-soft); stroke: var(--line); stroke-dasharray: 4 4; }
+.sc-arch-agents { fill: var(--accent-soft); stroke: var(--accent); }
+.sc-arch-gate { fill: var(--hitl-soft); stroke: var(--hitl); }
+.sc-arch-line { stroke: var(--muted-dim); stroke-width: 1.5; }
+.sc-arch-head { fill: var(--muted-dim); }
+.sc-arch-h { fill: var(--text-bright); font-family: var(--font); font-size: var(--fs-base); font-weight: 600; }
+.sc-arch-t { fill: var(--text); font-family: var(--font); font-size: var(--fs-sm); }
+.sc-arch-t.strong { font-weight: 600; }
+.sc-arch-s { fill: var(--muted); font-family: var(--font); font-size: var(--fs-xs); }
+
+/* The ladder: the rung in force is lit, the others are muted text (not faded). */
+.sc-ladder { list-style: none; margin: var(--s2) 0 0; padding: 0; display: grid; gap: var(--s1); }
+.sc-rung { display: grid; gap: 2px; padding: var(--s2) var(--s3); border: 1px solid transparent; border-radius: var(--r-md); }
+.sc-rung strong { color: var(--muted); font-size: var(--fs-sm); }
+.sc-rung span { color: var(--muted); font-size: var(--fs-sm); line-height: 1.45; }
+.sc-rung.current { border-color: color-mix(in srgb, var(--accent) 45%, transparent); background: var(--accent-soft); }
+.sc-rung.current strong { color: var(--text-bright); }
+.sc-rung.current span { color: var(--text); }
+
+.sc-never { margin: var(--s2) 0 0; padding-left: 1.2rem; display: grid; gap: var(--s2); }
+.sc-never li { font-size: var(--fs-md); line-height: 1.45; }
+
+/* One closing row: one sentence, one button. */
+.sc-try {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s3) var(--s5);
+  margin-top: var(--s6);
+  padding-top: var(--s4);
+  border-top: 1px solid var(--line);
+}
+.sc-try p { margin: 0; color: var(--text); font-size: var(--fs-md); line-height: 1.5; }
+
+/* ---------------------------------------------------------------- narrow */
+@media (max-width: 900px) {
+  .sc-hero,
+  .sc-two { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* Phones: each step is two short lines (name and minutes, then Before and Now), never a table
+   that scrolls sideways. */
+@media (max-width: 700px) {
+  .sc-steps,
+  .sc-steps tbody,
+  .sc-steps tfoot { display: block; }
+  .sc-steps thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+  .sc-steps tr {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 2px var(--s3);
+    padding: var(--s2) 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .sc-steps th,
+  .sc-steps td { display: block; padding: 0; border: 0; }
+  .sc-steps td { grid-column: 1 / -1; }
+  .sc-steps td.sc-num { grid-column: 2; grid-row: 1; }
+  .sc-steps td[data-label]::before {
+    content: attr(data-label);
+    margin-right: var(--s2);
+    color: var(--muted-dim);
+    font-weight: 600;
+  }
+  .sc-steps tfoot tr { border-bottom: 0; border-top: 1px solid var(--line-strong); }
+  .sc-steps tfoot th,
+  .sc-steps tfoot td { border: 0; padding: 0; }
+}
