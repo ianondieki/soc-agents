@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import AgentRail from "./AgentRail";
-import { fmtMs, isLifecycleNode, runChipClass, runStatusWord, sumDurations, type RailStep } from "../lib/agents";
+import { fmtMs, isLifecycleNode, runOutcome, runStatusWord, sumDurations, type RailStep } from "../lib/agents";
+import { IconAlert, IconPause } from "../lib/icons";
 import { fmtTime } from "../lib/time";
 import type { NocEvent } from "../realtime/renderers";
 
@@ -67,6 +68,22 @@ function fromEvents(events: NocEvent[]): EventRun | null {
   return { runId, incidentId, incidentNumber, steps: order.map((n) => steps[n]), finished, status };
 }
 
+/**
+ * A run's status as text: muted words when routine ("succeeded"), the drawn icon and the state
+ * colour when it is worth a look (waiting for a decision, failed). Never a chip.
+ */
+export function RunState({ status, routine = true }: { status: unknown; routine?: boolean }) {
+  const out = runOutcome(status);
+  if (!out) return routine ? <span>{runStatusWord(status)}</span> : null;
+  return (
+    <span className={"state" + (out.tone ? ` ${out.tone}` : "")}>
+      {out.tone === "hitl" && <IconPause />}
+      {out.tone === "danger" && <IconAlert />}
+      {out.word}
+    </span>
+  );
+}
+
 export default function LiveRunPanel({
   events,
   runsRev,
@@ -126,25 +143,22 @@ export default function LiveRunPanel({
   return (
     <div className="panel live-run">
       <div className="panel-head">
-        <h3>
-          <span className={live ? "live-dot" : "live-dot off"} />
-          {title}
-        </h3>
-        <div className="chips">
-          {incidentNumber && <span className="chip accent">{incidentNumber}</span>}
-          {status && <span className={runChipClass(status)}>{runStatusWord(status)}</span>}
-          {steps.length > 0 && (
-            <span className="muted">
-              {steps.length} of 12 hops, {fmtMs(elapsed)}
-              {!useLive && stored?.started_at ? `, ${fmtTime(stored.started_at)} EAT` : ""}
-            </span>
-          )}
-          {incidentId && onOpen && (
-            <button className="btn" onClick={() => onOpen(incidentId)}>
-              Open ticket
-            </button>
-          )}
+        <div className="head-row">
+          <h3>
+            {live && <span className="live-dot" aria-hidden="true" />}
+            {title}
+          </h3>
+          {incidentNumber && <span className="mono">{incidentNumber}</span>}
+          {status && <RunState status={status} />}
+          {steps.length > 0 && <span>{steps.length} of 12 hops</span>}
+          {steps.length > 0 && <span className="mono">{fmtMs(elapsed)}</span>}
+          {!useLive && stored?.started_at && <span className="mono">{fmtTime(stored.started_at)} EAT</span>}
         </div>
+        {incidentId && onOpen && (
+          <button className="btn sm" onClick={() => onOpen(incidentId)}>
+            Open ticket
+          </button>
+        )}
       </div>
       {nothing ? (
         <div className="empty">No alarm has been through the agents yet. Launch the storm and this rail lights up hop by hop.</div>

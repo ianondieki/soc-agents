@@ -50,33 +50,35 @@ export default function DemoGuide({
     {
       title: "Start the storm",
       say:
-        "Heavy rain hits Rift, Mt Kenya and Nairobi East. Eleven alarms arrive in about twenty seconds. " +
-        "Watch the rail: each hop is one agent finishing its part of the job.",
+        "Heavy rain hits Rift, Mt Kenya and Nairobi East: microwave hops drop and child sites cascade under " +
+        "their HUB majors. Eleven alarms arrive in about twenty seconds. Watch the rail on Mission control: " +
+        "each hop is one agent finishing its part of the job.",
       action: { label: storming ? "Storm running…" : "Launch the storm", run: onRunStorm },
     },
     {
       title: "Read what the agents decided",
       say:
         "Open the first ticket. Every field a NOC analyst used to type is already filled, and every hop " +
-        "says why: the subscriber thresholds, the HUB floor, the region-by-domain MSP matrix.",
+        "says why: the subscriber thresholds, the HUB floor, the region-by-domain MSP matrix. The Audit " +
+        "trail keeps each of those reasons.",
       action: firstIncidentId ? { label: "Open the first ticket", run: () => nav(`/incidents/${firstIncidentId}`) } : undefined,
     },
     {
       title: "Approve what matters",
       say:
-        "A P2 broadcast never leaves without a person. The inbox shows the SMS and the e-mail exactly as " +
+        "A P2 broadcast never leaves without a person. Approvals shows the SMS and the e-mail exactly as " +
         "they will be sent, with the facts beside them. Claim, read, approve.",
-      action: { label: "Open the HITL inbox", run: () => nav("/hitl") },
+      action: { label: "Open Approvals", run: () => nav("/hitl") },
     },
     {
       title: "Hand the shift over",
       say: "The ledger is already written. Generate the handover: owners, priorities and what the night shift must watch.",
-      action: { label: "Open the shift desk", run: () => nav("/shift") },
+      action: { label: "Open Shift desk", run: () => nav("/shift") },
     },
     {
       title: "Show the numbers",
       say: "Hours of toil taken off the floor, alarms absorbed before they became duplicate tickets, decisions kept human.",
-      action: { label: "Open the showcase", run: () => nav("/showcase") },
+      action: { label: "Open Showcase", run: () => nav("/showcase") },
     },
   ];
   const i = Math.min(step, steps.length - 1);
@@ -87,7 +89,7 @@ export default function DemoGuide({
       <div className="guide-head">
         <strong>Guided demo</strong>
         <span className="muted">
-          step {i + 1} of {steps.length}
+          Step {i + 1} of {steps.length}
         </span>
         <button type="button" className="btn guide-close" onClick={onClose} aria-label="Close the guided demo">
           Close

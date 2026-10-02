@@ -19,10 +19,10 @@ export const LIFECYCLE_NODES: readonly { id: string; label: string; agent: strin
   { id: "SEVERITY", label: "Severity", agent: "SeverityImpactAgent" },
   { id: "TICKET", label: "Ticket", agent: "TicketingAgent" },
   { id: "ASSIGN", label: "Assign", agent: "DispatchAssignmentAgent" },
-  { id: "HITL", label: "HITL Gate", agent: "SupervisorAgent" },
+  { id: "HITL", label: "HITL gate", agent: "SupervisorAgent" },
   { id: "BROADCAST", label: "Broadcast", agent: "BroadcastCommsAgent" },
-  { id: "EXEC_BRIEF", label: "Exec Brief", agent: "ExecutiveBriefingAgent" },
-  { id: "LEDGER", label: "Shift Ledger", agent: "ShiftLedgerAgent" },
+  { id: "EXEC_BRIEF", label: "Exec brief", agent: "ExecutiveBriefingAgent" },
+  { id: "LEDGER", label: "Shift ledger", agent: "ShiftLedgerAgent" },
   { id: "RECURRENCE", label: "Recurrence", agent: "RecurrenceProblemAgent" },
   { id: "MONITOR", label: "Monitor", agent: "WorklogMonitorAgent" },
 ];
@@ -33,6 +33,14 @@ export const LIFECYCLE_NODE_IDS: ReadonlySet<string> = new Set(LIFECYCLE_NODES.m
  *  records steps through the same tracker under its own node names. */
 export function isLifecycleNode(id: unknown): boolean {
   return typeof id === "string" && LIFECYCLE_NODE_IDS.has(id);
+}
+
+/** "EXEC_BRIEF" → "Exec brief": a node id as the rail labels it; unknown ids are humanised. */
+export function nodeLabel(id: unknown): string {
+  const hit = LIFECYCLE_NODES.find((n) => n.id === id);
+  if (hit) return hit.label;
+  const s = humanEnum(id);
+  return s ? s[0].toUpperCase() + s.slice(1) : "";
 }
 
 /** Run statuses that mean the run has decided what it was going to decide. */
@@ -68,7 +76,7 @@ export function humanStatus(status: unknown): string {
 const ACRONYMS: Record<string, string> = {
   MPESA: "M‑PESA", HUB: "HUB", CORE: "CORE", MSP: "MSP", RNIO: "RNIO", FE: "FE", TX: "TX", MW: "MW", SMS: "SMS",
   NOC: "NOC", SLA: "SLA", EAT: "EAT", CA: "CA", PIR: "PIR", TT: "TT", INC: "INC", OEM: "OEM", RF: "RF", IP: "IP",
-  DWDM: "DWDM", GSM: "GSM", LTE: "LTE", VOICE: "voice", DATA: "data", HITL: "HITL",
+  DWDM: "DWDM", ENODEB: "eNodeB", NODEB: "NodeB", GSM: "GSM", LTE: "LTE", VOICE: "voice", DATA: "data", HITL: "HITL",
 };
 
 /**
@@ -85,11 +93,28 @@ export function humanEnum(value: unknown): string {
     .join(" ");
 }
 
+/** The one phrase for a run or hop that is parked on a person, everywhere in the UI. */
+export const WAITING_WORD = "waiting for a decision";
+
 /** The run status as a person reads it. */
 export function runStatusWord(status: unknown): string {
   const s = String(status ?? "").toUpperCase();
-  if (s === "WAITING_HITL") return "waiting for a human";
+  if (s === "WAITING_HITL") return WAITING_WORD;
   return s ? s.toLowerCase() : "";
+}
+
+/**
+ * How a run's status is shown when it is worth a look: the word and its tone (a `.state`
+ * modifier in styles.css). A routine success returns null, because good news that is the
+ * normal state is not coloured and gets no chip.
+ */
+export function runOutcome(status: unknown): { word: string; tone: "hitl" | "danger" | "accent" | "" } | null {
+  const s = String(status ?? "").toUpperCase();
+  if (!s || s === "SUCCEEDED") return null;
+  if (s === "WAITING_HITL") return { word: WAITING_WORD, tone: "hitl" };
+  if (s === "FAILED") return { word: "failed", tone: "danger" };
+  if (s === "RUNNING") return { word: "running", tone: "accent" };
+  return { word: runStatusWord(s), tone: "" };
 }
 
 export type NodeStatus = "pending" | "running" | "succeeded" | "waiting_hitl" | "failed" | "skipped";
@@ -122,7 +147,7 @@ export const STATUS_WORD: Record<NodeStatus, string> = {
   pending: "pending",
   running: "running",
   succeeded: "done",
-  waiting_hitl: "waiting for a human",
+  waiting_hitl: WAITING_WORD,
   failed: "failed",
   skipped: "skipped",
 };

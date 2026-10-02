@@ -5,7 +5,7 @@ import { useRealtime } from "./realtime/useRealtime";
 import { RealtimeProvider } from "./realtime/RealtimeContext";
 import DemoGuide from "./components/DemoGuide";
 import { AUTO_STORM_KEY } from "./lib/demo";
-import { humanAutonomy } from "./lib/agents";
+import { humanAutonomy, humanEnum } from "./lib/agents";
 import MissionControl from "./pages/MissionControl";
 import IncidentBoard from "./pages/IncidentBoard";
 import IncidentWorkspace from "./pages/IncidentWorkspace";
@@ -24,15 +24,16 @@ import Pirs from "./pages/Pirs";
 import Scorecards from "./pages/Scorecards";
 import Showcase from "./pages/Showcase";
 
-/** The sidebar, grouped by who reaches for it: the shift, the agent story, quality, platform. */
+/** The sidebar, grouped by who reaches for it: the shift, the agent story, quality, vendors,
+ *  platform. Each label is its page's title, in sentence case. */
 const NAV_GROUPS: { title: string; links: { to: string; label: string; end?: boolean }[] }[] = [
   {
     title: "Operate",
     links: [
-      { to: "/", label: "Mission Control", end: true },
-      { to: "/incidents", label: "Incident Board" },
-      { to: "/hitl", label: "HITL Inbox" },
-      { to: "/shift", label: "Shift Desk" },
+      { to: "/", label: "Mission control", end: true },
+      { to: "/incidents", label: "Incident board" },
+      { to: "/hitl", label: "Approvals" },
+      { to: "/shift", label: "Shift desk" },
       { to: "/wallboard", label: "Wallboard" },
     ],
   },
@@ -40,26 +41,31 @@ const NAV_GROUPS: { title: string; links: { to: string; label: string; end?: boo
     title: "Agents",
     links: [
       { to: "/showcase", label: "Showcase" },
-      { to: "/agents", label: "Agent Observatory" },
-      { to: "/workflow", label: "Workflow Map" },
+      { to: "/agents", label: "Agent observatory" },
+      { to: "/workflow", label: "Workflow map" },
     ],
   },
   {
     title: "Quality",
     links: [
       { to: "/problems", label: "Problems" },
+      { to: "/pirs", label: "Post-incident reviews" },
       { to: "/regions", label: "Regions" },
-      { to: "/maintenance", label: "Maintenance" },
-      { to: "/pirs", label: "PIRs" },
-      { to: "/scorecards", label: "Vendor Scorecards" },
+    ],
+  },
+  {
+    title: "Vendors",
+    links: [
+      { to: "/scorecards", label: "Vendor scorecards" },
       { to: "/contracts", label: "Contracts" },
+      { to: "/maintenance", label: "Maintenance" },
     ],
   },
   {
     title: "Platform",
     links: [
-      { to: "/audit", label: "Audit" },
-      { to: "/settings", label: "Settings / Inject" },
+      { to: "/audit", label: "Audit trail" },
+      { to: "/settings", label: "Settings" },
     ],
   },
 ];
@@ -179,16 +185,17 @@ export default function App() {
       setStormErr("");
       try {
         const result = await runLiveRainStorm((i, total, inc) => {
+          const owner = inc.responsible_msp || inc.msp_name || inc.assignee_name;
           setStormProg(
-            `Alarm ${i} of ${total} · ${inc.incident_number} · ${inc.region_code} · ${inc.site_id} · ` +
-              `${inc.failure_domain} → ${inc.responsible_msp || inc.msp_name || inc.assignee_name}`
+            `Alarm ${i} of ${total}: ${inc.incident_number} at ${inc.site_id} (${inc.region_code}), ` +
+              `${humanEnum(inc.failure_domain)}${owner ? `, owner ${owner}` : ""}.`
           );
           if (i === 1 && inc?.id) setFirstStormIncident(inc.id);
           refresh();
           setManualTick((t) => t + 1);
         }, 1500);
         setStormProg(
-          `Storm complete: ${result.count} alarms. HUB majors opened; child sites folded under their parents. P2 broadcasts wait in the HITL inbox.`
+          `Storm complete: ${result.count} alarms. HUB majors opened and child sites folded under their parents; P2 broadcasts wait in Approvals.`
         );
         refresh();
         setManualTick((t) => t + 1);
@@ -209,6 +216,9 @@ export default function App() {
   );
 
   const isWall = loc.pathname.startsWith("/wallboard");
+  const org = profile?.display_name ? String(profile.display_name).replace(" (demo profile)", "") : "Connecting…";
+  const orgMeta = `${humanAutonomy(profile?.autonomy_level)}, ${profile?.shift ? String(profile.shift).toLowerCase() : "day"} shift`;
+  const pending: number | null = typeof metrics?.hitl_pending === "number" ? metrics.hitl_pending : metrics ? 0 : null;
 
   if (isWall) {
     return (
@@ -234,12 +244,19 @@ export default function App() {
   return (
     <RealtimeProvider value={realtime}>
       <div className="app">
+        <a
+          className="skip-link"
+          href="#main"
+          onClick={(e) => {
+            e.preventDefault();
+            document.getElementById("main")?.focus();
+          }}
+        >
+          Skip to content
+        </a>
         <nav className={"nav" + (navOpen ? " open" : "")} aria-label="Main">
           <div className="nav-brand-row">
-            <div className="brand">
-              Kenya NOC
-              <div className="muted">Mission Control, Safaricom demo</div>
-            </div>
+            <div className="brand">Kenya NOC</div>
             <button
               type="button"
               className="btn nav-toggle"
@@ -268,32 +285,34 @@ export default function App() {
         <div className="main">
           <header className="topbar">
             <div className="topbar-left">
-              <span className="topbar-id">{profile?.display_name ? String(profile.display_name).replace(" (demo profile)", "") : "Connecting…"}</span>
-              <span className="topbar-meta chip-wide">
-                {humanAutonomy(profile?.autonomy_level)}, {profile?.shift ? String(profile.shift).toLowerCase() : "day"} shift
-              </span>
-              <span className={"chip " + (connected ? "ok" : "bad")} title="WebSocket to the agent event stream">
-                {connected ? "Live" : "Reconnecting"}
-              </span>
-              <span className={"chip " + (apiOk ? "ok" : "bad")}>{apiOk ? "API ok" : "API down"}</span>
-              {quietMode && suppressed > 0 && (
-                <span className="chip" title="Non-critical ticker lines held back by quiet mode">
-                  {suppressed} held
+              <span className="topbar-org">
+                <span className="topbar-id">{org}</span>
+                <span className="topbar-meta chip-wide" title={orgMeta}>
+                  {orgMeta}
                 </span>
-              )}
+              </span>
+              {/* Healthy is not news: "Live" stays a muted word; only a broken link turns red. */}
+              <span
+                className={"topbar-live" + (!apiOk || !connected ? " bad" : "")}
+                role="status"
+                title={!apiOk ? "The API is not answering" : "WebSocket to the agent event stream"}
+              >
+                {!apiOk ? "API unreachable" : connected ? "Live" : "Reconnecting"}
+              </span>
             </div>
             <div className="topbar-right">
               <button
                 type="button"
-                className={"chip " + ((metrics?.hitl_pending ?? 0) > 0 ? "hitl" : "")}
+                className={"btn sm" + ((pending ?? 0) > 0 ? " hitl" : " quiet")}
                 onClick={() => nav("/hitl")}
-                title="Decisions waiting for a person"
+                title="Open Approvals"
               >
-                {metrics?.hitl_pending ?? 0} waiting for a decision
+                {pending == null ? "Approvals" : pending > 0 ? `${pending} waiting for a decision` : "No decisions waiting"}
               </button>
               <span className="topbar-user chip-wide">{session.display_name}</span>
               <button
-                className={"btn sm" + (guideOpen ? " good" : "")}
+                type="button"
+                className="btn sm"
                 onClick={() => setGuideOpen((o) => !o)}
                 aria-pressed={guideOpen}
                 title="A five-step walkthrough for presenting the prototype"
@@ -301,34 +320,32 @@ export default function App() {
                 Guided demo
               </button>
               <button
-                className={"btn sm chip-wide" + (quietMode ? " good" : "")}
+                type="button"
+                className="btn sm chip-wide"
                 onClick={() => setQuietMode(!quietMode)}
                 aria-pressed={quietMode}
-                title="Night shift: stop animations and non-critical ticker churn. P1/P2 incidents and HITL prompts stay live."
+                title={
+                  "Night shift: stop animations and non-critical ticker churn. P1 and P2 incidents and decisions stay live." +
+                  (quietMode && suppressed > 0 ? ` ${suppressed} non-critical lines held back.` : "")
+                }
               >
                 {quietMode ? "Quiet mode on" : "Quiet mode"}
-              </button>
-              <button className="btn sm" onClick={() => nav("/settings")}>
-                Settings
               </button>
             </div>
           </header>
           {!apiOk && (
-            <div className="storm-banner" style={{ margin: "0.75rem 1.5rem 0" }}>
+            <div className="storm-banner danger" role="alert" style={{ margin: "var(--s3) var(--s5) 0" }}>
               <div>
-                <strong>API not reachable</strong>
+                <strong>API unreachable</strong>
                 <div className="muted">
-                  Start backend:{" "}
-                  <code>python -m uvicorn noc_agents.main:app --app-dir src --port 8000</code>
-                  {" · "}
-                  UI dev: <code>cd frontend && npm run dev</code> → open{" "}
-                  <code>http://127.0.0.1:5173</code> (proxy to API). Or build UI and open{" "}
-                  <code>http://127.0.0.1:8000</code>.
+                  Start the backend with <code>python -m uvicorn noc_agents.main:app --app-dir src --port 8000</code>. For
+                  the UI dev server run <code>cd frontend && npm run dev</code> and open <code>http://127.0.0.1:5173</code>,
+                  or build the UI and open <code>http://127.0.0.1:8000</code>.
                 </div>
               </div>
             </div>
           )}
-          <main className="content" id="main">
+          <main className="content" id="main" tabIndex={-1}>
             <Routes>
               <Route
                 path="/"
