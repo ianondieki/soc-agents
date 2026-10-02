@@ -65,6 +65,26 @@ export function humanStatus(status: unknown): string {
   return String(status ?? "").toLowerCase().replace(/_/g, " ");
 }
 
+const ACRONYMS: Record<string, string> = {
+  MPESA: "M-PESA", HUB: "HUB", CORE: "CORE", MSP: "MSP", RNIO: "RNIO", FE: "FE", TX: "TX", MW: "MW", SMS: "SMS",
+  NOC: "NOC", SLA: "SLA", EAT: "EAT", CA: "CA", PIR: "PIR", TT: "TT", INC: "INC", OEM: "OEM", RF: "RF", IP: "IP",
+  DWDM: "DWDM", GSM: "GSM", LTE: "LTE", VOICE: "voice", DATA: "data", HITL: "HITL",
+};
+
+/**
+ * Any upper-case enum as a person reads it, keeping the acronyms the floor says as acronyms:
+ * "MPESA_CORRIDOR" → "M-PESA corridor", "FIELD_ENGINEER" → "field engineer", "L2_GUARDED" → "L2 guarded",
+ * "TX_MW" → "TX MW". Text that already contains lower case is returned unchanged.
+ */
+export function humanEnum(value: unknown): string {
+  const raw = String(value ?? "").trim();
+  if (!raw || /[a-z]/.test(raw)) return raw;
+  return raw
+    .split(/[_\s]+/)
+    .map((w) => (ACRONYMS[w] ? ACRONYMS[w] : /^[A-Z]\d+$/.test(w) ? w : w.toLowerCase()))
+    .join(" ");
+}
+
 /** The run status as a person reads it. */
 export function runStatusWord(status: unknown): string {
   const s = String(status ?? "").toUpperCase();
