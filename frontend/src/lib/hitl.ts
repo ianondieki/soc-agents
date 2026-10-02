@@ -43,6 +43,7 @@
  * build has never heard of. None of them throws. The inbox must never blank.
  */
 
+import { humanEnum } from "./agents";
 import { parseInstant } from "./time";
 
 /* ------------------------------------------------------------------ *
@@ -128,8 +129,7 @@ export interface TaskTypeSpec {
 
 const BROADCAST: TaskTypeSpec = {
   label: "Broadcast approval",
-  effect:
-    "Approving releases the held broadcast rows to the dispatcher. The draft below is what leaves.",
+  effect: "Approving releases the held broadcast to the dispatcher; the draft below is what leaves.",
   check: "Read every channel. Wrong wording here reaches customers and cannot be recalled.",
   channels: true,
   // The four legacy approve calls send `{resolved_by}` alone and must keep
@@ -351,7 +351,7 @@ export interface RenderedChannel {
   text: string;
   /** Email subject / WhatsApp template key / in-app title. */
   heading: string;
-  /** Segment count, encoding, audience, language — small chips under the label. */
+  /** Segment count, encoding, audience, language: short facts beside the label, one span each. */
   meta: string[];
   /** False when the channel key was present but carried no text. */
   present: boolean;
@@ -427,7 +427,8 @@ function readChannelValue(value: unknown): ChannelValue {
   return { text: asText(value), heading: "", meta: {} };
 }
 
-function metaChips(key: string, v: ChannelValue): string[] {
+/** One plain fact per entry; the card prints them as separate muted spans, never joined. */
+function channelMeta(key: string, v: ChannelValue): string[] {
   const chips: string[] = [];
   const m = v.meta;
 
@@ -456,7 +457,8 @@ function metaChips(key: string, v: ChannelValue): string[] {
     } else {
       const est = smsMetrics(v.text);
       chips.push(`${est.segments} segment${est.segments === 1 ? "" : "s"} (est.)`);
-      chips.push(`${est.encoding} · ${est.units} chars`);
+      chips.push(est.encoding);
+      chips.push(`${est.units} chars`);
       if (est.offender) {
         const { char, codepoint, count } = est.offender;
         chips.push(`forced by "${char}" ${codepoint}${count > 1 ? ` ×${count}` : ""}`);
@@ -479,7 +481,7 @@ function metaChips(key: string, v: ChannelValue): string[] {
   const fallback = firstString(own(m, "language_fallback"));
   // §6.5: an unapproved `sw` template silently renders `en`. The approver has to
   // be told, otherwise a Kiswahili audience is quietly served English.
-  if (fallback) chips.push(`language fallback → ${fallback}`);
+  if (fallback) chips.push(`language falls back to ${fallback}`);
 
   const params = own(m, "params");
   if (Array.isArray(params)) chips.push(`${params.length} param${params.length === 1 ? "" : "s"}`);
@@ -577,7 +579,7 @@ export function channelsFor(payload: unknown): RenderedChannel[] {
       label,
       text,
       heading,
-      meta: metaChips(key, { ...v, text }),
+      meta: channelMeta(key, { ...v, text }),
       present: Boolean(text),
     });
   }
@@ -639,14 +641,26 @@ export function rawPayload(payload: unknown): string {
 export interface Fact {
   label: string;
   value: string;
-  tone?: "danger" | "warn" | "ok";
+  /**
+   * Set only on the three facts that change how fast a supervisor must act: the M-PESA
+   * corridor at risk, a HUB major, and 50 000 or more users. The card gives those the one
+   * "needs attention" treatment (a dot in the state colour); every other fact is plain text.
+   */
+  attention?: "danger";
+  /** An identifier (the site code): drawn in the mono face. */
+  mono?: boolean;
 }
 
-function pushFact(out: Fact[], label: string, value: unknown, tone?: Fact["tone"]): void {
+function pushFact(out: Fact[], label: string, value: unknown, extra?: Pick<Fact, "attention" | "mono">): void {
   if (value == null || value === "") return;
   const text = clamp(asText(value), 120);
   if (!text) return;
-  out.push({ label, value: text, tone });
+  out.push({ label, value: text, ...extra });
+}
+
+/** An upper-case enum as a person reads it; free text and non-strings pass through `asText`. */
+function human(v: unknown): string {
+  return typeof v === "string" ? humanEnum(v) : asText(v);
 }
 
 /**
@@ -664,48 +678,45 @@ export function factsFor(task: unknown, incident: unknown): Fact[] {
   const payload = isPlainObject(own(t, "proposed_payload")) ? own(t, "proposed_payload") : {};
   const facts: Fact[] = [];
 
+  // Name and code are separate facts: the code is an identifier (mono), the name is prose.
   const siteId = firstString(own(inc, "site_id"), own(t, "site_id"));
   const siteName = firstString(own(inc, "site_name"));
-  if (siteId || siteName) {
-    pushFact(facts, "Site", siteName ? `${siteId || "?"} · ${siteName}` : siteId);
-  }
-  const siteType = firstString(own(inc, "site_type"));
-  if (siteType) pushFact(facts, "Type", siteType, siteType === "HUB" ? "warn" : undefined);
+  pushFact(facts, "Site", siteName);
+  pushFact(facts, "Site code", siteId, { mono: true });
+  pushFact(facts, "Site type", human(firstString(own(inc, "site_type"))));
 
   const region = firstString(own(inc, "region_code"));
   const county = firstString(own(inc, "county"));
-  if (region || county) pushFact(facts, "Region", [region, county].filter(Boolean).join(" / "));
+  if (region || county) pushFact(facts, "Region", [region, county].filter(Boolean).join(", "));
 
   const users = firstNumber(own(inc, "users_affected"));
   if (users != null) {
-    pushFact(facts, "Est. users", users.toLocaleString(), users >= 50000 ? "danger" : undefined);
+    pushFact(facts, "Est. users", users.toLocaleString("en-KE"), users >= 50000 ? { attention: "danger" } : undefined);
   }
 
-  pushFact(facts, "Domain", own(inc, "failure_domain"));
+  pushFact(facts, "Domain", human(own(inc, "failure_domain")));
 
   const services = own(inc, "services_impacted");
-  if (Array.isArray(services) && services.length) pushFact(facts, "Services", services.join(", "));
+  if (Array.isArray(services) && services.length) pushFact(facts, "Services", services.map(human).join(", "));
 
-  if (own(inc, "mpesa_risk") === true) pushFact(facts, "M-PESA corridor", "AT RISK", "danger");
-  if (own(inc, "service_affecting") === false) pushFact(facts, "Service affecting", "NO", "ok");
-  if (own(inc, "is_hub_major") === true) pushFact(facts, "HUB major", "YES", "danger");
+  if (own(inc, "mpesa_risk") === true) pushFact(facts, "M‑PESA corridor", "at risk", { attention: "danger" });
+  // Good news in its normal state is not coloured (brief rule 7).
+  if (own(inc, "service_affecting") === false) pushFact(facts, "Service affecting", "no");
+  if (own(inc, "is_hub_major") === true) pushFact(facts, "HUB major", "yes", { attention: "danger" });
 
   const children = firstNumber(own(inc, "child_sites_down"));
-  if (children != null && children > 0) pushFact(facts, "Children down", String(children), "warn");
+  if (children != null && children > 0) pushFact(facts, "Child sites down", String(children));
 
   const recurrence = firstNumber(own(inc, "recurrence_count"));
-  if (recurrence != null && recurrence > 1) {
-    pushFact(facts, "Recurrence", `${recurrence}×`, "warn");
-  }
+  if (recurrence != null && recurrence > 1) pushFact(facts, "Recurrence", `${recurrence} times`);
 
+  // Owner and MSP are names or codes as the floor wrote them: never humanised.
   pushFact(facts, "Owner", firstString(own(inc, "assignee_name"), own(payload, "assignee")));
   pushFact(facts, "MSP", firstString(own(inc, "responsible_msp"), own(inc, "msp_name")));
-  pushFact(facts, "Status", own(inc, "status"));
+  pushFact(facts, "Status", human(own(inc, "status")));
 
   const audiences = own(payload, "audiences");
-  if (Array.isArray(audiences) && audiences.length) {
-    pushFact(facts, "Audiences", audiences.join(", "), "warn");
-  }
+  if (Array.isArray(audiences) && audiences.length) pushFact(facts, "Audiences", audiences.map(human).join(", "));
 
   return facts;
 }
@@ -722,13 +733,25 @@ export function ageMinutes(createdAt: unknown, now: number = Date.now()): number
   return mins < 0 ? 0 : mins; // clock skew must not print "-2m"
 }
 
-export function fmtAge(mins: number | null): string {
-  if (mins == null) return "age unknown";
-  if (mins < 1) return "just now";
-  if (mins < 60) return `${mins}m waiting`;
+const NBSP = "\u00a0";
+
+/**
+ * A wait as a person says it: "16 h 16 m", "4 m", "under a minute"; `""` when unknown.
+ * A no-break space keeps each number with its unit, so "16 h" never splits across lines.
+ */
+export function fmtWait(mins: number | null): string {
+  if (mins == null) return "";
+  if (mins < 1) return "under a minute";
+  if (mins < 60) return `${mins}${NBSP}m`;
   const h = Math.floor(mins / 60);
   const m = mins % 60;
-  return m ? `${h}h ${m}m waiting` : `${h}h waiting`;
+  return m ? `${h}${NBSP}h ${m}${NBSP}m` : `${h}${NBSP}h`;
+}
+
+/** The card's age: "waiting 16 h 16 m". */
+export function fmtAge(mins: number | null): string {
+  if (mins == null) return "age unknown";
+  return `waiting ${fmtWait(mins)}`;
 }
 
 /**
@@ -742,6 +765,17 @@ export function ageTone(mins: number | null): "" | "warn" | "danger" {
   if (mins >= 30) return "danger";
   if (mins >= 5) return "warn";
   return "";
+}
+
+/**
+ * True once the ladder has started on this task: a P1 or P2 still unclaimed at T+5. The card
+ * prints its age in the watch colour then; before that, or once somebody holds the task, the
+ * age is plain text.
+ */
+export function ladderBreached(mins: number | null, priority: unknown, claimedBy: unknown): boolean {
+  if (ageTone(mins) === "") return false;
+  if (typeof claimedBy === "string" && claimedBy) return false;
+  return priority === "P1" || priority === "P2";
 }
 
 /* ------------------------------------------------------------------ *
@@ -761,4 +795,18 @@ export function friendlyError(err: unknown): string {
   if (/^5\d\d/.test(raw)) return "The API failed on that request. Nothing was decided — try again.";
   if (!raw) return "The request failed.";
   return clamp(raw, 200);
+}
+
+/**
+ * The queue's own load failure, as the problem in one sentence. Separate from
+ * `friendlyError`, whose wording ("Nothing was decided") is about a decision.
+ */
+export function friendlyLoadError(err: unknown): string {
+  const raw = err instanceof Error ? err.message : asText(err);
+  if (/^401/.test(raw)) return "Your session has ended. Sign in again, then retry.";
+  if (/^403/.test(raw)) return "Your role cannot see the approvals queue.";
+  if (/^5\d\d/.test(raw)) return "The API failed while loading the queue.";
+  if (/failed to fetch|networkerror|load failed/i.test(raw)) return "The API is unreachable.";
+  if (!raw) return "The request failed.";
+  return clamp(raw, 160);
 }

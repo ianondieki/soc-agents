@@ -1,3 +1,4 @@
+import { humanEnum } from "./agents";
 import { humanizeType, isPlainObject } from "./hitl";
 
 /**
@@ -25,7 +26,8 @@ export function hitlSubject(task: unknown): string {
 
   if (type === "APPROVE_MAINTENANCE_WINDOW" || isPlainObject(payload.window)) {
     const win: Record<string, unknown> = isPlainObject(payload.window) ? payload.window : {};
-    const scope = [text(win.scope), text(win.scope_ref)].filter(Boolean).join(" ");
+    // The scope is an enum ("SITE", "REGION"); the ref after it is an identifier and stays as written.
+    const scope = [humanEnum(text(win.scope)), text(win.scope_ref)].filter(Boolean).join(" ");
     const starts = text(win.starts_at_eat);
     return joinParts("Maintenance window", scope, eat(starts));
   }
@@ -54,6 +56,15 @@ export function hitlSubject(task: unknown): string {
  * "… 00:00 EAT EAT" on every maintenance card. A bare time (an older payload, a hand-written
  * one) still gets the suffix, so the heading never shows a wall-clock time with no zone.
  */
+/**
+ * True when the heading is an incident number or id, an identifier the card sets in the
+ * mono face; false for a maintenance or other incident-less card, whose heading is prose.
+ */
+export function hitlSubjectIsIncident(task: unknown): boolean {
+  const t: Record<string, unknown> = isPlainObject(task) ? task : {};
+  return Boolean(text(t.incident_number) || text(t.incident_id));
+}
+
 function eat(when: string): string {
   if (!when) return "";
   return /\bEAT$/.test(when) ? when : `${when} EAT`;
@@ -65,9 +76,9 @@ function text(v: unknown): string {
   return "";
 }
 
-/** `Maintenance window — SITE SFC-CST-HUB-MSA · 2026-09-22 01:00 EAT` */
+/** `Maintenance window — site SFC-CST-HUB-MSA, 2026-09-22 01:00 EAT` (no middle-dot strings). */
 function joinParts(head: string, ...rest: string[]): string {
   const [first, ...more] = rest.filter(Boolean);
   if (!first) return head;
-  return [`${head} — ${first}`, ...more].join(" · ");
+  return [`${head} — ${first}`, ...more].join(", ");
 }

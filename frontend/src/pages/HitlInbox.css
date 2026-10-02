@@ -1,193 +1,339 @@
-/* HITL approval inbox. Owned by pages/HitlInbox.tsx and components/ApprovalCard.tsx; loaded
- * after styles.css so it can lean on the tokens and the chip/button vocabulary there. */
+/* Approvals (route /hitl). Owned by pages/HitlInbox.tsx and components/ApprovalCard.tsx; loaded
+ * after styles.css and built only from its tokens (--fs-*, --s*, --r-*, the colour roles).
+ *
+ * Sentence case throughout: no rule here changes letter case or adds tracking. Nothing here
+ * animates, so quiet mode and reduced motion have nothing new to strip; the loading bars are
+ * the shared .skeleton, which honours both. Boxes nest at most two deep: card > pre.
+ */
 
-/* ------------------------------------------------------------------ *
- * HITL approval inbox — side-by-side card (spec §6.5).                *
- *                                                                     *
- * Purely additive: nothing above this line is edited. The card reuses  *
- * the existing tokens, the .panel surface values, .chip, .pill and     *
- * .pre, so it reads as the same product. No animation is introduced,  *
- * so quiet mode has nothing new to suppress.                          *
- * ------------------------------------------------------------------ */
+/* ---------------------------------------------------------------- summary row */
+/* Plain facts under the page head, 16 px apart. No chips: counts are text. */
+.hitl-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s1) var(--s4);
+  margin: 0 0 var(--s4);
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+}
+.hitl-summary > span { white-space: nowrap; }
+/* Nothing to say (empty queue, socket up, no decision yet): no gap above the empty state. */
+.hitl-summary:not(:has(> :not(:empty))) { margin-bottom: 0; }
+/* The one "needs attention" treatment: a dot in the state colour, the words in --text-bright. */
+.hitl-attn { display: inline-flex; align-items: center; gap: 6px; color: var(--text-bright); }
+/* The last decision's outcome, on the right; wraps to its own line on a phone. */
+.hitl-summary > .hitl-done {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text);
+  white-space: normal;
+}
+.hitl-ok { flex: none; color: var(--ok); }
+.hitl-dot { flex: none; color: var(--danger); }
+.hitl-dot.warn { color: var(--warn); }
 
+/* ---------------------------------------------------------------- list */
 /*
- * Deliberately NOT `.list`: that class caps its scroller at 440px, which is
- * right for the Mission Control side panels and wrong here — it would hide the
- * second half of a card the supervisor is being asked to read. The inbox is a
- * full page, so it scrolls with the page.
+ * Deliberately NOT `.list`: that class caps its scroller at 440px, which is right for the
+ * Mission control side panels and wrong here; it would hide the second half of a card the
+ * supervisor is being asked to read. The page scrolls with the window, which is also what
+ * lets the card footer stick to the bottom of the viewport.
  */
 .hitl-list {
   display: flex;
   flex-direction: column;
-  gap: 0.9rem;
+  gap: var(--s4);
 }
 
 .hitl-card {
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--r-lg);
-  padding: var(--s4) var(--s4);
+  padding: var(--s4);
 }
-.hitl-card.P1 { border-color: rgba(255, 77, 106, 0.45); }
 
+/* ---------------------------------------------------------------- card head */
 .hitl-card-head {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.45rem;
   align-items: center;
+  gap: var(--s2) var(--s4);
+  color: var(--muted);
+  font-size: var(--fs-sm);
 }
+.hitl-title { display: inline-flex; align-items: center; gap: var(--s2); min-width: 0; }
+/* The incident number: an identifier, so mono, and 500 (never bold + mono). */
 .hitl-inc {
-  color: var(--text-bright);
+  margin: 0;
   font-family: var(--mono);
-  font-size: 0.98rem;
+  font-size: var(--fs-base);
   font-weight: 500;
-  letter-spacing: 0.01em;
+  line-height: 1.3;
+  color: var(--text-bright);
+  overflow-wrap: anywhere;
 }
-.hitl-type { color: var(--muted); font-size: 0.84rem; }
-.hitl-created { margin-left: auto; font-size: 0.74rem; white-space: nowrap; }
+/* A maintenance (or other incident-less) heading is prose: the sans. */
+.hitl-subject {
+  margin: 0;
+  font-size: var(--fs-base);
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--text-bright);
+  overflow-wrap: anywhere;
+}
+.hitl-type { color: var(--muted); }
+.hitl-age { color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.hitl-age.late { color: var(--warn); }
+.hitl-created {
+  margin-left: auto;
+  color: var(--muted-dim);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
 
+/* One line on what Approve causes; regular weight, muted. */
 .hitl-effect {
-  margin: 0.6rem 0 0.7rem;
-  max-width: 100ch;
+  margin: var(--s2) 0 var(--s3);
+  max-width: 90ch;
+  color: var(--muted);
+  font-size: var(--fs-md);
+  font-weight: 400;
+  line-height: 1.5;
 }
-.hitl-effect strong { color: var(--text); }
 
-/* Facts: the justification as a definition grid, one glance, no boxes. A tone colours
-   the value only, so the at-risk facts read first and the rest stay quiet. */
+/* ---------------------------------------------------------------- facts */
+/* The justification as a definition grid between two hairlines: one glance, no boxes. */
 .hitl-facts {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-  gap: var(--s2) var(--s4);
+  grid-template-columns: repeat(auto-fill, minmax(min(9rem, 100%), 1fr));
+  gap: var(--s3) var(--s4);
   margin: 0 0 var(--s4);
   padding: var(--s3) 0;
   border-top: 1px solid var(--line);
   border-bottom: 1px solid var(--line);
 }
-.hitl-fact { display: flex; flex-direction: column; gap: 1px; min-width: 0; font-size: 0.84rem; }
-.hitl-fact-label { color: var(--muted-dim); font-size: 0.72rem; }
-.hitl-fact-value { color: var(--text); font-weight: 500; overflow-wrap: anywhere; }
-.hitl-fact.danger .hitl-fact-value { color: #ffb4c0; }
-.hitl-fact.warn .hitl-fact-value { color: var(--warn); }
-.hitl-fact.ok .hitl-fact-value { color: var(--ok); }
+.hitl-fact { min-width: 0; }
+.hitl-fact dt {
+  color: var(--muted-dim);
+  font-size: var(--fs-xs);
+  line-height: 1.4;
+}
+.hitl-fact dd {
+  margin: 2px 0 0;
+  color: var(--text);
+  font-size: var(--fs-md);
+  font-weight: 400;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.hitl-fact dd.mono { font-family: var(--mono); font-size: var(--fs-sm); }
+.hitl-fact dd.attn { display: flex; align-items: center; gap: 6px; color: var(--text-bright); }
 
+/* ---------------------------------------------------------------- what goes out */
 .hitl-section-head {
   display: flex;
-  align-items: center;
-  gap: 0.5rem;
   flex-wrap: wrap;
-  margin: 0 0 0.5rem;
-}
-.hitl-section-head h4 {
-  margin: 0;
-  font-size: 0.74rem;
-  font-weight: 600;
+  align-items: baseline;
+  gap: var(--s1) var(--s4);
+  margin: 0 0 var(--s3);
   color: var(--muted);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
+  font-size: var(--fs-sm);
 }
-.hitl-expand { margin-left: auto; padding: 0.3rem 0.6rem; font-size: 0.76rem; }
+.hitl-section-head h3,
+.hitl-fields h3 {
+  margin: 0;
+  color: var(--text);
+  font-size: var(--fs-md);
+  font-weight: 600;
+  line-height: 1.4;
+}
+.hitl-expand { margin-left: auto; align-self: center; }
 
 /*
- * THE POINT OF THE WHOLE CARD. auto-fit + minmax keeps SMS and email genuinely
- * side by side on any NOC screen and stacks them below ~700px of card width
- * rather than squeezing both into unreadable columns.
+ * THE POINT OF THE WHOLE CARD. auto-fit + minmax keeps SMS and email side by side on any NOC
+ * screen and stacks them on a phone; min() stops an 18rem column overflowing a 360 px screen.
+ * A channel is an unboxed column (head line, subject, body), so the body's .pre is the only
+ * box inside the card.
  */
 .hitl-channels {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-  gap: 0.7rem;
+  grid-template-columns: repeat(auto-fit, minmax(min(18rem, 100%), 1fr));
+  gap: var(--s4);
   align-items: start;
-  margin-bottom: 0.85rem;
+  margin-bottom: var(--s4);
 }
-.hitl-channel {
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: rgba(8, 16, 30, 0.6);
-  padding: 0.6rem 0.65rem;
-  min-width: 0; /* let a long unbroken line wrap instead of widening the grid */
-}
+.hitl-channel { min-width: 0; /* let a long unbroken line wrap instead of widening the grid */ }
 .hitl-channel-head {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.35rem;
-  align-items: center;
-  margin-bottom: 0.45rem;
+  align-items: baseline;
+  gap: 2px var(--s4);
+  margin-bottom: var(--s2);
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
 }
-.hitl-channel-name {
-  font-size: 0.72rem;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--accent);
-}
+.hitl-channel-name { color: var(--text); font-weight: 500; }
 .hitl-channel-subject {
-  font-weight: 600;
+  margin-bottom: var(--s2);
   color: var(--text-bright);
-  font-size: 0.84rem;
-  margin-bottom: 0.4rem;
-  word-break: break-word;
+  font-size: var(--fs-md);
+  font-weight: 600;
+  overflow-wrap: anywhere;
 }
-/*
- * The body scrolls inside itself so a 20-line email can never push the
- * Approve / Reject bar off the bottom of the screen. "Full text" lifts the cap.
- */
+/* Capped so the drafts and the sticky footer share one screen; "Full text" lifts the cap. */
 .hitl-channel-body {
   margin: 0;
-  max-height: 16rem;
+  max-height: 11rem;
   overflow: auto;
-  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 .hitl-channel-body.full { max-height: none; }
 
 .hitl-nochannel {
-  border: 1px dashed rgba(255, 193, 77, 0.45);
-  border-radius: 10px;
-  padding: 0.7rem 0.8rem;
-  margin-bottom: 0.85rem;
+  margin-bottom: var(--s4);
+  padding: var(--s3) var(--s4);
+  border: 1px dashed rgba(242, 193, 78, 0.45);
+  border-radius: var(--r-md);
   color: var(--warn);
-  font-size: 0.84rem;
+  font-size: var(--fs-md);
 }
 
-.hitl-fields { margin-bottom: 0.6rem; }
-.hitl-fields h4 {
-  margin: 0 0 0.35rem;
-  font-size: 0.74rem;
-  font-weight: 700;
-  color: var(--text-bright);
-  text-transform: uppercase;
-  letter-spacing: 0.07em;
+/* ---------------------------------------------------------------- task fields, raw payload */
+.hitl-fields { margin-bottom: var(--s3); }
+.hitl-fields h3 { margin-bottom: var(--s2); }
+.hitl-fields table { font-size: var(--fs-md); }
+.hitl-field-key { width: 12rem; color: var(--muted); }
+.hitl-field-pre { margin: 0; max-height: 18rem; overflow: auto; overflow-wrap: anywhere; }
+
+.hitl-raw { margin-bottom: var(--s3); }
+.hitl-raw summary {
+  width: fit-content;
+  cursor: pointer;
+  color: var(--muted);
+  font-size: var(--fs-sm);
 }
-.hitl-field-key { width: 12rem; white-space: nowrap; }
-.hitl-field-pre { margin: 0; max-height: 18rem; overflow: auto; word-break: break-word; }
+.hitl-raw summary:hover { color: var(--text); }
+.hitl-raw > pre { margin-top: var(--s2); }
 
-.hitl-raw { margin-bottom: 0.7rem; }
-.hitl-raw summary { cursor: pointer; font-size: 0.78rem; }
-.hitl-raw > pre { margin-top: 0.45rem; }
-
+/* ---------------------------------------------------------------- errors */
 .hitl-error {
-  border: 1px solid rgba(255, 59, 92, 0.5);
-  background: rgba(255, 59, 92, 0.1);
+  border: 1px solid rgba(255, 92, 116, 0.5);
+  background: var(--danger-soft);
   color: #ffb4c0;
-  border-radius: 10px;
-  padding: 0.6rem 0.75rem;
-  font-size: 0.85rem;
-  margin-bottom: 0.7rem;
+  border-radius: var(--r-md);
+  padding: var(--s2) var(--s3);
+  font-size: var(--fs-md);
 }
-
-.hitl-actions {
-  border-top: 1px solid var(--border);
-  padding-top: 0.75rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-.hitl-reason { min-height: 0; width: 100%; }
-.hitl-reason-quick { display: flex; flex-wrap: wrap; gap: 0.35rem; }
-.hitl-quick { cursor: pointer; font-family: var(--font); }
-.hitl-quick:hover { border-color: var(--accent); color: var(--accent); }
-.hitl-buttons {
+/* A failed refetch above the last good list: the sentence, then Retry. */
+.hitl-stale {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.5rem;
   align-items: center;
+  justify-content: space-between;
+  gap: var(--s2) var(--s3);
+  margin-bottom: var(--s4);
+}
+
+/* ---------------------------------------------------------------- decision footer */
+/*
+ * Sticky to the bottom of the viewport inside its card: while a long card is read the
+ * reason box and Claim / Approve / Reject stay on screen, and at the card's end the footer
+ * settles back into place. The negative margins take it to the card's edges so the card
+ * surface sits behind it, with one hairline on top.
+ */
+.hitl-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  margin: var(--s3) calc(-1 * var(--s4)) calc(-1 * var(--s4));
+  padding: var(--s3) var(--s4) var(--s4);
+  background: var(--surface);
+  border-top: 1px solid var(--line);
+  border-radius: 0 0 calc(var(--r-lg) - 1px) calc(var(--r-lg) - 1px);
+}
+.hitl-decide {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--s2) var(--s3);
+}
+.hitl-reason {
+  flex: 1 1 20rem;
+  width: auto;
+  min-width: 0;
+  min-height: 0;
+  resize: vertical;
+  font-size: var(--fs-md);
+}
+.hitl-buttons { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2); }
+.hitl-reason-quick { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2); }
+.hitl-hint { margin-left: auto; color: var(--muted-dim); font-size: var(--fs-sm); }
+.hitl-fallback-actions { margin-top: var(--s3); }
+
+/* ---------------------------------------------------------------- loading, error, empty */
+.hitl-skel { display: flex; flex-direction: column; gap: var(--s3); }
+.hitl-skel .skeleton { width: 100%; }
+.hitl-skel .skeleton.w30 { width: 30%; }
+.hitl-skel .skeleton.w55 { width: 55%; }
+.hitl-skel .skeleton.w70 { width: 70%; }
+.hitl-skel-cols {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(18rem, 100%), 1fr));
+  gap: var(--s3) var(--s4);
+  margin-top: var(--s2);
+}
+.hitl-skel-cols > div { display: flex; flex-direction: column; gap: var(--s2); }
+
+.hitl-state { padding: var(--s5) var(--s4); }
+.hitl-state p { margin: 0; max-width: 70ch; color: var(--muted); font-size: var(--fs-md); }
+.hitl-state .hitl-state-title {
+  margin-bottom: var(--s1);
+  color: var(--text);
+  font-size: var(--fs-base);
+  font-weight: 600;
+}
+.hitl-state .btn { margin-top: var(--s3); }
+.hitl-state a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-color: rgba(70, 198, 242, 0.5);
+}
+
+.hitl-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ---------------------------------------------------------------- phone */
+@media (max-width: 600px) {
+  .hitl-card { padding: var(--s3); }
+  .hitl-actions {
+    margin: var(--s3) calc(-1 * var(--s3)) calc(-1 * var(--s3));
+    padding: var(--s3);
+  }
+  .hitl-created { margin-left: 0; }
+  .hitl-hint { margin-left: 0; }
+  .hitl-field-key { width: 7.5rem; }
+  .hitl-buttons .btn { min-height: 44px; }
+}
+
+/* Phones: the sticky decision footer keeps the reason and the buttons; the hint can go. */
+@media (max-width: 700px) {
+  .hitl-hint { display: none; }
 }
