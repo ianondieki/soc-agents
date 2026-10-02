@@ -7,8 +7,8 @@
     <title>Kenya NOC Mission Control</title>
     <!-- Display mode before the first paint (lib/display.ts): ?display=projector (or =standard)
          sets and stores it, so a TV opened on that link and its Wallboard keep it; otherwise the
-         stored choice. Projector turns quiet mode on; quiet mode is applied here too, so nothing
-         animates before the app has read it. -->
+         stored choice. Projector turns quiet mode on and =standard gives it back as it was before;
+         quiet mode is applied here too, so nothing animates before the app has read it. -->
     <script>
       (function () {
         var d = document.documentElement, store = null, mode = null, quiet = null;
@@ -22,6 +22,11 @@
             if (mode === "projector") {
               store.setItem("noc_quiet_before_projector_v1", store.getItem("noc_quiet_mode_v1") === "1" ? "1" : "0");
               store.setItem("noc_quiet_mode_v1", "1");
+            } else {
+              // Leaving projector mode gives quiet mode back as it was, as the in-app toggle does.
+              var before = store.getItem("noc_quiet_before_projector_v1");
+              store.removeItem("noc_quiet_before_projector_v1");
+              if (before === "0") store.setItem("noc_quiet_mode_v1", "0");
             }
             store.setItem("noc_display_v1", mode);
           }

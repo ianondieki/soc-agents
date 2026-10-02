@@ -10,17 +10,20 @@ const PRIORITIES = ["P1", "P2", "P3", "P4"];
 const COLS = 8;
 /** Typing settles this long before the board asks the API (`q`), so a ticket number is one request. */
 const SEARCH_DEBOUNCE_MS = 250;
+/** The longest search the board sends (the box stops there too): a pasted page never becomes a URL. */
+const SEARCH_MAX = 200;
+const settle = (typed: string) => typed.trim().slice(0, SEARCH_MAX);
 
 /**
  * Who holds the ticket, as a name: a vendor or role enum through `humanEnum` and capitalised as a
  * name ("EGYPRO_FIBRE" → "Egypro Fibre", "FIELD_ENGINEER" → "Field Engineer"); a code the floor
- * writes as one word or with a hyphen ("TETRANET", "ATC", "NOC-QUEUE") stays as written. The same
- * rule as the Wallboard's owner line.
+ * writes as one word or with a hyphen ("TETRANET", "ATC", "NOC-QUEUE") stays as written, ASCII
+ * hyphen included (it is what the floor searches and copies); the cell keeps it on one line
+ * (`.owner-cell`, white-space: nowrap). The same rule as the Wallboard's owner line.
  */
 function ownerName(value: unknown): string {
   const raw = String(value ?? "").trim();
-  // A code keeps its hyphen on one line ("NOC‑QUEUE" never splits into "NOC-" and "QUEUE").
-  if (!/^[A-Z]+(_[A-Z]+)+$/.test(raw)) return raw.replace(/-/g, "\u2011");
+  if (!/^[A-Z]+(_[A-Z]+)+$/.test(raw)) return raw;
   return humanEnum(raw)
     .split(" ")
     .map((w) => (/^[a-z]/.test(w) ? w[0].toUpperCase() + w.slice(1) : w))
@@ -41,7 +44,7 @@ export default function IncidentBoard({ tick, profile }: { tick: number; profile
   const [text, setText] = useState("");
   const [query, setQuery] = useState("");
   useEffect(() => {
-    const t = window.setTimeout(() => setQuery(text.trim()), SEARCH_DEBOUNCE_MS);
+    const t = window.setTimeout(() => setQuery(settle(text)), SEARCH_DEBOUNCE_MS);
     return () => window.clearTimeout(t);
   }, [text]);
   const nav = useNavigate();
@@ -97,8 +100,9 @@ export default function IncidentBoard({ tick, profile }: { tick: number; profile
             value={text}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter") setQuery(text.trim()); // no need to wait for the pause
+              if (e.key === "Enter") setQuery(settle(text)); // no need to wait for the pause
             }}
+            maxLength={SEARCH_MAX}
             placeholder="Search ticket or site"
             aria-label="Search ticket number, site code or site name"
           />
@@ -154,7 +158,7 @@ export default function IncidentBoard({ tick, profile }: { tick: number; profile
                   </div>
                   <div className="facts">
                     <span>{i.site_name}</span>
-                    <span>{ownerName(i.assignee_name)}</span>
+                    <span className="owner-cell">{ownerName(i.assignee_name)}</span>
                     <span>{humanStatus(i.status)}</span>
                     {mpesa(i, "M‑PESA at risk")}
                   </div>
@@ -204,7 +208,7 @@ export default function IncidentBoard({ tick, profile }: { tick: number; profile
                   </td>
                   <td title={i.region_code}>{regionName(i.region_code, profile)}</td>
                   <td>{humanEnum(i.failure_domain)}</td>
-                  <td>{ownerName(i.assignee_name)}</td>
+                  <td className="owner-cell">{ownerName(i.assignee_name)}</td>
                   <td className="status">{humanStatus(i.status)}</td>
                   <td>{mpesa(i, "at risk") ?? <span className="muted">—</span>}</td>
                 </tr>

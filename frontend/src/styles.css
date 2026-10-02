@@ -407,8 +407,8 @@ button.chip:hover { border-color: var(--accent); color: var(--text-bright); }
 .kpi-strip > .kpis { margin-bottom: 0; }
 .kpi-strip.stale .kpi .value { color: var(--muted-dim); }
 .kpis-note { margin: var(--s2) 0 0; padding: 0 var(--s1); font-size: var(--fs-sm); }
-/* Tablets (701-1100 px): two rows, 4 + 3, every tile full width of its share (no empty slab). */
-@media (min-width: 701px) and (max-width: 1100px) {
+/* Tablets (701-1120 px): two rows, 4 + 3, every tile full width of its share (no empty slab). */
+@media (min-width: 701px) and (max-width: 1120px) {
   .kpis { grid-template-columns: repeat(12, minmax(0, 1fr)); }
   .kpis > .kpi { grid-column: span 3; }
   .kpis > .kpi:nth-child(n + 5) { grid-column: span 4; }
@@ -1227,7 +1227,7 @@ textarea { width: 100%; min-height: 90px; }
   height: 1.6rem;
   border-radius: 999px;
   background: var(--p1);
-  color: var(--text-bright);
+  color: var(--p1-ink);
   font-size: var(--fs-base);
 }
 .reg-failed-body { margin-top: 0.45rem; color: var(--text-bright); }
@@ -1387,7 +1387,7 @@ textarea { width: 100%; min-height: 90px; }
 /* A P3/P4 Approval the autonomy level let through: it ran, nobody decided anything. A neutral
    filled dot and the words "not needed", never the green check of an approval. */
 .rail-hop.not_needed .rail-dot { background: var(--muted-dim); border-color: var(--muted-dim); }
-.rail-hop.failed .rail-dot { background: var(--p1); border-color: var(--p1); color: var(--text-bright); }
+.rail-hop.failed .rail-dot { background: var(--p1); border-color: var(--p1); color: var(--p1-ink); }
 .rail-hop.failed .rail-btn { border-color: var(--p1); }
 .rail-hop.running .rail-dot { border-color: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft); animation: pulse 1.6s ease-in-out infinite; }
 .rail-hop.running .rail-btn { border-color: var(--accent); }
@@ -1557,6 +1557,8 @@ textarea { width: 100%; min-height: 90px; }
 .phone-only { display: none; }
 th.num { text-align: right; }
 td.num { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* Who holds a ticket stays on one line: "NOC-QUEUE" never splits at its (ASCII) hyphen. */
+.owner-cell { white-space: nowrap; }
 .hop-what { margin: 0.2rem 0 0; font-weight: 400; color: var(--muted); font-size: var(--fs-sm); line-height: 1.45; }
 
 /* ==================================================================== *
@@ -1661,7 +1663,7 @@ td.num { text-align: right; font-family: var(--mono); font-variant-numeric: tabu
   body { background: #fff !important; color: #000 !important; }
   /* Chrome and controls: nothing to press on paper. */
   .nav, .topbar, #guide-bar, .skip-link, .app-alert, .page-actions, .btn, button.chip, .seg, .nav-toggle,
-  .lr-actions, .list-foot, .audit-routine, .audit-more, .wb-foot { display: none !important; }
+  .lr-actions, .list-foot, .audit-routine, .audit-more, button.audit-link, .wb-foot { display: none !important; }
   .app { display: block; min-height: 0; }
   .main { display: block; }
   .content, .content-narrow { padding: 0; max-width: none; }
@@ -1714,6 +1716,5 @@ td.num { text-align: right; font-family: var(--mono); font-variant-numeric: tabu
     font-size: 9pt;
     color: #333;
     text-align: right;
-    background: #fff;
   }
 }

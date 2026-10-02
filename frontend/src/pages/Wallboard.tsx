@@ -218,6 +218,11 @@ export default function Wallboard({
   const shown = overflow ? list.slice(0, Math.max(1, cap - 1)) : list;
   const hidden = list.slice(shown.length);
   const hiddenP1 = hidden.filter((i) => i.priority === "P1").length;
+  const hiddenP2 = hidden.length - hiddenP1;
+  // "3 P1 and 24 P2 tickets", with a part left out when it is zero ("24 P2 tickets", never "and 0 P2").
+  const hiddenWhat = [hiddenP1 > 0 ? `${hiddenP1} P1` : "", hiddenP2 > 0 ? `${hiddenP2} P2` : ""]
+    .filter(Boolean)
+    .join(" and ");
 
   return (
     <div className="wallboard">
@@ -374,7 +379,7 @@ export default function Wallboard({
           <a className="wb-card wb-more" href="/incidents">
             <span className="wb-more-n">+{hidden.length} more</span>
             <span className="wb-more-what">
-              {hiddenP1 > 0 ? `${hiddenP1} P1 and ${hidden.length - hiddenP1} P2` : "P2"} tickets, opened more recently
+              {hiddenWhat} {hidden.length === 1 ? "ticket" : "tickets"}, opened more recently
             </span>
             <span className="wb-more-where">On the Incident board</span>
           </a>

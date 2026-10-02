@@ -316,17 +316,12 @@ export default function App() {
 
   // Defect #26: the KPI row used to refetch on *every* WS frame. It now refetches
   // once per debounced flush of the `metrics` slice — and only for event types
-  // that can actually move a count (see realtime/renderers.ts).
+  // that can actually move a count (see realtime/renderers.ts). Through refresh(), so a failure
+  // here probes `/session` the same way: two metrics failures alone never call the API down.
   useEffect(() => {
     if (revisions.metrics === 0) return; // the mount load is refresh()'s job
-    api
-      .metrics()
-      .then((m) => {
-        setMetrics(m);
-        setMetricsFailed(false);
-      })
-      .catch(() => setMetricsFailed(true));
-  }, [revisions.metrics]);
+    refresh();
+  }, [revisions.metrics, refresh]);
 
   // Quiet mode is signalled on <html> so it also covers the standalone
   // /wallboard route, which renders its own tree. CSS only suppresses

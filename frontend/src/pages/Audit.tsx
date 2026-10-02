@@ -198,19 +198,22 @@ export default function Audit({ tick }: { tick: number }) {
     return out;
   }, [blocks, incidents, bySite, kind, needle]);
 
+  // Paper has no "Show N older tickets" button: while printing, every ticket is on the page.
+  const printing = usePrinting();
   const { visible, olderTickets } = useMemo(() => {
+    const limit = printing ? Infinity : shown;
     const vis: typeof filtered = [];
     let tickets = 0;
     let i = 0;
     for (; i < filtered.length; i++) {
       if (filtered[i].block.kind === "ticket") {
-        if (tickets === shown) break;
+        if (tickets >= limit) break;
         tickets += 1;
       }
       vis.push(filtered[i]);
     }
     return { visible: vis, olderTickets: filtered.slice(i).filter((f) => f.block.kind === "ticket").length };
-  }, [filtered, shown]);
+  }, [filtered, shown, printing]);
 
   const ticketCount = useMemo(
     () => new Set(filtered.filter((f) => f.block.kind === "ticket").map((f) => f.block.ticketId)).size,

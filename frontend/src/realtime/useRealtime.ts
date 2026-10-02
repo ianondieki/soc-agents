@@ -3,7 +3,7 @@ import { useOpsSocket } from "../hooks/useOpsSocket";
 import { ANY_INCIDENT, EventRouter } from "./EventRouter";
 import { EventFeed } from "./feed";
 import { zeroRevisions, type Revisions, type Slice } from "./renderers";
-import { onFirstAnswer, serverNow } from "./apiHealth";
+import { firstAnswerServerMs, onFirstAnswer, serverNow } from "./apiHealth";
 import { parseInstant } from "../lib/time";
 
 const INCIDENT_REV_CAP = 500; // prune the per-incident map on a long shift
@@ -48,11 +48,18 @@ function frameTime(raw: any): number | null {
  *    changes nothing. The estimate errs early (the header has one-second resolution and the
  *    answer's travel time is not subtracted), so a frame from the last second or two before the
  *    connection can still count as live and cost one refetch; a live frame is never history.
+ *  - On the first connection the cut is never later than the first REST answer
+ *    (`min(socket open, first answer)`, both on the server's clock): the pages' mount loads were
+ *    asked around that answer, so a frame stamped after it may be news to them, and it counts as
+ *    live even when the socket opened later. A reconnect cuts at its own open, as before (App
+ *    refetches every list when the stream comes back).
  *  - A connection that opens before any REST answer has arrived (the first seconds on a slow link)
  *    holds its frames until the first answer gives the server's clock, or for 10 s at most.
  */
 interface ReplayGate {
   cut: number | null;
+  /** A connection has opened before: the next one is a reconnect. */
+  opened: boolean;
   holding: boolean;
   held: any[];
   openedAt: number;
@@ -156,7 +163,15 @@ export function useRealtime(): RealtimeState {
     };
   }, [feed]);
 
-  const gateRef = useRef<ReplayGate>({ cut: null, holding: false, held: [], openedAt: 0, cancelWait: null, timer: null });
+  const gateRef = useRef<ReplayGate>({
+    cut: null,
+    opened: false,
+    holding: false,
+    held: [],
+    openedAt: 0,
+    cancelWait: null,
+    timer: null,
+  });
 
   const deliver = useCallback((raw: any) => {
     const cut = gateRef.current.cut;
@@ -183,22 +198,29 @@ export function useRealtime(): RealtimeState {
       if (g.cut == null) g.cut = Number.POSITIVE_INFINITY;
       release();
     }
+    const first = !g.opened;
+    g.opened = true;
     g.openedAt = Date.now();
+    // The first connection's cut is never after the first REST answer; a reconnect's is its open.
+    const cutAt = (openServerMs: number) => {
+      const answered = first ? firstAnswerServerMs() : null;
+      return answered != null ? Math.min(openServerMs, answered) : openServerMs;
+    };
     const now = serverNow();
     if (now != null) {
-      g.cut = now;
+      g.cut = cutAt(now);
       return;
     }
     g.holding = true;
     g.cut = null;
     g.cancelWait = onFirstAnswer(() => {
       const est = serverNow();
-      g.cut = est != null ? g.openedAt + (est - Date.now()) : g.openedAt;
+      g.cut = cutAt(est != null ? g.openedAt + (est - Date.now()) : g.openedAt);
       release();
     });
     g.timer = window.setTimeout(() => {
       // No answer in 10 s: this machine's clock is all there is.
-      g.cut = g.openedAt;
+      g.cut = cutAt(g.openedAt);
       release();
     }, HOLD_MAX_MS);
   }, [release]);

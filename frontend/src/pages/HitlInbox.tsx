@@ -76,6 +76,8 @@ const RECEIPT_MS = 1200;
 const ELSEWHERE_MS = 4000;
 /** While the pointer or a focused button holds a receipt from elsewhere, check again after this. */
 const HOLD_RECHECK_MS = 1000;
+/** The longest a resting pointer keeps a receipt from elsewhere on screen; then it folds anyway. */
+const HOVER_HOLD_MAX_MS = 30_000;
 /** The longest the page waits for the ticket's timeline to name who decided, before it speaks. */
 const LOOKUP_MS = 1500;
 /** The fold itself (HitlInbox.css `.hitl-slot`); skipped under quiet mode and reduced motion. */
@@ -89,6 +91,10 @@ type Entry = { id: string; task: any; decided: Decided | null };
 const reducedMotion = () =>
   document.documentElement.getAttribute("data-quiet") === "on" ||
   (typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+
+/** A pointer that can rest on something (a mouse, a trackpad); a finger never "hovers". */
+const canHover = () =>
+  typeof window.matchMedia === "function" && window.matchMedia("(hover: hover)").matches;
 
 const taskId = (t: any, i: number) => (typeof t?.id === "string" && t.id ? t.id : `row-${i}`);
 
@@ -189,14 +195,18 @@ export default function HitlInbox({ session, tick }: { session: any; tick: numbe
   const slotOf = (id: string) =>
     listRef.current?.querySelector<HTMLElement>(`.hitl-slot[data-card-id="${CSS.escape(id)}"]`) ?? null;
 
-  /** Focus for a card: an open card's Claim, else its heading; a row's button; never <body>. */
-  const focusCard = useCallback((id: string | null) => {
+  /**
+   * Focus for a card: an open card's Claim, else its heading; a row's button. The page heading
+   * only when `orHeading` (the open card left and nothing is waiting). Never scrolls the page:
+   * the focus follows the presenter's place, the view does not jump to it.
+   */
+  const focusCard = useCallback((id: string | null, orHeading: boolean) => {
     const slot = id ? slotOf(id) : null;
     const target =
       slot?.querySelector<HTMLElement>(".hitl-claim") ||
       slot?.querySelector<HTMLElement>(".hitl-card h2") ||
       slot?.querySelector<HTMLElement>(".hitl-row");
-    (target || headingRef.current)?.focus();
+    (target || (orHeading ? headingRef.current : null))?.focus({ preventScroll: true });
   }, []);
 
   /** The card after `id` in the queue that is still waiting, else the one before it. */
@@ -211,15 +221,22 @@ export default function HitlInbox({ session, tick }: { session: any; tick: numbe
 
   /**
    * Show the receipt for `ms`, fold the card, hand the open slot and focus on. A receipt from
-   * elsewhere (`hold`) is never folded from under the pointer or a focused Copy button: it is
-   * checked again a second later instead.
+   * elsewhere (`hold`) is not folded while its Copy button has focus, nor, on a screen with a
+   * pointer that can rest (`(hover: hover)`), from under the pointer for up to 30 s: it is checked
+   * again a second later instead. A touch screen's sticky :hover holds nothing.
    */
   const retire = useCallback(
     (id: string, ms: number, hold: boolean) => {
       const quick = reducedMotion();
+      let hoverSince: number | null = null;
       const drop = () => {
         const wasOpen = openNow.current === id;
         const next = neighbourOf(id);
+        // Focus moves only when it was inside the slot that is leaving (its receipt, its Copy
+        // button); a presenter reading elsewhere on the page keeps their focus and their scroll.
+        const slot = slotOf(id);
+        const active = document.activeElement;
+        const hadFocus = slot != null && active != null && active !== document.body && slot.contains(active);
         setDecided((d) => {
           if (!d[id]) return d;
           const rest = { ...d };
@@ -227,13 +244,14 @@ export default function HitlInbox({ session, tick }: { session: any; tick: numbe
           return rest;
         });
         if (wasOpen) setOpenPick(next);
-        // Once React has removed the slot, the next card takes focus, unless the presenter has
-        // already moved on to something else (focus is no longer on <body>).
+        if (!hadFocus) return;
+        // Once React has removed the slot, the next card takes focus, unless focus has already
+        // gone somewhere else meanwhile. The page heading only for the open card's slot.
         window.requestAnimationFrame(() =>
           window.requestAnimationFrame(() => {
-            const active = document.activeElement;
-            if (active && active !== document.body) return;
-            focusCard(wasOpen ? next : null);
+            const now = document.activeElement;
+            if (now && now !== document.body && now.isConnected) return;
+            focusCard(next, wasOpen);
           })
         );
       };
@@ -245,10 +263,14 @@ export default function HitlInbox({ session, tick }: { session: any; tick: numbe
         if (hold) {
           const slot = slotOf(id);
           const active = document.activeElement;
-          const held =
-            slot != null &&
-            (slot.matches(":hover") || (active instanceof HTMLButtonElement && slot.contains(active)));
-          if (held) return later(expire, HOLD_RECHECK_MS);
+          const focused = slot != null && active instanceof HTMLButtonElement && slot.contains(active);
+          let hovered = slot != null && canHover() && slot.matches(":hover");
+          if (hovered) {
+            const now = Date.now();
+            if (hoverSince == null) hoverSince = now;
+            if (now - hoverSince >= HOVER_HOLD_MAX_MS) hovered = false;
+          }
+          if (focused || hovered) return later(expire, HOLD_RECHECK_MS);
         }
         if (quick) drop();
         else fold();
@@ -297,13 +319,20 @@ export default function HitlInbox({ session, tick }: { session: any; tick: numbe
         return rest;
       });
       // The receipt took the open card's footer: it has focus (ApprovalCard). A row only takes
-      // focus when focus was on that row.
+      // focus when focus was on that row (its button is replaced by the receipt, which would drop
+      // focus to <body>); focus already on <body>, or anywhere else, stays where it is.
       if (!wasOpen) {
-        window.requestAnimationFrame(() => {
-          const slot = slotOf(id);
-          if (slot && (document.activeElement === document.body || slot.contains(document.activeElement)))
-            slot.querySelector<HTMLElement>(".hitl-row")?.focus();
-        });
+        const before = slotOf(id);
+        const active = document.activeElement;
+        const onRow = before != null && active != null && active !== document.body && before.contains(active);
+        if (onRow) {
+          window.requestAnimationFrame(() => {
+            const slot = slotOf(id);
+            const now = document.activeElement;
+            if (slot && (now === document.body || !now?.isConnected || slot.contains(now)))
+              slot.querySelector<HTMLElement>(".hitl-row")?.focus({ preventScroll: true });
+          });
+        }
       }
 
       let spoken = false;
@@ -423,7 +452,9 @@ export default function HitlInbox({ session, tick }: { session: any; tick: numbe
         // The pressed button stays; after a failed claim the card's heading takes focus so the
         // error under it is read in context.
         if (action === "claim") {
-          window.requestAnimationFrame(() => slotOf(id)?.querySelector<HTMLElement>(".hitl-card h2")?.focus());
+          window.requestAnimationFrame(() =>
+            slotOf(id)?.querySelector<HTMLElement>(".hitl-card h2")?.focus({ preventScroll: true })
+          );
         }
       } finally {
         setBusy((b) => {

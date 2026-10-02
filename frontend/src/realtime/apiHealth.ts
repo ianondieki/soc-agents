@@ -23,7 +23,7 @@ export const UNREACHABLE_AFTER = 2;
 
 let failures = 0;
 /** Server time (ms) of the first answer this tab received, from its `Date` header (null before it). */
-let firstAnswerServerMs: number | null = null;
+let firstAnswerMs: number | null = null;
 /** Server clock minus this machine's clock, a lower bound (max over answers of Date − arrival). */
 let offsetMs: number | null = null;
 const listeners = new Set<Listener>();
@@ -46,10 +46,10 @@ export function noteAnswer(date: string | null | undefined): void {
   if (Number.isFinite(server)) {
     const off = server - at;
     offsetMs = offsetMs == null ? off : Math.max(offsetMs, off);
-    if (firstAnswerServerMs == null) firstAnswerServerMs = server;
-  } else if (firstAnswerServerMs == null) {
+    if (firstAnswerMs == null) firstAnswerMs = server;
+  } else if (firstAnswerMs == null) {
     // No header (an odd proxy): this machine's clock is the best there is.
-    firstAnswerServerMs = at;
+    firstAnswerMs = at;
     offsetMs = offsetMs ?? 0;
   }
   if (firstAnswerWaiters.size > 0) {
@@ -104,9 +104,19 @@ export function serverNow(): number | null {
   return offsetMs == null ? null : Date.now() + offsetMs;
 }
 
+/**
+ * The server's time (ms) of the first successful REST answer this tab received, read from its
+ * `Date` header (this machine's clock when it had none); null before it. The pages' mount loads
+ * were asked around then, so a frame stamped after it may be news to them: the realtime layer
+ * never counts such a frame as replayed history (realtime/useRealtime.ts).
+ */
+export function firstAnswerServerMs(): number | null {
+  return firstAnswerMs;
+}
+
 /** Run `fn` once the first answer has arrived (at once if it already has). Returns a cancel. */
 export function onFirstAnswer(fn: () => void): () => void {
-  if (firstAnswerServerMs != null) {
+  if (firstAnswerMs != null) {
     fn();
     return () => undefined;
   }

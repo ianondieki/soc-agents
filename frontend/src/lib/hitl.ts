@@ -932,12 +932,18 @@ export function decisionFromTimeline(items: unknown, raisedAt: unknown): Elsewhe
   return best;
 }
 
-/** "Approved by NOC Analyst in another session, 15:24"; the parts that are unknown are left out. */
+/**
+ * "Approved by NOC Analyst in another session, 15:24"; the parts that are unknown are left out.
+ * A card that left the queue without a known yes or no (expired, cancelled, reseeded) is not
+ * called decided: "No longer waiting: it was closed in another session".
+ */
 export function elsewhereHeadline(d: ElsewhereDecision, hm: (ts: unknown) => string): string {
-  const verb = d.verdict === "approved" ? "Approved" : d.verdict === "rejected" ? "Rejected" : "Decided";
-  const by = d.by ? ` by ${clamp(d.by, 60)}` : "";
   const at = d.at ? hm(d.at) : "";
-  return `${verb}${by} in another session${at ? `, ${at}` : ""}`;
+  const when = at ? `, ${at}` : "";
+  if (d.verdict !== "approved" && d.verdict !== "rejected") return `No longer waiting: it was closed in another session${when}`;
+  const verb = d.verdict === "approved" ? "Approved" : "Rejected";
+  const by = d.by ? ` by ${clamp(d.by, 60)}` : "";
+  return `${verb}${by} in another session${when}`;
 }
 
 /* ------------------------------------------------------------------ *
