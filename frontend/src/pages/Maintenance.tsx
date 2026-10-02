@@ -158,7 +158,7 @@ export default function Maintenance({ tick }: { tick: number }) {
       )}
 
       <div className="panel">
-        <h3>Windows</h3>
+        <h2 className="panel-title">Windows</h2>
         <table>
           <thead>
             <tr>
@@ -296,7 +296,7 @@ export default function Maintenance({ tick }: { tick: number }) {
       </div>
 
       <div className="panel" style={{ marginTop: "1rem" }}>
-        <h3>Tasks</h3>
+        <h2 className="panel-title">Tasks</h2>
         <table>
           <thead>
             <tr>

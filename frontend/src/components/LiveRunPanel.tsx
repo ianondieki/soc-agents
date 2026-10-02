@@ -144,10 +144,10 @@ export default function LiveRunPanel({
     <div className="panel live-run">
       <div className="panel-head">
         <div className="head-row">
-          <h3>
+          <h2 className="panel-title">
             {live && <span className="live-dot" aria-hidden="true" />}
             {title}
-          </h3>
+          </h2>
           {incidentNumber && <span className="mono">{incidentNumber}</span>}
           {status && <RunState status={status} />}
           {steps.length > 0 && <span>{steps.length} of 12 hops</span>}

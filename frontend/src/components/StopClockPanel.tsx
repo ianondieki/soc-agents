@@ -189,7 +189,7 @@ export default function StopClockPanel({ incidentId }: { incidentId?: string | n
   return (
     <div className="panel" style={{ marginTop: "1rem" }}>
       <div className="panel-head">
-        <h3>Stop clock (SCC)</h3>
+        <h2 className="panel-title">Stop clock (SCC)</h2>
         <div className="facts">
           {openCount > 0 ? (
             <span className="attn warn">

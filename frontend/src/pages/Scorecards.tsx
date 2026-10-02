@@ -188,7 +188,7 @@ export default function Scorecards({ session }: { session: Session }) {
       <div>
         {heading}
         <div className="panel">
-          <h3>{listFailure.view.title}</h3>
+          <h2 className="panel-title">{listFailure.view.title}</h2>
           <p className="muted" style={{ marginTop: 0 }}>
             {listFailure.view.body} Your role here is <strong>{role ? roleWords(role) : "unknown"}</strong>.
           </p>
@@ -285,7 +285,7 @@ export default function Scorecards({ session }: { session: Session }) {
 
       <div className="panel">
         <div className="panel-head">
-          <h3>Cards</h3>
+          <h2 className="panel-title">Cards</h2>
           <span className="muted">{rows.length} shown</span>
         </div>
         <div style={{ overflowX: "auto" }}>

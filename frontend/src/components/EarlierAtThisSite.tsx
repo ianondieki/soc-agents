@@ -106,7 +106,7 @@ export default function EarlierAtThisSite({ siteId }: { siteId?: string | null }
   return (
     <div className="panel" style={{ marginTop: "1rem" }}>
       <div className="panel-head">
-        <h3>Earlier at this site</h3>
+        <h2 className="panel-title">Earlier at this site</h2>
         <div className="facts">
           <span className="mono">{siteId}</span>
           {data && !data.enabled && <span>recall off</span>}

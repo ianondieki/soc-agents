@@ -147,7 +147,7 @@ export default function ScorecardDetail({
   if (failure) {
     return (
       <div className="panel">
-        <h3>{failure.view.title}</h3>
+        <h2 className="panel-title">{failure.view.title}</h2>
         <p className="muted" style={{ marginTop: 0 }}>
           {failure.view.body}
         </p>
@@ -231,10 +231,10 @@ export default function ScorecardDetail({
         {/* ---- header ------------------------------------------------------------ */}
         <div className="panel-head" style={{ flexWrap: "wrap" }}>
           <div>
-            <h3 className="head-row" style={{ margin: 0 }}>
+            <h2 className="panel-title head-row" style={{ margin: 0 }}>
               {card.vendor_code || "vendor " + card.vendor_id}
               {card.vendor_name ? <span className="muted">{card.vendor_name}</span> : null}
-            </h3>
+            </h2>
             <div className="facts">
               <span>
                 Period {card.period} ({periodWords(card.period)}, EAT calendar month)
@@ -342,7 +342,7 @@ export default function ScorecardDetail({
         {/* ---- human acts ---------------------------------------------------------- */}
         {(anyAction || actions.none) && (
           <div style={{ borderTop: "1px solid var(--border)", paddingTop: "0.7rem", marginTop: "0.2rem" }}>
-            <h4 style={H4}>Actions</h4>
+            <h3 style={SUBHEAD}>Actions</h3>
             {actions.none && <div className="muted">{actions.none}</div>}
             {anyAction && !actions.roleMayAct && (
               <div className="muted">
@@ -445,12 +445,12 @@ export default function ScorecardDetail({
         )}
 
         {/* ---- lines ------------------------------------------------------------- */}
-        <h4 style={H4} className="head-row">
+        <h3 style={SUBHEAD} className="head-row">
           Lines
           <span className="muted">{lines.length} lines</span>
           <span className="muted">raw beside normalised, never instead of it</span>
           <span className="muted">select a line for its formula and evidence</span>
-        </h4>
+        </h3>
         <ScorecardLinesTable
           lines={lines}
           canDispute={dispute.canDispute}
@@ -460,10 +460,10 @@ export default function ScorecardDetail({
         />
 
         {/* ---- operator discipline: OUR record-keeping, shown to the vendor -------- */}
-        <h4 style={H4} className="head-row">
+        <h3 style={SUBHEAD} className="head-row">
           Operator discipline
           <span className="muted">the operator's own record-keeping; it moves no vendor KPI</span>
-        </h4>
+        </h3>
         <div className="facts">
           <span>
             Stop clocks recorded: <strong style={{ color: "var(--text)" }}>{d.scc_events ?? "not recorded"}</strong>
@@ -498,10 +498,10 @@ export default function ScorecardDetail({
 
         {card.narrative && (
           <>
-            <h4 style={H4} className="head-row">
+            <h3 style={SUBHEAD} className="head-row">
               Narrative
               {card.narrative_ai_assisted ? <span className="muted">AI-assisted</span> : null}
-            </h4>
+            </h3>
             <div className="pre">{card.narrative}</div>
           </>
         )}
@@ -524,7 +524,7 @@ export default function ScorecardDetail({
   );
 }
 
-const H4 = { margin: "1.05rem 0 0.5rem", fontSize: "var(--fs-md)", color: "var(--text-bright)" } as const;
+const SUBHEAD = { margin: "1.05rem 0 0.5rem", fontSize: "var(--fs-md)", color: "var(--text-bright)" } as const;
 
 const NOTICE = {
   display: "flex",

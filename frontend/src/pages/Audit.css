@@ -85,7 +85,8 @@
   border-top: 0;
   border-radius: calc(var(--r-lg) - 1px) calc(var(--r-lg) - 1px) 0 0;
 }
-.audit-head-title {
+/* Two classes so `.panel h2` (the panel-title rule; this list sits in a .panel) never wins. */
+.audit-head .audit-head-title {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;

@@ -52,13 +52,13 @@ export default function ShiftDesk({ tick }: { tick: number }) {
       </div>
       {handover && (
         <div className="panel" style={{ marginBottom: "var(--s4)" }}>
-          <h3>{handover.subject}</h3>
+          <h2 className="panel-title">{handover.subject}</h2>
           <div className="pre">{handover.body}</div>
         </div>
       )}
       <div className="panel">
         <div className="panel-head">
-          <h3>Shift ledger</h3>
+          <h2 className="panel-title">Shift ledger</h2>
           <span className="muted">Times in EAT</span>
         </div>
         {failed && ledger === null ? (

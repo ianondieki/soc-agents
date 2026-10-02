@@ -391,7 +391,7 @@ export default function PirEditor({
   return (
     <div className="panel pir-editor">
       <div className="panel-head">
-        <h3>{incidentLabel || pir.incident_id}</h3>
+        <h2 className="panel-title">{incidentLabel || pir.incident_id}</h2>
         <div className="facts">
           {st.chip ? <span className={st.chip}>{st.word}</span> : <span>{st.word}</span>}
           <span>Opened: {PIR_REASON_WORDS[pir.opened_reason] || humanEnum(pir.opened_reason)}</span>
@@ -518,10 +518,10 @@ export default function PirEditor({
       )}
 
       {/* ---- action items ------------------------------------------------- */}
-      <h4 className="pir-h4 head-row">
+      <h3 className="pir-subhead head-row">
         Action items
         <span className="muted">the owner is a role token, never a person (§7.7.6)</span>
-      </h4>
+      </h3>
       <table>
         <thead>
           <tr>
@@ -645,10 +645,10 @@ export default function PirEditor({
       )}
 
       {/* ---- timeline ----------------------------------------------------- */}
-      <h4 className="pir-h4 head-row">
+      <h3 className="pir-subhead head-row">
         Assembled timeline
         <span className="muted">work notes, agent steps, stop clocks, broadcasts, approvals</span>
-      </h4>
+      </h3>
       <div className="list">
         {(pir.timeline ?? []).map((t, i) => (
           <div key={t.ts + "-" + i} className="row" style={{ cursor: "default" }}>
@@ -671,7 +671,7 @@ export default function PirEditor({
       {/* ---- publish ------------------------------------------------------ */}
       {!published && (
         <>
-          <h4 className="pir-h4">Publish</h4>
+          <h3 className="pir-subhead">Publish</h3>
           <p className="muted">
             Publishing is an A2 act: a <strong>named human</strong> signs it (§5.3.18), and the
             server checks every precondition in one pass so you see them all at once rather than

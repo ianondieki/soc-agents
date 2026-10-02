@@ -131,14 +131,14 @@ export default function Agents({ tick = 0 }: { tick?: number }) {
       </div>
       <div className="grid-2">
         <div className="panel">
-          <h3>Agent roster</h3>
+          <h2 className="panel-title">Agent roster</h2>
           <div className="grid-2" style={{ gridTemplateColumns: "1fr 1fr" }}>
             {agents.map((a) => {
               const s = stats[a.name];
               const failed = s?.failed || 0;
               return (
                 <div key={a.name} className="agent-card">
-                  <h4>{agentDisplayName(a.name)}</h4>
+                  <h3>{agentDisplayName(a.name)}</h3>
                   <p className="muted" style={{ margin: 0 }}>
                     {a.mission}
                   </p>
@@ -173,7 +173,7 @@ export default function Agents({ tick = 0 }: { tick?: number }) {
         </div>
         <div className="panel">
           <div className="panel-head">
-            <h3>Live and recent runs</h3>
+            <h2 className="panel-title">Live and recent runs</h2>
             <span className="muted">Times in EAT</span>
           </div>
           <div className="list" aria-busy={runs === null || undefined}>

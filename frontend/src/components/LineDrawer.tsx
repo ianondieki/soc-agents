@@ -148,10 +148,10 @@ export default function LineDrawer({
                   <span key={i}>{t}</span>
                 ))}
               </div>
-              <h3 className="head-row" style={{ margin: "0.15rem 0 0" }}>
+              <h2 className="panel-title head-row" style={{ margin: "0.15rem 0 0" }}>
                 {k.label}
                 <span className="muted">{priorityLabel(line.priority)}</span>
-              </h3>
+              </h2>
               <div className="mono muted">{k.code}</div>
             </div>
             <div className="chips">
@@ -178,15 +178,15 @@ export default function LineDrawer({
             <Tile label="Region multiplier" value={mult.text} note={mult.text === "—" ? mult.title : null} />
           </div>
 
-          <h4 style={H4}>Formula</h4>
+          <h3 style={SUBHEAD}>Formula</h3>
           <div className="pre" style={{ fontFamily: "var(--mono)", fontSize: "var(--fs-xs)" }}>
             {formula || "—"}
           </div>
 
-          <h4 style={H4} className="head-row">
+          <h3 style={SUBHEAD} className="head-row">
             Terms cited
             <span className="muted">yaml_path, resolved against the card's SLA terms version</span>
-          </h4>
+          </h3>
           {paths.length ? (
             <ul style={{ margin: 0, paddingLeft: "1.1rem" }}>
               {paths.map((p) => (
@@ -199,10 +199,10 @@ export default function LineDrawer({
             <div className="muted">No term path recorded.</div>
           )}
 
-          <h4 style={H4} className="head-row">
+          <h3 style={SUBHEAD} className="head-row">
             Stop-clock minutes deducted
             <span className="muted">un-reversed SCC intervals inside the outage</span>
-          </h4>
+          </h3>
           <div className="facts">
             <span style={{ fontFamily: "var(--mono)", fontSize: "var(--fs-lg)", fontWeight: 500, color: "var(--text-bright)" }}>
               {sccMinutes} min
@@ -213,12 +213,12 @@ export default function LineDrawer({
             {sccMinutes === 0 && <span className="muted">none on this line</span>}
           </div>
 
-          <h4 style={H4} className="head-row">
+          <h3 style={SUBHEAD} className="head-row">
             Excluded incidents
             <span className="muted">
               {excluded.length} listed, {line.excluded_incidents} counted
             </span>
-          </h4>
+          </h3>
           {excluded.length ? (
             <table>
               <thead>
@@ -244,14 +244,14 @@ export default function LineDrawer({
             <div className="muted">No incident was excluded from this line.</div>
           )}
 
-          <h4 style={H4} className="head-row">
+          <h3 style={SUBHEAD} className="head-row">
             Measured
             <span className="muted">{line.eligible_incidents} eligible</span>
-          </h4>
+          </h3>
           <EvidenceTable table={measured} empty="No measured rows on this line." />
           {sites.rows.length > 0 && (
             <>
-              <h4 style={H4}>Sites</h4>
+              <h3 style={SUBHEAD}>Sites</h3>
               <EvidenceTable table={sites} empty="" />
             </>
           )}
@@ -265,7 +265,7 @@ export default function LineDrawer({
             </div>
           )}
 
-          <h4 style={H4}>Credit</h4>
+          <h3 style={SUBHEAD}>Credit</h3>
           {credit ? (
             <span className={credit.chip} title={credit.title}>
               {humanEnum(credit.label)}
@@ -277,7 +277,7 @@ export default function LineDrawer({
 
           {dispute && (
             <>
-              <h4 style={H4}>Dispute</h4>
+              <h3 style={SUBHEAD}>Dispute</h3>
               <span className="chip accent">{humanEnum(dispute.label)}</span>
               {dispute.detail ? <span className="muted"> {dispute.detail}</span> : null}
               {line.adjudicated_by ? <div className="muted">Adjudicated by {line.adjudicated_by}</div> : null}
@@ -290,7 +290,7 @@ export default function LineDrawer({
   );
 }
 
-const H4 = { margin: "1.05rem 0 0.45rem", fontSize: "var(--fs-md)", color: "var(--text-bright)" } as const;
+const SUBHEAD = { margin: "1.05rem 0 0.45rem", fontSize: "var(--fs-md)", color: "var(--text-bright)" } as const;
 
 function Tile({ label, value, note }: { label: string; value: string; note?: string | null }) {
   return (

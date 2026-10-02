@@ -117,7 +117,7 @@ export default function ContractsDrawer({
   return (
     <div className="panel" style={{ marginTop: "1rem" }}>
       <div className="panel-head">
-        <h3>Ask the contracts</h3>
+        <h2 className="panel-title">Ask the contracts</h2>
         <div className="head-row">
           {incidentId && (
             <span className="muted" title="Answers are narrowed to this incident's vendor">

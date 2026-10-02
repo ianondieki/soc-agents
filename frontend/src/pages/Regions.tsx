@@ -117,10 +117,10 @@ function RegionCard({ region }: { region: any }) {
   return (
     <div className="panel">
       <div className="panel-head">
-        <h3 className="head-row">
+        <h2 className="panel-title head-row">
           {region.label || region.region_code}
           <span className="muted">{region.region_code}</span>
-        </h3>
+        </h2>
         {chip ? (
           <span className={chip} title={STATUS_HINT[status] || ""}>
             {word}

@@ -236,7 +236,7 @@ export default function RegulatoryCountdown({ incidentId }: { incidentId?: strin
       })}
 
       <div className="panel-head">
-        <h3>Regulatory clock</h3>
+        <h2 className="panel-title">Regulatory clock</h2>
         <span className="muted">times in EAT</span>
       </div>
 

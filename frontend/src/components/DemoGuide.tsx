@@ -95,7 +95,7 @@ export default function DemoGuide({
           Close
         </button>
       </div>
-      <h4 className="guide-title">{current.title}</h4>
+      <h2 className="guide-title">{current.title}</h2>
       <p className="guide-say">{current.say}</p>
       <div className="guide-actions">
         {current.action && (

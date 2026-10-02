@@ -186,7 +186,7 @@ export default function Settings({
         </div>
       </div>
       <div className="panel">
-        <h3>Session role (team demo)</h3>
+        <h2 className="panel-title">Session role (team demo)</h2>
         <div className="form-row">
           <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Display name" aria-label="Display name" />
           <select value={role} onChange={(e) => setRole(e.target.value)} aria-label="Session role">
@@ -219,7 +219,7 @@ export default function Settings({
       </div>
 
       <div className="panel" style={{ marginTop: "1rem" }}>
-        <h3>Gmail demo email</h3>
+        <h2 className="panel-title">Gmail demo email</h2>
         {emailSt ? (
           <div className="muted">
             <div>
@@ -261,7 +261,7 @@ export default function Settings({
       </div>
 
       <div className="panel" style={{ marginTop: "1rem" }}>
-        <h3>Regions and MSP map</h3>
+        <h2 className="panel-title">Regions and MSP map</h2>
         <p className="muted">
           About 7,000 sites and 50M+ subscribers in six Safaricom regions. Power: NBI_E and MTK to Egypro, RFT and WNY
           to Tetranet. Radio: NBI_W and CST to Huawei. Fibre: Egypro Fibre, Soliton (Mt Kenya), Camusat, Ecta, Adrian,
@@ -286,7 +286,7 @@ export default function Settings({
       </div>
 
       <div className="panel" style={{ marginTop: "1rem" }}>
-        <h3>Heavy-rain microwave storm</h3>
+        <h2 className="panel-title">Heavy-rain microwave storm</h2>
         <p className="muted">
           Best launched from <Link to="/">Mission control</Link>, so the agent steps stream live. It also runs from
           here:
@@ -306,7 +306,7 @@ export default function Settings({
 
       <div className="panel" style={{ marginTop: "1rem" }}>
         <div className="panel-head">
-          <h3>Single-event inject</h3>
+          <h2 className="panel-title">Single-event inject</h2>
           <span className="muted">Each one opens an INC ticket</span>
         </div>
         <div className="list">
@@ -347,7 +347,7 @@ export default function Settings({
 
       <div className="panel" style={{ marginTop: "1rem" }}>
         <div className="panel-head">
-          <h3>Seed sites</h3>
+          <h2 className="panel-title">Seed sites</h2>
           <span className="muted">{sites.length} sites</span>
         </div>
         <table>

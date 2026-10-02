@@ -124,7 +124,7 @@ export default function Contracts() {
       {status && (
         <div className="panel" style={{ marginBottom: "1rem" }}>
           <div className="panel-head">
-            <h3>Status</h3>
+            <h2 className="panel-title">Status</h2>
             <div className="facts">
               <span>Role: {roleWords(status.role)}</span>
               {status.llm.cited_answers ? (
@@ -151,7 +151,7 @@ export default function Contracts() {
       {!off && (
         <div className="panel" style={{ marginTop: "1rem" }}>
           <div className="panel-head">
-            <h3>Clause search</h3>
+            <h2 className="panel-title">Clause search</h2>
             {incidentId && <span className="muted">Narrowed to incident {incidentId.slice(0, 8)}…</span>}
           </div>
           <div style={{ display: "flex", gap: "0.5rem" }}>
@@ -194,7 +194,7 @@ export default function Contracts() {
 
       {!off && (
         <div className="panel" style={{ marginTop: "1rem" }}>
-          <h3>Contracts you may see</h3>
+          <h2 className="panel-title">Contracts you may see</h2>
           <table>
             <thead>
               <tr>

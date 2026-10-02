@@ -297,7 +297,7 @@ export default function MissionControl({
         <div className="panel">
           <div className="panel-head">
             <div className="head-row">
-              <h3>Live incidents</h3>
+              <h2 className="panel-title">Live incidents</h2>
               {incLoad === "ok" && <span>{open.length} open</span>}
             </div>
           </div>
@@ -346,7 +346,7 @@ export default function MissionControl({
         <div className="panel">
           <div className="panel-head">
             <div className="head-row">
-              <h3>Agent activity</h3>
+              <h2 className="panel-title">Agent activity</h2>
               {quietMode ? (
                 <>
                   <span>{events.length} critical</span>
@@ -393,7 +393,7 @@ export default function MissionControl({
         <div className="panel">
           <div className="panel-head">
             <div className="head-row">
-              <h3>Approvals</h3>
+              <h2 className="panel-title">Approvals</h2>
               {hitlLoad === "ok" && <span>{hitl.length} waiting</span>}
             </div>
           </div>
@@ -433,7 +433,7 @@ export default function MissionControl({
 
       <div className="grid-2" style={{ marginTop: "var(--s4)", alignItems: "start" }}>
         <div className="panel">
-          <h3>Open incidents by region</h3>
+          <h2 className="panel-title">Open incidents by region</h2>
           <div className="region-bars">
             {Object.entries(metrics?.by_region || {}).length === 0 && (
               <div className="empty">Region load appears when incidents are open.</div>
@@ -452,7 +452,7 @@ export default function MissionControl({
         <div className="panel">
           <div className="panel-head">
             <div className="head-row">
-              <h3>Recent agent runs</h3>
+              <h2 className="panel-title">Recent agent runs</h2>
               <span>times in EAT</span>
             </div>
           </div>

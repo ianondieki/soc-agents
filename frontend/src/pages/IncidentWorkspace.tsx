@@ -173,7 +173,7 @@ export default function IncidentWorkspace({ session }: { session: any }) {
 
       <div className="panel" style={{ marginBottom: "1rem" }}>
         <div className="panel-head">
-          <h3>NOC ticket fields</h3>
+          <h2 className="panel-title">NOC ticket fields</h2>
           <span className="muted">Filled by the agents. Times in EAT.</span>
         </div>
         <table>
@@ -261,7 +261,7 @@ export default function IncidentWorkspace({ session }: { session: any }) {
 
       <div className="panel" style={{ marginBottom: "1rem" }}>
         <div className="panel-head">
-          <h3>How the agents handled this alarm</h3>
+          <h2 className="panel-title">How the agents handled this alarm</h2>
           <div className="facts">
             {railSteps.length > 0 && <span>{railSteps.length} hops</span>}
             {railSteps.length > 0 && <span>{fmtMs(elapsed)}</span>}
@@ -285,7 +285,7 @@ export default function IncidentWorkspace({ session }: { session: any }) {
 
       <div className="detail-grid">
         <div className="panel">
-          <h3>Ticket narrative</h3>
+          <h2 className="panel-title">Ticket narrative</h2>
           <p>
             <strong>{inc.title}</strong>
           </p>
@@ -351,9 +351,9 @@ export default function IncidentWorkspace({ session }: { session: any }) {
           )}
         </div>
         <div className="panel">
-          <h3>Exec brief</h3>
+          <h2 className="panel-title">Exec brief</h2>
           <div className="pre">{brief || "No brief yet."}</div>
-          <h3 style={{ marginTop: "1rem" }}>Work note</h3>
+          <h2 className="panel-title" style={{ marginTop: "1rem" }}>Work note</h2>
           {msg && (
             <p className="muted" role="status">
               <IconCheck /> {msg}
@@ -421,7 +421,7 @@ export default function IncidentWorkspace({ session }: { session: any }) {
 
       <div className="panel" style={{ marginTop: "1rem" }}>
         <div className="panel-head">
-          <h3>Timeline</h3>
+          <h2 className="panel-title">Timeline</h2>
           <span className="muted">Times in EAT</span>
         </div>
         <div className="list">

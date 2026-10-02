@@ -294,7 +294,11 @@ button.chip:hover { border-color: var(--accent); color: var(--text-bright); }
   padding: var(--s4) var(--s4);
   min-width: 0;
 }
-.panel h3, .panel-head h3, .panel-kicker {
+/* Panel title: the h2 of a section directly under the page's h1. `.panel-title` is the class to
+   use; `.panel h2` / `.panel-head h2` cover a bare h2, and `.panel-kicker` is a kept alias.
+   A sub-section inside a panel is an h3 styled by its own component class (`.agent-card h3`,
+   `.pir-subhead`, the drawers' SUBHEAD style), so there is deliberately no `.panel h3` rule. */
+.panel h2, .panel-head h2, .panel-title, .panel-kicker {
   margin: 0 0 var(--s3);
   font-size: var(--fs-md);
   font-weight: 600;
@@ -302,11 +306,11 @@ button.chip:hover { border-color: var(--accent); color: var(--text-bright); }
   line-height: 1.4;
 }
 .panel-head { display: flex; justify-content: space-between; align-items: center; gap: var(--s2); margin-bottom: var(--s3); flex-wrap: wrap; }
-.panel-head h3, .panel-head .panel-kicker { margin: 0; }
+.panel-head h2, .panel-head .panel-title, .panel-head .panel-kicker { margin: 0; }
 .panel-head .chips { gap: var(--s2); }
 
 /* A heading with its count or facts beside it, as muted text 16 px away (never a chip):
-     <div class="head-row"><h3>Live incidents</h3><span>5 open</span></div> */
+     <div class="head-row"><h2 class="panel-title">Live incidents</h2><span>5 open</span></div> */
 .head-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s1) var(--s4); min-width: 0; }
 .head-row > h2, .head-row > h3, .head-row > h4 { margin: 0; }
 .head-row > span { color: var(--muted); font-size: var(--fs-sm); }
@@ -526,7 +530,7 @@ textarea { width: 100%; min-height: 90px; }
 }
 
 .agent-card { padding: var(--s3) var(--s4); border-radius: var(--r-md); border: 1px solid var(--line); background: var(--surface-2); }
-.agent-card h4 { margin: 0 0 2px; color: var(--text-bright); font-size: 0.92rem; font-weight: 600; }
+.agent-card h3 { margin: 0 0 2px; color: var(--text-bright); font-size: 0.92rem; font-weight: 600; }
 .agent-card .status-pill { display: none; }
 
 /* Quiet mode (night shift): subtractive, motion only. */
@@ -781,7 +785,7 @@ textarea { width: 100%; min-height: 90px; }
 
 /* ---- PIR editor --------------------------------------------------- */
 .pir-editor .panel-head { flex-wrap: wrap; }
-.pir-h4 {
+.pir-subhead {
   margin: 1.1rem 0 0.5rem;
   font-size: 0.95rem;
   color: var(--text-bright);

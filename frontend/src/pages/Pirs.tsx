@@ -221,7 +221,7 @@ export default function Pirs({ tick }: { tick: number }) {
 
       <div className="panel">
         <div className="panel-head">
-          <h3>Reviews</h3>
+          <h2 className="panel-title">Reviews</h2>
           <div className="facts">
             <span>{rows.length} shown</span>
             {awaiting != null &&

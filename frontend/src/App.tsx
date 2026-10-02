@@ -81,7 +81,8 @@ function useScrollableRegions(pathname: string, revisions: unknown) {
         if (scrolls) {
           if (!el.hasAttribute("tabindex")) el.setAttribute("tabindex", "0");
           if (!el.hasAttribute("aria-label")) {
-            const head = el.querySelector("h3, h4")?.textContent?.trim();
+            // The region's own title (a panel title is an h2.panel-title) or its first sub-section.
+            const head = el.querySelector(".panel-title, h3, h4")?.textContent?.trim();
             if (head) el.setAttribute("aria-label", head);
           }
         } else if (el.getAttribute("tabindex") === "0" && !el.hasAttribute("data-keep-tab")) {
