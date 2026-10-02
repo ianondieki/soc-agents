@@ -12,6 +12,7 @@ from typing import Any, AsyncIterator
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import HTMLResponse, StreamingResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from openpyxl import Workbook
@@ -191,6 +192,13 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# Compress every HTTP answer of 1 KiB or more for a client that accepts gzip: the JS chunks, the
+# stylesheet and the big JSON lists (/api/v1/runs, /api/v1/audit) shrink to a quarter or less,
+# which is most of a first load on a weak link. HTTP only -- the middleware passes WebSocket
+# scopes (/ws/ops) straight through -- and Starlette's default exclusions keep it off
+# text/event-stream (the SSE feed must flush frame by frame) and already-compressed bodies
+# (woff2 fonts, images, zip).
+app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 # The RBAC allow-lists, the _actor rule and the operator-scoping helpers moved to
 # api/deps.py when Phase 4 split the API into router modules -- a router cannot import
@@ -1761,10 +1769,29 @@ for _router in ROUTERS:
     app.include_router(_router)
 
 
+#: Vite names every file under /assets after a hash of its bytes (index-3sW5Qz-1.css), so the
+#: bytes behind such a URL never change: a browser may keep them for a year without asking.
+#: index.html is the opposite -- it names the current hashes -- so it is always revalidated.
+IMMUTABLE_ASSET = "public, max-age=31536000, immutable"
+#: Other files at the root of the build (public/: the self-hosted fonts, their licences) keep
+#: their names across builds, so they are cached for a week rather than forever.
+STABLE_FILE = "public, max-age=604800"
+SPA_SHELL = "no-cache"
+
+
+class HashedAssets(StaticFiles):
+    """The /assets mount, answering with the long-lived cache header (304s included)."""
+
+    def file_response(self, *args: Any, **kwargs: Any) -> Response:
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = IMMUTABLE_ASSET
+        return response
+
+
 if FRONTEND_DIST.exists():
     assets = FRONTEND_DIST / "assets"
     if assets.exists():
-        app.mount("/assets", StaticFiles(directory=str(assets)), name="assets")
+        app.mount("/assets", HashedAssets(directory=str(assets)), name="assets")
 
     # Deliberately open, both: this is the built SPA shell. The login screen is served from
     # here, so a gate would make it impossible to ever acquire the cookie that passes the
@@ -1773,7 +1800,7 @@ if FRONTEND_DIST.exists():
     @app.get("/")
     def spa_index():
         index = FRONTEND_DIST / "index.html"
-        return FileResponse(index, headers={"Cache-Control": "no-cache"})
+        return FileResponse(index, headers={"Cache-Control": SPA_SHELL})
 
     @app.get("/{full_path:path}")
     def spa_fallback(full_path: str):
@@ -1788,8 +1815,9 @@ if FRONTEND_DIST.exists():
         if not candidate.is_relative_to(FRONTEND_DIST.resolve()):
             raise HTTPException(404)
         if candidate.exists() and candidate.is_file():
-            return FileResponse(candidate)
-        return FileResponse(FRONTEND_DIST / "index.html", headers={"Cache-Control": "no-cache"})
+            shell = candidate.name == "index.html"
+            return FileResponse(candidate, headers={"Cache-Control": SPA_SHELL if shell else STABLE_FILE})
+        return FileResponse(FRONTEND_DIST / "index.html", headers={"Cache-Control": SPA_SHELL})
 
 else:
     # No build to serve: say so at the door. 503, because the thing this port is asked for is
