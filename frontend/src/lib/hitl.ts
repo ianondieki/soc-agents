@@ -44,6 +44,7 @@
  */
 
 import { humanEnum } from "./agents";
+import { detailOf, statusOf } from "./apiError";
 import { parseInstant } from "./time";
 
 /* ------------------------------------------------------------------ *
@@ -820,19 +821,27 @@ export function ladderBreached(mins: number | null, priority: unknown, claimedBy
  * Errors                                                              *
  * ------------------------------------------------------------------ */
 
+/** `fetch` rejects with a TypeError whose wording differs per browser when the API is down. */
+const NETWORK_FAILURE = /failed to fetch|networkerror|load failed|network request failed/i;
+
 /**
- * Turn `api.ts`'s `"409: {...}"` into something a supervisor can act on.
- * The raw text is kept by the caller as a `title` so nothing is hidden.
+ * A decision request's failure, as the problem and what to do. The server's own sentence
+ * (`detailOf`) is used where it is the useful part (a 400 or 403 says exactly which rule
+ * refused it); a dead network reads as one, not as "TypeError: Failed to fetch". The raw
+ * text is kept by the caller as a `title`, so nothing is hidden.
  */
 export function friendlyError(err: unknown): string {
+  const status = statusOf(err);
   const raw = err instanceof Error ? err.message : asText(err);
-  if (/^409/.test(raw)) return "Already decided — somebody else got there first. Queue refreshed.";
-  if (/^403/.test(raw)) return "Not permitted: a decision needs a supervisor role, and the raiser may not approve their own task.";
-  if (/^404/.test(raw)) return "Task no longer exists. Queue refreshed.";
-  if (/^400/.test(raw)) return `Rejected by the API: ${clamp(raw.replace(/^400:\s*/, ""), 160)}`;
-  if (/^5\d\d/.test(raw)) return "The API failed on that request. Nothing was decided — try again.";
+  if (status === 409) return "Somebody else got there first; your decision was not recorded.";
+  if (status === 404) return "The card is gone; your decision was not recorded.";
+  if (status === 401) return "Your session has ended. Sign in again, then retry.";
+  if (status === 403) return clamp(`Not permitted: ${detailOf(err, "your role cannot decide this card")}.`, 200);
+  if (status === 400 || status === 422) return clamp(capFirst(detailOf(err, "The API refused the request.")), 200);
+  if (status != null && status >= 500) return "The API failed on that request. Nothing was decided; try again.";
+  if (NETWORK_FAILURE.test(raw)) return "The API is unreachable. Nothing was decided; try again.";
   if (!raw) return "The request failed.";
-  return clamp(raw, 200);
+  return clamp(detailOf(err), 200);
 }
 
 /**
@@ -840,11 +849,16 @@ export function friendlyError(err: unknown): string {
  * `friendlyError`, whose wording ("Nothing was decided") is about a decision.
  */
 export function friendlyLoadError(err: unknown): string {
+  const status = statusOf(err);
   const raw = err instanceof Error ? err.message : asText(err);
-  if (/^401/.test(raw)) return "Your session has ended. Sign in again, then retry.";
-  if (/^403/.test(raw)) return "Your role cannot see the approvals queue.";
-  if (/^5\d\d/.test(raw)) return "The API failed while loading the queue.";
-  if (/failed to fetch|networkerror|load failed/i.test(raw)) return "The API is unreachable.";
+  if (status === 401) return "Your session has ended. Sign in again, then retry.";
+  if (status === 403) return "Your role cannot see the approvals queue.";
+  if (status != null && status >= 500) return "The API failed while loading the queue.";
+  if (NETWORK_FAILURE.test(raw)) return "The API is unreachable.";
   if (!raw) return "The request failed.";
-  return clamp(raw, 160);
+  return clamp(detailOf(err), 160);
+}
+
+function capFirst(s: string): string {
+  return s ? s[0].toUpperCase() + s.slice(1) : s;
 }

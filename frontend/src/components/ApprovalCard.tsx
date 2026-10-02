@@ -1,6 +1,6 @@
-import { Fragment, useEffect, useId, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { humanStatus } from "../lib/agents";
-import { IconDot } from "../lib/icons";
+import { IconCheck, IconDot } from "../lib/icons";
 import { fmtDateTime } from "../lib/time";
 import {
   ageMinutes,
@@ -34,7 +34,15 @@ import { hitlSubject, hitlSubjectIsIncident } from "../lib/hitlSubject";
  * in that footer, next to the button that caused it.
  *
  * "Claimed by you" is said once, by the head chip: once a card is claimed the
- * Claim button goes (it could only be disabled) and the page does not toast it.
+ * Claim button goes (it could only be disabled) and the page does not toast it. Its slot
+ * stays reserved, so the reason box keeps its width.
+ *
+ * DECIDING: Approve and Reject are never disabled buttons. Pressed with an empty reason they
+ * say "Add a reason; it goes on the audit row" under the box, mark it `aria-invalid` and put
+ * focus in it. The button that was pressed says what is happening ("Approving…"); the others
+ * are `aria-disabled` meanwhile, so focus never drops to <body>. Once decided, the footer
+ * shows the receipt ("Approved by NOC Analyst" and what that did) where the buttons were and
+ * takes focus; the page collapses the card a moment later (pages/HitlInbox.tsx).
  *
  * DEGRADATION RULES — nothing here may blank the inbox:
  *  - unknown `task_type` → `specFor` returns the fallback spec and the card
@@ -59,18 +67,35 @@ const APPROVE_REASON_REQUIRED_IN_UI = true;
 
 const REJECT_REASONS = ["wording", "wrong MSP", "late", "facts not verified"];
 
+/** The request in flight for this card, if any; each button says its own. */
+export type CardAction = "claim" | "approve" | "reject";
+
+const BUSY_LABEL: Record<CardAction, string> = { claim: "Claiming…", approve: "Approving…", reject: "Rejecting…" };
+
+/** A decided card's footer: who decided ("Approved by NOC Analyst") and what that did. */
+export interface CardReceipt {
+  headline: string;
+  effect: string;
+  /** Approved here: the check in the done colour. */
+  approved: boolean;
+}
+
+const REASON_NEEDED = "Add a reason; it goes on the audit row";
+
 export interface ApprovalCardProps {
   task: any;
   /** Full incident row when the board fetch succeeded; `null` is fine. */
   incident?: any;
   /** Display name of the signed-in operator. */
   who: string;
-  /** A request for this task is in flight. */
-  busy: boolean;
+  /** The request in flight for this task, or `null`. */
+  busy: CardAction | null;
   /** Already-friendly error text for this task, or `""`. */
   error: string;
   /** Raw error text, shown as a tooltip so nothing is hidden. */
   errorDetail?: string;
+  /** Set once the card is decided: the footer shows the receipt instead of the controls. */
+  receipt?: CardReceipt | null;
   onClaim: () => void;
   onApprove: (reason: string) => void;
   onReject: (reason: string) => void;
@@ -83,12 +108,15 @@ export default function ApprovalCard({
   busy,
   error,
   errorDetail,
+  receipt = null,
   onClaim,
   onApprove,
   onReject,
 }: ApprovalCardProps) {
   const [reason, setReason] = useState("");
   const [expanded, setExpanded] = useState(false);
+  // Approve or Reject pressed with an empty reason: the box says so and takes focus.
+  const [reasonMissing, setReasonMissing] = useState(false);
 
   const t = task && typeof task === "object" ? task : {};
   const payload = t.proposed_payload;
@@ -122,8 +150,35 @@ export default function ApprovalCard({
 
   const trimmed = reason.trim();
   const approveNeedsReason = spec.reasonRequired || APPROVE_REASON_REQUIRED_IN_UI;
-  const canApprove = !busy && (!approveNeedsReason || trimmed.length > 0);
-  const canReject = !busy && trimmed.length > 0; // the API 400s on an empty reason
+  const reasonMsgId = `${headingId}-reason`;
+
+  // The decision lands where the eye is: the receipt replaces the buttons in the sticky footer
+  // and takes focus before the buttons leave, so focus never falls to <body>.
+  const receiptRef = useRef<HTMLParagraphElement>(null);
+  useLayoutEffect(() => {
+    if (receipt) receiptRef.current?.focus({ preventScroll: true });
+  }, [receipt]);
+
+  /** An empty reason is said beside the box, never by greying out the button. */
+  const needReason = (): boolean => {
+    setReasonMissing(true);
+    reasonRef.current?.focus();
+    return false;
+  };
+  const approve = () => {
+    if (busy || receipt) return;
+    if (approveNeedsReason && !trimmed) return void needReason();
+    onApprove(trimmed);
+  };
+  const reject = () => {
+    if (busy || receipt) return;
+    if (!trimmed) return void needReason(); // the API 400s on an empty reason
+    onReject(trimmed);
+  };
+  const claim = () => {
+    if (busy || receipt) return;
+    onClaim();
+  };
 
   return (
     <article className="hitl-card" aria-labelledby={headingId}>
@@ -132,7 +187,8 @@ export default function ApprovalCard({
           <span className={`pill ${priority}`}>{priority}</span>
           {/* Since v8 a maintenance card has no incident; say what it IS about (lib/hitlSubject).
               An incident number is an identifier (mono); a maintenance heading is prose. */}
-          <h2 id={headingId} className={hitlSubjectIsIncident(t) ? "hitl-inc" : "hitl-subject"}>
+          {/* Focusable from script only: after a failed claim, or when the card above it is decided. */}
+          <h2 id={headingId} className={hitlSubjectIsIncident(t) ? "hitl-inc" : "hitl-subject"} tabIndex={-1}>
             {hitlSubject(t)}
           </h2>
         </span>
@@ -273,71 +329,114 @@ export default function ApprovalCard({
       </details>
 
       {/* Sticky to the bottom of the viewport inside the card, so the decision stays in reach
-          while the channels are read. The error block sits here, beside the buttons. */}
-      <footer className="hitl-actions">
-        {error && (
-          <div className="hitl-error" role="alert" title={errorDetail || error}>
-            {error}
-          </div>
-        )}
-        <div className="hitl-decide">
-          {/* One line that grows with what is typed, so the footer leaves the drafts in view. */}
-          <textarea
-            ref={reasonRef}
-            className="hitl-reason"
-            value={reason}
-            onChange={(e) => setReason(e.target.value)}
-            aria-label="Decision reason"
-            placeholder={
-              approveNeedsReason
-                ? "Decision reason — required, goes on the audit row"
-                : "Decision reason (required to reject)"
-            }
-            rows={1}
-          />
-          <div className="hitl-buttons">
-            {/* The head chip already says who holds a claimed card; the button only exists to claim. */}
-            {!claimed && (
-              <button className="btn" onClick={onClaim} disabled={busy}>
-                Claim
+          while the channels are read. The error block sits here, beside the buttons; once the
+          card is decided the receipt takes the controls' place, at the controls' height. */}
+      <footer className={"hitl-actions" + (receipt ? " decided" : "")}>
+        <div className="hitl-controls" aria-hidden={receipt ? true : undefined}>
+          {error && (
+            <div className="hitl-error" role="alert" title={errorDetail || error}>
+              {error}
+            </div>
+          )}
+          <div className="hitl-decide">
+            <div className="hitl-reason-wrap">
+              {/* One line that grows with what is typed, so the footer leaves the drafts in view. */}
+              <textarea
+                ref={reasonRef}
+                className="hitl-reason"
+                value={reason}
+                onChange={(e) => {
+                  setReason(e.target.value);
+                  if (reasonMissing && e.target.value.trim()) setReasonMissing(false);
+                }}
+                aria-label="Decision reason"
+                aria-invalid={reasonMissing || undefined}
+                aria-describedby={reasonMissing ? reasonMsgId : undefined}
+                placeholder={
+                  approveNeedsReason
+                    ? "Reason for the decision; it goes on the audit row"
+                    : "Reason (needed to reject); it goes on the audit row"
+                }
+                rows={1}
+                tabIndex={receipt ? -1 : undefined}
+              />
+              {reasonMissing && (
+                <p id={reasonMsgId} className="hitl-invalid">
+                  {REASON_NEEDED}
+                </p>
+              )}
+            </div>
+            {/* Three fixed slots: Claim's stays reserved once the card is claimed, and a busy
+                label fits its button, so the reason box never changes width. */}
+            <div className="hitl-buttons">
+              {/* The head chip already says who holds a claimed card; the button only exists to claim. */}
+              {!claimed && (
+                <button
+                  type="button"
+                  className="btn hitl-claim"
+                  onClick={claim}
+                  aria-disabled={busy ? true : undefined}
+                  tabIndex={receipt ? -1 : undefined}
+                >
+                  {busy === "claim" ? BUSY_LABEL.claim : "Claim"}
+                </button>
+              )}
+              <button
+                type="button"
+                className="btn good hitl-approve"
+                onClick={approve}
+                aria-disabled={busy ? true : undefined}
+                title={spec.effect}
+                tabIndex={receipt ? -1 : undefined}
+              >
+                {busy === "approve" ? BUSY_LABEL.approve : "Approve"}
               </button>
-            )}
-            <button
-              className="btn good"
-              onClick={() => onApprove(trimmed)}
-              disabled={!canApprove}
-              title={
-                canApprove
-                  ? spec.effect
-                  : "A reason is required before approving — it is recorded on the audit row."
-              }
-            >
-              {busy ? "Working…" : "Approve"}
-            </button>
-            <button
-              className="btn danger"
-              onClick={() => onReject(trimmed)}
-              disabled={!canReject}
-              title={canReject ? "Suppress the drafts and cancel" : "Reject requires a reason."}
-            >
-              Reject
-            </button>
+              <button
+                type="button"
+                className="btn danger hitl-reject"
+                onClick={reject}
+                aria-disabled={busy ? true : undefined}
+                title="Suppress the drafts and cancel"
+                tabIndex={receipt ? -1 : undefined}
+              >
+                {busy === "reject" ? BUSY_LABEL.reject : "Reject"}
+              </button>
+            </div>
+          </div>
+          <div className="hitl-reason-quick">
+            {/* These are reasons to reject; picking one fills the box, it does not decide. */}
+            <span className="hitl-quick-label" id={`${headingId}-quick`}>
+              Reject because
+            </span>
+            <span className="hitl-quick-list" role="group" aria-labelledby={`${headingId}-quick`}>
+              {REJECT_REASONS.map((r) => (
+                <button
+                  key={r}
+                  type="button"
+                  className="chip hitl-quick"
+                  onClick={() => {
+                    setReason(r);
+                    setReasonMissing(false);
+                  }}
+                  title="Put this reason in the box"
+                  tabIndex={receipt ? -1 : undefined}
+                >
+                  {r}
+                </button>
+              ))}
+            </span>
+            {!claimed && <span className="hitl-hint">Claim first so two supervisors do not both act.</span>}
           </div>
         </div>
-        <div className="hitl-reason-quick">
-          {REJECT_REASONS.map((r) => (
-            <button
-              key={r}
-              type="button"
-              className="chip hitl-quick"
-              onClick={() => setReason(r)}
-              title="Fill the reason box"
-            >
-              {r}
-            </button>
-          ))}
-          {!claimed && <span className="hitl-hint">Claim first so two supervisors do not both act.</span>}
-        </div>
+        {receipt && (
+          <p className="hitl-receipt" tabIndex={-1} ref={receiptRef}>
+            <span className={receipt.approved ? "hitl-receipt-verb ok" : "hitl-receipt-verb"}>
+              <IconCheck />
+              {receipt.headline}
+            </span>
+            {receipt.effect && <span className="hitl-receipt-effect">{receipt.effect}</span>}
+          </p>
+        )}
       </footer>
     </article>
   );

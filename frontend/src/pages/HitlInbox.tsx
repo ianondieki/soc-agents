@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api";
-import ApprovalCard from "../components/ApprovalCard";
+import ApprovalCard, { type CardAction, type CardReceipt } from "../components/ApprovalCard";
 import CardBoundary from "../components/CardBoundary";
 import {
   ageMinutes,
@@ -12,8 +12,9 @@ import {
   labelFor,
   rawPayload,
 } from "../lib/hitl";
+import { statusOf } from "../lib/apiError";
 import { hitlSubject } from "../lib/hitlSubject";
-import { IconCheck, IconDot } from "../lib/icons";
+import { IconDot } from "../lib/icons";
 import { useRealtimeState } from "../realtime/RealtimeContext";
 import "./HitlInbox.css";
 
@@ -35,9 +36,16 @@ import "./HitlInbox.css";
  * queue) fails; a one-line warning + Retry above the last good list when a
  * refetch fails; an empty state that says nothing is waiting for a decision.
  *
- * OUTCOMES: an approve or reject is confirmed in the summary row (the card is
- * gone, so the page says what happened). A claim is not: the card's own chip
- * turns to "claimed by you", so the confirmation is spoken to screen readers only.
+ * A DECISION LANDS WHERE THE EYE IS. The decided card stays in place for 1.2 s with
+ * "Approved by NOC Analyst" and what that did in its footer (where the buttons were, and
+ * focused), then folds away; focus moves to the next card's Claim (its heading when it is
+ * already claimed, the page heading when the queue is empty). There is no separate
+ * confirmation line elsewhere on the page; screen readers also hear the outcome from a
+ * visually hidden status line.
+ *
+ * NO GHOSTS. Every list request is numbered: an answer older than the one on screen is
+ * dropped, and a successful decision retires every answer already in flight (they were asked
+ * before it). The ids decided here are kept, so no late answer can bring a decided card back.
  *
  * REFRESH: the page is driven by `tick` (`revisions.hitl` from the WS renderer
  * table, so a burst of `agent.step.*` frames costs nothing here and a
@@ -49,95 +57,145 @@ import "./HitlInbox.css";
  */
 
 const DISCONNECTED_POLL_MS = 15000;
+/** How long a decided card shows its receipt before it folds away. */
+const RECEIPT_MS = 1200;
+/** The fold itself (HitlInbox.css `.hitl-slot`); skipped under quiet mode and reduced motion. */
+const FOLD_MS = 200;
 
 type LoadError = { text: string; detail: string };
-/** The last decision's outcome; `shown: false` is announced but not drawn. */
-type Outcome = { text: string; shown: boolean };
+/** A card decided on this page, kept on screen for its receipt, then folded. */
+type Decided = { task: any; receipt: CardReceipt; index: number; folding: boolean };
+
+const reducedMotion = () =>
+  document.documentElement.getAttribute("data-quiet") === "on" ||
+  (typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+
+const taskId = (t: any, i: number) => (typeof t?.id === "string" && t.id ? t.id : `row-${i}`);
 
 export default function HitlInbox({ session, tick }: { session: any; tick: number }) {
   const [tasks, setTasks] = useState<any[]>([]);
   const [incidents, setIncidents] = useState<Record<string, any>>({});
-  const [msg, setMsg] = useState<Outcome | null>(null);
+  // What screen readers hear after a claim or a decision; never drawn.
+  const [announce, setAnnounce] = useState("");
   // False until the first answer (rows or an error), so the list can show skeleton cards
   // instead of a misleading "nothing waiting".
   const [loaded, setLoaded] = useState(false);
   const [loadError, setLoadError] = useState<LoadError | null>(null);
-  const [busyId, setBusyId] = useState<string | null>(null);
+  const [busy, setBusy] = useState<Record<string, CardAction>>({});
   const [errors, setErrors] = useState<Record<string, { text: string; detail: string }>>({});
+  const [decided, setDecided] = useState<Record<string, Decided>>({});
 
-  // Incident ids we have already asked the board for. Without this the "fetch
-  // the facts for an incident I don't have" effect re-runs forever when an
-  // incident is genuinely absent from `/api/v1/incidents`.
-  const factsAsked = useRef<Set<string>>(new Set());
+  // Request numbering: `asked` is the newest request sent, `shown` the newest whose answer
+  // may be applied. An answer numbered below `shown` is stale and dropped.
+  const asked = useRef(0);
+  const shown = useRef(0);
+  // Every id decided on this page, for the page's life: a late answer never revives one.
+  const decidedIds = useRef<Set<string>>(new Set());
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+  const timers = useRef<number[]>([]);
+  useEffect(() => () => timers.current.forEach((t) => window.clearTimeout(t)), []);
 
   const rt = useRealtimeState();
   const connected = rt?.connected ?? false;
 
+  /**
+   * The queue and the incident facts in one round. `/api/v1/hitl/pending` returns only
+   * `incident_number`, `priority` and `site_id`; est. users, M-PESA risk, services and the owner
+   * live on the incident. Both answers are applied together, before the list first draws, so
+   * the facts never arrive later and push the drafts down. A failed incidents call keeps the
+   * facts already known (the cards render with what the task rows carry).
+   */
   const load = useCallback(() => {
-    api
-      .hitl()
-      .then((rows) => {
-        // Only ever *replace* the queue with something we actually received.
-        // A failed or malformed refetch leaves the last good list on screen.
-        setTasks(Array.isArray(rows) ? rows.filter(isPlainObject) : []);
+    const mine = ++asked.current;
+    Promise.allSettled([api.hitl(), api.incidents()]).then(([queue, facts]) => {
+      if (mine < shown.current) return; // an older answer than the one on screen
+      if (facts.status === "fulfilled" && Array.isArray(facts.value)) {
+        const map: Record<string, any> = {};
+        for (const r of facts.value) if (r && typeof r.id === "string") map[r.id] = r;
+        setIncidents(map);
+      }
+      if (queue.status === "fulfilled") {
+        shown.current = mine;
+        // Only ever *replace* the queue with something we actually received, minus anything
+        // decided here. A failed or malformed refetch leaves the last good list on screen.
+        const rows = queue.value;
+        const list = Array.isArray(rows) ? rows.filter(isPlainObject) : [];
+        setTasks(list.filter((t) => !decidedIds.current.has(String(t.id))));
         setLoadError(null);
-      })
-      .catch((e) =>
-        setLoadError({ text: friendlyLoadError(e), detail: e instanceof Error ? e.message : String(e) })
-      )
-      .finally(() => setLoaded(true));
+      } else {
+        const e = queue.reason;
+        setLoadError({ text: friendlyLoadError(e), detail: e instanceof Error ? e.message : String(e) });
+      }
+      setLoaded(true);
+    });
   }, []);
 
-  const reload = useCallback(() => {
-    factsAsked.current.clear();
-    load();
-  }, [load]);
+  const reload = load;
 
-  useEffect(reload, [tick, reload]);
+  useEffect(load, [tick, load]);
 
   // Degraded mode: no socket, no revisions, so poll. Costs nothing while the
   // socket is up because the effect only arms when `connected` is false.
   useEffect(() => {
     if (connected) return;
-    const id = window.setInterval(reload, DISCONNECTED_POLL_MS);
+    const id = window.setInterval(load, DISCONNECTED_POLL_MS);
     return () => window.clearInterval(id);
-  }, [connected, reload]);
-
-  /**
-   * Incident facts. `/api/v1/hitl/pending` returns only `incident_number`,
-   * `priority` and `site_id`; est. users, M-PESA risk, services and the owner
-   * live on the incident. One list call covers every card, and a failure is
-   * swallowed — the cards render with whatever the task rows carry.
-   */
-  useEffect(() => {
-    const need = tasks
-      .map((t) => t?.incident_id)
-      .filter(
-        (id): id is string =>
-          typeof id === "string" && Boolean(id) && !incidents[id] && !factsAsked.current.has(id)
-      );
-    if (need.length === 0) return;
-    for (const id of need) factsAsked.current.add(id);
-    let cancelled = false;
-    api
-      .incidents()
-      .then((rows) => {
-        if (cancelled || !Array.isArray(rows)) return;
-        const map: Record<string, any> = {};
-        for (const r of rows) if (r && typeof r.id === "string") map[r.id] = r;
-        setIncidents(map);
-      })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
-  }, [tasks, incidents]);
+  }, [connected, load]);
 
   const who = session?.display_name || "Supervisor";
 
+  /** Focus for the card now at `index` in the list: its Claim, else its heading; the page
+   *  heading when the queue is empty. Never <body>. */
+  const focusCardAt = useCallback((index: number) => {
+    const slots = listRef.current ? Array.from(listRef.current.querySelectorAll<HTMLElement>(".hitl-slot:not(.folding)")) : [];
+    const slot = slots[Math.min(index, slots.length - 1)];
+    const target = slot?.querySelector<HTMLElement>(".hitl-claim") || slot?.querySelector<HTMLElement>(".hitl-card h2");
+    (target || headingRef.current)?.focus();
+  }, []);
+
+  // The decided cards as of the last render, for the timers below (a state updater may run
+  // after them, so they read the index from here).
+  const decidedNow = useRef(decided);
+  decidedNow.current = decided;
+
+  /** Show the receipt, fold the card, hand focus on. */
+  const retire = useCallback(
+    (id: string) => {
+      const quick = reducedMotion();
+      const fold = () => {
+        setDecided((d) => (d[id] ? { ...d, [id]: { ...d[id], folding: true } } : d));
+        timers.current.push(window.setTimeout(drop, FOLD_MS));
+      };
+      const drop = () => {
+        const at = decidedNow.current[id]?.index ?? 0;
+        setDecided((d) => {
+          if (!d[id]) return d;
+          const next = { ...d };
+          delete next[id];
+          return next;
+        });
+        // Once React has removed the slot, the card now at that position takes focus, unless
+        // the presenter has already moved on to something else (focus is no longer on <body>).
+        window.requestAnimationFrame(() =>
+          window.requestAnimationFrame(() => {
+            const active = document.activeElement;
+            if (active && active !== document.body) return;
+            focusCardAt(at);
+          })
+        );
+      };
+      timers.current.push(window.setTimeout(quick ? drop : fold, RECEIPT_MS));
+    },
+    [focusCardAt]
+  );
+
   const act = useCallback(
-    async (id: string, run: () => Promise<any>, okMsg: string, shown = true) => {
-      setBusyId(id);
+    async (task: any, index: number, action: CardAction, reason = "") => {
+      const id = taskId(task, index);
+      const subject = hitlSubject(task);
+      const broadcast = task?.task_type === "APPROVE_BROADCAST";
+      setBusy((b) => ({ ...b, [id]: action }));
       setErrors((prev) => {
         if (!prev[id]) return prev;
         const next = { ...prev };
@@ -145,24 +203,77 @@ export default function HitlInbox({ session, tick }: { session: any; tick: numbe
         return next;
       });
       try {
-        await run();
-        setMsg({ text: okMsg, shown });
+        if (action === "claim") await api.claim(id, who);
+        else if (action === "approve") await api.approve(id, who, reason);
+        else await api.reject(id, who, reason);
+        // Every list answer already on its way was asked before this decision: retire them.
+        shown.current = asked.current + 1;
+        if (action === "claim") {
+          setTasks((ts) => ts.map((t) => (t?.id === id ? { ...t, claimed_by: who, status: "CLAIMED" } : t)));
+          setAnnounce(`Claimed ${subject}. Write a reason, then approve or reject.`);
+        } else {
+          const verb = action === "approve" ? "Approved" : "Rejected";
+          const effect =
+            action === "approve"
+              ? broadcast
+                ? "The held broadcast is released to the dispatcher."
+                : "The change goes ahead."
+              : broadcast
+                ? "The drafts are suppressed; nothing is sent."
+                : "Nothing goes ahead.";
+          decidedIds.current.add(id);
+          const receipt = { headline: `${verb} by ${who}`, effect, approved: action === "approve" };
+          setDecided((d) => ({ ...d, [id]: { task, receipt, index, folding: false } }));
+          setTasks((ts) => ts.filter((t) => t?.id !== id));
+          setAnnounce(`${verb} ${subject}. ${effect}`);
+          retire(id);
+        }
       } catch (e) {
-        setMsg(null);
-        setErrors((prev) => ({
-          ...prev,
-          [id]: {
-            text: friendlyError(e),
-            detail: e instanceof Error ? e.message : String(e),
-          },
-        }));
+        const code = statusOf(e);
+        if (action !== "claim" && (code === 409 || code === 404)) {
+          // Somebody else decided it first: the card says so where the buttons were, then
+          // folds like any decided card, so focus is handed on instead of falling to <body>.
+          decidedIds.current.add(id);
+          const receipt = { headline: "Already decided by someone else", effect: friendlyError(e), approved: false };
+          setDecided((d) => ({ ...d, [id]: { task, receipt, index, folding: false } }));
+          setTasks((ts) => ts.filter((t) => t?.id !== id));
+          setAnnounce(`${subject} was already decided by someone else.`);
+          retire(id);
+          return;
+        }
+        const text = action === "claim" && code === 409 ? "Somebody else claimed this card first." : friendlyError(e);
+        setErrors((prev) => ({ ...prev, [id]: { text, detail: e instanceof Error ? e.message : String(e) } }));
+        // The pressed button stays; after a failed claim the card's heading takes focus so the
+        // error under it is read in context.
+        if (action === "claim") {
+          window.requestAnimationFrame(() =>
+            listRef.current?.querySelector<HTMLElement>(`[data-card-id="${CSS.escape(id)}"] .hitl-card h2`)?.focus()
+          );
+        }
       } finally {
-        setBusyId(null);
+        setBusy((b) => {
+          if (!b[id]) return b;
+          const next = { ...b };
+          delete next[id];
+          return next;
+        });
         reload(); // whatever happened, the truth is on the server
       }
     },
-    [reload]
+    [reload, retire, who]
   );
+
+  /** The list as drawn: the queue, with each card decided here back in its place until it folds. */
+  const display = useMemo(() => {
+    const out: { id: string; task: any; decided: Decided | null }[] = tasks.map((t, i) => ({
+      id: taskId(t, i),
+      task: t,
+      decided: null,
+    }));
+    const kept = Object.entries(decided).sort((a, b) => a[1].index - b[1].index);
+    for (const [id, d] of kept) out.splice(Math.min(d.index, out.length), 0, { id, task: d.task, decided: d });
+    return out;
+  }, [tasks, decided]);
 
   const summary = useMemo(() => {
     let urgent = 0;
@@ -177,26 +288,27 @@ export default function HitlInbox({ session, tick }: { session: any; tick: numbe
     return { urgent, unclaimed, oldest };
   }, [tasks]);
 
-  const showList = loaded && tasks.length > 0;
+  const showList = loaded && display.length > 0;
 
   return (
     <div>
       <div className="page-head">
         <div>
-          <h1>Approvals</h1>
+          <h1 ref={headingRef} tabIndex={-1}>
+            Approvals
+          </h1>
           <p className="lead">Claim a card, read what leaves, then approve or reject with a reason.</p>
         </div>
         <div className="page-actions">
-          <button className="btn" onClick={reload} disabled={busyId !== null}>
+          <button className="btn" onClick={reload}>
             Refresh
           </button>
         </div>
       </div>
 
-      {/* Plain facts, 16 px apart, no chips. The status span is always mounted so a screen
-          reader hears each decision's outcome. */}
+      {/* Plain facts, 16 px apart, no chips. */}
       <div className="hitl-summary">
-        {showList && (
+        {loaded && tasks.length > 0 && (
           <>
             <span>{tasks.length} waiting</span>
             {summary.urgent > 0 && <span>{summary.urgent} P1/P2</span>}
@@ -210,20 +322,14 @@ export default function HitlInbox({ session, tick }: { session: any; tick: numbe
             Live updates are down; checking every {DISCONNECTED_POLL_MS / 1000}&nbsp;s
           </span>
         )}
-        <span className="hitl-done" role="status">
-          {msg &&
-            (msg.shown ? (
-              <>
-                <IconCheck className="hitl-ok" />
-                {msg.text}
-              </>
-            ) : (
-              <span className="hitl-sr">{msg.text}</span>
-            ))}
-        </span>
       </div>
+      {/* Always mounted, so each claim and decision is spoken; the receipt on the card is what
+          a sighted presenter reads. */}
+      <span className="hitl-sr" role="status">
+        {announce}
+      </span>
 
-      {loadError && tasks.length > 0 && (
+      {loadError && display.length > 0 && (
         <div className="hitl-error hitl-stale" role="alert" title={loadError.detail}>
           <span>Couldn't refresh the queue; showing the last list received. {loadError.text}</span>
           <button className="btn sm" onClick={reload}>
@@ -238,18 +344,20 @@ export default function HitlInbox({ session, tick }: { session: any; tick: numbe
             Loading the approvals queue.
           </span>
           {[0, 1].map((n) => (
-            <div key={n} className="hitl-card hitl-skel" aria-hidden="true">
-              <div className="skeleton w30" />
-              <div className="skeleton w55" />
-              <div className="hitl-skel-cols">
-                <div>
-                  <div className="skeleton" />
-                  <div className="skeleton" />
-                  <div className="skeleton w70" />
-                </div>
-                <div>
-                  <div className="skeleton" />
-                  <div className="skeleton w70" />
+            <div key={n} className="hitl-slot">
+              <div className="hitl-card hitl-skel" aria-hidden="true">
+                <div className="skeleton w30" />
+                <div className="skeleton w55" />
+                <div className="hitl-skel-cols">
+                  <div>
+                    <div className="skeleton" />
+                    <div className="skeleton" />
+                    <div className="skeleton w70" />
+                  </div>
+                  <div>
+                    <div className="skeleton" />
+                    <div className="skeleton w70" />
+                  </div>
                 </div>
               </div>
             </div>
@@ -257,7 +365,7 @@ export default function HitlInbox({ session, tick }: { session: any; tick: numbe
         </div>
       )}
 
-      {loaded && tasks.length === 0 && loadError && (
+      {loaded && display.length === 0 && loadError && (
         <div className="panel">
           <div className="empty" role="alert" title={loadError.detail}>
             Couldn't load the approvals queue. {loadError.text}
@@ -268,7 +376,7 @@ export default function HitlInbox({ session, tick }: { session: any; tick: numbe
         </div>
       )}
 
-      {loaded && tasks.length === 0 && !loadError && (
+      {loaded && display.length === 0 && !loadError && (
         <div className="panel">
           <div className="empty">
             Nothing is waiting for a decision. Cards arrive here when an agent holds a broadcast or a change for
@@ -278,75 +386,56 @@ export default function HitlInbox({ session, tick }: { session: any; tick: numbe
       )}
 
       {showList && (
-        <div className="hitl-list">
-          {tasks.map((t, i) => {
-            const id = typeof t?.id === "string" && t.id ? t.id : `row-${i}`;
+        <div className="hitl-list" ref={listRef}>
+          {display.map(({ id, task: t, decided: d }, i) => {
             const err = errors[id];
-            const subject = hitlSubject(t);
-            const broadcast = t?.task_type === "APPROVE_BROADCAST";
             return (
-              <CardBoundary
-                key={id}
-                fallback={
-                  <article className="hitl-card">
-                    <header className="hitl-card-head">
-                      <span className="chip danger">card failed to render</span>
-                      <h2 className="hitl-inc">
-                        {typeof t?.incident_number === "string" && t.incident_number ? t.incident_number : id}
-                      </h2>
-                      <span className="hitl-type">{labelFor(t?.task_type)}</span>
-                    </header>
-                    <p className="hitl-effect">
-                      This task could not be drawn. The raw payload is below; decide from it, or open the
-                      incident.
-                    </p>
-                    <pre className="pre hitl-field-pre" tabIndex={0}>
-                      {rawPayload(t?.proposed_payload)}
-                    </pre>
-                    <div className="hitl-buttons hitl-fallback-actions">
-                      <button
-                        className="btn danger"
-                        disabled={busyId === id}
-                        onClick={() =>
-                          act(
-                            id,
-                            () => api.reject(id, who, "card render failure — rejected unread"),
-                            "Rejected"
-                          )
-                        }
-                      >
-                        Reject unread
-                      </button>
-                    </div>
-                  </article>
-                }
-              >
-                <ApprovalCard
-                  task={t}
-                  incident={t?.incident_id ? incidents[t.incident_id] : null}
-                  who={who}
-                  busy={busyId === id}
-                  error={err?.text || ""}
-                  errorDetail={err?.detail}
-                  onClaim={() => act(id, () => api.claim(id, who), `Claimed ${subject}`, false)}
-                  onApprove={(reason) =>
-                    act(
-                      id,
-                      () => api.approve(id, who, reason),
-                      broadcast
-                        ? `Approved ${subject}; the held broadcast is released to the dispatcher`
-                        : `Approved ${subject}`
-                    )
+              <div key={id} className={"hitl-slot" + (d?.folding ? " folding" : "")} data-card-id={id}>
+                <CardBoundary
+                  fallback={
+                    <article className="hitl-card">
+                      <header className="hitl-card-head">
+                        <span className="chip danger">card failed to render</span>
+                        <h2 className="hitl-inc" tabIndex={-1}>
+                          {typeof t?.incident_number === "string" && t.incident_number ? t.incident_number : id}
+                        </h2>
+                        <span className="hitl-type">{labelFor(t?.task_type)}</span>
+                      </header>
+                      <p className="hitl-effect">
+                        This task could not be drawn. The raw payload is below; decide from it, or open the
+                        incident.
+                      </p>
+                      <pre className="pre hitl-field-pre" tabIndex={0}>
+                        {rawPayload(t?.proposed_payload)}
+                      </pre>
+                      <div className="hitl-buttons hitl-fallback-actions">
+                        <button
+                          className="btn danger"
+                          aria-disabled={busy[id] || d ? true : undefined}
+                          onClick={() => {
+                            if (!busy[id] && !d) act(t, i, "reject", "card render failure — rejected unread");
+                          }}
+                        >
+                          {busy[id] === "reject" ? "Rejecting…" : "Reject unread"}
+                        </button>
+                      </div>
+                    </article>
                   }
-                  onReject={(reason) =>
-                    act(
-                      id,
-                      () => api.reject(id, who, reason),
-                      broadcast ? `Rejected ${subject}; the drafts are suppressed` : `Rejected ${subject}`
-                    )
-                  }
-                />
-              </CardBoundary>
+                >
+                  <ApprovalCard
+                    task={t}
+                    incident={t?.incident_id ? incidents[t.incident_id] : null}
+                    who={who}
+                    busy={busy[id] ?? null}
+                    error={err?.text || ""}
+                    errorDetail={err?.detail}
+                    receipt={d?.receipt ?? null}
+                    onClaim={() => act(t, i, "claim")}
+                    onApprove={(reason) => act(t, i, "approve", reason)}
+                    onReject={(reason) => act(t, i, "reject", reason)}
+                  />
+                </CardBoundary>
+              </div>
             );
           })}
         </div>

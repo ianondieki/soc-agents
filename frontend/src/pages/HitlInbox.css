@@ -1,9 +1,10 @@
 /* Approvals (route /hitl). Owned by pages/HitlInbox.tsx and components/ApprovalCard.tsx; loaded
  * after styles.css and built only from its tokens (--fs-*, --s*, --r-*, the colour roles).
  *
- * Sentence case throughout: no rule here changes letter case or adds tracking. Nothing here
- * animates, so quiet mode and reduced motion have nothing new to strip; the loading bars are
- * the shared .skeleton, which honours both. Boxes nest at most two deep: card > pre.
+ * Sentence case throughout: no rule here changes letter case or adds tracking. One thing moves:
+ * a decided card folds away (about 0.2 s) after its receipt has been on screen for 1.2 s; quiet
+ * mode and reduced motion remove it at once instead. The loading bars are the shared .skeleton,
+ * which honours both. Boxes nest at most two deep: card > pre.
  */
 
 /* ---------------------------------------------------------------- summary row */
@@ -19,18 +20,8 @@
   font-variant-numeric: tabular-nums;
 }
 .hitl-summary > span { white-space: nowrap; }
-/* Nothing to say (empty queue, socket up, no decision yet): no gap above the empty state. */
+/* Nothing to say (empty queue, socket up): no gap above the empty state. */
 .hitl-summary:not(:has(> :not(:empty))) { margin-bottom: 0; }
-/* The last decision's outcome, on the right; wraps to its own line on a phone. */
-.hitl-summary > .hitl-done {
-  margin-left: auto;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--text);
-  white-space: normal;
-}
-.hitl-ok { flex: none; color: var(--ok); }
 
 /* ---------------------------------------------------------------- list */
 /*
@@ -42,7 +33,26 @@
 .hitl-list {
   display: flex;
   flex-direction: column;
-  gap: var(--s4);
+}
+
+/*
+ * One slot per card. The space between cards is the slot's own margin, so a decided card folds
+ * its height and that margin together and the cards below rise without a final jump. The fold
+ * is a one-row grid going from 1fr to 0fr; overflow is clipped only while folding, because a
+ * clipping ancestor would stop the decision footer sticking to the viewport.
+ */
+.hitl-slot {
+  display: grid;
+  grid-template-rows: 1fr;
+  margin-bottom: var(--s4);
+  transition: grid-template-rows 0.2s cubic-bezier(0.22, 1, 0.36, 1), margin-bottom 0.2s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.16s ease-out;
+}
+.hitl-slot > * { min-width: 0; }
+.hitl-slot.folding { grid-template-rows: 0fr; margin-bottom: 0; opacity: 0; }
+.hitl-slot.folding > * { min-height: 0; overflow: hidden; }
+:root[data-quiet="on"] .hitl-slot { transition: none; }
+@media (prefers-reduced-motion: reduce) {
+  .hitl-slot { transition: none; }
 }
 
 .hitl-card {
@@ -256,25 +266,29 @@
   position: sticky;
   bottom: 0;
   z-index: 2;
-  display: flex;
-  flex-direction: column;
-  gap: var(--s2);
+  /* The controls and, once decided, the receipt share one cell: the receipt sits where the
+     buttons were and the footer keeps its height until the card folds away. */
+  display: grid;
   margin: var(--s3) calc(-1 * var(--s4)) calc(-1 * var(--s4));
   padding: var(--s3) var(--s4);
   background: var(--surface);
   border-top: 1px solid var(--line);
   border-radius: 0 0 calc(var(--r-lg) - 1px) calc(var(--r-lg) - 1px);
 }
+.hitl-actions > * { grid-area: 1 / 1; min-width: 0; }
+.hitl-controls { display: flex; flex-direction: column; gap: var(--s2); }
+.hitl-actions.decided > .hitl-controls { visibility: hidden; }
 .hitl-decide {
   display: flex;
   flex-wrap: wrap;
-  align-items: flex-end;
+  align-items: flex-start;
   gap: var(--s2) var(--s3);
 }
+.hitl-reason-wrap { flex: 1 1 20rem; min-width: 0; }
 /* One line (the height of the buttons beside it) that grows with what is typed. */
 .hitl-reason {
-  flex: 1 1 20rem;
-  width: auto;
+  display: block;
+  width: 100%;
   min-width: 0;
   min-height: 0;
   max-height: 8rem;
@@ -283,10 +297,48 @@
   line-height: 1.35;
   field-sizing: content;
 }
-.hitl-buttons { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2); }
-.hitl-reason-quick { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2); }
+.hitl-reason[aria-invalid="true"] { border-color: var(--danger); }
+.hitl-invalid {
+  margin: var(--s1) 0 0;
+  color: var(--danger-text);
+  font-size: var(--fs-sm);
+}
+/* Three fixed slots, wide enough for "Approving…": Claim's slot stays when the card is claimed
+   and a busy label never widens its button, so the reason box keeps its width. */
+.hitl-buttons {
+  flex: none;
+  display: grid;
+  grid-template-columns: repeat(3, 7rem);
+  gap: var(--s2);
+}
+.hitl-buttons .btn { padding-left: var(--s2); padding-right: var(--s2); white-space: nowrap; }
+.hitl-claim { grid-column: 1; }
+.hitl-approve { grid-column: 2; }
+.hitl-reject { grid-column: 3; }
+.hitl-buttons .btn[aria-disabled="true"] { opacity: 0.6; cursor: progress; }
+.hitl-reason-quick { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2) var(--s3); }
+.hitl-quick-label { color: var(--muted); font-size: var(--fs-sm); white-space: nowrap; }
+.hitl-quick-list { display: flex; flex-wrap: wrap; gap: var(--s2); }
 .hitl-hint { margin-left: auto; color: var(--muted-dim); font-size: var(--fs-sm); }
 .hitl-fallback-actions { margin-top: var(--s3); }
+
+/* The receipt: who decided, then what that did, centred in the footer's height. */
+.hitl-receipt {
+  align-self: center;
+  justify-self: start;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--s1) var(--s4);
+  margin: 0;
+  font-size: var(--fs-md);
+}
+.hitl-receipt:focus { outline: none; }
+.hitl-receipt:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+.hitl-receipt-verb { display: inline-flex; align-items: center; gap: 6px; color: var(--text-bright); font-weight: 600; }
+.hitl-receipt-verb > svg { flex: none; align-self: center; color: var(--muted); }
+.hitl-receipt-verb.ok > svg { color: var(--ok); }
+.hitl-receipt-effect { color: var(--muted); }
 
 /* ---------------------------------------------------------------- loading, error, empty */
 .hitl-skel { display: flex; flex-direction: column; gap: var(--s3); }
@@ -325,6 +377,10 @@
   }
   .hitl-created { margin-left: 0; }
   .hitl-hint { margin-left: 0; }
+  /* The reason box has its own row here, so nothing to hold steady: the buttons share the width. */
+  .hitl-reason-wrap { flex-basis: 100%; }
+  .hitl-buttons { width: 100%; grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); }
+  .hitl-buttons .btn { grid-column: auto; }
   .hitl-buttons .btn { min-height: 44px; }
 }
 

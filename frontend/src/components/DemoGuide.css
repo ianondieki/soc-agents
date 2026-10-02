@@ -1,0 +1,81 @@
+/* The guided-demo bar (components/DemoGuide.tsx). One row under the top bar, in normal flow, so
+ * it pushes the page down instead of covering it. The presenter's layer reads as a faint accent
+ * band with an accent hairline under it; nothing floats, nothing animates. Built only from the
+ * tokens in styles.css. */
+
+.guide-bar {
+  padding: var(--s2) var(--s5);
+  border-bottom: 1px solid var(--accent-line);
+  background: var(--accent-faint);
+  font-size: var(--fs-sm);
+}
+
+.guide-bar-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s2) var(--s3);
+  min-height: 32px;
+}
+
+.guide-bar-step {
+  color: var(--muted);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The step title takes focus on open and on every step change (tabIndex -1). */
+.guide-bar-title {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+  margin: 0;
+  min-width: 0;
+  color: var(--text-bright);
+  font-size: var(--fs-md);
+  font-weight: 600;
+  line-height: 1.35;
+}
+.guide-bar-title:focus { outline: none; }
+.guide-bar-title:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.guide-bar-done { display: inline-flex; color: var(--ok); }
+
+.guide-bar-status { color: var(--accent); white-space: nowrap; }
+
+.guide-bar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s2);
+  margin-left: auto;
+}
+
+/* Back at the first step: announced as unavailable, still focusable, so focus never drops. */
+.guide-bar .btn[aria-disabled="true"],
+.guide-bar .btn[aria-disabled="true"]:hover {
+  opacity: 0.45;
+  cursor: not-allowed;
+  background: transparent;
+  border-color: var(--line-strong);
+  color: var(--text);
+}
+
+/* What to say, under the row when the disclosure is open. */
+.guide-bar-say {
+  max-width: 90ch;
+  margin: var(--s2) 0 var(--s1);
+  color: var(--text);
+  font-size: var(--fs-md);
+  line-height: 1.5;
+}
+.guide-bar-say[hidden] { display: none; }
+
+@media (max-width: 960px) {
+  .guide-bar { padding: var(--s2) 1rem; }
+}
+
+/* Phones: the title takes its own line; the controls wrap under it, left-aligned. */
+@media (max-width: 600px) {
+  .guide-bar-title { flex: 1 1 100%; }
+  .guide-bar-actions { margin-left: 0; }
+}
