@@ -1,0 +1,17 @@
+/* Post-incident reviews (route /pirs). Owned by pages/Pirs.tsx; loaded after styles.css and built
+   only from its tokens. */
+
+/* A row opens its review: the whole row for the mouse, the incident number for the keyboard. */
+.pir-row { cursor: pointer; }
+.pir-open {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-bright);
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+.pir-open:hover { text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--muted-dim); }
+.pir-editor-slot { margin-top: var(--s4); }

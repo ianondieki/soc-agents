@@ -33,9 +33,10 @@ import "./Regions.css";
 
 /** Status → chip class. Grey (plain `chip`) for STALE is deliberate: grey reads as
  *  "unknown", which is exactly the claim being made. CALM is the normal state, so it
- *  is a word and earns no chip and no green. */
+ *  is a word and earns no chip and no green. ALERT is the static red chip: nothing on
+ *  this page pulses (only the Wallboard's escalation does). */
 const STATUS_CHIP: Record<string, string | null> = {
-  ALERT: "chip bad",
+  ALERT: "chip danger",
   WATCH: "chip warn",
   STALE: "chip",
   CALM: null,

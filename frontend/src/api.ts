@@ -168,24 +168,3 @@ export const api = {
   /** Scheduler liveness (spec §7.0.3) — the poll-side truth behind the Wallboard "AGENTS OFFLINE" badge. */
   schedulerStatus: () => req<any>("/api/v1/scheduler/status"),
 };
-
-/**
- * Live rain storm: inject events one-by-one with delay so WebSocket
- * agent activity streams onto Mission Control in real time.
- */
-export async function runLiveRainStorm(
-  onProgress?: (i: number, total: number, incident: any) => void,
-  delayMs = 1600
-): Promise<{ count: number; incidents: any[] }> {
-  const tpl = await api.rainStormEvents();
-  const events: any[] = tpl.events || [];
-  const incidents: any[] = [];
-  for (let i = 0; i < events.length; i++) {
-    const res = await api.inject(events[i]);
-    const inc = res.incident;
-    incidents.push(inc);
-    onProgress?.(i + 1, events.length, inc);
-    if (i < events.length - 1) await sleep(delayMs);
-  }
-  return { count: incidents.length, incidents };
-}

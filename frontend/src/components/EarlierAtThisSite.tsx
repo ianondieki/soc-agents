@@ -16,10 +16,10 @@ import { fmtDateTime } from "../lib/time";
  * 1. **It can never take the workspace down.** Its own `try`/`catch` swallows every failure
  *    into a muted line; the page it sits on is the tool people use during an outage, and a
  *    blank panel is a disappointment where a thrown render is an outage of the tool.
- * 2. **Empty is explained, never implied.** `MEMORY_ENABLED` defaults to false (§7.11.3), so
- *    on most deployments this panel is empty because the feature is off — which must not read
- *    as "this site has a clean record". The API returns `enabled`/`degraded` precisely so the
- *    panel can say which it is. Same reasoning as the Wallboard's STALE badges (§7.10).
+ * 2. **Empty is explained, never implied.** `MEMORY_ENABLED` defaults to false (§7.11.3); with
+ *    the feature off the panel is not drawn at all (an empty panel would read as "this site has
+ *    a clean record", and the flag name is not manager copy). With it on, an empty panel says
+ *    how far back it looked.
  * 3. **Advisory, and labelled as such.** Memory changes no priority, no assignment and no SLA
  *    (MEM1/G15). The footer says so, because a number rendered beside a live ticket at 03:00
  *    will otherwise be read as an instruction.
@@ -92,6 +92,9 @@ export default function EarlierAtThisSite({ siteId }: { siteId?: string | null }
   }, [siteId]);
 
   if (!siteId) return null;
+  // Recall switched off is a deployment setting, not news for the person working the ticket:
+  // the panel is simply absent, like the other lanes that are off in this demo.
+  if (data && !data.enabled) return null;
 
   const episodes = data?.episodes ?? [];
   // Why the panel is empty, in words. "Off" and "clean record" must never look the same.
@@ -99,9 +102,7 @@ export default function EarlierAtThisSite({ siteId }: { siteId?: string | null }
     ? "History could not be loaded. The rest of this page is unaffected."
     : data == null
       ? "Loading…"
-      : !data.enabled
-        ? "Memory recall is off (MEMORY_ENABLED). No history is being read."
-        : `No earlier resolved incidents recorded at this site in the last ${data.lookback_days} days.`;
+      : `No earlier resolved incidents recorded at this site in the last ${data.lookback_days} days.`;
 
   return (
     <div className="panel" style={{ marginTop: "1rem" }}>
@@ -109,7 +110,6 @@ export default function EarlierAtThisSite({ siteId }: { siteId?: string | null }
         <h2 className="panel-title">Earlier at this site</h2>
         <div className="facts">
           <span className="mono">{siteId}</span>
-          {data && !data.enabled && <span>recall off</span>}
         </div>
       </div>
 

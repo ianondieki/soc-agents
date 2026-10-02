@@ -2,9 +2,10 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api";
 import { humanEnum } from "../lib/agents";
-import { IconAlert } from "../lib/icons";
+import { detailOf } from "../lib/apiError";
+import { IconAlert, IconDot, IconPause } from "../lib/icons";
 import { fmtDateTime } from "../lib/time";
-import { ONE_COL, useNarrow } from "./IncidentBoard";
+import { ONE_COL, useNarrow } from "../lib/layout";
 
 const COLS = 7;
 
@@ -34,8 +35,7 @@ export default function ShiftDesk({ tick }: { tick: number }) {
         setLedger(Array.isArray(r) ? r : []);
         setFailed(false);
       })
-      .catch((e) => {
-        console.error(e);
+      .catch(() => {
         if (live) setFailed(true);
       });
     return () => {
@@ -50,8 +50,7 @@ export default function ShiftDesk({ tick }: { tick: number }) {
       const h = await api.handover();
       setHandover(h);
     } catch (e) {
-      console.error(e);
-      setHandoverError("Couldn't build the handover preview.");
+      setHandoverError(`Couldn't generate the handover: ${detailOf(e)}`);
     } finally {
       setHandoverBusy(false);
     }
@@ -64,7 +63,7 @@ export default function ShiftDesk({ tick }: { tick: number }) {
       <div className="page-head">
         <div>
           <h1>Shift desk</h1>
-          <p className="lead">The day and night ledger, and the handover package for the incoming shift.</p>
+          <p className="lead">The day and night ledger; the handover goes to the shift lead as an approval card.</p>
         </div>
         <div className="page-actions">
           {handoverError && (
@@ -73,16 +72,11 @@ export default function ShiftDesk({ tick }: { tick: number }) {
             </span>
           )}
           <button className="btn primary" disabled={handoverBusy} aria-busy={handoverBusy || undefined} onClick={generateHandover}>
-            {handoverBusy ? "Generating handover…" : "Generate handover preview"}
+            {handoverBusy ? "Generating the handover…" : "Generate handover and raise the approval"}
           </button>
         </div>
       </div>
-      {handover && (
-        <div className="panel">
-          <h2 className="panel-title">{handover.subject}</h2>
-          <div className="pre">{handover.body}</div>
-        </div>
-      )}
+      {handover && <Handover h={handover} />}
       <div className="panel">
         <div className="panel-head">
           <h2 className="panel-title">Shift ledger</h2>
@@ -177,6 +171,96 @@ export default function ShiftDesk({ tick }: { tick: number }) {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * The handover just generated: where it is (waiting for the shift lead, or queued), the
+ * watchlist it carries as a table, and the email text exactly as it will leave. A mock or
+ * queued email is never called "sent".
+ */
+function Handover({ h }: { h: any }) {
+  const rows: any[] = Array.isArray(h?.incidents) ? h.incidents : [];
+  const gate = h?.hitl || {};
+  const to: string[] = Array.isArray(h?.email?.to) ? h.email.to : [];
+  return (
+    <div className="panel stack">
+      <div className="panel-head">
+        <h2 className="panel-title">Handover for the {humanEnum(h?.shift) || "current"} shift</h2>
+        <div className="facts">
+          <span>
+            <span className="mono">{h?.watch_count ?? rows.length}</span> on the watchlist
+          </span>
+          <span>
+            <span className="mono">{h?.open_total ?? 0}</span> open
+          </span>
+        </div>
+      </div>
+      {gate.task_id ? (
+        <div className="note-form-actions">
+          <span className="attn hitl">
+            <IconPause />
+            <span>Waiting for the shift lead in Approvals; nothing is sent until it is approved.</span>
+          </span>
+          <Link className="btn sm" to="/hitl">
+            Open Approvals
+          </Link>
+        </div>
+      ) : gate.blocked_reason ? (
+        <p>
+          <span className="attn warn">
+            <IconDot />
+            <span>Not queued: {gate.blocked_reason}</span>
+          </span>
+        </p>
+      ) : (
+        <p className="muted">Queued in the outbox{to.length ? ` for ${to.join(", ")}` : ""}.</p>
+      )}
+      {rows.length > 0 ? (
+        <table>
+          <thead>
+            <tr>
+              <th>Incident</th>
+              <th>Priority</th>
+              <th>Site</th>
+              <th>Region</th>
+              <th>Owner</th>
+              <th>Status</th>
+              <th>M‑PESA</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r, i) => (
+              <tr key={r.incident_number || i}>
+                <td className="mono">{r.incident_number}</td>
+                <td>
+                  <span className={`pill ${r.priority}`}>{r.priority}</span>
+                </td>
+                <td className="mono">{r.site_id}</td>
+                <td className="mono">{r.region_code}</td>
+                <td>{r.owner}</td>
+                <td>{humanEnum(r.status)}</td>
+                <td>
+                  {r.mpesa_risk ? (
+                    <span className="attn danger">
+                      <IconDot /> at risk
+                    </span>
+                  ) : (
+                    <span className="muted">—</span>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ) : (
+        <p className="muted">Nothing open to hand over.</p>
+      )}
+      <details>
+        <summary>Email text, as it will be sent</summary>
+        <div className="pre">{h?.body}</div>
+      </details>
     </div>
   );
 }

@@ -40,6 +40,18 @@
 /* The figures: the window control sits directly above the numbers it changes. */
 .sc-figures { min-width: 0; }
 .sc-figures > .seg { margin-bottom: var(--s3); }
+/* When everything on record is from the last 24 hours the toggle would change nothing: the
+   window is named as text, on the toggle's line and at its height, so nothing moves if the
+   toggle later appears. */
+.sc-window {
+  display: flex;
+  align-items: center;
+  min-height: 30px;
+  margin: 0 0 var(--s3);
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+@media (max-width: 700px) { .sc-window { min-height: 42px; } }
 .sc-fig-list { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line); }
 .sc-fig { padding: var(--s2) 0 var(--s3); border-bottom: 1px solid var(--line); }
 .sc-fig-value {

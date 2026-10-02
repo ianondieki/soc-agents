@@ -5,29 +5,12 @@ import { RunState } from "../components/LiveRunPanel";
 import { agentDisplayName, fmtInt, fmtMs, humanGraph, nodeLabel, runOutcome, runStatusWord } from "../lib/agents";
 import { IconDot } from "../lib/icons";
 import { fmtTime } from "../lib/time";
-import { ONE_COL } from "./IncidentBoard";
+import { ONE_COL } from "../lib/layout";
+import { RunError } from "../components/RunError";
 
-/**
- * The line under a run that says why it did not succeed — one component for both run
- * lists (the Observatory and Mission control): the two pages had already drifted apart once
- * on a FAILED run with no summary.
- *
- * Shown for any status that is not in flight and not a success. That includes CANCELLED,
- * because rejecting a HITL gate ends the run CANCELLED with the rejection reason in
- * error_summary (main.py _finish_waiting_run), and hiding it left the operator with a
- * bare word. A FAILED run says so even with no summary recorded — the absence is itself
- * the finding; any other status with nothing to say shows nothing.
- */
-export function RunError({ status, summary }: { status?: string; summary?: string | null }) {
-  if (!status || status === "RUNNING" || status === "WAITING_HITL" || status === "SUCCEEDED") return null;
-  const text = typeof summary === "string" ? summary.trim() : "";
-  if (!text && status !== "FAILED") return null;
-  return (
-    <div className="muted" style={{ color: "var(--danger-text)", overflowWrap: "anywhere" }}>
-      {status === "FAILED" ? "Error" : "Reason"}: {text || "no error summary recorded"}
-    </div>
-  );
-}
+// The failed-run line lives in components/RunError.tsx (Mission control imports it without
+// this page's chunk); re-exported here so older imports still work.
+export { RunError } from "../components/RunError";
 
 /** How a run was started, when it was not the ordinary alarm event ("Incident lifecycle" needs no "event"). */
 const TRIGGER_WORDS: Record<string, string> = { SCHEDULE: "scheduled", REQUEST: "on request" };
@@ -63,8 +46,7 @@ export default function Agents({ tick = 0 }: { tick?: number }) {
       .then((r) => {
         if (live) setAgents(Array.isArray(r) ? r : []);
       })
-      .catch((e) => {
-        console.error(e);
+      .catch(() => {
         if (live) setAgentsFailed(true);
       });
     return () => {
@@ -104,8 +86,7 @@ export default function Agents({ tick = 0 }: { tick?: number }) {
     api
       .runs()
       .then(take)
-      .catch((e) => {
-        console.error(e);
+      .catch(() => {
         if (live) setRunsFailed(true);
       });
     const id = window.setInterval(() => {

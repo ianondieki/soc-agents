@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useParams } from "react-router-dom";
 import { api } from "../api";
 import AgentRail from "../components/AgentRail";
@@ -7,15 +7,18 @@ import {
   WAITING_WORD,
   agentDisplayName,
   countAbsorbed,
+  displaySteps,
   fmtMs,
+  fmtWait,
   humanEnum,
   humanStatus,
   nodeLabel,
   pickCreatingRun,
   sumDurations,
 } from "../lib/agents";
+import { detailOf } from "../lib/apiError";
 import { parseRationale } from "../lib/audit";
-import { IconAlert, IconCheck, IconDot } from "../lib/icons";
+import { IconAlert, IconCheck, IconDot, IconPause } from "../lib/icons";
 import EarlierAtThisSite from "../components/EarlierAtThisSite";
 import ContractsDrawer from "../components/ContractsDrawer";
 import RegulatoryCountdown from "../components/RegulatoryCountdown";
@@ -55,6 +58,13 @@ const techList = (v: unknown) =>
 
 /** "02 Oct, 05:16": the timeline's clock, without the seconds. */
 const shortTime = (ts: unknown) => fmtDateTime(ts, "").replace(/(\d{2}:\d{2}):\d{2}$/, "$1");
+
+/** A stored UTC timestamp inside a sentence ("SLA ack due 2026-10-02 05:16:22.085241"). */
+const STORED_INSTANT = /\b\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?\b/g;
+
+/** Stored text as the page prints it: every embedded timestamp in EAT, like the rest of the page.
+ *  The stored row is untouched. */
+const eatTimes = (s: string) => s.replace(STORED_INSTANT, (m) => shortTime(m) || m);
 
 /** A stored rationale ("Severity why", "Assignment why") as a sentence and a list of facts. */
 function Why({ title, text }: { title: string; text: string | null | undefined }) {
@@ -128,7 +138,7 @@ function timelineHead(t: any): { title: string; sub: string; state: ReactNode } 
 
 /** A timeline detail: a stored rationale reads as its sentence and facts; anything else as written. */
 function TimelineDetail({ text }: { text: unknown }) {
-  const s = typeof text === "string" ? text.trim() : "";
+  const s = typeof text === "string" ? eatTimes(text.trim()) : "";
   if (!s) return null;
   const { sentence, facts } = parseRationale(s);
   if (facts.length === 0) return <div className="muted">{arrowsToWords(s)}</div>;
@@ -157,8 +167,17 @@ function Skeleton({ rows, label }: { rows: number; label: string }) {
   );
 }
 
+/**
+ * One incident. Keyed by the id in the URL, so moving from one ticket to another starts from
+ * a clean page (no fields, forms or messages carried over) and an answer that arrives for the
+ * ticket just left is dropped with the instance that asked for it.
+ */
 export default function IncidentWorkspace({ session }: { session: any }) {
   const { id } = useParams();
+  return <Workspace key={id || ""} id={id} session={session} />;
+}
+
+function Workspace({ id, session }: { id: string | undefined; session: any }) {
   // Defect #26: this page reloads when an event names *this* incident (or when
   // an unrecognised event forces a full resync), not on every WS frame.
   const rev = useIncidentRevision(id);
@@ -167,7 +186,9 @@ export default function IncidentWorkspace({ session }: { session: any }) {
   // null until the first answer, so the timeline never reads as empty while it loads.
   const [timeline, setTimeline] = useState<any[] | null>(null);
   const [timelineFailed, setTimelineFailed] = useState(false);
-  const [runs, setRuns] = useState<any[]>([]);
+  // null until the first answer: "no run recorded" is said only once the runs have answered.
+  const [runs, setRuns] = useState<any[] | null>(null);
+  const [runsFailed, setRunsFailed] = useState(false);
   const [brief, setBrief] = useState<string>("");
   const [note, setNote] = useState("");
   const [vendorRef, setVendorRef] = useState("");
@@ -187,49 +208,76 @@ export default function IncidentWorkspace({ session }: { session: any }) {
   const [reassignReason, setReassignReason] = useState("");
   const [reassignBusy, setReassignBusy] = useState(false);
 
-  const load = () => {
+  // Answers that land after the page has moved on (another ticket, or away) are dropped.
+  const alive = useRef(true);
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, []);
+
+  // Expected failures (a lane that is off answers 404, a brief not written yet) are states on
+  // the page, never console errors.
+  const load = useCallback(() => {
     if (!id) return;
+    const mine = <T,>(f: (v: T) => void) => (v: T) => {
+      if (alive.current) f(v);
+    };
     api
       .incident(id)
-      .then((row) => {
-        setInc(row);
-        setLoadFailed(false);
-      })
-      .catch((e) => {
-        console.error(e);
-        setLoadFailed(true);
-      });
-    api.workflow(id).then(setWf).catch(console.error);
+      .then(
+        mine((row: any) => {
+          setInc(row);
+          setLoadFailed(false);
+        })
+      )
+      .catch(mine(() => setLoadFailed(true)));
+    api
+      .workflow(id)
+      .then(mine(setWf))
+      .catch(() => undefined);
     api
       .timeline(id)
-      .then((r) => {
-        setTimeline(Array.isArray(r) ? r : []);
-        setTimelineFailed(false);
-      })
-      .catch((e) => {
-        console.error(e);
-        setTimelineFailed(true);
-      });
+      .then(
+        mine((r: any) => {
+          setTimeline(Array.isArray(r) ? r : []);
+          setTimelineFailed(false);
+        })
+      )
+      .catch(mine(() => setTimelineFailed(true)));
     // The run that opened the ticket, not the newest (usually a two-step merge): lib/agents.
     api
       .runsFor(id)
-      .then((r) => setRuns(Array.isArray(r) ? r : []))
-      .catch(() => setRuns([]));
+      .then(
+        mine((r: any) => {
+          setRuns(Array.isArray(r) ? r : []);
+          setRunsFailed(false);
+        })
+      )
+      .catch(mine(() => setRunsFailed(true)));
     api
       .brief(id)
-      .then((b) => setBrief(b.body))
-      .catch(() => setBrief(""));
-  };
+      .then(mine((b: any) => setBrief(b?.body || "")))
+      .catch(mine(() => setBrief("")));
+  }, [id]);
 
-  useEffect(load, [id, rev]);
+  useEffect(load, [load, rev]);
 
   const creating = useMemo(() => pickCreatingRun(runs), [runs]);
   const absorbed = useMemo(() => countAbsorbed(runs), [runs]);
-  const railSteps = creating?.steps || wf?.steps || [];
-  const elapsed =
-    creating?.finished_at && creating?.started_at
-      ? Math.max(0, +new Date(creating.finished_at) - +new Date(creating.started_at))
-      : sumDurations(railSteps);
+  // Decided hops read as decided (the backend leaves them at WAITING_HITL), and the Approval hop
+  // carries how long the run waited for a person: lib/agents.displaySteps.
+  const railSteps = useMemo(
+    () => (creating ? displaySteps(creating) : wf?.steps ? displaySteps({ status: wf.status, steps: wf.steps }) : []),
+    [creating, wf]
+  );
+  // One time for one run: what the agents worked (the sum of the step durations), and, apart
+  // from it, the time spent waiting for a decision.
+  const worked = sumDurations(railSteps);
+  const approvalHop = railSteps.find((st) => st.node_name === "HITL" && typeof st.waited_ms === "number");
+  const stillWaiting = String(creating?.status || "").toUpperCase() === "WAITING_HITL";
+  const noRuns = runs !== null && runs.length === 0 && railSteps.length === 0;
 
   const who = session?.display_name || "NOC";
 
@@ -261,7 +309,7 @@ export default function IncidentWorkspace({ session }: { session: any }) {
       setNoteMsg({ tone: "ok", text: `Note posted. Status is now ${humanStatus(res.status)}.` });
       load();
     } catch (e: any) {
-      setNoteMsg({ tone: "danger", text: `Couldn't post the note: ${e?.message || e}` });
+      setNoteMsg({ tone: "danger", text: `Couldn't post the note: ${detailOf(e)}` });
     } finally {
       setNoteBusy(false);
     }
@@ -280,7 +328,7 @@ export default function IncidentWorkspace({ session }: { session: any }) {
       setActionMsg({ tone: "ok", text: "Ticket closed." });
       load();
     } catch (e: any) {
-      setActionMsg({ tone: "danger", text: `Couldn't close the ticket: ${e?.message || e}` });
+      setActionMsg({ tone: "danger", text: `Couldn't close the ticket: ${detailOf(e)}` });
     } finally {
       setCloseBusy(false);
     }
@@ -304,7 +352,7 @@ export default function IncidentWorkspace({ session }: { session: any }) {
       setReassignReason("");
       load();
     } catch (e: any) {
-      setActionMsg({ tone: "danger", text: `Reassign failed: ${e?.message || e}` });
+      setActionMsg({ tone: "danger", text: `Reassign failed: ${detailOf(e)}` });
     } finally {
       setReassignBusy(false);
     }
@@ -431,20 +479,57 @@ export default function IncidentWorkspace({ session }: { session: any }) {
       <div className="panel">
         <div className="panel-head">
           <h2 className="panel-title">How the agents handled this alarm</h2>
-          <div className="facts">
-            {railSteps.length > 0 && <span>{railSteps.length} hops</span>}
-            {railSteps.length > 0 && <span className="mono">{fmtMs(elapsed)}</span>}
-            {/* Success is the normal outcome: a plain word. Waiting or failed: the state colour and icon. */}
-            {creating?.status && <RunState status={creating.status} />}
-            {absorbed > 0 && (
-              <span title="Later alarms the correlation step folded into this ticket instead of opening a duplicate">
-                {absorbed} later alarm{absorbed === 1 ? "" : "s"} folded in
-              </span>
-            )}
-          </div>
+          {!noRuns && runs !== null && (
+            <div className="facts">
+              {railSteps.length > 0 && (
+                <span>
+                  agents took <span className="mono">{fmtMs(worked)}</span>
+                </span>
+              )}
+              {/* Still parked on a person: one state, with how long ("waiting 4 h 31 m for a
+                  decision"). Decided: the wait as a plain fact beside the run's outcome. */}
+              {approvalHop && stillWaiting ? (
+                <span className="state hitl">
+                  <IconPause />
+                  waiting <span className="mono">{fmtWait(approvalHop.waited_ms)}</span> for a decision
+                </span>
+              ) : (
+                <>
+                  {approvalHop && (
+                    <span>
+                      waited <span className="mono">{fmtWait(approvalHop.waited_ms)}</span> for a decision
+                    </span>
+                  )}
+                  {/* Success is the normal outcome: a plain word. Failed: the state colour and icon. */}
+                  {creating?.status && <RunState status={creating.status} />}
+                </>
+              )}
+              {absorbed > 0 && (
+                <span title="Later alarms the correlation step folded into this ticket instead of opening a duplicate">
+                  {absorbed} later alarm{absorbed === 1 ? "" : "s"} folded in
+                </span>
+              )}
+            </div>
+          )}
         </div>
-        <p className="muted">Select a hop for the agent's reasoning, what it produced and the tools it called.</p>
-        <AgentRail steps={railSteps} nodes={wf?.nodes} caption="This ticket's run" />
+        {runs === null && runsFailed ? (
+          <div className="empty" role="alert">
+            Couldn't load this ticket's agent run.{" "}
+            <button className="btn sm" onClick={load}>
+              Retry
+            </button>
+          </div>
+        ) : noRuns ? (
+          <p className="muted">
+            No agent run is recorded for this ticket, so there are no hops to show. It was opened outside the
+            alarm pipeline.
+          </p>
+        ) : (
+          <>
+            <p className="muted">Select a hop for the agent's reasoning, what it produced and the tools it called.</p>
+            <AgentRail steps={railSteps} nodes={wf?.nodes} caption="This ticket's run" loading={runs === null} runStatus={creating?.status} />
+          </>
+        )}
       </div>
 
       <div className="detail-grid">

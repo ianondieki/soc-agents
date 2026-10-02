@@ -118,7 +118,13 @@ export default function Audit({ tick }: { tick: number }) {
     return out;
   }, [incidents]);
 
-  const blocks = useMemo(() => groupBlocks(rows), [rows]);
+  // At the cap the oldest block is probably cut short (its earlier rows are past the 500), so
+  // it is left out rather than shown as if it were the whole ticket.
+  const capped = rows.length >= FETCH;
+  const blocks = useMemo(() => {
+    const all = groupBlocks(rows);
+    return capped && all.length > 1 ? all.slice(0, -1) : all;
+  }, [rows, capped]);
   const needle = q.trim().toLowerCase();
   const filterActive = needle !== "" || kind !== "all";
 
@@ -211,7 +217,11 @@ export default function Audit({ tick }: { tick: number }) {
               {ticketCount} {ticketCount === 1 ? "ticket" : "tickets"}, {entryCount} {entryCount === 1 ? "entry" : "entries"}
             </span>
           )}
-          {load === "ready" && rows.length >= FETCH && <span>Latest {FETCH} loaded</span>}
+          {load === "ready" && capped && (
+            <span title={`The trail keeps more; this page reads the newest ${FETCH} and leaves out the oldest ticket, which those entries only cover in part.`}>
+              Newest {FETCH} entries
+            </span>
+          )}
           {filterActive && (
             <button type="button" className="audit-link" onClick={clearFilters}>
               Clear filters

@@ -4,7 +4,6 @@ import { api } from "../api";
 import LiveRunPanel from "../components/LiveRunPanel";
 import { LIFECYCLE_NODES, WAITING_WORD, fmtInt, fmtMinutes, fmtMs, humanAutonomy, nodeDoes, nodeLabel } from "../lib/agents";
 import { fmtEAT } from "../lib/time";
-import type { NocEvent } from "../realtime/renderers";
 import "./Showcase.css";
 
 /**
@@ -45,17 +44,25 @@ function plural(n: number, word: string): string {
   return `${fmtInt(n)} ${n === 1 ? word : `${word}s`}`;
 }
 
+/** How much a productivity answer has on record: alarms, steps and decisions together. */
+function recordSize(d: any): number {
+  return (
+    Number(d?.alarms?.processed || 0) +
+    Number(d?.steps?.total || 0) +
+    Number(d?.hitl?.approved || 0) +
+    Number(d?.hitl?.rejected || 0)
+  );
+}
+
 type Window = 0 | 24;
 
 export default function Showcase({
   profile,
   metrics,
-  events,
   runsRev,
 }: {
   profile: any;
   metrics: any;
-  events: NocEvent[];
   runsRev: number;
 }) {
   const nav = useNavigate();
@@ -66,6 +73,10 @@ export default function Showcase({
   // null until `api.agents()` answers: the tool-connection sentence and the agent count are
   // drawn only from a real answer, never from a default.
   const [agents, setAgents] = useState<any[] | null>(null);
+  // Whether anything on record is older than 24 hours. Until it is known (or when it is not),
+  // the two windows show the same numbers, so the page says "All time" instead of offering a
+  // toggle that changes nothing.
+  const [spansDay, setSpansDay] = useState(false);
   const lastKey = useRef("");
   const fired = useRef(0); // rollups requested
   const applied = useRef(0); // the newest request whose answer is on screen
@@ -96,6 +107,16 @@ export default function Showcase({
           applied.current = mine;
           setP(d);
           if (mine === fired.current) setErr("");
+          // An all-time answer, and the toggle is still hidden: ask the last 24 hours straight
+          // after and compare the pair. More on record than in the last day means older data.
+          if (windowHours === 0 && !spansDayRef.current) {
+            api
+              .productivity(24)
+              .then((recent) => {
+                if (mounted.current && recordSize(d) > recordSize(recent)) setSpansDay(true);
+              })
+              .catch(() => undefined);
+          }
         })
         .catch((e) => {
           if (mounted.current && mine === fired.current) setErr(String(e?.message || e));
@@ -103,6 +124,9 @@ export default function Showcase({
     }, delay);
     return () => window.clearTimeout(t);
   }, [windowHours, runsRev, retry]);
+
+  const spansDayRef = useRef(spansDay);
+  spansDayRef.current = spansDay;
 
   useEffect(() => {
     let cancelled = false;
@@ -157,14 +181,18 @@ export default function Showcase({
         </div>
 
         <div className="sc-figures">
-          <div className="seg" role="group" aria-label="Numbers window">
-            <button type="button" aria-pressed={windowHours === 24} onClick={() => setWindowHours(24)}>
-              Last 24 h
-            </button>
-            <button type="button" aria-pressed={windowHours === 0} onClick={() => setWindowHours(0)}>
-              All time
-            </button>
-          </div>
+          {spansDay ? (
+            <div className="seg" role="group" aria-label="Numbers window">
+              <button type="button" aria-pressed={windowHours === 24} onClick={() => setWindowHours(24)}>
+                Last 24 h
+              </button>
+              <button type="button" aria-pressed={windowHours === 0} onClick={() => setWindowHours(0)}>
+                All time
+              </button>
+            </div>
+          ) : (
+            <p className="sc-window">All time</p>
+          )}
           {err && !fresh ? (
             <div className="empty sc-alert" role="alert" title={err}>
               <span>Couldn't load the numbers.</span>
@@ -189,7 +217,7 @@ export default function Showcase({
       </section>
 
       <div className="sc-hero-rail">
-        <LiveRunPanel events={events} runsRev={runsRev} onOpen={(id) => nav(`/incidents/${id}`)} compact />
+        <LiveRunPanel runsRev={runsRev} onOpen={(id) => nav(`/incidents/${id}`)} compact />
       </div>
 
       <section className="sc-section" aria-labelledby="sc-steps-title">
@@ -267,7 +295,7 @@ function Figures({ p, windowHours, waitingNow }: { p: any | null; windowHours: W
   const hitl = p.hitl || {};
   const processed = Number(alarms.processed || 0);
   const created = Number(alarms.incidents_created || 0);
-  const pct = alarms.noise_reduction_pct;
+  const absorbed = Math.max(0, Math.round(Number(alarms.absorbed) || 0));
   const made = Number(hitl.approved || 0) + Number(hitl.rejected || 0);
   const span = windowHours ? "in the last 24 hours" : "on record";
 
@@ -292,9 +320,11 @@ function Figures({ p, windowHours, waitingNow }: { p: any | null; windowHours: W
         {processed > 0 ? (
           <>
             <span className="sc-fig-value">{plural(created, "ticket")}</span>{" "}
+            {/* Whole numbers a manager can say aloud: "6 of 11 alarms", never "54.5 %". */}
             <span className="sc-fig-label">
-              from {plural(processed, "alarm")}
-              {pct != null && Number(alarms.absorbed) > 0 ? `; ${pct}% folded into an open ticket` : ""}
+              {absorbed > 0
+                ? `${fmtInt(absorbed)} of ${plural(processed, "alarm")} folded into an open ticket`
+                : `from ${plural(processed, "alarm")}`}
             </span>
           </>
         ) : (
@@ -320,7 +350,11 @@ function Steps({ p, fresh, failed, windowHours }: { p: any | null; fresh: any | 
   const live = new Map<string, any>(byNode.map((n) => [String(n.node), n]));
   const ids: string[] = byNode.length ? byNode.map((n) => String(n.node)) : LIFECYCLE_NODES.map((n) => n.id);
   const totalByHand = byNode.reduce((sum, n) => sum + Number(n.toil_minutes_each || 0), 0);
-  const median = fresh?.pipeline_ms?.median;
+  // One time for one run (the rule the rail and the ticket follow): what the agents worked, the
+  // sum of their step times, never started-to-finished, which grows by hours when a person
+  // approves later. Per ticket: each hop's average step time, added up.
+  const freshNodes: any[] = Array.isArray(fresh?.steps?.by_node) ? fresh.steps.by_node : [];
+  const agentMs = freshNodes.length ? freshNodes.reduce((sum, n) => sum + (Number(n.avg_ms) || 0), 0) : null;
   const span = windowHours ? "in the last 24 hours" : "on record";
 
   const minutes = (content: string) => (p ? content : failed ? "—" : <span className="skeleton sc-skel-min" aria-hidden="true" />);
@@ -369,7 +403,7 @@ function Steps({ p, fresh, failed, windowHours }: { p: any | null; fresh: any | 
           <th scope="row">Per alarm</th>
           <td colSpan={2} className="sc-total-note">
             Minutes by hand are the operator profile's estimate, not a stopwatch.
-            {median != null ? ` The agents take ${fmtMs(median)} on median.` : ""}
+            {agentMs != null && agentMs > 0 ? ` The agents' own steps take ${fmtMs(agentMs)} per ticket, on average.` : ""}
           </td>
           <td className="sc-num">{minutes(fmtMinutes(totalByHand))}</td>
         </tr>

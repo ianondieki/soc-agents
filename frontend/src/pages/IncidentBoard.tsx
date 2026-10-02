@@ -1,40 +1,16 @@
-import { useEffect, useState, type CSSProperties } from "react";
+import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api } from "../api";
 import { humanEnum, humanStatus } from "../lib/agents";
 import { IconDot } from "../lib/icons";
+import { ONE_COL, useNarrow } from "../lib/layout";
 
 const REGIONS = ["NBI_E", "NBI_W", "MTK", "CST", "RFT", "WNY"];
 const PRIORITIES = ["P1", "P2", "P3", "P4"];
 const COLS = 8;
 
-/** Phones: below this width a ticket list reads as two stacked lines per row, not a sideways table. */
-export const NARROW_QUERY = "(max-width: 600px)";
-
-/** A `.row` whose one child takes the whole width (the stacked phone rows). */
-export const ONE_COL: CSSProperties = { gridTemplateColumns: "minmax(0, 1fr)" };
-
-/**
- * True while the viewport matches `query` (default: phone width). Shared by the Incident board
- * and the Shift desk, which swap their table for stacked rows on a phone.
- */
-export function useNarrow(query: string = NARROW_QUERY): boolean {
-  const read = () => typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia(query).matches;
-  const [narrow, setNarrow] = useState<boolean>(read);
-  useEffect(() => {
-    if (typeof window.matchMedia !== "function") return;
-    const mq = window.matchMedia(query);
-    const sync = () => setNarrow(mq.matches);
-    sync();
-    if (typeof mq.addEventListener === "function") {
-      mq.addEventListener("change", sync);
-      return () => mq.removeEventListener("change", sync);
-    }
-    mq.addListener(sync); // Safari < 14
-    return () => mq.removeListener(sync);
-  }, [query]);
-  return narrow;
-}
+// The phone-layout helpers moved to lib/layout.ts; re-exported here so older imports still work.
+export { NARROW_QUERY, ONE_COL, useNarrow } from "../lib/layout";
 
 export default function IncidentBoard({ tick }: { tick: number }) {
   // null until the first answer: loading is a state of its own, never an empty board.
@@ -59,8 +35,7 @@ export default function IncidentBoard({ tick }: { tick: number }) {
         setRows(Array.isArray(r) ? r : []);
         setFailed(false);
       })
-      .catch((e) => {
-        console.error(e);
+      .catch(() => {
         if (live) setFailed(true);
       });
     return () => {

@@ -6,6 +6,7 @@ import { humanEnum, humanStatus } from "../lib/agents";
 import { detailOf, isLaneOff } from "../lib/apiError";
 import { IconDot } from "../lib/icons";
 import { fmtDateTime } from "../lib/time";
+import "./Pirs.css";
 
 /**
  * Post-incident reviews (spec §7.7, §7.10) — the screen for a lane that was complete,
@@ -260,11 +261,22 @@ export default function Pirs({ tick }: { tick: number }) {
               <tr
                 key={r.id}
                 onClick={() => setSelected(r.id)}
-                style={{ cursor: "pointer" }}
-                className={selected === r.id ? "pir-row-selected" : undefined}
+                className={"pir-row" + (selected === r.id ? " pir-row-selected" : "")}
               >
                 <td>
-                  <strong>{label(r.incident_id)}</strong>
+                  {/* The keyboard's way in; the row click stays for the mouse. */}
+                  <button
+                    type="button"
+                    className="pir-open"
+                    aria-expanded={selected === r.id}
+                    aria-controls={selected === r.id ? "pir-editor" : undefined}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSelected(r.id);
+                    }}
+                  >
+                    {label(r.incident_id)}
+                  </button>
                   <div className="muted">
                     {byId[r.incident_id]?.site_name || byId[r.incident_id]?.site_id || "—"}
                   </div>
@@ -314,7 +326,7 @@ export default function Pirs({ tick }: { tick: number }) {
       </div>
 
       {selected && (
-        <div style={{ marginTop: "1rem" }}>
+        <div id="pir-editor" className="pir-editor-slot">
           <PirEditor
             key={selected}
             pirId={selected}

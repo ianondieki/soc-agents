@@ -4,6 +4,8 @@ import CardBoundary from "../components/CardBoundary";
 import RiskStrip from "../components/RiskStrip";
 import AgentsStatusTile from "../components/AgentsStatusTile";
 import RedactionMissChip from "../components/RedactionMissChip";
+import { humanEnum } from "../lib/agents";
+import { labelFor } from "../lib/hitl";
 import { fmtEAT } from "../lib/time";
 import "./Wallboard.escalation.css";
 
@@ -47,8 +49,13 @@ function redCards(tasks: any[]): RedCard[] {
   return out;
 }
 
-/** "APPROVE_BROADCAST" → "APPROVE BROADCAST": the glass keeps its capitals, not the underscores. */
-const words = (s: unknown) => String(s ?? "").replace(/_/g, " ");
+/** A vendor or owner enum as a name on the glass: "EGYPRO_FIBRE" → "Egypro Fibre", "FIELD_ENGINEER"
+ *  → "Field Engineer"; acronyms humanEnum keeps (MSP, RNIO) stay as they are. */
+const nameOf = (s: unknown) =>
+  humanEnum(s)
+    .split(" ")
+    .map((w) => (/^[a-z]/.test(w) ? w[0].toUpperCase() + w.slice(1) : w))
+    .join(" ");
 
 /** Skeleton bar widths for the cards shown before the first answer. */
 const SKELETON_WIDTHS = ["46%", "78%", "62%", "54%"];
@@ -164,7 +171,7 @@ export default function Wallboard({
           {offGrid.map((c) => (
             <div key={c.id} className="wb-line muted">
               <span>{c.priority ?? "P?"}</span>
-              <span>{words(c.task_type)}</span>
+              <span>{labelFor(c.task_type)}</span>
               <span className="mono">{c.incident_number ?? "no incident"}</span>
               {c.unclaimed_minutes != null && <span>unclaimed {c.unclaimed_minutes} min</span>}
               {c.since_eat && <span>red since {c.since_eat}</span>}
@@ -209,13 +216,13 @@ export default function Wallboard({
               <div className="wb-site">{i.site_name}</div>
               <div className="wb-line wb-meta muted">
                 <span className="mono">{i.region_code}</span>
-                {i.failure_domain && <span>{String(i.failure_domain).toLowerCase()}</span>}
+                {i.failure_domain && <span>{humanEnum(i.failure_domain)}</span>}
                 <span>{i.users_affected?.toLocaleString()} users</span>
               </div>
-              <div className="wb-owner">Owner {i.assignee_name}</div>
+              <div className="wb-owner">Owner {nameOf(i.assignee_name)}</div>
               <div className="wb-line wb-meta muted">
-                <span>{words(i.status)}</span>
-                {i.tt_category && <span>{words(i.tt_category)}</span>}
+                <span>{humanEnum(i.status)}</span>
+                {i.tt_category && <span>{humanEnum(i.tt_category)}</span>}
               </div>
               {(i.mpesa_risk || decisionFlag) && (
                 <div className="wb-flags">
@@ -227,10 +234,10 @@ export default function Wallboard({
                 <div className="wb-escalated-line wb-line">
                   <span>DECISION WAITING</span>
                   <span>
-                    {words(esc.task_type)} UNCLAIMED
-                    {esc.unclaimed_minutes != null ? ` ${esc.unclaimed_minutes} MIN` : ""}
+                    {labelFor(esc.task_type)} unclaimed
+                    {esc.unclaimed_minutes != null ? ` ${esc.unclaimed_minutes} min` : ""}
                   </span>
-                  {esc.since_eat && <span>RED SINCE {esc.since_eat}</span>}
+                  {esc.since_eat && <span>red since {esc.since_eat}</span>}
                 </div>
               )}
             </div>

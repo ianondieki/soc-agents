@@ -30,8 +30,9 @@ import { useRealtimeState } from "../realtime/RealtimeContext";
  *    client-side drift is added, so a slow poll cannot push a healthy scheduler over the line.
  *  - **CIRCUIT OPEN** (red, per job): a job failed 3 times running and the loop now skips it.
  *    `POST /api/v1/scheduler/run/{job}` (admin) resets it.
- *  - **SCHEDULER OFF** (grey): `SCHEDULER_ENABLED` is false — a deliberate configuration, not
- *    an outage, and said as such. "Off" must not look like "healthy" either.
+ *  - **OFF** (grey): `SCHEDULER_ENABLED` is false — a deliberate configuration, not an outage,
+ *    and said as such ("Unattended jobs are off in this demo"). "Off" must not look like
+ *    "healthy" either.
  *  - **NOT AVAILABLE TO YOUR ROLE** (grey): 403. With auth enforced, `/scheduler/status` is
  *    limited to platform readers; msp_coordinator, field_engineer, planning and legal get 403.
  *    Any earlier reading is dropped — it belonged to another role or session.
@@ -183,9 +184,8 @@ export default function AgentsStatusTile() {
   if (!status.enabled) {
     return (
       <div className="wb-alarms">
-        <span className="wb-alarm-chip grey">
-          AGENTS · SCHEDULER OFF · scheduled agents are not running (SCHEDULER_ENABLED=false)
-        </span>
+        {/* A deliberate setting, not an outage: said in the floor's words, without the flag name. */}
+        <span className="wb-alarm-chip grey">Unattended jobs are off in this demo</span>
         {circuitChips}
       </div>
     );

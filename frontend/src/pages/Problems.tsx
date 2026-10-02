@@ -20,8 +20,7 @@ export default function Problems({ tick }: { tick: number }) {
         setRows(Array.isArray(r) ? r : []);
         setFailed(false);
       })
-      .catch((e) => {
-        console.error(e);
+      .catch(() => {
         if (live) setFailed(true);
       });
     return () => {
