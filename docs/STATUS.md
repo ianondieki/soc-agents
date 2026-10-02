@@ -67,6 +67,13 @@ and switch on with environment flags. The suite is green (3,208 tests), the UI b
    and an Audit trail that groups each alarm's steps by run (the API now returns `run_id`
    and `node` per audit row). Verified with Playwright at 1280 × 650, 1440 × 900 and
    375 × 812: no overflow, no console errors, zero critical or serious axe findings.
+9. **Consistency pass (2 October, second round).** Heading levels never skip (axe is clean at
+   every impact on every route); one primitive per job (segmented control, loading skeletons,
+   error-with-retry, static rows, key/value lists); hop names from one source; loading never
+   looks empty and a failed poll says so; the Showcase page cut from six copies of the twelve
+   steps to one and from 4,362 px to about 2,000 px at 1280 wide; the approval card shows the
+   SMS above its sticky decision bar on a laptop; the phone layouts stack rows instead of
+   scrolling tables sideways.
 
 ## What is not done (honest list)
 

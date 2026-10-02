@@ -78,19 +78,19 @@ Open `/showcase`.
 
 Say: *Everything on this page is read from the running system.* Then walk down:
 
-- **The three numbers.** Hours of floor toil taken over; alarms into tickets with the share
-  absorbed; decisions asked of a person. Switch between *Last 24 h* and *All time*.
-- **What changed for the floor.** The twelve steps, before and after, with the minutes a person
-  spends on each by hand.
-- **How it sits on what you already run.** Nothing is replaced: the NMS feed, the ticket
-  system, the CMDB, the mail and SMS gateways and the Excel ledger stay. The agents read and
-  write through adapters. Twenty-nine tool connections across twenty systems are already
-  declared, each read-only or behind a named approval, none switched on here.
+- **The three numbers.** Hours saved after the time people spent deciding; alarms into
+  tickets with the share folded into an open ticket; decisions made by a person and how many
+  are waiting now. Switch between *Last 24 h* and *All time* above them.
+- **Latest alarm through the agents.** The same rail as Mission control, hop by hop.
+- **What changed for the floor.** The twelve steps in one table: before, now, and the minutes
+  a person spends on each by hand, with the per-alarm total.
+- **How it sits on the platform.** Nothing is replaced: the NMS feed, the ticket system, the
+  CMDB, the mail and SMS gateways and the Excel ledger stay. The agents read and write through
+  adapters. Twenty-nine tool connections across twenty systems are already declared, each
+  read-only or behind a named approval, none switched on here.
 - **People keep the decisions.** The autonomy level is one setting; this deployment runs at
-  L2. The list of what is never automated.
-- **Where the minutes go** and **each agent by the numbers**: the toil bars and the per-agent
-  throughput.
-- **Adding the next agent**: one module, one registry card, tests.
+  L2. Beside it, the list of what is never automated.
+- **Try it yourself.** One line, one button to the Approvals page.
 
 ## Where the numbers come from (say this if asked, and before anyone asks about "AI magic")
 
