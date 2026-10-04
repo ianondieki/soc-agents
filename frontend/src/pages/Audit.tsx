@@ -372,7 +372,7 @@ export default function Audit({ tick }: { tick: number }) {
           </div>
         ) : rows.length === 0 ? (
           <div className="empty">
-            Nothing has happened yet. Run an alarm from <Link to="/">Mission control</Link>; every agent step lands
+            Nothing has happened yet. Run an alarm from <Link to="/mission">Mission control</Link>; every agent step lands
             here.
           </div>
         ) : filtered.length === 0 ? (

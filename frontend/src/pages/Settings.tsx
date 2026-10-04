@@ -480,7 +480,7 @@ function Settings({
             Heavy-rain microwave storm
           </h2>
           <p className="muted settings-note">
-            Best launched from <Link to="/">Mission control</Link>, so the agent steps stream live. It also runs from
+            Best launched from <Link to="/mission">Mission control</Link>, so the agent steps stream live. It also runs from
             here.
           </p>
           <div className="settings-actions">

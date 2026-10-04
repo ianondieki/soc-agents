@@ -167,7 +167,7 @@ export default function ShiftDesk({ tick }: { tick: number }) {
         )}
         {empty && (
           <div className="empty">
-            No ledger rows yet. Each new ticket writes one; launch the storm from <Link to="/">Mission control</Link>.
+            No ledger rows yet. Each new ticket writes one; launch the storm from <Link to="/mission">Mission control</Link>.
           </div>
         )}
       </div>

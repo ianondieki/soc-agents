@@ -596,7 +596,7 @@ export default function HitlInbox({ session, tick }: { session: any; tick: numbe
         <div className="panel">
           <div className="empty">
             Nothing is waiting for a decision. Cards arrive here when an agent holds a broadcast or a change for
-            a person. <Link to="/">Watch Mission control</Link>
+            a person. <Link to="/mission">Watch Mission control</Link>
           </div>
         </div>
       )}

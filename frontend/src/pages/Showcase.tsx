@@ -178,7 +178,7 @@ export default function Showcase({
             <span>Agents fill every field, choose the vendor, draft the SMS and email, and chase the reply.</span>{" "}
             <span>P1 and P2 messages wait for a named person, and every step is on record.</span>
           </p>
-          <button type="button" className="btn primary" onClick={() => nav("/")}>
+          <button type="button" className="btn primary" onClick={() => nav("/mission")}>
             Watch it live on Mission control
           </button>
         </div>

@@ -192,7 +192,7 @@ export default function Agents({ tick = 0 }: { tick?: number }) {
             {runs === null && !runsFailed && <Skeleton rows={6} />}
             {runs !== null && runs.length === 0 && (
               <div className="empty">
-                No runs yet. Launch the storm from <Link to="/">Mission control</Link>.
+                No runs yet. Launch the storm from <Link to="/mission">Mission control</Link>.
               </div>
             )}
             {(runs || []).slice(0, 15).map((r) => {

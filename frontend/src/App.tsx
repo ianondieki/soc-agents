@@ -48,6 +48,11 @@ const Contracts = lazy(() => import("./pages/Contracts"));
 const Pirs = lazy(() => import("./pages/Pirs"));
 const Scorecards = lazy(() => import("./pages/Scorecards"));
 const Showcase = lazy(() => import("./pages/Showcase"));
+// The front door and the public complaint form render outside the console shell, as the
+// Wallboard does; the Support desk is a console page.
+const Landing = lazy(() => import("./pages/Landing"));
+const SupportDesk = lazy(() => import("./pages/SupportDesk"));
+const Complain = lazy(() => import("./pages/Complain"));
 // The guide bar is closed on almost every first paint: its chunk arrives beside the page's,
 // behind its own null fallback, instead of in the shell.
 const DemoGuide = lazy(() => import("./components/DemoGuide"));
@@ -82,11 +87,18 @@ const NAV_GROUPS: { title: string; links: { to: string; label: string; end?: boo
   {
     title: "Operate",
     links: [
-      { to: "/", label: "Mission control", end: true },
+      { to: "/mission", label: "Mission control" },
       { to: "/incidents", label: "Incident board" },
       { to: "/hitl", label: "Approvals" },
       { to: "/shift", label: "Shift desk" },
       { to: "/wallboard", label: "Wallboard" },
+    ],
+  },
+  {
+    title: "Support",
+    links: [
+      { to: "/support", label: "Support desk" },
+      { to: "/complain", label: "Complaint form" },
     ],
   },
   {
@@ -505,11 +517,26 @@ export default function App() {
   const stormDone = storm.phase === "done" || stormDoneThisSession || (metrics?.open_total ?? 0) > 0;
 
   const isWall = loc.pathname.startsWith("/wallboard");
+  const isLanding = loc.pathname === "/";
+  const isComplain = loc.pathname.startsWith("/complain");
   const org = profile?.display_name ? String(profile.display_name).replace(" (demo profile)", "") : "Connecting…";
   const orgMeta = `${humanAutonomy(profile?.autonomy_level)}, ${profile?.shift ? String(profile.shift).toLowerCase() : "day"} shift`;
   // "L2 guarded", explained: what the agents may do on their own at this level (Settings says it too).
   const autonomyTitle = autonomyMeaning(profile?.autonomy_level) || orgMeta;
   const pending: number | null = typeof metrics?.hitl_pending === "number" ? metrics.hitl_pending : metrics ? 0 : null;
+
+  if (isLanding || isComplain) {
+    return (
+      <RealtimeProvider value={realtime}>
+        <Suspense fallback={null}>
+          <Routes>
+            <Route path="/" element={<Landing profile={profile} metrics={metrics} runsRev={revisions.runs + manualTick} />} />
+            <Route path="/complain" element={<Complain />} />
+          </Routes>
+        </Suspense>
+      </RealtimeProvider>
+    );
+  }
 
   if (isWall) {
     return (
@@ -660,7 +687,7 @@ export default function App() {
             <Suspense fallback={<PageSkeleton />}>
             <Routes>
               <Route
-                path="/"
+                path="/mission"
                 element={
                   <MissionControl
                     metrics={metrics}
@@ -677,6 +704,7 @@ export default function App() {
                   />
                 }
               />
+              <Route path="/support" element={<SupportDesk session={session} />} />
               <Route
                 path="/showcase"
                 element={<Showcase profile={profile} metrics={metrics} runsRev={revisions.runs + manualTick} />}

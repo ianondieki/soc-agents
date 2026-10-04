@@ -226,7 +226,7 @@ export default function IncidentBoard({ tick, profile }: { tick: number; profile
         )}
         {rows !== null && rows.length === 0 && !filtered && (
           <div className="empty">
-            No tickets yet. Launch the storm from <Link to="/">Mission control</Link> to open some.
+            No tickets yet. Launch the storm from <Link to="/mission">Mission control</Link> to open some.
           </div>
         )}
       </div>

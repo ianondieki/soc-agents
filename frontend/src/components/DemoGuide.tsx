@@ -154,7 +154,7 @@ export default function DemoGuide({
   const incidentId = latestIncidentId || firstIncidentId;
   const launch = () => {
     if (onLaunchStorm) {
-      if (pathname !== "/") nav("/");
+      if (pathname !== "/mission") nav("/mission");
       onLaunchStorm();
     } else if (onRunStorm) {
       void onRunStorm();
@@ -170,7 +170,7 @@ export default function DemoGuide({
         "failed HUB fold into its ticket instead of opening duplicates. Watch the panel under the numbers: each of " +
         "the twelve steps lights up as its agent finishes.",
       action: storming || stormDone ? undefined : { label: "Launch the storm", run: launch },
-      onPage: (p) => p === "/",
+      onPage: (p) => p === "/mission",
       status: storming ? "Storm running" : undefined,
       done: stormDone && !storming,
       doneNext: "Storm done · Next",

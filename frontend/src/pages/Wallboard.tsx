@@ -386,7 +386,7 @@ export default function Wallboard({
         )}
       </div>
       <p className="wb-foot muted" ref={footRef}>
-        <a href="/">Back to Mission control</a>
+        <a href="/mission">Back to Mission control</a>
       </p>
     </div>
   );
