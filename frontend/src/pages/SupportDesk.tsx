@@ -20,6 +20,7 @@ import {
   isLaneOff,
   isNetworkError,
   pct,
+  statusOfError,
   supportApi,
   withPerson,
   type CaseDetail,
@@ -62,6 +63,14 @@ function loadErrorText(e: unknown): string {
   return errorDetail(e, "The request failed.");
 }
 
+/** What a failed eval run says: the last report stays on screen either way. */
+function runErrorText(e: unknown): string {
+  const s = statusOfError(e);
+  if (s != null && s >= 500) return "The eval run failed on the server; the last report below is unchanged. Try again.";
+  if (isNetworkError(e)) return "The API is unreachable; the last report below is unchanged. Try again.";
+  return `The eval run did not start: ${errorDetail(e, "the API refused it")}. The last report below is unchanged.`;
+}
+
 export default function SupportDesk({ session, tick = 0 }: { session: any; tick?: number }) {
   const [params, setParams] = useSearchParams();
   const tab: Tab = isTab(params.get("tab")) ? (params.get("tab") as Tab) : "queue";
@@ -84,8 +93,10 @@ export default function SupportDesk({ session, tick = 0 }: { session: any; tick?
   const [seeding, setSeeding] = useState(false);
   const [notice, setNotice] = useState("");
   const [filters, setFilters] = useState({ q: "", status: "", route: "", category: "" });
+  const [tabsMore, setTabsMore] = useState(false);
   const asked = useRef(0);
   const tabRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+  const tabsRef = useRef<HTMLDivElement>(null);
 
   const loadQueue = useCallback(() => {
     const mine = ++asked.current;
@@ -153,6 +164,20 @@ export default function SupportDesk({ session, tick = 0 }: { session: any; tick?
     if (tick > 0) loadQueue();
   }, [tick, loadQueue]);
 
+  // The tab row scrolls sideways on a phone; a fade at its edge says there is more.
+  useEffect(() => {
+    const el = tabsRef.current;
+    if (!el) return;
+    const check = () => setTabsMore(el.scrollWidth - el.clientWidth - el.scrollLeft > 4);
+    check();
+    el.addEventListener("scroll", check, { passive: true });
+    window.addEventListener("resize", check);
+    return () => {
+      el.removeEventListener("scroll", check);
+      window.removeEventListener("resize", check);
+    };
+  }, []);
+
   const items = queue?.items ?? [];
   const titles = useMemo(() => Object.fromEntries(kb.map((a) => [a.id, a.title])), [kb]);
 
@@ -206,16 +231,13 @@ export default function SupportDesk({ session, tick = 0 }: { session: any; tick?
     tabRefs.current[TABS[n].key]?.focus();
   };
 
-  const onChanged = useCallback(
-    (d: CaseDetail) => {
-      setQueue((q) => (q ? { ...q, items: q.items.map((c) => (c.id === d.complaint.id ? d.complaint : c)) } : q));
-      supportApi
-        .metrics(0)
-        .then(setMetrics)
-        .catch(() => undefined);
-    },
-    []
-  );
+  const onChanged = useCallback((d: CaseDetail) => {
+    setQueue((q) => (q ? { ...q, items: q.items.map((c) => (c.id === d.complaint.id ? d.complaint : c)) } : q));
+    supportApi
+      .metrics(0)
+      .then(setMetrics)
+      .catch(() => undefined);
+  }, []);
 
   const seed = () => {
     setSeeding(true);
@@ -240,14 +262,14 @@ export default function SupportDesk({ session, tick = 0 }: { session: any; tick?
         setEvalsState("ok");
         setNotice(r.passed ? `Evals ran: all ${r.gates.length} gates pass.` : `Evals ran: ${r.gates.filter((g) => !g.passed).length} of ${r.gates.length} gates fail.`);
       })
-      .catch((e) => setRunError(`The run failed. ${loadErrorText(e)}`))
+      .catch((e) => setRunError(runErrorText(e)))
       .finally(() => setRunning(false));
   };
 
   if (queueState === "missing") {
     return (
       <div>
-        <PageHead empty />
+        <PageHead />
         <LaneOff title="The Support desk is off in this demo" flag="SUPPORT_DESK_ENABLED">
           take complaints from customers, route them through the triage, resolver and action agents, and score the desk on its golden set
         </LaneOff>
@@ -258,11 +280,12 @@ export default function SupportDesk({ session, tick = 0 }: { session: any; tick?
   const resolvedCount = (metrics?.auto_resolved ?? 0) + (metrics?.action_completed ?? 0);
   const personNow = metrics ? metrics.escalated + metrics.awaiting_approval : null;
   const wrongGate = evals ? gateFor(evals, "wrong_escalation_rate") : null;
+  const wrongHas = !!wrongGate && typeof wrongGate.value === "number";
   const emptyQueue = queueState === "ok" && items.length === 0;
 
   return (
     <div className="sd">
-      <PageHead empty={emptyQueue} seeding={seeding} onSeed={seed} />
+      <PageHead />
       <span className="sr-only" role="status">
         {notice}
       </span>
@@ -280,15 +303,17 @@ export default function SupportDesk({ session, tick = 0 }: { session: any; tick?
         </div>
         <div className="kpi">
           <div className="label">Wrong escalations</div>
-          <div className={"value" + (wrongGate ? (wrongGate.passed ? (wrongGate.value === 0 ? " zero" : "") : " p1") : " zero")}>{wrongGate ? pct(wrongGate.value) : "—"}</div>
+          <div className={"value" + (wrongHas ? (wrongGate!.passed ? (wrongGate!.value === 0 ? " zero" : "") : " p1") : " zero")}>{wrongHas ? pct(wrongGate!.value) : "—"}</div>
           <div className="sd-kpi-sub">
-            {wrongGate ? (
+            {wrongHas ? (
               <>
-                {wrongGate.passed ? "passes" : "fails"} the {pct(wrongGate.threshold)} gate,{" "}
+                {wrongGate!.passed ? "passes" : "fails"} the {pct(wrongGate!.threshold)} gate,{" "}
                 <button type="button" className="sd-kpi-link" onClick={() => setTab("evals")}>
                   see the evals
                 </button>
               </>
+            ) : wrongGate ? (
+              wrongGate.note || "no evidence in the latest eval"
             ) : evalsState === "missing" ? (
               <button type="button" className="sd-kpi-link" onClick={() => setTab("evals")}>
                 no eval run yet
@@ -304,8 +329,37 @@ export default function SupportDesk({ session, tick = 0 }: { session: any; tick?
           <div className="sd-kpi-sub">from intake to the reply</div>
         </div>
       </div>
+      {/* Phones: the same four figures as one line, so the queue starts on the first screen. */}
+      <p className="sd-kpis-line" aria-label="The desk today">
+        {metrics ? (
+          <>
+            <span>
+              Agents resolved <span className="mono">{resolvedCount}</span> of <span className="mono">{metrics.total}</span>
+            </span>
+            <span className={personNow ? "hitl" : undefined}>
+              <span className="mono">{personNow ?? 0}</span> with a person
+            </span>
+            <span>
+              wrong escalations <span className="mono">{wrongHas ? pct(wrongGate!.value) : "—"}</span>
+              {wrongHas && (
+                <>
+                  ,{" "}
+                  <button type="button" className="sd-kpi-link" onClick={() => setTab("evals")}>
+                    evals
+                  </button>
+                </>
+              )}
+            </span>
+            <span>
+              median <span className="mono">{metrics.total ? fmtMs(metrics.median_handle_ms) : "—"}</span>
+            </span>
+          </>
+        ) : (
+          <span>Loading the desk's figures</span>
+        )}
+      </p>
 
-      <div className="sd-tabs" role="tablist" aria-label="Support desk views" onKeyDown={onTabKey}>
+      <div className="sd-tabs" role="tablist" aria-label="Support desk views" onKeyDown={onTabKey} ref={tabsRef} data-more={tabsMore ? "1" : undefined}>
         {TABS.map((t) => {
           const on = t.key === tab;
           const count = t.key === "person" ? personCount : null;
@@ -361,7 +415,7 @@ export default function SupportDesk({ session, tick = 0 }: { session: any; tick?
   );
 }
 
-function PageHead({ empty, seeding, onSeed }: { empty: boolean; seeding?: boolean; onSeed?: () => void }) {
+function PageHead() {
   return (
     <div className="page-head">
       <div>
@@ -369,11 +423,6 @@ function PageHead({ empty, seeding, onSeed }: { empty: boolean; seeding?: boolea
         <p className="lead">Customer complaints, read and routed by agents; the hard ones come to a person, with the reason.</p>
       </div>
       <div className="page-actions">
-        {!empty && onSeed && (
-          <button type="button" className="btn ghost" onClick={onSeed} aria-disabled={seeding ? true : undefined}>
-            {seeding ? "Loading samples…" : "Load sample complaints"}
-          </button>
-        )}
         <Link to="/complain" className="btn">
           Open the complaint form
         </Link>
@@ -407,8 +456,37 @@ function QueueView(p: QueueViewProps) {
   const person = p.tab === "person";
   const hasCase = !!p.selectedId;
   const showList = !p.stacked || !hasCase;
-  const showCase = hasCase && (!p.stacked || hasCase);
   const filtered = p.filters.q || p.filters.status || p.filters.route || p.filters.category;
+  const caseCol = useRef<HTMLDivElement>(null);
+  // A case a person picked scrolls to its top; the one the page opened on its own does not move
+  // the view. "Back" returns focus to the row that was open.
+  const picked = useRef(false);
+  const backTo = useRef<string | null>(null);
+  const [scrollKey, setScrollKey] = useState(0);
+
+  useEffect(() => {
+    if (p.selectedId && picked.current) {
+      picked.current = false;
+      caseCol.current?.scrollIntoView({ block: "start" });
+      setScrollKey((k) => k + 1);
+    }
+    if (!p.selectedId && backTo.current) {
+      const id = backTo.current;
+      backTo.current = null;
+      window.requestAnimationFrame(() => {
+        document.querySelector<HTMLElement>(`.sd-row[data-id="${CSS.escape(id)}"]`)?.focus({ preventScroll: true });
+      });
+    }
+  }, [p.selectedId]);
+
+  const pick = (id: string) => {
+    picked.current = true;
+    p.onSelect(id);
+  };
+  const back = () => {
+    backTo.current = p.selectedId;
+    p.onSelect(null);
+  };
 
   if (p.state === "loading" && !p.all.length) {
     return (
@@ -457,7 +535,7 @@ function QueueView(p: QueueViewProps) {
         <div className="empty sd-empty">
           <p>No complaints on the desk yet. Load a dozen sample complaints, across every route, to watch the agents work them; or send one yourself from the public form.</p>
           <p className="sd-empty-actions">
-            <button type="button" className="btn primary" onClick={p.onSeed} aria-disabled={p.seeding ? true : undefined}>
+            <button type="button" className="btn primary" onClick={() => !p.seeding && p.onSeed()} aria-disabled={p.seeding ? true : undefined}>
               {p.seeding ? "Loading samples…" : "Load sample complaints"}
             </button>
             <Link to="/complain" className="btn">
@@ -482,11 +560,13 @@ function QueueView(p: QueueViewProps) {
             </div>
           )}
           {person ? (
-            <div className="sd-filters sd-filters-note">
-              <span className="muted">
-                {p.visible.length === 0 ? "Nobody is waiting for a person." : `${p.visible.length} ${p.visible.length === 1 ? "case" : "cases"} with a person, oldest first.`}
-              </span>
-            </div>
+            p.visible.length > 0 && (
+              <div className="sd-filters sd-filters-note">
+                <span className="muted">
+                  {p.visible.length} {p.visible.length === 1 ? "case" : "cases"} with a person, oldest first.
+                </span>
+              </div>
+            )
           ) : (
             <div className="sd-filters" role="search">
               <label className="sd-search">
@@ -532,7 +612,7 @@ function QueueView(p: QueueViewProps) {
           {p.visible.length === 0 ? (
             <div className="empty">
               {person ? (
-                <>Every case is answered or fixed by the agents. Escalations and held tool calls appear here, oldest first.</>
+                <>Nobody is waiting for a person; escalations and held tool calls appear here, oldest first.</>
               ) : filtered ? (
                 <>
                   No case matches these filters.{" "}
@@ -545,16 +625,14 @@ function QueueView(p: QueueViewProps) {
               )}
             </div>
           ) : (
-            <CaseList items={p.visible} selectedId={p.selectedId} onSelect={(id) => p.onSelect(id)} person={person} ariaLabel={person ? "Cases waiting for a person" : "Complaints"} />
+            <CaseList items={p.visible} selectedId={p.selectedId} onSelect={pick} person={person} ariaLabel={person ? "Cases waiting for a person" : "Complaints"} />
           )}
-          <div className="sd-list-foot">
-            {person ? "" : `${p.visible.length} of ${p.all.length} ${p.all.length === 1 ? "case" : "cases"}`}
-          </div>
+          <div className="sd-list-foot">{person ? "" : `${p.visible.length} of ${p.all.length} ${p.all.length === 1 ? "case" : "cases"}`}</div>
         </div>
       )}
-      {showCase && p.selectedId && (
-        <div className="sd-case-col">
-          <CasePane id={p.selectedId} who={p.who} tick={p.tick} stacked={p.stacked} onBack={() => p.onSelect(null)} onChanged={p.onChanged} titles={p.titles} />
+      {hasCase && p.selectedId && (
+        <div className="sd-case-col" ref={caseCol}>
+          <CasePane id={p.selectedId} who={p.who} tick={p.tick} stacked={p.stacked} onBack={back} onChanged={p.onChanged} titles={p.titles} scrollKey={scrollKey} />
         </div>
       )}
       {!p.stacked && !hasCase && (

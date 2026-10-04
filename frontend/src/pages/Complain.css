@@ -96,7 +96,19 @@
 .cp-chip:hover { border-color: var(--accent); background: var(--surface-raised); color: var(--text-strong); }
 .cp-chip:active { background: var(--surface-sunk); }
 
+/* The optional fields behind one disclosure. */
+.cp-more { margin-top: var(--s5); max-width: 36rem; }
+.cp-more > summary { width: fit-content; min-height: 44px; align-items: center; color: var(--accent); font-size: var(--fs-md); font-weight: 500; }
+.cp-more > summary:hover { text-decoration: underline; text-underline-offset: 3px; }
+.cp-more-body { display: flex; flex-direction: column; margin-top: var(--s3); }
+.cp-more-body > .cp-field + .cp-field { margin-top: var(--s4); }
+
 .cp-submit { display: flex; flex-direction: column; align-items: flex-start; gap: var(--s3); margin-top: var(--s6); max-width: 36rem; }
+/* The button with any form-level error beside it, where the person is looking. */
+.cp-submit-row { display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--s3); width: 100%; }
+.cp-submit-row > .cp-alert { flex: 1 1 16rem; margin: 0; }
+.cp-alert:focus { outline: none; }
+.cp-alert:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .cp-btn {
   display: inline-flex;
   align-items: center;
@@ -117,7 +129,7 @@
 .cp-btn.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
 .cp-btn.secondary { border-color: var(--line-strong); background: var(--surface); }
 .cp-btn.secondary:hover { background: var(--surface-raised); }
-.cp-btn:disabled { opacity: 0.6; cursor: progress; }
+.cp-btn:disabled, .cp-btn[aria-disabled="true"] { opacity: 0.6; cursor: progress; }
 
 /* ------------------------------------------------------------------ result */
 .cp-result { display: flex; flex-direction: column; }
@@ -178,6 +190,12 @@
 /* ------------------------------------------------------------------ footer */
 .cp-foot { margin-top: auto; padding: var(--s5) 0; border-top: 1px solid var(--line); color: var(--muted-dim); font-size: var(--fs-sm); }
 
+/* Tap targets: 44 px on phones and touch screens. */
+@media (max-width: 700px), (pointer: coarse) {
+  .cp-chip { min-height: 44px; padding: 8px 14px; }
+  .cp-icon-btn { width: 44px; height: 44px; }
+  .cp-quiet-link { display: inline-flex; align-items: center; min-height: 44px; padding: 0 10px; }
+}
 @media (max-width: 600px) {
   .cp-main { padding: var(--s6) 0; }
   .cp h1 { font-size: var(--fs-xl); }

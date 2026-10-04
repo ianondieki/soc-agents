@@ -5,12 +5,22 @@
 
 /* ---------------------------------------------------------------- figures */
 .sd-kpis { margin-bottom: var(--s5); }
-/* Four figures, not Mission control's seven: on a phone two by two, in their own order. The
-   shared strip reorders its tiles and spans the last one across three columns (`.kpis .kpi
-   :last-child:nth-child(3n + 1)`), so the override matches that specificity. */
+/* Phones: the four figures become one line, so the queue starts on the first screen. */
+.sd-kpis-line { display: none; }
 @media (max-width: 600px) {
-  .kpis.sd-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .kpis.sd-kpis > .kpi:nth-child(n) { order: 0; grid-column: auto; }
+  .kpis.sd-kpis { display: none; }
+  .sd-kpis-line {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px var(--s4);
+    margin: 0 0 var(--s4);
+    color: var(--muted);
+    font-size: var(--fs-sm);
+    line-height: 1.5;
+  }
+  .sd-kpis-line .mono { color: var(--text-strong); }
+  .sd-kpis-line .hitl, .sd-kpis-line .hitl .mono { color: var(--hitl); font-weight: 600; }
+  .sd-kpis-line .sd-kpi-link { display: inline-block; padding: 10px 4px; margin: -10px -4px; }
 }
 .sd-kpi-sub { margin-top: 4px; color: var(--muted-dim); font-size: var(--fs-xs); line-height: 1.4; min-height: 1.4em; }
 .sd-kpi-link {
@@ -175,6 +185,7 @@
 .sd-status.hitl { color: var(--hitl); font-weight: 600; }
 
 /* ---------------------------------------------------------------- the case */
+/* The page's own scroll-padding already clears the sticky top bar; no margin of its own. */
 .sd-case { min-width: 0; }
 .sd-back { margin: calc(-1 * var(--s2)) 0 var(--s3) calc(-1 * var(--s2)); }
 .sd-back .btn { gap: 6px; }
@@ -234,15 +245,15 @@
 .sd-section-head h3 { margin: 0; color: var(--text-strong); font-size: var(--fs-md); font-weight: 600; line-height: 1.4; }
 
 /* ---------------------------------------------------------------- the trace */
+/* A short story: one line per step (agent, sentence), each a disclosure; the dots on a line. */
 .sd-trace { margin: 0; padding: 0; list-style: none; }
 .sd-step {
   position: relative;
   display: grid;
-  grid-template-columns: 26px minmax(0, 1fr) auto;
+  grid-template-columns: 26px minmax(0, 1fr);
   column-gap: var(--s3);
-  padding-bottom: var(--s4);
+  padding-bottom: var(--s3);
 }
-/* The line between steps runs down from each dot to the next; the last step has none. */
 .sd-step::before {
   content: "";
   position: absolute;
@@ -266,14 +277,25 @@
   color: var(--muted);
 }
 .sd-step-dot.hitl { border-color: var(--hitl-line); background: var(--hitl-soft); color: var(--hitl); }
-.sd-step-main { grid-column: 2; grid-row: 1; min-width: 0; padding-top: 3px; }
-.sd-step-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 var(--s2); line-height: 1.35; }
-.sd-step-agent { color: var(--text-strong); font-size: var(--fs-md); font-weight: 600; }
+.sd-step-d { grid-column: 2; min-width: 0; }
+/* The agent and its sentence flow as one line of text (wrapping as text does); the chevron sits
+   in the gutter before it. */
+.sd-step-line {
+  position: relative;
+  display: block;
+  min-height: 26px;
+  padding: 3px 0 3px 1.1em;
+  color: var(--text);
+  font-size: var(--fs-md);
+  line-height: 1.45;
+}
+summary.sd-step-line::before { position: absolute; left: 0.1em; top: 0.85em; color: var(--muted-dim); }
+details[open] > summary.sd-step-line::before { top: 0.7em; }
+summary.sd-step-line:hover .sd-step-sum { color: var(--text-strong); }
+.sd-step-agent { color: var(--text-strong); font-weight: 600; margin-right: var(--s2); }
 .sd-step.hitl .sd-step-agent { color: var(--hitl); }
-.sd-step-action { color: var(--muted); font-size: var(--fs-sm); }
-.sd-step-sum { margin: 2px 0 0; max-width: 72ch; color: var(--text); font-size: var(--fs-md); line-height: 1.45; overflow-wrap: anywhere; }
-.sd-step-ms { grid-column: 3; grid-row: 1; padding-top: 5px; color: var(--muted-dim); font-size: var(--fs-xs); white-space: nowrap; }
-.sd-step-body { margin-top: var(--s2); }
+.sd-step-sum { overflow-wrap: anywhere; }
+.sd-step-body { margin: var(--s1) 0 var(--s2) 1.1em; max-width: 72ch; }
 .sd-step-body:empty { display: none; }
 
 /* Label and value pairs inside a step: the shared .rail-dl, a touch tighter. */
@@ -332,29 +354,30 @@
 .sd-msg-body { margin: var(--s1) 0 0; max-width: 70ch; color: var(--text); font-size: var(--fs-md); line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
 
 /* ---------------------------------------------------------------- the decision */
-/* Sticky to the bottom of the viewport inside the case, as on Approvals: the decision stays in
-   reach while the trace is read, and settles into place at the case's end. */
-.sd-actions {
-  position: sticky;
-  bottom: 0;
-  z-index: 2;
-  margin: var(--s3) -20px -20px;
-  padding: var(--s3) 20px var(--s4);
-  background: var(--surface);
-  border-top: 1px solid var(--line);
-  border-radius: 0 0 calc(var(--r-lg) - 1px) calc(var(--r-lg) - 1px);
-}
-.sd-actions.live { border-top-color: var(--hitl-line); }
-.sd-decide { display: grid; gap: var(--s2); }
+/* The words and the fields sit in the page flow; only the buttons stick to the foot of the
+   viewport (about 72 px), as the decision bar on Approvals does, and settle into place at the
+   case's end. */
+.sd-decide .sd-section-head h3 { color: var(--hitl); }
+.sd-decide-form { display: grid; gap: var(--s2); }
 .sd-decide-text { margin: 0; max-width: 75ch; color: var(--text); font-size: var(--fs-md); line-height: 1.5; }
 .sd-decide-text strong { color: var(--text-strong); }
-.sd-decide-form .sd-tool { padding: var(--s2) var(--s3); border: 1px solid var(--hitl-line); border-radius: var(--r-md); background: var(--hitl-soft); }
 .sd-label { display: block; margin-top: var(--s1); color: var(--muted); font-size: var(--fs-xs); font-weight: 500; }
 .sd-reply { display: block; width: 100%; min-height: 0; max-width: 75ch; font-size: var(--fs-md); line-height: 1.4; field-sizing: content; }
 .sd-note { width: 100%; max-width: 75ch; }
 .sd-reply[aria-invalid="true"], .sd-note[aria-invalid="true"] { border-color: var(--danger); }
 .sd-invalid { margin: 0; color: var(--danger-text); font-size: var(--fs-sm); }
-.sd-buttons { display: flex; flex-wrap: wrap; gap: var(--s2) var(--s3); margin-top: var(--s1); }
+.sd-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  margin: var(--s2) -20px -20px;
+  padding: var(--s3) 20px;
+  background: var(--surface);
+  border-top: 1px solid var(--line);
+  border-radius: 0 0 calc(var(--r-lg) - 1px) calc(var(--r-lg) - 1px);
+}
+.sd-actions.live { border-top-color: var(--hitl-line); }
+.sd-buttons { display: flex; flex-wrap: wrap; gap: var(--s2) var(--s3); }
 .sd-buttons .btn[aria-disabled="true"] { opacity: 0.6; cursor: progress; }
 .sd-error {
   margin: 0 0 var(--s2);
@@ -366,10 +389,12 @@
   font-size: var(--fs-md);
 }
 .sd-receipt { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s1) var(--s4); margin: 0; font-size: var(--fs-md); color: var(--muted); }
+.sd-receipt:focus { outline: none; }
+.sd-receipt:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: var(--r-sm); }
 .sd-receipt-verb { display: inline-flex; align-items: center; gap: 6px; color: var(--text-strong); font-weight: 600; }
 .sd-receipt-verb > svg { color: var(--ok); }
 @media (max-height: 560px) { .sd-actions { position: static; } }
-.sd-case :focus-visible { scroll-margin-bottom: 10rem; }
+.sd-case :focus-visible { scroll-margin-bottom: 6rem; }
 
 /* ---------------------------------------------------------------- empty states */
 .sd-empty p { margin: 0; }
@@ -400,6 +425,10 @@
 .sd-ev-run { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--s2) var(--s3); }
 .sd-ev-run .sd-error { margin: 0; font-size: var(--fs-sm); }
 .sd-ev-note { margin: 0 0 var(--s3); max-width: 70ch; color: var(--muted); font-size: var(--fs-sm); line-height: 1.5; }
+.sd-ev-dataset { display: inline-block; }
+.sd-ev-dataset > summary { display: inline-flex; color: var(--muted); }
+.sd-ev-dataset > summary:hover { color: var(--text); }
+.sd-ev-dataset[open] > summary { margin-right: var(--s2); }
 .sd-ev-sub { margin: var(--s5) 0 var(--s2); color: var(--text-strong); font-size: var(--fs-md); font-weight: 600; }
 
 /* The gates: the two headline figures large, the other two beside them. */
@@ -419,6 +448,8 @@
 .sd-gate-word { margin-top: var(--s2); font-size: var(--fs-md); white-space: normal; }
 .sd-gate:not(:has(.sd-gatebar)) .sd-gate-word { margin-top: var(--s3); }
 .sd-gate-means { margin: var(--s1) 0 0; max-width: 46ch; color: var(--muted); font-size: var(--fs-sm); line-height: 1.5; }
+.sd-gate.none .sd-gate-value { color: var(--muted-dim); font-weight: 500; }
+.sd-gate-note { color: var(--muted); font-weight: 400; }
 .sd-gate.big .sd-gate-means { max-width: 56ch; }
 
 /* Supporting metrics: a figure, then what it means. */
@@ -467,19 +498,25 @@ tbody tr:hover .sd-cell.off { background: color-mix(in oklab, var(--danger) calc
 .sd-splits table { min-width: 0; }
 .sd-splits td.num { font-size: var(--fs-sm); }
 
-/* Failures: one disclosure each, grouped by kind. */
-.sd-fails { display: grid; gap: var(--s2); }
-.sd-fail { border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface-raised); }
-.sd-fail > summary { gap: var(--s3); padding: var(--s2) var(--s3); color: var(--text); font-size: var(--fs-sm); }
+/* Failures: one disclosure per failed case, with every way it failed. Everything inside is
+   allowed to shrink (min-width 0) and the tables scroll inside their box, so a long gold text or a
+   wide expected/actual pair never widens the page. */
+.sd-fails { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s2); }
+.sd-fail { min-width: 0; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface-raised); }
+.sd-fail > summary { min-width: 0; gap: var(--s3); padding: var(--s2) var(--s3); color: var(--text); font-size: var(--fs-sm); }
 .sd-fail > summary > .mono { flex: none; color: var(--text-strong); }
-.sd-fail-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sd-fail-kinds { flex: none; color: var(--muted); }
+.sd-fail-text { flex: 1 1 10rem; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sd-fail[open] .sd-fail-text { display: none; }
-.sd-fail-body { padding: 0 var(--s3) var(--s3); }
+.sd-fail-body { min-width: 0; padding: 0 var(--s3) var(--s3); }
 .sd-fail-full { margin: 0 0 var(--s2); max-width: 70ch; color: var(--text-strong); font-size: var(--fs-md); line-height: 1.5; }
-.sd-fail-table { font-size: var(--fs-sm); }
+.sd-fail-one + .sd-fail-one { margin-top: var(--s3); }
+.sd-fail-kind { margin: 0 0 var(--s1); color: var(--text); font-size: var(--fs-sm); font-weight: 600; }
+.sd-fail-body .table-scroll { min-width: 0; }
+.sd-fail-table { min-width: 0; font-size: var(--fs-sm); }
 .sd-fail-table thead th { position: static; top: auto; height: auto; padding: 4px 10px; background: transparent; }
-.sd-fail-table th[scope="row"] { color: var(--muted); font-weight: 500; }
-.sd-fail-table td, .sd-fail-table th { padding: 6px 10px; }
+.sd-fail-table th[scope="row"] { color: var(--muted); font-weight: 500; white-space: nowrap; }
+.sd-fail-table td, .sd-fail-table th { padding: 6px 10px; overflow-wrap: anywhere; }
 .sd-fail-table tr.differs td { color: var(--text-strong); font-weight: 500; }
 .sd-fail-table tbody tr:hover td, .sd-fail-table tbody tr:hover th { background: transparent; }
 
@@ -493,20 +530,24 @@ tbody tr:hover .sd-cell.off { background: color-mix(in oklab, var(--danger) calc
   .sd-rows { overflow: visible; }
   .sd-ev-grid { grid-template-columns: minmax(0, 1fr); }
 }
+/* Tap targets: 44 px on phones and touch screens. */
+@media (max-width: 700px), (pointer: coarse) {
+  .sd-filters select, .sd-search > input { min-height: 44px; }
+  .sd-buttons .btn, .sd-back .btn { min-height: 44px; }
+  .sd-kpi-sub .sd-kpi-link { display: inline-block; padding: 10px 2px; margin: -10px -2px; }
+  .sd-tab { min-height: 44px; }
+}
 @media (max-width: 700px) {
   /* One row that scrolls sideways, the way a phone's tab strip does, instead of a second row. */
   .sd-tabs { flex-wrap: nowrap; gap: 0 var(--s4); margin-left: calc(-1 * var(--s4)); margin-right: calc(-1 * var(--s4)); padding: 0 var(--s4); overflow-x: auto; scrollbar-width: none; }
   .sd-tabs::-webkit-scrollbar { display: none; }
+  .sd-tabs[data-more="1"] { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 40px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 40px), transparent); }
   .sd-tab { min-height: 44px; font-size: var(--fs-sm); }
   .sd-gates { grid-template-columns: minmax(0, 1fr); }
   .sd-gate.big .sd-gate-value { font-size: var(--fs-2xl); }
   .sd-ev-head { flex-direction: column; }
   .sd-ev-run { justify-content: flex-start; }
-  .sd-actions { margin: var(--s3) -20px -20px; }
   .sd-incident-open { margin-left: 0; }
-  /* The duration drops under the step's words; the dot and the words keep their columns. */
-  .sd-step { grid-template-columns: 26px minmax(0, 1fr); }
-  .sd-step-ms { grid-column: 2; grid-row: 2; padding-top: 0; }
   .sd-kv dt { min-width: 5.5rem; }
   .sd-cell { width: 3.5rem; height: 2.75rem; font-size: var(--fs-base); }
   /* A panel on a phone scrolls sideways for wide tables; the case must not, or its sticky footer

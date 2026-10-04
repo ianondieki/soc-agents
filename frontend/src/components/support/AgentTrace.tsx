@@ -5,23 +5,25 @@ import {
   fmtMs,
   humanWords,
   keyLabel,
+  reasonWord,
+  softWords,
+  stepSentence,
+  toolPhrase,
   toolWord,
   valueText,
   type CaseDetail,
   type Step,
-  type ToolCall,
   type ToolStatus,
 } from "../../lib/support";
-import { fmtTime } from "../../lib/time";
 import { AgentDot, ToolStatusWord, agentWord } from "./marks";
 
 /**
- * The agent trace: every step the desk recorded, as a vertical timeline. Intake, Triage, then
- * the Resolver or the Action agent, then Escalation and a person. Each step shows its plain
- * sentence, then the structured detail as label and value pairs, drawn for what it is: the triage
- * confidence as a meter against the 0.55 threshold, the reasons that fired as a list, the
- * candidates with their scores, a tool call with its arguments, result, policy sentence and
- * status. The raw JSON sits behind one disclosure at the foot, never in the way.
+ * The agent trace as a short story: one line per step (the agent, then one plain sentence built
+ * from the word maps), each line a disclosure that opens on its structured detail. Only the step
+ * the verdict turns on starts open: the escalation, the held call, the article the resolver
+ * answered from, the tool that fixed it. Facts the header and the verdict already show (channel,
+ * language, number, category, urgency, sentiment) are not repeated, a tool result that merely
+ * echoes its arguments is dropped, and the raw JSON sits behind one disclosure at the foot.
  */
 
 /** Triage sends a case to a person below this confidence (config/support/policy.yaml). */
@@ -30,7 +32,7 @@ const LOW_CONFIDENCE = 0.55;
 const isPlain = (v: unknown): v is Record<string, unknown> => v != null && typeof v === "object" && !Array.isArray(v);
 const isScalar = (v: unknown): boolean => v == null || ["string", "number", "boolean"].includes(typeof v);
 
-/** A value cell: scalars as words, lists of scalars joined, anything deeper behind a disclosure. */
+/** A value cell: scalars as words (numbers, codes and money in the mono), lists joined, anything deeper behind a disclosure. */
 function Value({ k, v }: { k: string; v: unknown }) {
   if (Array.isArray(v)) {
     if (v.length === 0) return <>none</>;
@@ -46,7 +48,8 @@ function Value({ k, v }: { k: string; v: unknown }) {
     return <Nested label={`${keys.length} fields`} value={v} />;
   }
   const text = valueText(k, v);
-  return MONO_KEYS.has(k) || /^[A-Z0-9-]{6,}$/.test(text) ? <span className="mono wrap">{text}</span> : <>{text}</>;
+  const mono = typeof v === "number" || MONO_KEYS.has(k) || /^[A-Z0-9-]{6,}$/.test(text) || /^KES /.test(text);
+  return mono ? <span className="mono wrap">{text}</span> : <>{text}</>;
 }
 
 function Nested({ label, value }: { label: string; value: unknown }) {
@@ -58,10 +61,9 @@ function Nested({ label, value }: { label: string; value: unknown }) {
   );
 }
 
-/** Label and value pairs, the shared `.rail-dl` primitive. `order` puts named keys first. */
+/** Label and value pairs, the shared `.rail-dl` primitive. `order` puts named keys first; nulls are left out. */
 export function KvList({ obj, order = [], skip = [], twoUp = true }: { obj: Record<string, unknown>; order?: string[]; skip?: string[]; twoUp?: boolean }) {
   const skipSet = new Set(skip);
-  // A null field says nothing ("tier: null" on a line with no account): it is left out.
   const has = (k: string) => k in obj && !skipSet.has(k) && obj[k] != null;
   const keys = [...order.filter(has), ...Object.keys(obj).filter((k) => !order.includes(k) && has(k))];
   if (!keys.length) return null;
@@ -95,28 +97,31 @@ export function ConfidenceMeter({ value }: { value: number }) {
   );
 }
 
-/** One tool call: what was called, its status, the policy sentence, then arguments and result. */
-export function ToolCallView({ call, titleKb, compact = false }: { call: { tool: string; status: ToolStatus; policy: string | null; args: Record<string, unknown>; result: Record<string, unknown> | null; decided_by?: string | null }; titleKb?: Record<string, string>; compact?: boolean }) {
-  void titleKb;
+const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+
+/** One tool call: the policy sentence, then arguments and a result that adds something. */
+export function ToolCallView({ call, showName = true }: { call: { tool: string; status: ToolStatus; policy: string | null; args: Record<string, unknown>; result: Record<string, unknown> | null; decided_by?: string | null }; showName?: boolean }) {
   const args = isPlain(call.args) ? call.args : {};
-  const result = isPlain(call.result) ? call.result : null;
+  const result = isPlain(call.result) && !same(call.result, args) ? call.result : null;
   return (
     <div className="sd-tool">
-      <div className="sd-tool-head">
-        <span className="sd-tool-name">
-          {toolWord(call.tool)} <code>{call.tool}</code>
-        </span>
-        <ToolStatusWord status={call.status} />
-        {call.decided_by && <span className="muted">decided by {call.decided_by}</span>}
-      </div>
+      {showName && (
+        <div className="sd-tool-head">
+          <span className="sd-tool-name">
+            {toolWord(call.tool)} <code>{call.tool}</code>
+          </span>
+          <ToolStatusWord status={call.status} />
+          {call.decided_by && <span className="muted">decided by {call.decided_by}</span>}
+        </div>
+      )}
       {call.policy && <p className="sd-tool-policy">{call.policy}</p>}
-      {!compact && Object.keys(args).length > 0 && (
+      {Object.keys(args).length > 0 && (
         <div className="sd-tool-part">
           <span className="sd-tool-label">Arguments</span>
           <KvList obj={args} twoUp={false} />
         </div>
       )}
-      {!compact && result && Object.keys(result).length > 0 && (
+      {result && Object.keys(result).length > 0 && (
         <div className="sd-tool-part">
           <span className="sd-tool-label">Result</span>
           <KvList obj={result} order={["reversal_id", "amount_kes", "counterparty", "incident_number", "site_name", "status", "note"]} skip={["found"]} twoUp={false} />
@@ -137,7 +142,7 @@ function CandidateList({ items, titles, top }: { items: any[]; titles: Record<st
             <span className="sd-cite-title">{titles[id] ?? id}</span>
             <span className="sd-cite-id mono">{id}</span>
             <span className="sd-cite-score mono">{typeof c?.score === "number" ? c.score.toFixed(1) : "—"}</span>
-            {matched.length > 0 && <span className="sd-cite-matched">matched {matched.join(", ")}</span>}
+            {matched.length > 0 && <span className="sd-cite-matched">matched {matched.map((m: string) => softWords(m)).join(", ")}</span>}
           </li>
         );
       })}
@@ -145,10 +150,13 @@ function CandidateList({ items, titles, top }: { items: any[]; titles: Record<st
   );
 }
 
-function StepBody({ step, titles }: { step: Step; titles: Record<string, string> }) {
+/** The detail under a step, trimmed to what the sentence, the header and the verdict do not say. */
+function StepBody({ step, detail, titles }: { step: Step; detail: CaseDetail; titles: Record<string, string> }): ReactNode {
   const d = isPlain(step.detail) ? step.detail : {};
   if (!Object.keys(d).length) return null;
   const a = step.agent;
+
+  if (a === "intake") return null; // channel, language, number and the account are in the sentence and the header
 
   if (a === "triage") {
     const reasons = Array.isArray(d.reasons) ? d.reasons.filter((r) => typeof r === "string") : [];
@@ -171,26 +179,18 @@ function StepBody({ step, titles }: { step: Step; titles: Record<string, string>
           </dd>
           <dt>Route chosen</dt>
           <dd>{valueText("route", d.route)}</dd>
-          <dt>Category</dt>
-          <dd>{valueText("category", d.category)}</dd>
-          <dt>Urgency</dt>
-          <dd>{valueText("urgency", d.urgency)}</dd>
-          <dt>Sentiment</dt>
-          <dd>{valueText("sentiment", d.sentiment)}</dd>
-          {scoreText && (
+          {flags.length > 0 && (
             <>
-              <dt>Category scores</dt>
-              <dd>{scoreText}</dd>
+              <dt>Risk flags</dt>
+              <dd className="sd-flag">{flags.map((f) => humanWords(f)).join(", ")}</dd>
             </>
           )}
-          <dt>Risk flags</dt>
-          <dd className={flags.length ? "sd-flag" : undefined}>{flags.length ? flags.map((f) => humanWords(f)).join(", ") : "none"}</dd>
           {d.intent != null && (
             <>
               <dt>Intent</dt>
               <dd>
-                <span className="mono">{String(d.intent)}</span>
-                {d.tool ? <span className="muted dim"> via {toolWord(d.tool)}</span> : null}
+                {humanWords(d.intent)}
+                {d.tool ? <span className="muted dim">, via {toolPhrase(d.tool)}</span> : null}
               </dd>
             </>
           )}
@@ -198,6 +198,12 @@ function StepBody({ step, titles }: { step: Step; titles: Record<string, string>
             <>
               <dt>Places named</dt>
               <dd>{placeText}</dd>
+            </>
+          )}
+          {scoreText && (
+            <>
+              <dt>Category scores</dt>
+              <dd className="mono wrap">{scoreText}</dd>
             </>
           )}
           <dt>Decided by</dt>
@@ -208,7 +214,7 @@ function StepBody({ step, titles }: { step: Step; titles: Record<string, string>
             <span className="sd-tool-label">Reasons that fired</span>
             <ul>
               {reasons.map((r, i) => (
-                <li key={i}>{String(r)}</li>
+                <li key={i}>{softWords(r)}</li>
               ))}
             </ul>
           </div>
@@ -227,11 +233,16 @@ function StepBody({ step, titles }: { step: Step; titles: Record<string, string>
           <dt>Grounded</dt>
           <dd>
             <span className={"state" + (grounded ? " ok" : " warn")}>{grounded ? "Yes" : "No"}</span>
-            {typeof d.score === "number" && <span className="muted dim"> (best score {d.score.toFixed(1)})</span>}
+            {typeof d.score === "number" && (
+              <span className="muted dim">
+                {" "}
+                (best score <span className="mono">{d.score.toFixed(1)}</span>)
+              </span>
+            )}
           </dd>
           {top && (
             <>
-              <dt>Answered from</dt>
+              <dt>Best article</dt>
               <dd>
                 {titles[top] ? `${titles[top]} ` : ""}
                 <span className="mono">{top}</span>
@@ -259,6 +270,7 @@ function StepBody({ step, titles }: { step: Step; titles: Record<string, string>
     const status = (typeof d.status === "string" ? d.status : "ok") as ToolStatus;
     return (
       <ToolCallView
+        showName={false}
         call={{
           tool: d.tool,
           status,
@@ -271,92 +283,115 @@ function StepBody({ step, titles }: { step: Step; titles: Record<string, string>
   }
 
   if (a === "action" && step.action === "planned") {
+    const args = isPlain(d.args) ? d.args : {};
+    if (!Object.keys(args).length) return null;
     return (
-      <dl className="rail-dl sd-kv two-up">
-        <dt>Tool</dt>
-        <dd>
-          {toolWord(d.tool)} <code>{String(d.tool ?? "")}</code>
-        </dd>
-        {isPlain(d.args) && Object.keys(d.args).length > 0 && (
-          <>
-            <dt>Arguments</dt>
-            <dd>
-              <Value k="args" v={d.args} />
-            </dd>
-          </>
-        )}
-        {d.why != null && (
-          <>
-            <dt>Why this target</dt>
-            <dd>{String(d.why)}</dd>
-          </>
-        )}
-      </dl>
+      <div className="sd-tool-part">
+        <span className="sd-tool-label">Arguments</span>
+        <KvList obj={args} twoUp={false} />
+      </div>
     );
   }
 
   if (a === "escalation") {
+    const waiting = detail.tool_calls.find((c) => c.status === "needs_approval");
+    const also = Array.isArray(d.also_matched) ? d.also_matched.filter((x) => typeof x === "string") : [];
     return (
-      <KvList
-        obj={{
-          reason_code: d.reason_code,
-          reason: d.reason,
-          evidence: d.evidence,
-          also_matched: d.also_matched,
-          held_tool: d.held_tool == null ? "none" : `${toolWord(d.held_tool)} (${String(d.held_tool)}), held for the person who takes the case`,
-        }}
-        order={["reason_code", "reason", "evidence", "also_matched", "held_tool"]}
-      />
+      <dl className="rail-dl sd-kv">
+        <dt>Reason</dt>
+        <dd>{reasonWord(d.reason_code)}</dd>
+        {d.reason != null && (
+          <>
+            <dt>Told the customer</dt>
+            <dd>{String(d.reason)}</dd>
+          </>
+        )}
+        {d.evidence != null && (
+          <>
+            <dt>Evidence</dt>
+            <dd>{softWords(d.evidence)}</dd>
+          </>
+        )}
+        {also.length > 0 && (
+          <>
+            <dt>Also matched</dt>
+            <dd>{also.map((x) => reasonWord(x)).join(", ")}</dd>
+          </>
+        )}
+        {waiting ? (
+          <>
+            <dt>Waiting for approval</dt>
+            <dd>{toolPhrase(waiting.tool)}</dd>
+          </>
+        ) : d.held_tool ? (
+          <>
+            <dt>Held, not run</dt>
+            <dd>{toolPhrase(d.held_tool)}, for whoever takes the case</dd>
+          </>
+        ) : null}
+      </dl>
     );
   }
 
-  // Intake, human steps and anything new: the detail as it is, with the number already in the hero.
-  return <KvList obj={d} skip={["msisdn_masked"]} order={["channel", "language", "chars", "account_found", "tier", "claimed_by", "resolved_by", "note", "reason"]} />;
+  // Human steps: the sentence says who and what; a note is in it too.
+  if (a === "human") return null;
+
+  return <KvList obj={d} skip={["msisdn_masked", "channel", "language", "category", "urgency", "sentiment"]} />;
 }
 
-const ACTION_WORD: Record<string, string> = {
-  received: "received the complaint",
-  classified: "classified it",
-  retrieved: "searched the knowledge base",
-  answered: "answered",
-  planned: "planned a tool call",
-  called_tool: "called a tool",
-  escalated: "sent it to a person",
-  claimed: "claimed it",
-  resolved: "resolved it",
-  approved: "approved the held call",
-  rejected: "rejected the held call",
-};
+/** The step the verdict turns on: the one that starts open. */
+function pivotSeq(detail: CaseDetail): number | null {
+  const c = detail.complaint;
+  const steps = detail.steps;
+  const find = (fn: (s: Step) => boolean) => steps.find(fn)?.seq ?? null;
+  const last = (fn: (s: Step) => boolean) => [...steps].reverse().find(fn)?.seq ?? null;
+  if (c.status === "awaiting_approval") return last((s) => s.agent === "action" && s.action === "called_tool" && (s.detail as any)?.status === "needs_approval") ?? find((s) => s.agent === "escalation");
+  if (c.status === "escalated" || c.status === "in_progress" || c.status === "resolved") return last((s) => s.agent === "escalation") ?? last((s) => s.agent === "human");
+  if (c.status === "answered") return last((s) => s.agent === "resolver");
+  if (c.status === "action_taken") {
+    return (
+      last((s) => s.agent === "action" && s.action === "called_tool" && !["lookup_account", "update_ticket"].includes(String((s.detail as any)?.tool))) ??
+      last((s) => s.agent === "action")
+    );
+  }
+  return null;
+}
 
 export default function AgentTrace({ detail, titles }: { detail: CaseDetail; titles: Record<string, string> }) {
   const steps = [...detail.steps].sort((x, y) => x.seq - y.seq);
   const total = steps.reduce((n, s) => n + (Number.isFinite(s.duration_ms) ? s.duration_ms : 0), 0);
+  const pivot = pivotSeq(detail);
   return (
     <section className="sd-section" aria-labelledby="sd-trace-h">
       <div className="head-row sd-section-head">
         <h3 id="sd-trace-h">What the agents did</h3>
         <span>
-          {steps.length} {steps.length === 1 ? "step" : "steps"}, <span className="mono">{fmtMs(total)}</span>
+          {steps.length} {steps.length === 1 ? "step" : "steps"} in <span className="mono">{fmtMs(total)}</span>
         </span>
       </div>
       <ol className="sd-trace">
         {steps.map((s, i) => {
-          const human = s.agent === "human";
-          const right: ReactNode = human ? <span className="mono">{fmtTime(s.at)}</span> : <span className="mono">{s.duration_ms > 0 ? fmtMs(s.duration_ms) : "<1 ms"}</span>;
+          const person = s.agent === "human" || s.agent === "escalation";
+          const body = <StepBody step={s} detail={detail} titles={titles} />;
+          const sentence = stepSentence(s, titles);
+          const hasBody = body != null;
           return (
-            <li key={`${s.seq}-${i}`} className={"sd-step" + (human || s.agent === "escalation" ? " hitl" : "")}>
+            <li key={`${s.seq}-${i}`} className={"sd-step" + (person ? " hitl" : "")}>
               <AgentDot agent={s.agent} />
-              <div className="sd-step-main">
-                <div className="sd-step-head">
+              {hasBody ? (
+                <details className="sd-step-d" open={s.seq === pivot || undefined}>
+                  <summary className="sd-step-line">
+                    <span className="sd-step-agent">{agentWord(s.agent)}</span>
+                    <span className="sd-step-sum">{sentence}</span>
+                  </summary>
+                  <div className="sd-step-body">{body}</div>
+                </details>
+              ) : (
+                <div className="sd-step-line static">
                   <span className="sd-step-agent">{agentWord(s.agent)}</span>
-                  <span className="sd-step-action">{ACTION_WORD[s.action] ?? humanWords(s.action)}</span>
+                  <span className="sd-step-sum">{sentence}</span>
                 </div>
-                <p className="sd-step-sum">{s.summary}</p>
-                <div className="sd-step-body">
-                  <StepBody step={s} titles={titles} />
-                </div>
-              </div>
-              <span className="sd-step-ms">{right}</span>
+              )}
             </li>
           );
         })}

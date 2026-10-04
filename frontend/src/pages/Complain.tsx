@@ -18,11 +18,12 @@ import {
 import "./Complain.css";
 
 /**
- * The public complaint form at /complain, outside the console shell. One short form, then an
- * authored result: the reference large in the Mono, what happened to the complaint revealed one
- * step at a time (the page's one motion; static under reduced motion and quiet mode), and the
- * reply. Written for a customer, in the customer's words: no agent names a customer would not
- * know, no status codes, and a reason whenever the complaint goes to a person.
+ * The public complaint form at /complain, outside the console shell. The question first, the
+ * phone number second, the optional name and account number behind a disclosure, then one
+ * button. After it: an authored result with the reference large in the Mono, what happened to
+ * the complaint revealed one quick step at a time (static under reduced motion and quiet mode),
+ * and the reply. Written for a customer: the page shows only what the customer typed and what
+ * the desk replied, never an account holder's name, a policy line or a staff link.
  */
 
 interface Example {
@@ -46,6 +47,8 @@ interface Sent {
   detail: CaseDetail;
   /** 200: the same number sent the same words in the last two minutes; nothing new was filed. */
   duplicate: boolean;
+  /** The name the caller typed, if any: the only name this page ever shows. */
+  typedName: string;
 }
 
 function formError(e: unknown): string {
@@ -79,10 +82,12 @@ export default function Complain() {
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState<Sent | null>(null);
   const [touchedPhone, setTouchedPhone] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
   const uid = useId();
   const phoneRef = useRef<HTMLInputElement>(null);
   const bodyRef = useRef<HTMLTextAreaElement>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
+  const formErrorRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     document.title = sent ? `${sent.detail.complaint.ref}, Kenya NOC Support` : "Send a complaint, Kenya NOC Support";
@@ -90,6 +95,11 @@ export default function Complain() {
       document.title = "Kenya NOC Mission Control";
     };
   }, [sent]);
+
+  // A form-level error (rate limit, outage) lands beside the button and takes focus there.
+  useEffect(() => {
+    if (errors.form) formErrorRef.current?.focus({ preventScroll: false });
+  }, [errors.form]);
 
   const phoneProblem = msisdnProblem(msisdn);
   const bodyLen = body.trim().length;
@@ -103,17 +113,18 @@ export default function Complain() {
 
   const submit = async (ev: FormEvent) => {
     ev.preventDefault();
+    if (sending) return;
     const next: Errors = {};
-    if (phoneProblem) next.msisdn = phoneProblem;
     if (bodyLen < BODY_MIN) next.body = bodyLen === 0 ? "Tell us what went wrong." : `Add a little more: at least ${BODY_MIN} characters.`;
     if (bodyLen > BODY_MAX) next.body = `Keep it under ${BODY_MAX.toLocaleString("en-KE")} characters.`;
+    if (phoneProblem) next.msisdn = phoneProblem;
     setErrors(next);
-    if (next.msisdn) {
-      phoneRef.current?.focus();
-      return;
-    }
     if (next.body) {
       bodyRef.current?.focus();
+      return;
+    }
+    if (next.msisdn) {
+      phoneRef.current?.focus();
       return;
     }
     setSending(true);
@@ -125,7 +136,7 @@ export default function Complain() {
         ...(account.trim() ? { account_ref: account.trim() } : {}),
         channel: "web",
       });
-      setSent({ detail: a.data, duplicate: a.status === 200 });
+      setSent({ detail: a.data, duplicate: a.status === 200, typedName: name.trim() });
       window.scrollTo({ top: 0 });
       window.setTimeout(() => headingRef.current?.focus({ preventScroll: true }), 0);
     } catch (e) {
@@ -138,8 +149,9 @@ export default function Complain() {
       };
       const any = Object.values(mapped).some(Boolean);
       setErrors(any ? mapped : { form: formError(e) });
-      if (mapped.msisdn) phoneRef.current?.focus();
-      else if (mapped.body) bodyRef.current?.focus();
+      if (mapped.name || mapped.account_ref) setMoreOpen(true);
+      if (mapped.body) bodyRef.current?.focus();
+      else if (mapped.msisdn) phoneRef.current?.focus();
     } finally {
       setSending(false);
     }
@@ -184,16 +196,47 @@ export default function Complain() {
                 are told why.
               </p>
 
-              {errors.form && (
-                <div className="cp-alert" role="alert">
-                  {errors.form}
-                </div>
-              )}
-
               <div className="cp-field">
-                <label htmlFor={`${uid}-name`}>Your name (optional)</label>
-                <input id={`${uid}-name`} value={name} onChange={(e) => setName(e.target.value)} autoComplete="name" maxLength={128} />
-                {errors.name && <p className="cp-error">{errors.name}</p>}
+                <div className="cp-label-row">
+                  <label htmlFor={`${uid}-body`}>What went wrong?</label>
+                  <span className={"cp-count" + (bodyLen > BODY_MAX ? " over" : "")} aria-live="polite">
+                    <span className="cp-mono">{bodyLen.toLocaleString("en-KE")}</span> of {BODY_MAX.toLocaleString("en-KE")}
+                  </span>
+                </div>
+                <textarea
+                  id={`${uid}-body`}
+                  ref={bodyRef}
+                  value={body}
+                  onChange={(e) => {
+                    setBody(e.target.value);
+                    if (errors.body) setErrors((x) => ({ ...x, body: undefined }));
+                  }}
+                  rows={5}
+                  maxLength={BODY_MAX + 200}
+                  aria-describedby={`${uid}-body-hint${errors.body ? ` ${uid}-body-err` : ""}`}
+                  aria-invalid={!!errors.body || undefined}
+                  required
+                />
+                <p id={`${uid}-body-hint`} className="cp-hint">
+                  Say what happened, where, and when. If it's about an M-PESA transfer, include the 10-character code from the confirmation SMS.
+                </p>
+                {errors.body && (
+                  <p id={`${uid}-body-err`} className="cp-error">
+                    {errors.body}
+                  </p>
+                )}
+                <div className="cp-examples">
+                  <span className="cp-examples-label" id={`${uid}-ex`}>
+                    Or start from an example
+                  </span>
+                  <div className="cp-chips" role="group" aria-labelledby={`${uid}-ex`}>
+                    {EXAMPLES.map((ex) => (
+                      <button key={ex.label} type="button" className="cp-chip" onClick={() => fill(ex)} title={ex.text}>
+                        {ex.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
               </div>
 
               <div className="cp-field">
@@ -224,60 +267,35 @@ export default function Complain() {
                 )}
               </div>
 
-              <div className="cp-field">
-                <label htmlFor={`${uid}-acct`}>Account or M-PESA code (optional)</label>
-                <input id={`${uid}-acct`} value={account} onChange={(e) => setAccount(e.target.value)} autoComplete="off" maxLength={32} placeholder="ACC-100412 or SJK4H7QW2L" className="cp-mono" />
-                <p className="cp-hint">An account number, or the 10-character code from the M-PESA confirmation SMS, if the problem is about one.</p>
-                {errors.account_ref && <p className="cp-error">{errors.account_ref}</p>}
-              </div>
-
-              <div className="cp-field">
-                <div className="cp-label-row">
-                  <label htmlFor={`${uid}-body`}>What went wrong?</label>
-                  <span className={"cp-count" + (bodyLen > BODY_MAX ? " over" : "")} aria-live="polite">
-                    <span className="cp-mono">{bodyLen.toLocaleString("en-KE")}</span> of {BODY_MAX.toLocaleString("en-KE")}
-                  </span>
-                </div>
-                <textarea
-                  id={`${uid}-body`}
-                  ref={bodyRef}
-                  value={body}
-                  onChange={(e) => {
-                    setBody(e.target.value);
-                    if (errors.body) setErrors((x) => ({ ...x, body: undefined }));
-                  }}
-                  rows={5}
-                  maxLength={BODY_MAX + 200}
-                  aria-describedby={`${uid}-body-hint${errors.body ? ` ${uid}-body-err` : ""}`}
-                  aria-invalid={!!errors.body || undefined}
-                  required
-                />
-                <p id={`${uid}-body-hint`} className="cp-hint">
-                  Say what happened, where, and when. If you have a transaction code, include it.
-                </p>
-                {errors.body && (
-                  <p id={`${uid}-body-err`} className="cp-error">
-                    {errors.body}
-                  </p>
-                )}
-                <div className="cp-examples">
-                  <span className="cp-examples-label" id={`${uid}-ex`}>
-                    Or start from an example
-                  </span>
-                  <div className="cp-chips" role="group" aria-labelledby={`${uid}-ex`}>
-                    {EXAMPLES.map((ex) => (
-                      <button key={ex.label} type="button" className="cp-chip" onClick={() => fill(ex)} title={ex.text}>
-                        {ex.label}
-                      </button>
-                    ))}
+              <details className="cp-more" open={moreOpen} onToggle={(e) => setMoreOpen((e.currentTarget as HTMLDetailsElement).open)}>
+                <summary>Add your name or account number (optional)</summary>
+                <div className="cp-more-body">
+                  <div className="cp-field">
+                    <label htmlFor={`${uid}-name`}>Your name</label>
+                    <input id={`${uid}-name`} value={name} onChange={(e) => setName(e.target.value)} autoComplete="name" maxLength={128} />
+                    <p className="cp-hint">So the reply can greet you.</p>
+                    {errors.name && <p className="cp-error">{errors.name}</p>}
+                  </div>
+                  <div className="cp-field">
+                    <label htmlFor={`${uid}-acct`}>Account number</label>
+                    <input id={`${uid}-acct`} value={account} onChange={(e) => setAccount(e.target.value)} autoComplete="off" maxLength={32} placeholder="ACC-100412" className="cp-mono" />
+                    <p className="cp-hint">Your account number, if you know it. Put an M-PESA transaction code in the message above instead.</p>
+                    {errors.account_ref && <p className="cp-error">{errors.account_ref}</p>}
                   </div>
                 </div>
-              </div>
+              </details>
 
               <div className="cp-submit">
-                <button type="submit" className="cp-btn primary" disabled={sending} aria-busy={sending || undefined}>
-                  {sending ? "Sending…" : "Send complaint"}
-                </button>
+                <div className="cp-submit-row">
+                  <button type="submit" className="cp-btn primary" aria-disabled={sending || undefined} aria-busy={sending || undefined}>
+                    {sending ? "Sending…" : "Send complaint"}
+                  </button>
+                  {errors.form && (
+                    <div className="cp-alert" role="alert" ref={formErrorRef} tabIndex={-1}>
+                      {errors.form}
+                    </div>
+                  )}
+                </div>
                 <p className="cp-hint">Sending runs your complaint through our agents now. You get a reference and a first reply on this page.</p>
               </div>
             </form>
@@ -301,9 +319,9 @@ function Result({ sent, onAgain, headingRef }: { sent: Sent; onAgain: () => void
   const c = d.complaint;
   const steps = customerSteps(d);
   const still = reducedMotion();
-  // One beat per step, then the reply; nothing moves under reduced motion or quiet mode.
-  const beat = still ? 0 : 520;
-  const replyDelay = still ? 0 : 400 + steps.length * beat;
+  // One quick beat per step, then the reply; nothing moves under reduced motion or quiet mode.
+  const beat = still ? 0 : 180;
+  const replyDelay = still ? 0 : 200 + steps.length * beat;
   return (
     <div className={"cp-result" + (still ? " still" : "")}>
       <h1 ref={headingRef} tabIndex={-1}>
@@ -312,8 +330,8 @@ function Result({ sent, onAgain, headingRef }: { sent: Sent; onAgain: () => void
       <p className="cp-lead">
         {sent.duplicate
           ? "This number sent the same words in the last two minutes, so nothing new was filed. Here is where that complaint stands."
-          : c.customer.name
-            ? `Thank you, ${c.customer.name}. Keep the reference for any follow-up.`
+          : sent.typedName
+            ? `Thank you, ${sent.typedName}. Keep the reference for any follow-up.`
             : "Keep the reference for any follow-up."}
       </p>
 
@@ -346,12 +364,9 @@ function Result({ sent, onAgain, headingRef }: { sent: Sent; onAgain: () => void
       )}
 
       <div className="cp-result-actions" style={{ animationDelay: `${replyDelay}ms` }}>
-        <button type="button" className="cp-btn primary" onClick={onAgain}>
+        <button type="button" className="cp-btn secondary" onClick={onAgain}>
           Send another complaint
         </button>
-        <Link className="cp-btn secondary" to={`/support?case=${encodeURIComponent(c.id)}`}>
-          Track it on the Support desk
-        </Link>
       </div>
     </div>
   );

@@ -7,7 +7,8 @@ import Markdownish from "./Markdownish";
 /**
  * The knowledge base the resolver answers from: search on the left (BM25 on the server, the
  * same ranking the resolver uses, with each hit's score), the article on the right, read as
- * text. With nothing typed the whole base is listed by category.
+ * text. The reading pane follows the search: the top hit opens as the results change, and with
+ * no hit the pane says so. With nothing typed the whole base is listed by category.
  */
 export default function KnowledgeBase({ stacked, articles, state, error, onRetry }: { stacked: boolean; articles: KbArticle[]; state: "loading" | "ok" | "error"; error: string | null; onRetry: () => void }) {
   const [q, setQ] = useState("");
@@ -17,6 +18,8 @@ export default function KnowledgeBase({ stacked, articles, state, error, onRetry
   const [open, setOpen] = useState(false); // phone: the article replaces the list
   const timer = useRef(0);
   const asked = useRef(0);
+  const titleRef = useRef<HTMLHeadingElement>(null);
+  const lastRow = useRef<string | null>(null);
 
   useEffect(() => {
     window.clearTimeout(timer.current);
@@ -32,8 +35,11 @@ export default function KnowledgeBase({ stacked, articles, state, error, onRetry
         .kbSearch(term)
         .then((r) => {
           if (mine !== asked.current) return;
-          setHits(Array.isArray(r?.results) ? r.results : []);
+          const list = Array.isArray(r?.results) ? r.results : [];
+          setHits(list);
           setSearchError(null);
+          // The pane follows the search: the top hit, or nothing.
+          setSelected(list.length ? list[0].article_id : null);
         })
         .catch((e) => {
           if (mine !== asked.current) return;
@@ -48,13 +54,33 @@ export default function KnowledgeBase({ stacked, articles, state, error, onRetry
     () => [...articles].sort((a, b) => (a.category === b.category ? a.title.localeCompare(b.title) : a.category.localeCompare(b.category))),
     [articles]
   );
-  const current = selected ? byId[selected] : !stacked && sorted.length ? sorted[0] : null;
+  const searching = hits != null;
+  const current: KbArticle | null = selected ? byId[selected] ?? null : !searching && !stacked && sorted.length ? sorted[0] : null;
   const pick = (id: string) => {
+    lastRow.current = id;
     setSelected(id);
     setOpen(true);
   };
-  const showList = !stacked || !open || !current;
-  const showArticle = !stacked || (open && current);
+  const back = () => {
+    setOpen(false);
+    const id = lastRow.current;
+    window.requestAnimationFrame(() => {
+      const el = id ? document.querySelector<HTMLElement>(`.sd-kb-row[data-id="${CSS.escape(id)}"]`) : null;
+      el?.focus({ preventScroll: true });
+    });
+  };
+  const showArticle = !stacked || (open && !!current);
+  const showList = !stacked || !showArticle;
+
+  // On a phone the opened article takes focus at its title.
+  useEffect(() => {
+    if (stacked && open && current) titleRef.current?.focus({ preventScroll: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stacked, open, current?.id]);
+
+  const rows = searching
+    ? hits!.map((h) => ({ id: h.article_id, title: h.title, category: byId[h.article_id]?.category, snippet: h.snippet, score: h.score as number | null }))
+    : sorted.map((a) => ({ id: a.id, title: a.title, category: a.category, snippet: a.summary, score: null as number | null }));
 
   return (
     <div className={"sd-split sd-kb" + (showArticle && stacked ? " has-case" : "")}>
@@ -82,17 +108,17 @@ export default function KnowledgeBase({ stacked, articles, state, error, onRetry
               </button>
             </div>
           )}
-          {state === "ok" && hits && hits.length === 0 && !searchError && <div className="empty">No article matches “{q.trim()}”. Try the customer's own words, in English or Kiswahili.</div>}
           {searchError && (
             <div className="empty" role="alert">
               {searchError}
             </div>
           )}
-          {state === "ok" && !searchError && (
-            <ol className="sd-rows" aria-label={hits ? `Articles matching ${q.trim()}` : "All articles"}>
-              {(hits ? hits.map((h) => ({ id: h.article_id, title: h.title, category: byId[h.article_id]?.category, snippet: h.snippet, score: h.score })) : sorted.map((a) => ({ id: a.id, title: a.title, category: a.category, snippet: a.summary, score: null as number | null }))).map((r) => (
+          {state === "ok" && !searchError && rows.length === 0 && <div className="empty">No article matches “{q.trim()}”. Try the customer's own words, in English or Kiswahili.</div>}
+          {state === "ok" && !searchError && rows.length > 0 && (
+            <ol className="sd-rows" aria-label={searching ? `Articles matching ${q.trim()}` : "All articles"}>
+              {rows.map((r) => (
                 <li key={r.id}>
-                  <button type="button" className="sd-row sd-kb-row" aria-current={current?.id === r.id ? "true" : undefined} onClick={() => pick(r.id)}>
+                  <button type="button" className="sd-row sd-kb-row" data-id={r.id} aria-current={current?.id === r.id ? "true" : undefined} onClick={() => pick(r.id)}>
                     <span className="sd-row-subject">{r.title}</span>
                     {r.score != null && (
                       <span className="sd-row-age mono" title="BM25 score">
@@ -115,13 +141,13 @@ export default function KnowledgeBase({ stacked, articles, state, error, onRetry
         <article className="panel sd-article" aria-labelledby="sd-kb-title">
           {stacked && (
             <div className="sd-back">
-              <button type="button" className="btn ghost sm" onClick={() => setOpen(false)}>
+              <button type="button" className="btn ghost sm" onClick={back}>
                 <ArrowLeft size={16} strokeWidth={1.75} aria-hidden="true" />
                 Back to the articles
               </button>
             </div>
           )}
-          <h2 id="sd-kb-title" className="sd-article-title">
+          <h2 id="sd-kb-title" ref={titleRef} tabIndex={-1} className="sd-article-title">
             {current.title}
           </h2>
           <div className="facts sd-article-facts">
@@ -135,7 +161,7 @@ export default function KnowledgeBase({ stacked, articles, state, error, onRetry
       )}
       {showArticle && !current && state === "ok" && !stacked && (
         <div className="panel sd-article">
-          <div className="empty">Pick an article to read it here.</div>
+          <div className="empty">{searching ? "No article matches the search. Pick one from the list, or try other words." : "Pick an article to read it here."}</div>
         </div>
       )}
     </div>

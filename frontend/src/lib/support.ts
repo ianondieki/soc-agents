@@ -166,8 +166,10 @@ export interface EvalGate {
   metric: string;
   op: ">=" | "<=" | "==";
   threshold: number;
-  value: number;
+  /** null when the split holds no evidence for the metric; `note` then says so. */
+  value: number | null;
   passed: boolean;
+  note?: string | null;
 }
 
 export type FailureKind =
@@ -362,12 +364,15 @@ export const CATEGORIES = Object.keys(CATEGORY_WORD) as Category[];
 export const STATUS_WORD: Record<Status, string> = {
   answered: "Answered",
   action_taken: "Action taken",
-  awaiting_approval: "Awaiting approval",
-  escalated: "With a person",
+  awaiting_approval: "Needs approval",
+  escalated: "Needs a person",
   in_progress: "Claimed",
   resolved: "Resolved",
   closed: "Closed",
 };
+
+/** A person must act now: the two statuses the queue marks in violet. */
+export const needsPerson = (s: Status): boolean => s === "escalated" || s === "awaiting_approval";
 export const STATUSES = Object.keys(STATUS_WORD) as Status[];
 
 export const ROUTE_WORD: Record<Route, string> = { resolver: "Resolver", action: "Action agent", human: "Person" };
@@ -435,6 +440,93 @@ export const TOOL_PHRASE: Record<string, string> = {
 };
 export const toolPhrase = (tool: unknown): string => TOOL_PHRASE[String(tool)] ?? humanWords(tool);
 
+/** What a tool call did, by status, as one sentence for the trace. */
+const TOOL_DONE: Record<string, string> = {
+  lookup_account: "Looked up the account.",
+  issue_refund: "Issued the refund.",
+  reverse_mpesa: "Reversed the M-PESA transfer.",
+  recredit_bundle: "Re-credited the bundle.",
+  link_incident: "Linked the complaint to the open incident.",
+  update_ticket: "Updated the ticket.",
+  reset_network_settings: "Sent the network settings SMS.",
+};
+export function toolSentence(tool: unknown, status: unknown, result?: Record<string, unknown> | null): string {
+  const t = String(tool ?? "");
+  const phrase = toolPhrase(t);
+  const cap = phrase ? phrase[0].toUpperCase() + phrase.slice(1) : "The tool call";
+  switch (String(status ?? "ok")) {
+    case "ok":
+      if (t === "link_incident" && result?.incident_number) return `Linked the complaint to ${String(result.incident_number)}.`;
+      return TOOL_DONE[t] ?? `${cap}: done.`;
+    case "approved":
+      return `${cap} ran after a person approved it.`;
+    case "needs_approval":
+      return `${cap} needs a person's approval.`;
+    case "refused":
+      return `${cap} was refused by policy.`;
+    case "rejected":
+      return `${cap} was rejected by a person.`;
+    case "failed":
+      return `${cap} failed.`;
+    default:
+      return `${cap}: ${humanWords(status)}.`;
+  }
+}
+
+/**
+ * One plain sentence per step, built from the word maps rather than the backend's machine words
+ * ("Called lookup_account: ok."). Falls back to the recorded summary for anything unknown.
+ */
+export function stepSentence(step: Step, titles: Record<string, string> = {}): string {
+  const d = step.detail && typeof step.detail === "object" ? (step.detail as Record<string, any>) : {};
+  const title = (id: unknown) => (typeof id === "string" && titles[id] ? `“${titles[id]}”` : typeof id === "string" ? id : "an article");
+  switch (`${step.agent}/${step.action}`) {
+    case "intake/received": {
+      const ch = (CHANNEL_WORD as Record<string, string>)[String(d.channel)] ?? "";
+      const lang = (LANGUAGE_WORD as Record<string, string>)[String(d.language)] ?? "";
+      const by = ch ? ` by ${ch === "SMS" || ch === "App" ? ch : ch.toLowerCase()}` : "";
+      const inLang = lang ? ` in ${lang}` : "";
+      const acct = d.account_found === true ? `; the account is on record${d.tier ? ` (${humanWords(d.tier)})` : ""}` : d.account_found === false ? "; no account on record for this number" : "";
+      return `Received${by}${inLang}${acct}.`;
+    }
+    case "triage/classified": {
+      const cat = (CATEGORY_WORD as Record<string, string>)[String(d.category)] ?? humanWords(d.category);
+      const route = d.route === "human" ? "a person" : d.route === "action" ? "the action agent" : d.route === "resolver" ? "the resolver" : null;
+      const conf = typeof d.confidence === "number" ? `, confidence ${d.confidence.toFixed(2)}` : "";
+      const flags = Array.isArray(d.risk_flags) && d.risk_flags.length ? `; flagged ${d.risk_flags.map((f: unknown) => humanWords(f)).join(", ")}` : "";
+      return `Classified as ${cat}, ${humanWords(d.urgency) || "normal"} urgency, ${humanWords(d.sentiment) || "calm"}${conf}${flags}${route ? `; routed to ${route}` : ""}.`;
+    }
+    case "resolver/retrieved": {
+      const score = typeof d.score === "number" ? ` (score ${d.score.toFixed(1)})` : "";
+      if (d.grounded === true) return `Found ${title(d.article_id)} above the grounding threshold${score}.`;
+      if (d.escalate) return `The best match, ${title(d.article_id)}, is marked escalate: it is never answered from.`;
+      return d.article_id ? `No article reached the grounding threshold; the best was ${title(d.article_id)}${score}.` : "No article matched.";
+    }
+    case "resolver/answered":
+      return d.article_id ? `Answered from ${title(d.article_id)}.` : "Answered from the knowledge base.";
+    case "action/planned": {
+      const why = d.why ? `: ${softWords(d.why)}` : "";
+      return `Planned ${toolPhrase(d.tool)}${why}.`;
+    }
+    case "action/called_tool":
+      return toolSentence(d.tool, d.status, d.result && typeof d.result === "object" ? d.result : null);
+    case "escalation/escalated": {
+      const ev = d.evidence ? ` (${softWords(d.evidence)})` : "";
+      return `Sent to a person: ${reasonWord(d.reason_code)}${ev}.`;
+    }
+    case "human/claimed":
+      return `Claimed by ${d.claimed_by ?? "a person"}.`;
+    case "human/resolved":
+      return `Resolved by ${d.resolved_by ?? "a person"}${d.note ? `: ${String(d.note)}` : ""}.`;
+    case "human/approved":
+      return `${d.decided_by ?? d.approved_by ?? "A person"} approved ${toolPhrase(d.tool)}${d.tool ? "" : " the held call"}.`;
+    case "human/rejected":
+      return `${d.decided_by ?? d.rejected_by ?? "A person"} rejected ${toolPhrase(d.tool)}${d.reason ? `: ${String(d.reason)}` : ""}.`;
+    default:
+      return step.summary || humanWords(step.action);
+  }
+}
+
 /** The escalation reason codes (config/support/policy.yaml), as a short phrase after "With a person:". */
 export const REASON_WORD: Record<string, string> = {
   fraud_or_sim_swap: "fraud or SIM swap reported",
@@ -468,6 +560,14 @@ export function humanWords(v: unknown): string {
   const s = String(v ?? "").trim();
   if (!s) return "";
   return s.replace(/[_\s]+/g, " ").toLowerCase();
+}
+
+/** Free text with code words in it ("category mpesa: wrong_number", "amount >= KES 1,000", a
+ *  transaction code): underscores become spaces, the case stays as written. */
+export function softWords(v: unknown): string {
+  return String(v ?? "")
+    .trim()
+    .replace(/_/g, " ");
 }
 
 /** A detail key as a label: "account_found" -> "Account found", "msisdn_masked" -> "Number". */
@@ -745,6 +845,20 @@ const CATEGORY_AS: Record<Category, string> = {
   other: "a general request",
 };
 
+/** What a person will do, by reason code, in the customer's words. Never the staff policy line. */
+const CUSTOMER_REASON: Record<string, string> = {
+  fraud_or_sim_swap: "A person from our fraud team will check your line and call you",
+  legal_or_regulator: "A senior member of staff will answer this",
+  threat_or_safety: "A person will handle this personally",
+  needs_verification: "A person will verify the transfer with you before anything moves",
+  over_refund_limit: "A person will review the amount and approve it",
+  repeat_unresolved: "A person will take ownership, as you have raised this before",
+  angry_high_value: "A senior member of the team will look at this personally",
+  low_confidence: "A person will read it, as our agents were not sure what it was about",
+  not_grounded: "A person will answer it, as our help articles do not cover it",
+  tool_failed: "A person will finish the fix",
+};
+
 function toolDone(call: ToolCall): string {
   switch (call.tool) {
     case "reverse_mpesa":
@@ -764,8 +878,9 @@ function toolDone(call: ToolCall): string {
 
 /**
  * What happened to a complaint, in the customer's words, one line per stage. Built from the
- * step agents, the tool calls' names and statuses, the citations and the escalation, so the
- * public view (blank details and arguments) reads the same as the staff view.
+ * step agents, the tool calls' names and statuses, the citations and the escalation's reason
+ * code, so the public view (blank details and arguments) reads the same as the staff view.
+ * Nothing here repeats a policy line or an account fact.
  */
 export function customerSteps(d: CaseDetail): CustomerStep[] {
   const c = d.complaint;
@@ -781,15 +896,13 @@ export function customerSteps(d: CaseDetail): CustomerStep[] {
   }
   const key = keyToolCall(d.tool_calls);
   if (key) {
-    if (key.status === "ok" || key.status === "approved") out.push({ key: "action", head: toolDone(key), line: key.decided_by ? `Approved by a member of our team.` : "", tone: "" });
-    else if (key.status === "needs_approval") out.push({ key: "action", head: "This needs a person's approval first", line: key.policy ?? "", tone: "hitl" });
-    else if (key.status === "refused" || key.status === "failed") out.push({ key: "action", head: "It could not be fixed automatically", line: key.policy ?? "", tone: "warn" });
-  } else if (agents.has("action") && c.route !== "action") {
-    out.push({ key: "action", head: "Our action agent looked at your account", line: "", tone: "" });
+    if (key.status === "ok" || key.status === "approved") out.push({ key: "action", head: toolDone(key), line: key.decided_by ? "Approved by a member of our team." : "", tone: "" });
+    else if (key.status === "needs_approval") out.push({ key: "action", head: "This needs a person's approval first", line: "The amount is above what our agents may do on their own.", tone: "hitl" });
+    else if (key.status === "refused" || key.status === "failed") out.push({ key: "action", head: "It could not be fixed automatically", line: "", tone: "warn" });
   }
   if (c.escalation) {
-    const reason = c.escalation.reason.replace(/^it\s+/i, "it ");
-    out.push({ key: "escalation", head: "Passed to a person in our team", line: `Because ${reason}. We will reply by ${fmtDue(c.sla_due_at)}.`, tone: "hitl" });
+    const will = CUSTOMER_REASON[c.escalation.reason_code] ?? "A person will take it from here";
+    out.push({ key: "escalation", head: "Passed to a person in our team", line: `${will}. We will reply by ${fmtDue(c.sla_due_at)}.`, tone: "hitl" });
   }
   if (c.status === "in_progress") out.push({ key: "human", head: "A member of our team is on it now", line: "", tone: "hitl" });
   if (c.status === "resolved") out.push({ key: "human", head: "Resolved by a member of our team", line: "", tone: "" });

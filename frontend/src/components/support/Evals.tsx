@@ -1,4 +1,4 @@
-import { Fragment, useMemo } from "react";
+import { useMemo } from "react";
 import { IconAlert, IconCheck } from "../../lib/icons";
 import {
   CATEGORY_WORD,
@@ -15,25 +15,25 @@ import {
   type EvalGate,
   type EvalMetrics,
   type EvalReport,
-  type FailureKind,
 } from "../../lib/support";
 import { fmtDateTime } from "../../lib/time";
 
-/** Splits in the order they were written, and how the page names them. */
+/** Splits in the order they were written, how the page names them, and what each one is. */
 const SPLIT_ORDER = ["dev", "validation", "test", "holdout"];
-const SPLIT_WORD: Record<string, { short: string; long: string }> = {
-  dev: { short: "Dev", long: "dev split" },
-  validation: { short: "Validation", long: "validation split" },
-  test: { short: "Test", long: "held-out test split" },
-  holdout: { short: "Holdout", long: "blind holdout" },
+const SPLIT_WORD: Record<string, { short: string; long: string; what: string }> = {
+  dev: { short: "Dev", long: "dev split", what: "is what the rules were tuned on" },
+  validation: { short: "Validation", long: "validation split", what: "was written blind, then seen" },
+  test: { short: "Test", long: "held-out test split", what: "was written blind and frozen" },
+  holdout: { short: "Holdout", long: "blind holdout", what: "was written blind by another author and is never tuned against" },
 };
 
 /**
  * The eval suite: the desk scored on a labelled set against fixed gates. Two headline figures
  * (resolution rate, wrong-escalation rate) each drawn against its gate, the two other gates, the
  * supporting metrics each with its one-sentence meaning, the route confusion matrix, the
- * per-category table, the failures grouped by kind, and the dataset facts. Every split the report
- * carries (dev, validation, holdout) sits side by side.
+ * per-category table, the failures grouped by case, and the dataset facts. Every split the report
+ * carries (dev, validation, holdout) sits side by side, each named for what it is. A gate with no
+ * evidence in the split (value null) shows a dash and the report's note, never a figure.
  */
 
 export interface EvalsProps {
@@ -47,7 +47,6 @@ export interface EvalsProps {
 }
 
 const SUPPORTING: (keyof EvalMetrics)[] = ["containment_rate", "routing_accuracy", "grounded_answer_rate", "tool_accuracy", "escalation_reason_accuracy", "missed_escalation_rate", "p50_ms"];
-const FAILURE_ORDER: FailureKind[] = ["missed_escalation", "wrong_escalation", "wrong_route", "wrong_category", "wrong_article", "wrong_tool", "unresolved"];
 
 function metricText(key: keyof EvalMetrics, v: number | null | undefined): string {
   if (v == null || !Number.isFinite(v)) return "—";
@@ -62,22 +61,27 @@ function gateSentence(g: EvalGate): string {
 function Gate({ g, big }: { g: EvalGate; big: boolean }) {
   const def = METRIC_DEFS[g.metric as keyof EvalMetrics];
   const label = def?.label ?? keyLabel(g.metric);
-  const value = pct(g.value, g.value > 0 && g.value < 0.01 ? 1 : 0);
-  const bar = g.op !== "==";
+  const hasValue = typeof g.value === "number" && Number.isFinite(g.value);
+  const value = hasValue ? pct(g.value, (g.value as number) > 0 && (g.value as number) < 0.01 ? 1 : 0) : "—";
+  const bar = hasValue && g.op !== "==";
   return (
-    <div className={"sd-gate" + (big ? " big" : "") + (g.passed ? "" : " fail")}>
+    <div className={"sd-gate" + (big ? " big" : "") + (hasValue && !g.passed ? " fail" : "") + (hasValue ? "" : " none")}>
       <div className="sd-gate-label">{label}</div>
       <div className="sd-gate-value mono">{value}</div>
       {bar && (
         <div className="sd-gatebar" aria-hidden="true">
-          <span className="sd-gatebar-fill" style={{ width: `${Math.max(0, Math.min(100, g.value * 100))}%` }} />
+          <span className="sd-gatebar-fill" style={{ width: `${Math.max(0, Math.min(100, (g.value as number) * 100))}%` }} />
           <span className="sd-gatebar-tick" style={{ left: `${Math.max(0, Math.min(100, g.threshold * 100))}%` }} />
         </div>
       )}
-      <div className={"sd-gate-word state" + (g.passed ? " ok" : " danger")}>
-        {g.passed ? <IconCheck /> : <IconAlert />}
-        {gateSentence(g)}
-      </div>
+      {hasValue ? (
+        <div className={"sd-gate-word state" + (g.passed ? " ok" : " danger")}>
+          {g.passed ? <IconCheck /> : <IconAlert />}
+          {gateSentence(g)}
+        </div>
+      ) : (
+        <div className="sd-gate-word sd-gate-note">{g.note || "No case in this split to measure it on."}</div>
+      )}
       {def && <p className="sd-gate-means">{def.means}</p>}
     </div>
   );
@@ -127,60 +131,75 @@ function Matrix({ labels, matrix }: { labels: string[]; matrix: number[][] }) {
   );
 }
 
-function Failure({ f }: { f: EvalFailure }) {
-  const keys = Array.from(new Set([...Object.keys(f.expected ?? {}), ...Object.keys(f.actual ?? {})]));
+function renderVal(k: string, v: unknown): string {
+  if (v == null) return "—";
+  if (Array.isArray(v)) return v.length ? v.map((x) => valueText(k, x)).join(", ") : "none";
+  if (typeof v === "object") return JSON.stringify(v);
+  if (k === "escalation_reason") return valueText(k, v);
+  return valueText(k, v);
+}
+
+/** One failed case: every way it failed, with expected against actual for each. */
+function FailedCase({ caseId, items }: { caseId: string; items: EvalFailure[] }) {
+  const kinds = items.map((f) => FAILURE_KIND_WORD[f.kind] ?? f.kind);
+  const text = items[0]?.text ?? "";
   return (
     <details className="sd-fail">
       <summary>
-        <span className="mono">{f.case_id}</span>
-        <span className="sd-fail-text">{f.text}</span>
+        <span className="mono">{caseId}</span>
+        <span className="sd-fail-kinds">{kinds.join(", ")}</span>
+        <span className="sd-fail-text">{text}</span>
       </summary>
       <div className="sd-fail-body">
-        <p className="sd-fail-full">{f.text}</p>
-        <table className="sd-fail-table">
-          <thead>
-            <tr>
-              <th scope="col">Field</th>
-              <th scope="col">Expected</th>
-              <th scope="col">Actual</th>
-            </tr>
-          </thead>
-          <tbody>
-            {keys.map((k) => {
-              const e = f.expected?.[k];
-              const a = f.actual?.[k];
-              const differs = JSON.stringify(e) !== JSON.stringify(a);
-              return (
-                <tr key={k} className={differs ? "differs" : undefined}>
-                  <th scope="row">{keyLabel(k)}</th>
-                  <td>{renderVal(k, e)}</td>
-                  <td>{renderVal(k, a)}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+        <p className="sd-fail-full">{text}</p>
+        {items.map((f, i) => {
+          const keys = Array.from(new Set([...Object.keys(f.expected ?? {}), ...Object.keys(f.actual ?? {})]));
+          return (
+            <div key={`${f.kind}-${i}`} className="sd-fail-one">
+              <h4 className="sd-fail-kind">{FAILURE_KIND_WORD[f.kind] ?? f.kind}</h4>
+              <div className="table-scroll">
+                <table className="sd-fail-table">
+                  <thead>
+                    <tr>
+                      <th scope="col">Field</th>
+                      <th scope="col">Expected</th>
+                      <th scope="col">Actual</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {keys.map((k) => {
+                      const e = f.expected?.[k];
+                      const a = f.actual?.[k];
+                      const differs = JSON.stringify(e) !== JSON.stringify(a);
+                      return (
+                        <tr key={k} className={differs ? "differs" : undefined}>
+                          <th scope="row">{keyLabel(k)}</th>
+                          <td>{renderVal(k, e)}</td>
+                          <td>{renderVal(k, a)}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          );
+        })}
       </div>
     </details>
   );
 }
 
-function renderVal(k: string, v: unknown): string {
-  if (v == null) return "—";
-  if (Array.isArray(v)) return v.length ? v.map((x) => valueText(k, x)).join(", ") : "none";
-  if (typeof v === "object") return JSON.stringify(v);
-  return valueText(k, v);
-}
-
 export default function Evals({ report, state, error, running, onRun, onRetry, runError }: EvalsProps) {
-  const groups = useMemo(() => {
-    const m = new Map<FailureKind, EvalFailure[]>();
-    for (const f of report?.failures ?? []) m.set(f.kind, [...(m.get(f.kind) ?? []), f]);
-    return FAILURE_ORDER.filter((k) => m.has(k)).map((k) => ({ kind: k, items: m.get(k)! }));
+  // Failures grouped by case: one case can fail in more than one way.
+  const byCase = useMemo(() => {
+    const m = new Map<string, EvalFailure[]>();
+    for (const f of report?.failures ?? []) m.set(f.case_id, [...(m.get(f.case_id) ?? []), f]);
+    return Array.from(m.entries());
   }, [report]);
 
   const runButton = (
-    <button type="button" className="btn primary" onClick={onRun} aria-disabled={running ? true : undefined} aria-busy={running || undefined}>
+    <button type="button" className="btn primary" onClick={() => !running && onRun()} aria-disabled={running ? true : undefined} aria-busy={running || undefined}>
       {running ? "Running the evals…" : "Run the evals"}
     </button>
   );
@@ -232,11 +251,14 @@ export default function Evals({ report, state, error, running, onRun, onRetry, r
   const headline = ["resolution_rate", "wrong_escalation_rate"].map((k) => gateFor(r, k)).filter((g): g is EvalGate => !!g);
   const others = r.gates.filter((g) => !headline.includes(g));
   const failed = r.gates.filter((g) => !g.passed).length;
-  // The splits in the order they were written, each with what it is: tuned on, seen, or never seen.
+  // The splits in the order they were written, each named for what it is.
   const splitKeys = r.by_split ? SPLIT_ORDER.filter((k) => r.by_split?.[k]) : [];
   const splits = splitKeys.length >= 2 ? r.by_split! : null;
+  const splitNote = splitKeys.map((k, i) => `${i === 0 ? "" : ""}${SPLIT_WORD[k]?.short ?? k} ${SPLIT_WORD[k]?.what ?? "is a split of the set"}`).join("; ");
   const splitWord = r.dataset.split === "all" ? "whole set" : SPLIT_WORD[r.dataset.split]?.long ?? `${r.dataset.split} split`;
   const excluded = r.dataset.excluded ? `, ${r.dataset.excluded} contested left out` : "";
+  const failureCount = r.failures.length;
+  const caseCount = byCase.length;
 
   return (
     <div className="sd-evals">
@@ -247,10 +269,7 @@ export default function Evals({ report, state, error, running, onRun, onRetry, r
             {r.passed ? `All ${r.gates.length} gates pass` : `${failed} of ${r.gates.length} gates ${failed === 1 ? "fails" : "fail"}`}
           </span>
           <span className="facts">
-            <span>
-              {r.dataset.name} <span className="mono">{r.dataset.version}</span>
-            </span>
-            <span>
+            <span title={`${r.dataset.name}, version ${r.dataset.version}`}>
               {r.dataset.size} cases, {splitWord}
               {excluded}
               {splits ? " (scored above)" : ""}
@@ -259,6 +278,12 @@ export default function Evals({ report, state, error, running, onRun, onRetry, r
             <span>
               ran <span className="mono">{fmtDateTime(r.ran_at)}</span> EAT
             </span>
+            <details className="sd-ev-dataset">
+              <summary>Dataset</summary>
+              <span>
+                {r.dataset.name}, version <span className="mono">{r.dataset.version}</span>
+              </span>
+            </details>
           </span>
         </div>
         <div className="sd-ev-run">
@@ -310,10 +335,7 @@ export default function Evals({ report, state, error, running, onRun, onRetry, r
           {splits && (
             <>
               <h3 className="sd-ev-sub">By split</h3>
-              <p className="sd-ev-note">
-                Dev is what the rules were tuned on; validation was written blind, then seen; the holdout was written
-                blind by another author and is never tuned against.
-              </p>
+              <p className="sd-ev-note">{splitNote}.</p>
               <div className="table-scroll sd-splits">
                 <table>
                   <thead>
@@ -395,23 +417,23 @@ export default function Evals({ report, state, error, running, onRun, onRetry, r
           <h2 id="sd-ev-fail" className="panel-title">
             Failures
           </h2>
-          <span>{r.failures.length === 0 ? "none" : `${r.failures.length} of ${r.dataset.size} cases`}</span>
+          <span>
+            {failureCount === 0
+              ? "none"
+              : `${caseCount} ${caseCount === 1 ? "case" : "cases"} of ${r.dataset.size}, ${failureCount} ${failureCount === 1 ? "failure" : "failures"}`}
+          </span>
         </div>
-        {r.failures.length === 0 ? (
+        {failureCount === 0 ? (
           <p className="sd-ev-note">Every case ended where the gold set says, with the right article or tool. Edit a rule in triage or the knowledge base and run again to see one appear here.</p>
         ) : (
-          groups.map((g) => (
-            <Fragment key={g.kind}>
-              <h3 className="sd-ev-sub">
-                {FAILURE_KIND_WORD[g.kind]} <span className="muted">({g.items.length})</span>
-              </h3>
-              <div className="sd-fails">
-                {g.items.map((f) => (
-                  <Failure key={f.case_id} f={f} />
-                ))}
-              </div>
-            </Fragment>
-          ))
+          <>
+            <p className="sd-ev-note">One case can fail in more than one way; each is listed once, with every way it failed.</p>
+            <div className="sd-fails">
+              {byCase.map(([caseId, items]) => (
+                <FailedCase key={caseId} caseId={caseId} items={items} />
+              ))}
+            </div>
+          </>
         )}
       </section>
     </div>
