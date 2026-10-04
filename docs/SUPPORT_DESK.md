@@ -170,8 +170,11 @@ type Metrics = {
 };  // null: no case to measure (empty denominator), never 0
 type EvalReport = {
   run_id: string; ran_at: string; mode: "deterministic" | "llm";
-  dataset: { name: string; version: string; size: number; split: "all" | "dev" | "test" };
-    // split: the split the headline below is over; a full run says "test" (held-out) and size is that split's cases
+  dataset: { name: string; version: string; size: number; excluded: number;
+             split: "all" | "dev" | "validation" | "holdout" | "dev+validation" };
+    // split: what the headline below is over. A full run says "holdout" (the blind split) and size is its
+    // scored cases; excluded counts contested cases that are loaded but never scored. version covers both
+    // golden files.
   metrics: Metrics;
   gates: { metric: string; op: ">=" | "<=" | "=="; threshold: number; value: number | null; passed: boolean;
            note: string | null }[];        // note: why a gate failed on a null value (no evidence is a failure)
@@ -182,7 +185,7 @@ type EvalReport = {
   failures: { case_id: string; text: string; kind: "wrong_escalation" | "missed_escalation" | "wrong_route" |
               "wrong_category" | "wrong_article" | "wrong_tool" | "unresolved";
               expected: Record<string, unknown>; actual: Record<string, unknown> }[];
-  by_split: { dev?: Metrics; test?: Metrics };  // added: every split that ran; the headline above is the test split
+  by_split: { dev?: Metrics; validation?: Metrics; holdout?: Metrics };  // added: every split that ran
 };
 ```
 
@@ -203,78 +206,120 @@ A rate with an empty denominator is `null`, never a number, and a gate that read
 `note`: a split with no safety case has not shown a safety-missed rate of 0, it has shown nothing.
 
 Default gates (`config/support/policy.yaml`): resolution rate >= 0.80, wrong-escalation rate <= 0.10,
-missed-escalation rate on safety cases == 0, triage accuracy >= 0.85. **They are judged on the held-out
-test split**: a full run (`POST /evals/run`, the pytest gate, the CLI without `--split`) runs every case,
-reports both splits in `by_split`, and takes the test split as the headline (`dataset.split: "test"`).
+missed-escalation rate on safety cases == 0, triage accuracy >= 0.85. Two uses, kept apart on purpose:
 
-### Methodology: two splits, one of them blind
+- **The regression gate** (asserted by pytest, `tests/unit/test_support_evals.py`) is the default gates on
+  **dev + validation combined** (`--split dev+validation`, `dataset.split: "dev+validation"`): the sets the
+  desk is developed against. It fails CI when a change breaks what the desk already handled.
+- **The holdout is reported, never asserted.** A full run (`POST /evals/run`, the CLI without `--split`)
+  runs every case, carries every split in `by_split`, and takes the blind **holdout** as the headline
+  (`dataset.split: "holdout"`). Its gates appear in the report as information. A held-out set that becomes
+  a CI target stops being held out: the moment a failing holdout case is fixed to make a build green, the
+  set measures fit, not generalisation. The holdout numbers are the honest ones, and they stay honest only
+  while nothing is tuned against them.
+
+### Methodology: three splits, two of them written blind
 
 The desk is keyword rules, and the starter set was written by the same hand as the lexicon, which is why
-its first score was 1.0 everywhere. The golden set (`tests/fixtures/support_eval/golden.jsonl`) therefore
-has two splits with different jobs:
+its first score was 1.0 everywhere. The golden set therefore has three splits, in two files, with
+different jobs and different provenance:
 
-- **test** (held out, 86 cases): written **first and blind**, from the customer's side, by reading only
-  the contract, the policy and the account fixtures, before reading `vocab.py`/`triage.py` or any system
-  output. Labelled by the contract, scored once to record the *before* numbers, then **frozen**: never
-  relabelled to match the desk, never edited, and never used to choose a fix. Only its before/after
-  numbers are read. The one post-freeze edit is a *policy* change (`needs_verification`, below), which
-  relabelled five code-less reversal requests; it is recorded in a comment in the file.
-- **dev** (111 cases): the 39 starter cases plus cases written in the same spirit. Every change to the
-  lexicon, triage weights, synonyms, places, knowledge-base keywords and escalation rules was chosen from
-  dev failures only, and kept general (Kiswahili/Sheng normalisation, misspellings, number words, phrase
-  patterns, contrast weights), never keyed to a sentence.
+| split | file | n | written by | status |
+|---|---|---|---|---|
+| `dev` | `tests/fixtures/support_eval/golden.jsonl` | 129 | the backend author (39 starter cases) and the eval author, beside the rules | tuned against; grows with every round |
+| `validation` | `golden.jsonl` (was `test`) | 86 | the eval author, **blind**: from the contract, the policy and `accounts.yaml` only, before reading `vocab.py`/`triage.py` or any output | frozen, scored, then *seen* (its failures were read in round 1), so it is a development set now |
+| `holdout` | `tests/fixtures/support_eval/holdout_blind.jsonl` | 95 (91 scored) | **a different model, with no access to the code**, from the contract, `policy.yaml`, `accounts.yaml` and the article titles; 80 cases carry the author's `note` | scored once before and once after round 2, never tuned against |
 
-Both splits are stocked with safety cases (fraud, legal, threat) so the safety gate always has evidence,
-and both hold the hard negatives the brief asked for: "lawyer", "fraud", "court" and "police" in benign
-contexts; refunds of KES 480 and 520 (the limit is 500); reversals at 23 h and 25 h (the window is 24 h);
-a recipient who already withdrew; a third repeat on a *different* category; angry customers on silver
-and on gold/platinum accounts; polite SIM-swap reports; M-PESA confirmation SMS pasted whole; lower-case
-codes; amounts as "1.5k", "Ksh 1,500", "12k", "elfu moja na mia tano"; two issues in one message; towns
-with and without an open incident. Three demo accounts were added to `accounts.yaml` for the boundary
-cases (`+254700001467`, `+254700001578`, `+254700001689`).
+Round 1 (validation blind, dev-only tuning) and round 2 (holdout blind, dev + validation tuning) followed
+the same discipline: write the held-out cases first, label them from the contract and the policy, freeze
+them, record the *before* number, tune on the development sets only with general mechanisms
+(Kiswahili/Sheng normalisation, number words, phrase patterns, contrast weights, the multi-issue
+capability below), never a rule keyed to a sentence, then record the *after* number once. The validation
+split's ids, texts and labels are unchanged since its freeze except the five code-less reversal requests
+relabelled for the `needs_verification` policy (recorded in a comment in the file).
 
-Composition (dataset version `6b49a55e35c1`):
+**Adjudications on the holdout** (orchestrator, 2026-10-04; the only label-level changes allowed):
 
-| category | dev | test | all |   | route | dev | test | all |   | language | dev | test | all |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| network | 23 | 16 | 39 |   | resolver | 44 | 31 | 75 |   | en | 55 | 43 | 98 |
-| data_bundles | 13 | 8 | 21 |   | action | 25 | 22 | 47 |   | sw (incl. Sheng) | 38 | 26 | 64 |
-| mpesa | 21 | 22 | 43 |   | human | 42 | 33 | 75 |   | mixed | 18 | 17 | 35 |
-| billing | 20 | 14 | 34 |   | **tool** | | | |   | **escalation reason** | | | |
-| sim_and_fraud | 9 | 9 | 18 |   | reverse_mpesa | 10 | 10 | 20 |   | fraud_or_sim_swap | 5 | 5 | 10 |
-| device_settings | 5 | 4 | 9 |   | recredit_bundle | 6 | 5 | 11 |   | legal_or_regulator | 5 | 4 | 9 |
-| roaming | 5 | 3 | 8 |   | issue_refund | 7 | 6 | 13 |   | threat_or_safety | 5 | 3 | 8 |
-| account | 7 | 4 | 11 |   | link_incident | 9 | 7 | 16 |   | needs_verification | 3 | 5 | 8 |
-| other | 8 | 6 | 14 |   | reset_network_settings | 3 | 3 | 6 |   | over_refund_limit | 6 | 6 | 12 |
-| **total** | **111** | **86** | **197** |   | | | | |   | repeat / angry_high_value | 3 / 3 | 1 / 1 | 4 / 4 |
-| | | | |   | | | | |   | low_confidence / not_grounded / tool_failed | 5 / 3 / 4 | 3 / 2 / 3 | 8 / 5 / 7 |
+- Four cases the author marked CONTESTABLE (`h-020`, `h-067`: a payment status check answered by
+  `lookup_account`; `h-054`, `h-068`: a note on an existing ticket by `update_ticket`) are marked
+  `"contested": true` in the file and **excluded from every number** (`dataset.excluded: 4`): the contract
+  gives no rule that makes a bookkeeping tool the decisive one. Their labels stay as written.
+- The author labelled outages in Nakuru, Kayole, Rongai, Nyali/Mombasa, Westlands and Machakos as
+  `link_incident`, assuming each town has an open incident. The eval's template database now holds, beside
+  the rain-storm hubs (Nakuru, Eldoret, Thika, Embakasi East, Nairobi East), four **eval-only open incidents**
+  for Westlands, Ongata Rongai, Nyali and Machakos (`evals.EVAL_EXTRA_INCIDENTS`; the live demo database is
+  untouched), and Rongai was added to the operator profile's Nairobi West coverage areas, which is where the
+  gazetteer learns its towns. Two dev cases and two unit tests that meant "a town with no open incident"
+  moved from Mombasa to Western-Nyanza towns, the one region the eval leaves without a ticket.
+- Holdout labels the eval author reads as contradicting the contract, **left unchanged** and listed here:
+  `h-048` names the Communications Authority (as a landmark) in an outage report and is labelled
+  `link_incident`, but the contract's `legal_or_regulator` rule names the Authority without an "in passing"
+  exception; `h-085` asks for a SIM swap (3G to 4G) and is labelled a resolver case, but the contract's
+  `fraud_or_sim_swap` rule names "SIM swap" without qualification, and an unverified caller asking for a
+  swap on a number is the classic takeover vector; `h-052` and `h-084` (a reversal whose recipient has
+  withdrawn) are labelled `tool_failed`, while the tools table says "recipient has not withdrawn; else
+  approval", which makes the reason `over_refund_limit` (route and tool agree either way).
 
-**Adding a case.** Append one JSON line to the split it belongs to (dev lines before the
-`# ---- test split` marker, test lines after it). Write it as a customer would, label it from the contract
-and the policy (never from what the desk does), use a real MSISDN from `accounts.yaml` when the case needs
-account context, and keep the consistency rules (`route` is `human` exactly when `escalation_reason` is
-set; `safety` exactly for the three safety reasons; `tool` for action cases and tool-driven escalations;
-`article_ids` lists every acceptable article). The loader refuses a contradictory line. A **test** line is
-never edited once it has been scored; add a new one instead. Run `python tests/eval/support_eval.py
---compare` to see dev and test side by side with the top failure kinds.
+**Composition** (dataset version `75e2eb4b020e`; contested cases not counted):
 
-**Latest numbers** (deterministic, 2026-10-04). *Before* is the desk as it landed, scored on the frozen
-test split; *after* is after the dev-only tuning. Dev *before* is the 92 cases that existed then.
+| category | dev | val | hold | all |   | route / tool | dev | val | hold | all |   | reason / language | dev | val | hold | all |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| network | 27 | 16 | 16 | 59 |   | resolver | 49 | 31 | 32 | 112 |   | fraud_or_sim_swap | 6 | 5 | 5 | 16 |
+| data_bundles | 17 | 8 | 7 | 32 |   | action | 35 | 22 | 20 | 77 |   | legal_or_regulator | 5 | 4 | 4 | 13 |
+| mpesa | 25 | 22 | 23 | 70 |   | human | 45 | 33 | 39 | 117 |   | threat_or_safety | 5 | 3 | 4 | 12 |
+| billing | 24 | 14 | 16 | 54 |   | reverse_mpesa | 12 | 10 | 10 | 32 |   | needs_verification | 4 | 5 | 5 | 14 |
+| sim_and_fraud | 10 | 9 | 9 | 28 |   | recredit_bundle | 9 | 5 | 5 | 19 |   | over_refund_limit | 6 | 6 | 6 | 18 |
+| device_settings | 6 | 4 | 4 | 14 |   | issue_refund | 9 | 6 | 7 | 22 |   | repeat / angry_high_value | 3 / 3 | 1 / 1 | 2 / 3 | 6 / 7 |
+| roaming | 5 | 3 | 3 | 11 |   | link_incident | 11 | 7 | 6 | 24 |   | low_conf / not_grounded / tool_failed | 5 / 4 / 4 | 3 / 2 / 3 | 2 / 4 / 4 | 10 / 10 / 11 |
+| account | 7 | 4 | 4 | 15 |   | reset_network_settings | 4 | 3 | 2 | 9 |   | en | 63 | 43 | 37 | 143 |
+| other | 8 | 6 | 9 | 23 |   | | | | | |   | sw (incl. Sheng) | 44 | 26 | 36 | 106 |
+| **total** | **129** | **86** | **91** | **306** |   | | | | | |   | mixed | 22 | 17 | 18 | 57 |
 
-| metric | test before | test after | dev before | dev after | gate |
+Every split holds the three safety reasons and the hard negatives: "lawyer", "fraud", "court", "police" and
+"CA" in benign contexts; refunds of KES 480 and 520 (limit 500); reversals at 23 h and 25 h (window 24 h); a
+recipient who already withdrew; a third repeat on a *different* category; angry customers on silver and on
+gold/platinum accounts; polite SIM-swap reports; pasted M-PESA confirmation SMS; lower-case codes; amounts
+as "1.5k", "Ksh 1,500", "12k", "elfu moja na mia tano", "hamsini bob"; two issues in one message; towns
+with and without an open incident.
+
+**Adding a case.** Append one JSON line to `golden.jsonl`, in the split it belongs to (dev lines before the
+`# ---- validation split` marker, validation lines after it). **Never add to, edit or relabel
+`holdout_blind.jsonl`**: a new blind holdout is written by someone who has not seen the code when the
+current one has been seen. Write the case as a customer would, label it from the contract and the policy
+(never from what the desk does), use a real MSISDN from `accounts.yaml` when the case needs account context,
+and keep the consistency rules (`route` is `human` exactly when `escalation_reason` is set; `safety` exactly
+for the three safety reasons; `tool` for action cases and tool-driven escalations; `article_ids` lists
+every acceptable article). The loader refuses a contradictory line. `python tests/eval/support_eval.py
+--compare` shows the three splits side by side with the regression gate, the holdout's gates and the top
+failure kinds; `--no-failures` prints a blind measurement (numbers, never the failing cases).
+
+**Latest numbers** (deterministic, 2026-10-04, round 2). The holdout *before* is the first and only
+measurement taken before this round's tuning (its failures unread); *after* is the single measurement at
+the end. Dev and validation are development sets; their *after* numbers show fit, not generalisation.
+
+| metric | holdout before | holdout after | dev after | validation after | gate |
 |---|---|---|---|---|---|
-| resolution_rate | 0.528 | **0.906** | 0.750 | 1.000 | >= 0.80 passes |
-| wrong_escalation_rate | 0.426 | **0.156** | 0.273 | 0.000 | <= 0.10 **fails** |
-| safety_missed_escalation_rate | 0.167 | **0.000** | 0.067 | 0.000 | == 0 passes |
-| triage_accuracy | 0.814 | **0.965** | 0.870 | 1.000 | >= 0.85 passes |
-| missed_escalation_rate | 0.182 | 0.182 | 0.111 | 0.048 | |
-| routing_accuracy | 0.640 | 0.872 | 0.804 | 0.982 | |
-| escalation_reason_accuracy | 0.576 | 0.727 | 0.833 | 0.929 | |
+| resolution_rate | 0.712 | **0.750** | 1.000 | 1.000 | >= 0.80: regression passes, holdout **below** |
+| wrong_escalation_rate | 0.292 | **0.250** | 0.000 | 0.000 | <= 0.10: regression passes, holdout **above** |
+| safety_missed_escalation_rate | 0.077 | **0.077** | 0.000 | 0.000 | == 0: regression passes, holdout **misses 1 of 13** |
+| triage_accuracy | 0.901 | **0.890** | 1.000 | 1.000 | >= 0.85: both pass |
+| missed_escalation_rate | 0.128 | 0.077 | 0.000 | 0.000 | |
+| routing_accuracy | 0.791 | 0.835 | 1.000 | 1.000 | |
+| tool_accuracy | 0.767 | 0.867 | 1.000 | 1.000 | |
+| escalation_reason_accuracy | 0.692 | 0.718 | 1.000 | 0.939 | |
 
-Five of the six missed escalations on test (and both dev failures) are the `needs_verification` cases,
-which fail by design until the desk-side change lands. The wrong-escalation gate is **not met on test**
-(5 of 32 escalations were resolvable cases, mostly `low_confidence` on long or two-issue messages);
-the gates were not weakened and the test cases were not touched; the decision is the owner's.
+Round 1, for the record (validation blind, before -> after dev-only tuning): resolution 0.528 -> 0.906,
+wrong-escalation 0.426 -> 0.156, safety-missed 0.167 -> 0.000, triage 0.814 -> 0.965.
+
+What the holdout still shows (22 of 91 cases; read once, after the round, for this paragraph only): most
+wrong escalations are `low_confidence` on single-issue Kiswahili messages whose words the lexicon does not
+know yet ("mistari ya Biblia", "sina mtandao kabisa", "court interpreter"), and risk words used
+figuratively or in a request ("Hii ni fraud tupu" about a bundle, "STOLEN 50 BOB", "naogopa" about future
+misuse, a requested 3G-to-4G "SIM swap"); the one missed safety case is a threat phrased without any word
+the threat lexicon knows ("someone there will regret it"); two hypothetical questions about reversals
+("if one sends M-PESA to a wrong number...") are treated as reversal requests and stop at
+`needs_verification`. None of these was fixed: they are the next round's development material once a
+fresh holdout exists.
 
 ## Decisions the contract left open
 
@@ -355,7 +400,10 @@ The vendor roles, `planning` and `legal` are out: a complaint is a customer's pe
 
 **Resolver (refinement)** -- "grounded" means the article reaches `grounding_threshold` (BM25, 4.0)
 **and** agrees with triage: it is in the category triage chose, or scores `cross_category_factor` (2x)
-the threshold. Citations are exactly the one article the reply came from. An article marked
+the threshold, **and** at least two distinct query terms matched it (one shared word, "stuck" read as
+"pending", is a coincidence, not an answer; escalate-only articles are exempt). Citations are exactly the
+articles the reply came from: one for the issue answered, plus one per secondary issue answered beside it
+(multi-issue, below). An article marked
 `escalate` in the knowledge base (`KB-SIM-SWAP-FRAUD`) is never answered from: landing on it adds the
 fraud flag, so a fraud complaint in words triage missed still reaches a person. Two more readings
 (2026-10-04): among grounded articles, one in triage's category is answered from unless a cross-category
@@ -368,12 +416,32 @@ common misspellings and SMS/Sheng spellings are folded before anything reads the
 "netwrk", "bundel", "net"); a number is split from its unit ("2gb"); a phrase tolerates a filler word or two
 ("cant *even* call", "hakuna *hata* bar"); a few phrases carry a negative weight for contrast ("niko na
 bundle lakini siwezi browse" is a network complaint, "personal data" is not a bundle, "charged twice for
-a bundle" is billing); text after a connector such as "na pia" / "and also" counts half, so a two-issue
-message is classified by the issue it leads with; a denied risk word ("I don't think this is fraud, I typed
-the number wrong") is masked; "lawyer", "advocate", "court" are a legal flag only beside a cue that action
+a bundle" is billing); a denied risk word ("I don't think this is fraud, I typed the number wrong") and
+a negated trip ("sijaenda nje ya nchi", "I haven't travelled anywhere") are masked; a 10-character M-PESA
+code in the text is evidence for the M-PESA category in itself; "lawyer", "advocate", "court" are a legal flag only beside a cue that action
 is meant (not "I paid my lawyer via paybill", not "the Kibera law courts"); fraud is also read from what is
 described ("mse flani ameingia M-PESA yangu") through a few regexes; amounts in words parse ("elfu moja na
 mia tano"); and the configuration-SMS tool is not used for a how-to question, a manual set-up or a router.
+
+**Multi-issue complaints (refinement, round 2)** -- a message that carries two issues ("Network ya Nakuru
+imepotea tangu asubuhi na pia nilitaka kuuliza bei ya roaming") used to tie two categories, drop below the
+confidence threshold and go to a person as `low_confidence`. Triage now cuts the text at sentence ends and
+at connectors ("na pia", "and also", "also", "pia", "plus", "alafu", "halafu", "then", "kisha", ...), scores
+each segment on its own, and merges consecutive segments that agree; a segment is an issue of its own when
+its winning category scores at least 2.0 and either a connector introduced it or it is sure of itself
+(confidence >= 0.55). Two issues with different categories make a multi-issue complaint. The **primary**
+issue is the first one the action agent can act on (an outage in a named town, a bundle to re-credit, a
+refund, a reversal with its code), else the one the customer led with; it decides the category, the
+confidence (scored on its own words) and the route. The **secondary** issues are retrieved from the
+knowledge base in their own category and, when grounded, answered in the same reply ("On your other
+question (roaming): ...") with their own citation. When the actionable issue turns out to have nothing to
+act on (no refundable charge on the account), the issue the customer led with becomes the primary (step
+`lead_issue_first`); when the leading issue has no grounded article but a secondary one has, the secondary
+is answered instead of sending both to a person. Risk flags are always read over the whole text, a reversal
+without a code still stops at `needs_verification` with nothing answered beside it, and an escalate-only
+article hit on a secondary fragment counts as a flag only at overwhelming evidence (2x the threshold):
+the whole-text flags are what read fraud in a side clause. Both issues are recorded in the triage step's
+`detail.issues` with `primary_issue`, and each secondary retrieval is its own `retrieved_secondary` step.
 
 **LLM** -- implemented: the triage tie-break (top two categories only; an accepted choice lifts
 confidence only to the low-confidence threshold, and a money-moving call it leads to is held, above),
@@ -387,24 +455,32 @@ now (`escalated`, `in_progress`); `escalation_rate` counts cases that ever went 
 **Evals**
 
 - Each case runs through `process_complaint` on its own in-memory copy of a template database that
-  holds the rain-storm scenario's open hub incidents; the live database and hub are never touched.
+  holds the rain-storm scenario's open hub incidents plus the four adjudicated eval-only incidents
+  (Westlands, Ongata Rongai, Nyali, Machakos; `evals.EVAL_EXTRA_INCIDENTS`); the live database and hub
+  are never touched.
 - Reports are stored in the database (`support_eval_runs`, operator-scoped, every run kept);
-  `GET /evals/latest` returns the newest. `dataset.version` is the first 12 hex of the golden file's
-  sha256.
+  `GET /evals/latest` returns the newest. `dataset.version` is the first 12 hex of the sha256 over both
+  golden files (`golden.jsonl`, then `holdout_blind.jsonl`).
 - An empty denominator is `null` everywhere (`metrics`, `by_split`, `by_category`), and a gate whose
   metric is `null` fails with a `note` (previously `0.0` in `metrics`, which let a split with no safety
   case pass the safety gate).
 - A full run's headline (`metrics`, `gates`, `passed`, `confusion`, `by_category`, `failures`) is the
-  **test** split and `dataset.split` says `"test"`; `by_split` carries the metrics of every split that
-  ran. `--split dev` makes dev the headline. A golden file with no test cases is judged on all of it.
+  blind **holdout** and `dataset.split` says `"holdout"`; `by_split` carries the metrics of every split
+  that ran. `--split dev` makes dev the headline; `--split dev+validation` (the pytest regression gate)
+  combines splits and says so in `dataset.split`. A golden file with no holdout cases is judged on all of it.
+- A case marked `"contested": true` (an adjudicated exclusion, with the reason in its `note`) is loaded,
+  may keep the author's label as written (even a bookkeeping tool), and is never scored;
+  `dataset.excluded` counts the contested cases of the headline split.
 - `tool` is `null` for a `needs_verification` case: the desk must not plan a reversal it cannot verify.
 - `tool_accuracy` counts the action agent's call whatever its status (an over-limit refund that chose
   `issue_refund` chose right); resolution still requires it to succeed.
 - Golden line format and its consistency rules (route `human` exactly when `escalation_reason` is set,
   `safety` exactly for the three safety reasons, `tool` for action cases and for tool-driven
   escalations) are in the `support/evals.py` docstring; the loader refuses a line that breaks them.
-- CLI: `python tests/eval/support_eval.py [--split dev|test] [--compare] [--json out.json] [--llm]`;
-  `--compare` prints dev and test side by side with the gates (test) and the top failure kinds of each.
+- CLI: `python tests/eval/support_eval.py [--split dev|validation|holdout|dev+validation] [--compare]
+  [--no-failures] [--json out.json] [--golden path]... [--llm]`; `--compare` prints the three splits side by
+  side with the regression gate (asserted) and the holdout's gates (reported), plus the top failure kinds
+  of each; `--no-failures` is the blind measurement (numbers only).
 
 **Schema** -- five tables (`support_complaints`, `support_steps`, `support_tool_calls`,
 `support_messages`, `support_eval_runs`), `SCHEMA_VERSION` 10. They are not yet classified in

@@ -51,6 +51,11 @@ PRICE_QUESTION = re.compile(
     r"ni ngapi|ni pesa ngapi|inauzwa|charges for|charge for|what do you charge|how expensive)\b"
 )
 PRICE_TERMS: tuple[str, ...] = ("price", "cost", "tariff", "charge", "charges", "charged", "fee", "bei", "rates")
+#: An article is grounded only when at least this many distinct query terms matched it: one shared
+#: word ("stuck" read as "pending") is a coincidence, not an answer. Escalate-only articles are
+#: exempt: landing on one at all is the evidence.
+MIN_MATCHED_TERMS = 2
+_GREETING = re.compile(r"^hi [^,]{1,40}, ", re.IGNORECASE)
 
 
 class _Placeholders(dict):
@@ -106,6 +111,7 @@ def resolve(
     """Retrieve, judge grounding, and fill the best grounded article's reply (or decline)."""
     hits = kb.search(text, limit=3, prefer_category=category, category_boost=policy.category_boost)
     passing = [h for h in hits if h.score >= policy.grounding_threshold]
+    passing = [h for h in passing if h.article.escalate or len(h.matched) >= MIN_MATCHED_TERMS]
     if PRICE_QUESTION.search(normalise(text)):
         passing = [h for h in passing if h.article.escalate or _talks_about_prices(h.article)]
     if passing and passing[0].article.escalate:  # safety first: no category agreement needed
@@ -118,6 +124,12 @@ def resolve(
     top = _prefer_agreement(grounded, category, policy)
     reply = fill(top.article.reply, name=name, ref=ref, msisdn_masked=msisdn_masked)
     return ResolverResult(True, top.article, top.score, hits, reply)
+
+
+def without_greeting(reply: str) -> str:
+    """A filled reply minus its "Hi {name}, " opening, for a second answer inside one message."""
+    stripped = _GREETING.sub("", reply, count=1)
+    return stripped[:1].upper() + stripped[1:] if stripped else stripped
 
 
 def _talks_about_prices(article: Article) -> bool:

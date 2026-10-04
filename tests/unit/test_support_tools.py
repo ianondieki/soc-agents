@@ -211,7 +211,7 @@ def test_link_incident_ignores_closed_incidents_children_and_other_operators(ses
 
 
 def test_no_matching_incident_is_ok_with_a_fallback(session):
-    out = run_tool("link_incident", _env(session, "0700001023"), {"place": "mombasa", "regions": ["CST"]})
+    out = run_tool("link_incident", _env(session, "0700001023"), {"place": "kisumu", "regions": ["WNY"]})
     assert out.status == "ok" and out.fallback and out.result["found"] is False
 
 

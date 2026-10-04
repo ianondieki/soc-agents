@@ -23,7 +23,10 @@ The order, and why:
    outcome can be weighed by the escalation table before anything is committed. When there is
    nothing safe to act on, the resolver answers instead.
 5. **Resolver** (route ``resolver``, or the action agent's fallback) -- BM25 over the knowledge
-   base; answers only when grounded (:mod:`resolver`).
+   base; answers only when grounded (:mod:`resolver`). A complaint that carries a second issue
+   (triage's ``secondary``) has that issue retrieved too: a grounded answer is appended to the reply
+   and cited, an escalate-only hit becomes a risk flag, and when the first issue has no grounded
+   answer but the second has, the second is answered rather than sending both to a person.
 6. **Escalation** -- the policy table over everything the agents found (:mod:`escalation`);
    the first matching rule is the reason, and the customer gets an honest holding reply. A call
    that was going to run is not dropped: it is recorded as ``needs_approval``, for the person who
@@ -78,7 +81,8 @@ from noc_agents.support import actions
 from noc_agents.support.accounts import Account
 from noc_agents.support.context import SupportContext, default_context
 from noc_agents.support.escalation import Escalation, EscalationFacts, customer_facing, holding_reply, matching
-from noc_agents.support.resolver import ResolverResult, resolve
+from noc_agents.support.resolver import ResolverResult, resolve, without_greeting
+from noc_agents.support.triage import Issue
 from noc_agents.support.text import InvalidMsisdn, body_hash, clean, mask_msisdn, normalise_msisdn
 from noc_agents.support.tools import ToolEnv, ToolOutcome, run_tool
 from noc_agents.support.triage import TriageResult, triage
@@ -294,6 +298,8 @@ class _Case:
     citations: list[dict[str, Any]] = field(default_factory=list)
     linked_incident_id: str | None = None
     escalation: Escalation | None = None
+    #: Grounded answers to the complaint's secondary issues, appended to the reply (multi-issue).
+    secondary: list[tuple[Issue, ResolverResult]] = field(default_factory=list)
 
 
 def _run_action(session: Session, ctx: SupportContext, case: _Case, operator_id: str, now: datetime) -> _Attempt | None:
@@ -315,9 +321,29 @@ def _run_action(session: Session, ctx: SupportContext, case: _Case, operator_id:
     return _Attempt(planned, outcome, ms)
 
 
+def _primary_text(case: _Case) -> str:
+    """What the resolver is asked: the primary issue's own words when the complaint has several
+    issues (so the other issue's stronger article cannot answer this one), else the whole text."""
+    triaged = case.triaged
+    return triaged.issues[triaged.primary].text if triaged.issues else case.text
+
+
+def _lead_with_first_issue(case: _Case) -> None:
+    """The issue triage picked as actionable had nothing to act on: the issue the customer led
+    with is the primary now (its category and confidence), and the other one is answered beside it."""
+    triaged = case.triaged
+    lead = triaged.issues[0]
+    before = triaged.issues[triaged.primary]
+    triaged.primary, triaged.category, triaged.confidence = 0, lead.category, lead.confidence
+    triaged.intent, triaged.tool = None, None
+    case.trace.step("action", "lead_issue_first",
+                    f"Nothing to act on for the {before.category} issue; the {lead.category} issue the customer led with is handled first.",
+                    {"category": lead.category, "confidence": lead.confidence, "demoted": before.category}, since=perf_counter())
+
+
 def _run_resolver(ctx: SupportContext, case: _Case) -> ResolverResult:
     t = perf_counter()
-    result = resolve(case.text, kb=ctx.kb, policy=ctx.policy, category=case.triaged.category,
+    result = resolve(_primary_text(case), kb=ctx.kb, policy=ctx.policy, category=case.triaged.category,
                      name=case.greet, ref=case.ref, msisdn_masked=case.masked)
     if result.escalate and result.article is not None:
         summary = f"Matched {result.article.id}, an escalate-only article: handing to a person."
@@ -327,6 +353,42 @@ def _run_resolver(ctx: SupportContext, case: _Case) -> ResolverResult:
         summary = f"No article reached the grounding threshold of {ctx.policy.grounding_threshold:g} (best {result.score:.1f})."
     case.trace.step("resolver", "retrieved", summary, result.detail(), since=t)
     return result
+
+
+def _run_secondary(ctx: SupportContext, case: _Case) -> list[ResolverResult]:
+    """Retrieve for each secondary issue (the resolver is asked the issue's own words, in its own
+    category). Grounded answers are kept on the case. An escalate-only article is never answered
+    from; it is reported back as a flag only on overwhelming lexical evidence (the policy's
+    ``cross_category_factor`` times the grounding threshold): the whole-text risk flags are what
+    read fraud in a side clause, and a weak match on a fragment ("I run an M-PESA shop") is not it."""
+    results: list[ResolverResult] = []
+    strong = ctx.policy.grounding_threshold * ctx.policy.cross_category_factor
+    for issue in case.triaged.secondary:
+        t = perf_counter()
+        result = resolve(issue.text, kb=ctx.kb, policy=ctx.policy, category=issue.category,
+                         name=case.greet, ref=case.ref, msisdn_masked=case.masked)
+        if result.escalate and result.article is not None and result.score < strong:
+            summary = f"Second issue ({issue.category}) touched {result.article.id} (escalate-only) below {strong:g}; not answered, not flagged."
+            result = ResolverResult(False, result.article, result.score, result.hits)
+        if result.escalate and result.article is not None:
+            summary = f"Second issue ({issue.category}) matched {result.article.id}, an escalate-only article, at {result.score:.1f}."
+        elif result.grounded and result.article is not None:
+            summary = f"Second issue ({issue.category}): found {result.article.id} (score {result.score:.1f})."
+            case.secondary.append((issue, result))
+        else:
+            summary = f"Second issue ({issue.category}): no article reached the grounding threshold; not answered."
+        case.trace.step("resolver", "retrieved_secondary", summary, {"issue": issue.detail(), **result.detail()}, since=t)
+        results.append(result)
+    return results
+
+
+def _append_secondary(case: _Case) -> None:
+    """Add the secondary answers to a resolved case's reply, one short paragraph each, and cite them."""
+    for issue, result in case.secondary:
+        if not result.reply or result.article is None:
+            continue
+        case.reply = f"{case.reply} On your other question ({issue.category.replace('_', ' ')}): {without_greeting(result.reply)}"
+        case.citations.append({"article_id": result.article.id, "title": result.article.title, "score": round(result.score, 3)})
 
 
 def _escalate(ctx: SupportContext, case: _Case, hits: list[Escalation], pending: _Attempt | None, due: datetime) -> None:
@@ -448,10 +510,20 @@ def process_complaint(
     falls_back = triaged.route == "action" and not unverified and (attempt is None or attempt.outcome.fallback)
     if falls_back and attempt is not None:  # e.g. no open incident for the place: it was looked for
         trace.call(attempt.planned.tool, attempt.planned.args, attempt.outcome, ms=attempt.ms)
+    if falls_back and triaged.issues and triaged.primary != 0:
+        _lead_with_first_issue(case)
     resolution = _run_resolver(ctx, case) if triaged.route == "resolver" or falls_back else None
     pending = None if falls_back else attempt
+    secondary = _run_secondary(ctx, case) if triaged.secondary and not unverified else []
+    if resolution is not None and not resolution.grounded and not resolution.escalate and case.secondary:
+        # The issue the customer led with has no grounded answer, but a second one has: answer that
+        # instead of sending both to a person (the step trace keeps the first retrieval).
+        _, resolution = case.secondary.pop(0)
+        trace.step("resolver", "answered_secondary_instead",
+                   "The first issue has no grounded article; the second issue is answered instead.",
+                   {"article_id": resolution.article.id if resolution.article else None}, since=perf_counter())
 
-    extra_flag = (resolution.escalate,) if resolution is not None and resolution.escalate else ()
+    extra_flag = tuple(r.escalate for r in [resolution, *secondary] if r is not None and r.escalate)
     facts = EscalationFacts(
         risk_flags=tuple(dict.fromkeys(triaged.risk_flags + extra_flag)),
         unverified=unverified,
@@ -470,8 +542,10 @@ def process_complaint(
         _escalate(ctx, case, hits, pending, due)
     elif pending is not None:
         _complete_action(session, ctx, case, operator_id, now, pending)
+        _append_secondary(case)
     elif resolution is not None:
         _answer(case, resolution)
+        _append_secondary(case)
     else:  # unreachable: a human-routed case matches a risk rule, an unverified one needs_verification
         raise RuntimeError("the desk reached no decision")
 

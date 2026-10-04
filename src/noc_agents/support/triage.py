@@ -32,6 +32,13 @@ customer asking how to escalate to the regulator is asking a question the knowle
 answers (``KB-REGULATOR-COMPLAINT``); one who names the Communications Authority, a lawyer
 or a court is raising a matter a senior person must answer.
 
+**Two issues in one message** ("Network ya Nakuru imepotea, na pia roaming ya Tanzania
+inawashwa aje?") are detected by cutting the text at sentence ends and connectors and scoring
+each piece on its own (the "issues" section below). The primary issue -- the first one the
+action agent can act on, else the one the customer led with -- decides the category, the
+confidence and the route; the others are recorded on the result for the desk to answer from
+the knowledge base in the same reply.
+
 **Route**: ``human`` when any risk flag fired; ``action`` when an intent the action agent
 can act on was recognised (a reversal, a bundle re-credit, a refund, an outage in a named
 place, device settings); otherwise ``resolver``. The remaining escalation rules (repeat,
@@ -57,7 +64,7 @@ from pydantic import BaseModel
 
 from noc_agents.support.places import Gazetteer, PlaceMention
 from noc_agents.support.policy import SupportPolicy
-from noc_agents.support.text import clean, detect_language, extract_amounts, normalise, phrase_pattern
+from noc_agents.support.text import clean, detect_language, extract_amounts, extract_mpesa_codes, normalise, phrase_pattern
 
 log = logging.getLogger(__name__)
 
@@ -83,8 +90,15 @@ CATEGORY_LEXICON: dict[str, Lexicon] = {
         ("mpesa balance", 1.5), ("namba isiyo sahihi", 2.5), ("namba isiyo", 2.0), ("namba noma", 2.0),
         ("wrong namba", 2.5), ("mtu nisiyemjua", 1.5), ("stranger", 1.0), ("rudishiwa pesa", 2.0), ("rudisheni pesa", 2.0),
         ("mrudishe pesa", 2.0), ("nilituma", 1.0), ("nilikosea", 1.5), ("kwa makosa", 1.5), ("by mistake", 1.0),
-        ("sina code", 1.5), ("transaction code", 1.5), ("code", 0.5),
+        ("sina code", 1.5), ("transaction code", 1.5), ("code", 0.5), ("code ni", 1.5), ("code yangu ni", 1.5),
+        # Sheng: money that went to the wrong person, and asking for it back
+        ("doh", 1.0), ("doh yangu", 1.5), ("doh imeenda", 2.0), ("pesa imeenda", 1.5), ("imeenda kwa mtu", 2.0),
+        ("imeenda kwa mse", 2.0), ("imeenda kwa namba", 2.5), ("kuirudisha", 1.5), ("kurudisha", 1.0), ("nirudishiwe", 1.5),
+        ("irudishwe", 1.0), ("zirudishwe", 1.0), ("wrong contact", 2.0), ("contact mbaya", 2.0), ("picked the wrong", 1.5),
+        # contrast: hire purchase, and M-PESA named only as the way something else was paid for
         ("lipa mdogo mdogo", -2.0), ("lipa pole pole", -2.0),
+        ("via mpesa", -1.5), ("using mpesa", -1.5), ("through mpesa", -1.5), ("paid with mpesa", -1.0), ("na mpesa", -1.0),
+        ("kwa mpesa", -1.0),
     ),
     "data_bundles": (
         ("bundle", 2.0), ("bundles", 2.0), ("bando", 2.0), ("data bundle", 1.0), ("data", 1.0),
@@ -95,6 +109,11 @@ CATEGORY_LEXICON: dict[str, Lexicon] = {
         ("recredit", 2.0), ("re credit", 2.0), ("validity", 1.5), ("bundle expired", 2.5), ("expired", 1.0),
         ("showing expired", 2.0), ("already expired", 2.0), ("bundle balance", 2.0), ("data balance", 2.0),
         ("bundle haijaingia", 2.5), ("sijapata bundle", 2.5), ("daily bundle", 1.0), ("weekly bundle", 1.0),
+        ("not reflected", 2.0), ("has not reflected", 2.0), ("haijareflect", 2.0), ("bundle is finished", 2.5),
+        ("bundle has finished", 2.5), ("bundle finished", 2.0), ("says my bundle", 2.0), ("inasema bundle", 2.0),
+        ("the daily one", 1.0), ("the weekly one", 1.0), ("the monthly one", 1.0),
+        # browsing from airtime after a bundle ends is the bundle's story, not a billing one
+        ("charged from airtime", 1.5), ("charged from my airtime", 1.5), ("inakata airtime", 1.5), ("inatumia airtime", 1.5),
         ("monthly bundle", 1.0), ("bundle ya", 1.0), ("mnakula bundles", 2.0), ("mnaiba data", 2.0),
         # contrast: being charged twice FOR a bundle is a billing matter
         ("charged twice", -2.0), ("double charge", -2.0), ("double charged", -2.0), ("deducted twice", -2.0),
@@ -125,7 +144,8 @@ CATEGORY_LEXICON: dict[str, Lexicon] = {
         ("network haifanyi", 3.0), ("mtandao haufanyi", 3.0), ("network imeisha", 2.5), ("network inasumbua", 2.5),
         ("network mbaya", 2.5), ("poor network", 2.5), ("weak signal", 2.5), ("signal iko chini", 2.5), ("sos only", 2.5),
         ("mtandao umepotea", 3.0), ("hamna network", 3.0), ("hamna mtandao", 3.0), ("hakuna huduma", 2.0),
-        ("no reception", 2.5), ("no coverage", 2.5), ("coverage", 1.5), ("reception", 1.5), ("network imekufa", 3.0),
+        ("no reception", 2.5), ("no coverage", 2.5), ("coverage", 1.5), ("reception", 1.5), ("network imekufa", 3.0), ("imepotea", 1.0), ("haijarudi", 2.0), ("network haijarudi", 3.0),
+        ("bado haijarudi", 1.5), ("hazishiki", 2.0), ("simu hazishiki", 2.5), ("haishiki", 2.0),
         ("network iko down", 3.0), ("network is down", 3.0), ("cant receive calls", 2.5), ("cannot receive calls", 2.5),
         ("calls not going through", 2.5), ("simu haipiti", 2.5), ("simu haziingii", 2.5), ("haziingii", 1.5),
         ("kupiga simu haiwezekani", 2.5),
@@ -162,7 +182,11 @@ CATEGORY_LEXICON: dict[str, Lexicon] = {
         ("sijawahi kujiunga", 2.0), ("kujiunga", 1.5), ("statement", 1.5), ("itemised", 2.0), ("itemized", 2.0),
         ("overcharged", 2.0), ("niliokoa", 2.5), ("nilichukua okoa", 2.0), ("top up imekatwa", 2.5), ("without calling", 1.5),
         ("made no calls", 1.5), ("sijapiga", 1.5), ("bila kupiga", 1.5), ("sijapiga simu", 2.0), ("shillings", 0.5),
-        ("bob", 0.5), ("my bill", 1.0), ("bill yangu", 2.0), ("bili yangu", 2.0),
+        ("bob", 0.5), ("my bill", 1.0), ("bill yangu", 2.0), ("bili yangu", 2.0), ("mwezi huu", 1.0), ("this month", 1.0),
+        # contrast: "twice" about reporting or complaining, and out-of-bundle browsing, are not charges
+        ("nimeripoti mara mbili", -2.0), ("nimelalamika mara mbili", -2.0), ("nimeshalalamika mara mbili", -2.0),
+        ("reported twice", -2.0), ("complained twice", -2.0), ("reported this twice", -2.0), ("called twice", -2.0),
+        ("charged from airtime", -1.5), ("charged from my airtime", -1.5),
     ),
     "sim_and_fraud": (
         ("sim swap", 3.0), ("swap", 2.0), ("imeswapiwa", 3.0), ("fraud", 3.0), ("puk", 3.0),
@@ -319,6 +343,17 @@ RISK_REGEX: dict[str, tuple[tuple[str, re.Pattern[str]], ...]] = {
 }
 #: A risk word the customer is denying ("I don't think this is fraud, I typed the number wrong") is
 #: masked before scoring, so neither the flag nor the fraud category reads it as evidence.
+#: "I have NOT been abroad" is not a roaming complaint: a negated travel phrase is masked so the
+#: roaming words after it carry no weight ("sijaenda nje ya nchi", "I haven't travelled anywhere").
+NEGATED_TOPIC = re.compile(
+    r"\b(?:(?:sija|siku|hatuja|hatuku)(?:enda|safiri|toka)|"
+    r"(?:have not|havent|has not|hasnt|did not|didnt|never|not|wasnt|was not)\s+(?:been|gone|go|travell?ed|travell?ing|left|flown|out))"
+    r"(?:\s+\w+){0,2}?\s+(?:abroad|nje ya nchi|nje ya kenya|nje|outside the country|out of the country|out of kenya|overseas|"
+    r"roaming|safari|anywhere)\b"
+)
+#: A 10-character M-PESA code in the text is evidence for the M-PESA category in itself: customers
+#: paste it without naming the service ("code ni sjk4h7qw2l, nisaidie kuirudisha").
+CODE_CATEGORY_WEIGHT = 2.5
 NEGATED_RISK = re.compile(
     r"\b(?:not|no|never|si|sio|siyo|isnt|wasnt|hakuna|hii si|hii sio|sidhani ni|sio kama ni|"
     r"dont think (?:this|it|that) is|do not think (?:this|it|that) is|dont think its|not really)"
@@ -363,7 +398,9 @@ INTENTS: dict[str, tuple[str, str, tuple[str, ...]]] = {
         "wrong number", "wrong person", "wrong recipient", "namba mbaya", "nimekosea namba", "kimakosa",
         "reverse", "reversal", "rudisha", "mtu mwingine", "mistake", "mistakenly", "by mistake",
         "namba isiyo sahihi", "namba noma", "wrong namba", "nilikosea", "nimekosea", "mtu nisiyemjua", "stranger",
-        "mnirudishie", "nirudishie", "rudisheni", "mrudishe", "irudi", "undo", "kwa makosa",
+        "mnirudishie", "nirudishie", "rudisheni", "mrudishe", "irudi", "undo", "kwa makosa", "kuirudisha", "kurudisha",
+        "irudishwe", "zirudishwe", "nirudishiwe", "imeenda kwa mse", "imeenda kwa mtu", "imeenda kwa namba",
+        "wrong contact", "contact mbaya", "picked the wrong", "si yenyewe", "isiyo yenyewe",
     )),
     "recredit_bundle": ("data_bundles", "recredit_bundle", (
         "expired early", "imeisha mapema", "zimeisha mapema", "not applied", "haijaingia", "not received",
@@ -377,7 +414,9 @@ INTENTS: dict[str, tuple[str, str, tuple[str, ...]]] = {
         "haijaonekana", "restore", "give me back my data", "return my data", "rudisha bundle", "rudisheni bundle",
         "nirudishie bundle", "mnirudishie data", "used barely", "barely used", "sijatumia", "hardly used",
         "died after", "finished after", "imeisha baada ya", "zimeisha baada ya", "expired after", "ndani ya masaa",
-        "within hours", "in an hour", "ndani ya saa",
+        "within hours", "in an hour", "ndani ya saa", "did not use it", "didnt use it", "did not even use", "havent used",
+        "hardly touched", "finished overnight", "bundle is finished", "bundle has finished", "sikutumia", "bado sijatumia",
+        "not reflected", "haijareflect",
     )),
     "issue_refund": ("billing", "issue_refund", (
         "refund", "rudisha", "rudisheni", "charged twice", "double charge", "double charged", "deducted twice",
@@ -402,6 +441,8 @@ INTENTS: dict[str, tuple[str, str, tuple[str, ...]]] = {
         "umepotea", "imepotea", "network imeisha", "network inasumbua", "poor network", "no reception", "no coverage",
         "weak signal", "signal iko chini", "sos only", "cant receive calls", "cannot receive calls",
         "calls not going through", "simu haipiti", "simu haziingii", "haziingii", "hakuna huduma", "network is down",
+        "haijarudi", "network haijarudi", "bado haijarudi", "hazishiki", "haishiki", "simu hazishiki", "not back",
+        "still not back", "hasnt come back", "has not come back", "not restored", "haijarejea",
         "network imekufa", "network iko down", "iko down", "hamna network", "hamna mtandao", "down since", "off since",
         "offline", "kupiga simu haiwezekani",
     )),
@@ -413,6 +454,7 @@ INTENTS: dict[str, tuple[str, str, tuple[str, ...]]] = {
 }
 #: Words that mean a billing complaint is NOT asking for a refund (repayment, bill queries).
 REFUND_EXCLUSIONS: tuple[str, ...] = (
+    "nimeripoti", "nimelalamika", "nimeshalalamika", "reported", "complained", "third time", "mara ya tatu",
     "airtime advance", "borrowed airtime", "okoa", "niliokoa", "nilichukua okoa", "nilikopa", "advance", "mkopo", "deni",
     "loan", "postpaid bill", "my bill", "bill yangu", "bili yangu", "bili", "statement", "itemised", "itemized", "invoice",
     "postpaid",
@@ -463,6 +505,138 @@ FRAUD_CATEGORY_WEIGHT = 3.0
 MONEY_HIGH_URGENCY_KES = 1000
 
 
+# ------------------------------------------------------------------------------- issues
+# A complaint often carries two issues: the outage the customer is reporting and a question
+# they add after "na pia" / "and also", or two sentences about two different things. Scored as
+# one text they tie, confidence drops below the threshold and a case the desk could have fixed
+# goes to a person as "low confidence". So the text is cut into segments (sentence ends, and
+# the connectors below), each segment is scored on its own, and consecutive segments that
+# agree are one issue. Two issues with different categories make a multi-issue complaint: the
+# PRIMARY is the first one the action agent can act on (an outage in a named town, a bundle
+# to re-credit), else the one the customer led with; the rest are SECONDARY, informational,
+# and the desk answers them from the knowledge base in the same reply when that is grounded.
+# Risk flags are always read over the whole text: a fraud report beside a reversal still goes to
+# a person first.
+
+#: Connectors that introduce a second issue (normalised text). Everyday words such as "also",
+#: "then" and "pia" are included: a segment they introduce is a separate issue only when it
+#: carries its own clear evidence (:data:`MIN_ISSUE_SCORE`), otherwise it folds back into the
+#: issue before it.
+ISSUE_CONNECTORS = re.compile(
+    r"\b(?:na pia|and also|also|pia|plus|alafu|halafu|then|kisha|secondly|second issue|another thing|one more thing|"
+    r"in addition|as well as|vilevile|na vile vile|na tena|by the way|btw|kitu kingine|jambo lingine|swali lingine|"
+    r"another question|other question|something else|something odd|na swali|and a question|quick question|"
+    r"separately|unrelated|on another note)\b"
+)
+_SENTENCE_END = re.compile(r"(?<=[.!?])\s+|\n+")
+#: The least a segment's winning category must score to count as an issue of its own.
+MIN_ISSUE_SCORE = 2.0
+#: A sentence (no connector) opens a new issue only when it is this sure of its own category.
+ISSUE_MIN_CONFIDENCE = 0.55
+MAX_SECONDARY_ISSUES = 2
+
+
+@dataclass(frozen=True)
+class Issue:
+    category: str
+    text: str  # the issue's segments, normalised and joined: what the resolver is asked
+    scores: dict[str, float]
+    confidence: float
+    intent: str | None = None
+    tool: str | None = None
+    triggers: tuple[str, ...] = ()
+    places: tuple[PlaceMention, ...] = ()
+    fired: tuple[str, ...] = ()
+
+    def detail(self) -> dict[str, Any]:
+        return {"category": self.category, "confidence": self.confidence, "intent": self.intent, "tool": self.tool,
+                "scores": {k: v for k, v in sorted(self.scores.items(), key=lambda kv: -kv[1]) if v > 0},
+                "evidence": list(self.fired), "text": self.text[:200]}
+
+
+@dataclass
+class _Draft:
+    category: str | None
+    texts: list[str]
+    scores: dict[str, float]
+    fired: list[str]
+
+    def add(self, norm: str, scores: dict[str, float], fired: dict[str, list[str]]) -> None:
+        self.texts.append(norm)
+        for category, value in scores.items():
+            self.scores[category] = round(self.scores.get(category, 0.0) + value, 3)
+        if self.category:
+            self.fired.extend(p for p in fired.get(self.category, []) if p not in self.fired)
+
+
+def _mask(norm: str) -> str:
+    return NEGATED_TOPIC.sub("nottopic", NEGATED_RISK.sub("notrisk", norm))
+
+
+def _segments(original: str) -> list[tuple[str, bool]]:
+    """Normalised segments in order, each flagged when a connector introduced it."""
+    out: list[tuple[str, bool]] = []
+    for sentence in _SENTENCE_END.split(original):
+        norm = _mask(normalise(sentence))
+        if not norm:
+            continue
+        last, after = 0, False
+        for match in ISSUE_CONNECTORS.finditer(norm):
+            piece = norm[last:match.start()].strip()
+            if piece:
+                out.append((piece, after))
+            last, after = match.start(), True  # the connector stays with the segment it introduces
+        piece = norm[last:].strip()
+        if piece:
+            out.append((piece, after))
+    return out
+
+
+def detect_issues(original: str, gazetteer: Gazetteer) -> list[Issue]:
+    """The distinct issues in ``original`` (two or more), each with its own category, confidence and
+    action intent; an empty list when the text is about one thing."""
+    drafts: list[_Draft] = []
+    for norm, after_connector in _segments(original):
+        scores, fired = _score_plain(norm)
+        winner, confidence = confidence_of(scores)
+        top = scores.get(winner, 0.0)
+        current = drafts[-1] if drafts else None
+        evidenced = winner != "other" and top >= MIN_ISSUE_SCORE
+        opens = evidenced and (current is None or current.category is None or (
+            winner != current.category and (after_connector or confidence >= ISSUE_MIN_CONFIDENCE)))
+        if opens:
+            earlier = next((d for d in drafts if d.category == winner), None)
+            if earlier is not None:  # A, B, A: the trailing A belongs to the first A
+                earlier.add(norm, scores, fired)
+            elif current is not None and current.category is None:  # a lead-in with no evidence joins the first issue
+                current.category = winner
+                current.fired = list(fired.get(winner, []))
+                current.add(norm, scores, fired)
+            else:
+                drafts.append(_Draft(winner, [norm], dict(scores), list(fired.get(winner, []))))
+        elif current is not None:
+            current.add(norm, scores, fired)
+        else:
+            drafts.append(_Draft(None, [norm], dict(scores), []))
+    real = [d for d in drafts if d.category]
+    if len(real) < 2:
+        return []
+    issues = []
+    for draft in real:
+        text = " ".join(draft.texts)
+        category, confidence = confidence_of(draft.scores)
+        places = gazetteer.find(text)
+        intent, tool, triggers = intent_of(text, draft.category, places)
+        issues.append(Issue(draft.category, text, draft.scores, confidence, intent, tool, tuple(triggers), tuple(places),
+                            tuple(draft.fired)))
+    return issues
+
+
+def primary_issue(issues: list[Issue]) -> int:
+    """The index of the issue to handle: the first actionable one, else the one the customer led with."""
+    return next((i for i, issue in enumerate(issues) if issue.intent), 0)
+
+
 # ------------------------------------------------------------------------------- result
 
 
@@ -481,6 +655,14 @@ class TriageResult:
     scores: dict[str, float]
     reasons: list[str] = field(default_factory=list)
     source: str = "rules"  # rules | llm_tiebreak
+    #: Every distinct issue when the complaint carries more than one, in the order written; empty otherwise.
+    issues: tuple[Issue, ...] = ()
+    primary: int = 0  # index into ``issues`` of the one the desk handles
+
+    @property
+    def secondary(self) -> tuple[Issue, ...]:
+        """The issues the desk answers from the knowledge base beside the primary one."""
+        return tuple(issue for i, issue in enumerate(self.issues) if i != self.primary)[:MAX_SECONDARY_ISSUES]
 
     def detail(self) -> dict[str, Any]:
         """The step trace's structured detail."""
@@ -498,6 +680,8 @@ class TriageResult:
             "scores": {k: v for k, v in sorted(self.scores.items(), key=lambda kv: -kv[1]) if v > 0},
             "reasons": self.reasons,
             "source": self.source,
+            "issues": [issue.detail() for issue in self.issues],
+            "primary_issue": self.primary if self.issues else None,
         }
 
 
@@ -513,6 +697,18 @@ def _score_part(norm: str, weight: float, scores: dict[str, float], fired: dict[
         matched = [(p, w) for p, w, pattern in patterns if pattern.search(norm)]
         scores[category] = scores.get(category, 0.0) + weight * sum(w for _, w in matched)
         fired.setdefault(category, []).extend(p for p, _ in matched if p not in fired.get(category, []))
+    if extract_mpesa_codes(norm):
+        scores["mpesa"] = scores.get("mpesa", 0.0) + weight * CODE_CATEGORY_WEIGHT
+        if "transaction code present" not in fired.setdefault("mpesa", []):
+            fired["mpesa"].append("transaction code present")
+
+
+def _score_plain(norm: str) -> tuple[dict[str, float], dict[str, list[str]]]:
+    """One segment's scores, no secondary-issue discount (the segments are already apart)."""
+    scores: dict[str, float] = {}
+    fired: dict[str, list[str]] = {}
+    _score_part(norm, 1.0, scores, fired)
+    return {c: round(v, 3) for c, v in scores.items()}, fired
 
 
 def score_categories(norm: str) -> tuple[dict[str, float], dict[str, list[str]]]:
@@ -658,7 +854,7 @@ def llm_tiebreak(port: Any, text: str, candidates: list[str], *, model: str = "c
 def triage(text: str, *, gazetteer: Gazetteer, policy: SupportPolicy, port: Any | None = None) -> TriageResult:
     """Classify ``text`` and choose the route. Deterministic unless ``port`` is given."""
     original = clean(text)
-    norm = NEGATED_RISK.sub("notrisk", normalise(original))
+    norm = _mask(normalise(original))
     flags = risk_flags(original, norm)
     scores, fired = score_categories(norm)
     if "fraud_or_sim_swap" in flags:
@@ -668,6 +864,13 @@ def triage(text: str, *, gazetteer: Gazetteer, policy: SupportPolicy, port: Any 
     matched = fired.get(category, [])
     reasons = [f"category {category}: {', '.join(matched)}" if matched else "category other: no phrase matched"]
     source = "rules"
+    issues = () if flags else tuple(detect_issues(original, gazetteer))
+    primary = primary_issue(list(issues)) if issues else 0
+    if issues:  # the primary issue, scored on its own words, decides the category and the confidence
+        lead = issues[primary]
+        category, confidence = lead.category, lead.confidence
+        reasons[0] = f"category {category} (primary of {len(issues)} issues): " + ", ".join(lead.fired)
+        reasons.append("issues: " + "; ".join(f"{i.category}" + (f" ({i.intent})" if i.intent else "") for i in issues))
 
     ranked = [c for c, s in sorted(scores.items(), key=lambda kv: (-kv[1], kv[0])) if s > 0]
     if port is not None and confidence < policy.llm_tiebreak_below and len(ranked) >= 2:
@@ -688,7 +891,13 @@ def triage(text: str, *, gazetteer: Gazetteer, policy: SupportPolicy, port: Any 
         reasons.append(f"sentiment {sentiment}: " + ", ".join(sentiment_why))
     places = gazetteer.find(original)
 
-    intent, tool, triggers = (None, None, []) if flags else intent_of(norm, category, places)
+    if flags:
+        intent, tool, triggers = None, None, []
+    elif issues:
+        lead = issues[primary]
+        intent, tool, triggers = lead.intent, lead.tool, list(lead.triggers)
+    else:
+        intent, tool, triggers = intent_of(norm, category, places)
     if intent:
         reasons.append(f"intent {intent}: " + ", ".join(triggers))
     route = "human" if flags else ("action" if intent else "resolver")
@@ -707,4 +916,6 @@ def triage(text: str, *, gazetteer: Gazetteer, policy: SupportPolicy, port: Any 
         scores=scores,
         reasons=reasons,
         source=source,
+        issues=issues,
+        primary=primary,
     )

@@ -249,8 +249,9 @@ def test_evals_latest_is_404_until_a_run_then_the_run(client):
                            "by_category", "failures", "by_split"}
     assert report["mode"] == "deterministic"
     assert report["passed"] == all(g["passed"] for g in report["gates"]) and report["gates"]
-    assert report["dataset"]["split"] == "test"  # the headline is the held-out split
-    assert set(report["by_split"]) == {"dev", "test"} and report["metrics"] == report["by_split"]["test"]
+    assert report["dataset"]["split"] == "holdout"  # the headline is the blind holdout (reported, never asserted)
+    assert set(report["by_split"]) == {"dev", "validation", "holdout"} and report["metrics"] == report["by_split"]["holdout"]
+    assert report["dataset"]["excluded"] == 4  # the contested holdout cases are loaded, never scored
     assert sum(map(sum, report["confusion"]["matrix"])) == report["dataset"]["size"]
     latest = client.get(f"{BASE}/evals/latest")
     assert latest.status_code == 200 and latest.json()["run_id"] == report["run_id"]

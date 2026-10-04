@@ -214,7 +214,7 @@ regions:
     coverage_areas:
       - Westlands / Parklands / Gigiri
       - CBD west / Upper Hill
-      - Karen / Langata / Ngong Road
+      - Karen / Langata / Ngong Road / Rongai (Ongata Rongai)
       - Kawangware / Kangemi
     counties: [Nairobi, Kajiado, Kiambu]
     hub_sites_hint: [SFC-NBIW-HUB-WLD, SFC-NBIW-HUB-KRN]

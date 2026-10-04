@@ -132,6 +132,54 @@ def test_language_and_reasons_are_reported():
     assert result.detail()["route"] == "action"
 
 
+# ------------------------------------------------------------------------ two issues in one
+
+
+def test_two_issues_joined_by_a_connector_are_both_recorded_and_the_actionable_one_leads():
+    result = _t("Network ya Nakuru imepotea tangu asubuhi na pia nilitaka kuuliza bei ya roaming nikienda Tanzania next week.")
+    assert [i.category for i in result.issues] == ["network", "roaming"]
+    assert result.primary == 0 and result.category == "network"
+    assert (result.intent, result.tool, result.route) == ("link_incident", "link_incident", "action")
+    assert result.confidence >= POLICY.low_confidence_threshold  # scored on its own words, the roaming aside no longer ties it
+    assert [i.category for i in result.secondary] == ["roaming"] and result.secondary[0].intent is None
+    detail = result.detail()
+    assert [i["category"] for i in detail["issues"]] == ["network", "roaming"] and detail["primary_issue"] == 0
+    assert any(r.startswith("issues: network (link_incident); roaming") for r in result.reasons)
+
+
+def test_the_actionable_issue_leads_even_when_the_customer_wrote_it_second():
+    result = _t("Quick question, roaming ya Uganda inawashwa aje? Also my Weekly 2GB bundle expired after one day, please re-credit it.")
+    assert [i.category for i in result.issues] == ["roaming", "data_bundles"]
+    assert result.primary == 1 and result.category == "data_bundles" and result.tool == "recredit_bundle"
+    assert [i.category for i in result.secondary] == ["roaming"]
+
+
+def test_two_informational_issues_keep_the_one_the_customer_led_with():
+    result = _t("Simu zangu zinakatika kila mara nikipiga. Then another thing, nataka kuhamia network ingine na nibaki na namba yangu.")
+    assert [i.category for i in result.issues] == ["network", "account"]
+    assert result.primary == 0 and result.category == "network" and result.route == "resolver"
+
+
+def test_a_connector_inside_one_topic_or_an_aside_without_evidence_is_not_a_second_issue():
+    assert _t("My bundle expired early and also it was not even applied properly, please re-credit it.").issues == ()
+    assert _t("Hello, it is not working since yesterday, please help me.").issues == ()
+    assert _t("No network in Nakuru since morning, I cannot make any calls.").issues == ()
+
+
+def test_a_risk_flag_outranks_the_issue_split():
+    result = _t("No network in Nakuru since morning, and also someone did a SIM swap on my brother's line and emptied his M-PESA.")
+    assert "fraud_or_sim_swap" in result.risk_flags and result.route == "human" and result.issues == ()
+    assert result.category == "sim_and_fraud"
+
+
+def test_a_negated_trip_is_not_a_roaming_complaint_and_a_pasted_code_is_mpesa_evidence():
+    bill = _t("Bili yangu ya mwezi huu ni 6,200 na kawaida huwa 3,500. Sijaenda nje ya nchi wala sijanunua kitu.")
+    assert bill.category == "billing" and bill.scores.get("roaming", 0) == 0 and bill.confidence >= POLICY.low_confidence_threshold
+    sheng = _t("Buda doh yangu imeenda kwa mse flani, 1.5k, code ni sjk4h7qw2l. Nisaidie kuirudisha")
+    assert sheng.category == "mpesa" and sheng.tool == "reverse_mpesa"
+    assert "transaction code present" in " ".join(sheng.reasons)
+
+
 class _FakePort:
     provider = "fake"
 

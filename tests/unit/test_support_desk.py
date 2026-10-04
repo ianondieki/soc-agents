@@ -77,7 +77,7 @@ def test_a_storm_outage_links_the_live_noc_incident_and_names_the_ticket(session
 
 
 def test_an_outage_with_no_open_incident_is_answered_and_the_search_is_on_record(session):
-    detail = _detail(session, _file(session, "Hakuna network huku Mombasa tangu jana", "0700001023").complaint)
+    detail = _detail(session, _file(session, "Hakuna network huku Kakamega tangu jana", "0700001023").complaint)
     assert detail["complaint"]["status"] == "answered"
     assert detail["complaint"]["citations"][0]["article_id"] == "KB-NETWORK-OUTAGE"
     assert [(t["tool"], t["result"]["found"]) for t in detail["tool_calls"]] == [("link_incident", False)]
@@ -401,3 +401,47 @@ def test_a_tiebreak_may_still_choose_the_article(session):
     row = _file(session, "Nimenunua bundle lakini airtime pia imekatwa, sielewi kinachoendelea", "0711000990", port=port).complaint
     assert port.calls == 1 and row.category == "billing"
     assert (row.status, json.loads(row.citations_json)[0]["article_id"]) == ("answered", "KB-AIRTIME-DEDUCTED")
+
+
+# ------------------------------------------------------------------------ two issues in one
+
+
+def test_a_two_issue_complaint_gets_the_fix_and_the_second_answer_in_one_reply(session):
+    d = _detail(session, _file(session, "Hakuna network Thika tangu asubuhi. Pia nilitaka kujua roaming ya Uganda inawashwa aje?",
+                                "0712100450").complaint)
+    c = d["complaint"]
+    assert (c["route"], c["status"], c["category"]) == ("action", "action_taken", "network")
+    assert c["linked_incident"]["title"].endswith("Thika Mt Kenya HUB")
+    assert "On your other question (roaming):" in c["reply"] and "roaming" in c["reply"].lower()
+    assert [x["article_id"] for x in c["citations"]] == ["KB-ROAMING"]
+    triage = next(s for s in d["steps"] if s["agent"] == "triage")["detail"]
+    assert [i["category"] for i in triage["issues"]] == ["network", "roaming"] and triage["primary_issue"] == 0
+    assert any(s["action"] == "retrieved_secondary" for s in d["steps"])
+
+
+def test_when_the_actionable_issue_has_nothing_to_act_on_the_leading_issue_is_answered_first(session):
+    c = _detail(session, _file(session, "Internet iko slow sana hapa Kisumu leo. Na pia, kuna hizi SMS za jokes nakatwa 5 bob kila siku, naziondoa aje?",
+                                "0712100451").complaint)
+    steps = c["steps"]
+    c = c["complaint"]
+    assert (c["route"], c["category"]) == ("resolver", "network")
+    assert [x["article_id"] for x in c["citations"]] == ["KB-NETWORK-SLOW-DATA", "KB-BILLING-PREMIUM-SMS"]
+    assert c["reply"].startswith("Hi there, sorry your internet is slow") and "On your other question (billing):" in c["reply"]
+    assert any(s["action"] == "lead_issue_first" for s in steps)
+
+
+def test_two_issues_never_outrank_a_safety_flag_or_the_verification_rule(session):
+    fraud = _detail(session, _file(session, "No network in Nakuru since morning, and also someone did a SIM swap on my brother's line and emptied his M-PESA, what do we do?",
+                                    "0712100454").complaint)["complaint"]
+    assert fraud["route"] == "human" and fraud["escalation"]["reason_code"] == "fraud_or_sim_swap"
+    unverified = _detail(session, _file(session, "Nimetuma 1.5k kwa namba mbaya, sina code. Pia roaming ya Tanzania inawashwa aje?",
+                                         "0700000412").complaint)["complaint"]
+    assert unverified["route"] == "human" and unverified["escalation"]["reason_code"] == "needs_verification"
+    assert unverified["citations"] == [] and "roaming" not in unverified["reply"].lower()  # nothing is answered beside a hold
+
+
+def test_a_weak_fraud_article_hit_on_a_side_clause_does_not_escalate_an_outage(session):
+    c = _detail(session, _file(session, "NO NETWORK IN NAKURU TOWN SINCE 6AM!!! I RUN AN MPESA SHOP AND I AM LOSING CUSTOMERS. FIX THIS NOW",
+                                "0712000301").complaint)["complaint"]
+    assert (c["route"], c["status"]) == ("action", "action_taken") and c["linked_incident"]
+    assert c["citations"] == []  # the side clause was not grounded, so nothing was appended

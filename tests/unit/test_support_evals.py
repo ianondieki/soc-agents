@@ -1,6 +1,8 @@
 """The support eval suite: metric arithmetic on a hand-computed synthetic set, the golden set's
-validation, report storage, the split rules, and the held-out TEST split against the contract's
-default gates (the dev split is tuned against and proves nothing)."""
+validation, report storage, the three-split rules, and the regression gate: the contract's default
+gates on dev + validation combined (the sets the desk is developed against). The blind holdout is
+reported in every run and never asserted here: a held-out set that becomes a CI target stops
+being held out."""
 
 from __future__ import annotations
 
@@ -13,8 +15,12 @@ from sqlalchemy.orm import Session
 from noc_agents.db.models import Base
 from noc_agents.support.context import default_context
 from noc_agents.support.evals import (
+    EVAL_EXTRA_INCIDENTS,
     GOLDEN_PATH,
     HEADLINE_SPLIT,
+    HOLDOUT_PATH,
+    REGRESSION_SPLITS,
+    SPLITS,
     CaseResult,
     Expected,
     GoldenCase,
@@ -130,6 +136,7 @@ def test_an_empty_denominator_is_null_and_fails_its_gate_with_a_note():
 
 def _write(tmp_path, lines):
     path = tmp_path / "golden.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return path
 
@@ -154,6 +161,7 @@ def _line(**overrides):
         ({"expected": {"category": "weather"}}, "category"),
         ({"expected": {"tool": "lookup_account"}}, "tool"),
         ({"split": "train"}, "split"),
+        ({"split": "test"}, "split"),
         ({"id": ""}, "id"),
     ],
 )
@@ -163,27 +171,48 @@ def test_a_contradictory_golden_line_is_refused_with_its_line_number(tmp_path, o
     assert "golden.jsonl:2" in str(err.value)
 
 
+def test_a_contested_case_may_keep_a_bookkeeping_tool_but_is_never_scored(tmp_path):
+    path = _write(tmp_path, [_line(), _line(id="x2", contested=True, expected={"route": "action", "tool": "lookup_account",
+                                                                                 "article_ids": []})])
+    cases, _ = load_golden(path)
+    assert [(c.id, c.contested) for c in cases] == [("x1", False), ("x2", True)]
+    report = run_eval(operator_id="safaricom", path=path)
+    assert report["dataset"]["size"] == 1 and report["dataset"]["excluded"] == 1
+    assert sum(map(sum, report["confusion"]["matrix"])) == 1
+    with pytest.raises(GoldenSetError, match="tool"):  # not contested: a bookkeeping tool is still refused
+        load_golden(_write(tmp_path, [_line(expected={"route": "action", "tool": "update_ticket", "article_ids": []})]))
+
+
 def test_duplicate_ids_and_bad_json_are_refused_and_comments_are_skipped(tmp_path):
     with pytest.raises(GoldenSetError, match="duplicated"):
         load_golden(_write(tmp_path, [_line(), _line()]))
+    with pytest.raises(GoldenSetError, match="duplicated"):  # across files too
+        load_golden([_write(tmp_path / "a", [_line()]), _write(tmp_path / "b", [_line()])])
     with pytest.raises(GoldenSetError, match="not JSON"):
         load_golden(_write(tmp_path, ["{oops"]))
     cases, version = load_golden(_write(tmp_path, ["# c", "", _line()]))
     assert [c.id for c in cases] == ["x1"] and len(version) == 12
 
 
-def test_the_golden_set_covers_every_route_every_reason_and_both_splits():
-    cases, _ = load_golden()
+def test_the_golden_set_covers_every_route_every_reason_and_all_three_splits():
+    cases, version = load_golden()
     assert {c.expected.route for c in cases} == set(ROUTES)
     assert {c.expected.escalation_reason for c in cases} - {None} == set(REASON_CODES)
-    assert {c.split for c in cases} == {"dev", "test"}
+    assert {c.split for c in cases} == {"dev", "validation", "holdout"}
     assert {c.language for c in cases} == {"en", "sw", "mixed"}
     assert len(cases) >= 30
-    assert len(load_golden(split="test")[0]) + len(load_golden(split="dev")[0]) == len(cases)
+    assert sum(len(load_golden(split=s)[0]) for s in SPLITS) == len(cases)
+    assert load_golden(split="dev+validation")[0] == load_golden(split=("dev", "validation"))[0]
+    # provenance: the holdout lives in its own file, and the version covers both files
+    holdout_only, _ = load_golden(HOLDOUT_PATH)
+    assert {c.split for c in holdout_only} == {"holdout"} and len(holdout_only) >= 90
+    assert {c.split for c in load_golden(GOLDEN_PATH)[0]} == {"dev", "validation"}
+    assert version != load_golden(GOLDEN_PATH)[1]
+    assert [c.id for c in holdout_only if c.contested] == ["h-020", "h-054", "h-067", "h-068"]
 
 
-@pytest.mark.parametrize("split", ["dev", "test"])
-def test_both_splits_keep_safety_cases_so_the_safety_gate_has_evidence(split):
+@pytest.mark.parametrize("split", SPLITS)
+def test_every_split_keeps_safety_cases_so_the_safety_gate_has_evidence(split):
     cases, _ = load_golden(split=split)
     reasons = {c.expected.escalation_reason for c in cases if c.expected.safety}
     assert reasons == {"fraud_or_sim_swap", "legal_or_regulator", "threat_or_safety"}
@@ -191,44 +220,68 @@ def test_both_splits_keep_safety_cases_so_the_safety_gate_has_evidence(split):
     assert len([c for c in cases if c.expected.route in ("resolver", "action")]) >= 10  # resolution has a denominator
 
 
-def test_a_full_run_reports_both_splits_and_takes_the_held_out_test_split_as_the_headline():
+def test_a_full_run_reports_every_split_and_takes_the_blind_holdout_as_the_headline():
     report = run_eval(operator_id="safaricom")
-    assert HEADLINE_SPLIT == "test" and report["dataset"]["split"] == "test"
-    assert report["dataset"]["size"] == len(load_golden(split="test")[0])
-    assert set(report["by_split"]) == {"dev", "test"}
-    assert report["by_split"]["test"] == report["metrics"]
-    assert set(report["by_split"]["dev"]) == set(report["metrics"])
-    assert {f["case_id"] for f in report["failures"]} <= {c.id for c in load_golden(split="test")[0]}
+    assert HEADLINE_SPLIT == "holdout" and report["dataset"]["split"] == "holdout"
+    holdout = load_golden(split="holdout")[0]
+    assert report["dataset"]["size"] == len([c for c in holdout if not c.contested])
+    assert report["dataset"]["excluded"] == len([c for c in holdout if c.contested]) == 4
+    assert set(report["by_split"]) == {"dev", "validation", "holdout"}
+    assert report["by_split"]["holdout"] == report["metrics"]
+    assert set(report["by_split"]["dev"]) == set(report["by_split"]["validation"]) == set(report["metrics"])
+    assert {f["case_id"] for f in report["failures"]} <= {c.id for c in holdout if not c.contested}
     assert report["mode"] == "deterministic"
     assert report["dataset"]["name"] == "support_golden" and report["dataset"]["version"] == load_golden()[1]
     only_dev = run_eval(operator_id="safaricom", split="dev")
-    assert only_dev["dataset"]["split"] == "dev" and set(only_dev["by_split"]) == {"dev"}
+    assert only_dev["dataset"]["split"] == "dev" and set(only_dev["by_split"]) == {"dev"} and only_dev["dataset"]["excluded"] == 0
 
 
-def test_a_golden_file_without_a_test_split_is_judged_on_all_of_it(tmp_path):
+def test_a_golden_file_without_a_holdout_is_judged_on_all_of_it(tmp_path):
     report = run_eval(operator_id="safaricom", path=_write(tmp_path, [_line()]))
     assert report["dataset"]["split"] == "all" and report["dataset"]["size"] == 1
     assert set(report["by_split"]) == {"dev"}
 
 
-def test_the_held_out_test_split_passes_the_contracts_default_gates():
-    """The gate: the TEST split, which no tuning has seen, against config/support/policy.yaml."""
-    report = run_eval(operator_id="safaricom")
+def test_the_eval_template_holds_the_storm_and_the_adjudicated_incidents():
+    from sqlalchemy import select
+
+    from noc_agents.db.models import IncidentRow
+    from noc_agents.support.evals import IsolatedDatabases
+
+    databases = IsolatedDatabases("safaricom")
+    try:
+        with databases.session() as session:
+            names = {row.site_name for row in session.scalars(select(IncidentRow)).all()}
+    finally:
+        databases.close()
+    assert {"Nakuru Rift HUB", "Eldoret Rift HUB", "Thika Mt Kenya HUB", "Embakasi East Aggregation HUB"} <= names
+    assert {name for _, name, *_ in EVAL_EXTRA_INCIDENTS} <= names
+    assert [town for _, name, *_ in EVAL_EXTRA_INCIDENTS for town in ("Westlands", "Rongai", "Nyali", "Machakos") if town in name] \
+        == ["Westlands", "Rongai", "Nyali", "Machakos"]
+
+
+def test_the_regression_gate_dev_plus_validation_passes_the_contracts_default_gates():
+    """The gate: the contract's default gates (config/support/policy.yaml) on the sets the desk is
+    developed against, dev and validation combined. The holdout is reported, never asserted."""
+    assert REGRESSION_SPLITS == ("dev", "validation")
+    report = run_eval(operator_id="safaricom", split=REGRESSION_SPLITS)
     gates = {g["metric"]: g for g in report["gates"]}
     assert set(gates) == {"resolution_rate", "wrong_escalation_rate", "safety_missed_escalation_rate", "triage_accuracy"}
     assert gates["resolution_rate"]["threshold"] == 0.80 and gates["wrong_escalation_rate"]["threshold"] == 0.10
     assert gates["triage_accuracy"]["threshold"] == 0.85 and gates["safety_missed_escalation_rate"]["op"] == "=="
-    assert report["dataset"]["split"] == "test"
+    assert report["dataset"]["split"] == "dev+validation"
+    assert report["dataset"]["size"] == len(load_golden(split="dev")[0]) + len(load_golden(split="validation")[0])
+    assert set(report["by_split"]) == {"dev", "validation"}
     assert report["passed"], json.dumps({"metrics": report["metrics"], "failures": report["failures"]}, indent=1)
 
 
 def test_a_run_is_reproducible_case_for_case():
-    first, second = run_eval(operator_id="safaricom", split="test"), run_eval(operator_id="safaricom", split="test")
+    first, second = run_eval(operator_id="safaricom", split="validation"), run_eval(operator_id="safaricom", split="validation")
     no_timing = lambda m: {k: v for k, v in m.items() if k != "p50_ms"}  # noqa: E731
     strip = lambda r: {k: v for k, v in r.items() if k not in ("run_id", "ran_at")} | {  # noqa: E731
         "metrics": no_timing(r["metrics"]), "by_split": {s: no_timing(m) for s, m in r["by_split"].items()}}
     assert strip(first) == strip(second)
-    assert first["dataset"]["split"] == "test"
+    assert first["dataset"]["split"] == "validation"
 
 
 def test_reports_are_stored_per_operator_and_the_latest_wins(tmp_path):
@@ -248,14 +301,15 @@ def test_reports_are_stored_per_operator_and_the_latest_wins(tmp_path):
         assert latest_report(session, "airtel") is None
 
 
-def test_the_golden_path_is_the_contracts():
+def test_the_golden_paths_are_the_contracts():
     assert GOLDEN_PATH.as_posix().endswith("tests/fixtures/support_eval/golden.jsonl")
+    assert HOLDOUT_PATH.as_posix().endswith("tests/fixtures/support_eval/holdout_blind.jsonl")
 
 
 # ------------------------------------------------------------------------------- the CLI
 
 
-def test_the_cli_compare_view_puts_dev_and_test_side_by_side_with_the_top_failure_kinds():
+def test_the_cli_compare_view_puts_every_split_side_by_side_with_the_top_failure_kinds():
     import importlib.util
     import sys
 
@@ -263,15 +317,20 @@ def test_the_cli_compare_view_puts_dev_and_test_side_by_side_with_the_top_failur
     cli = importlib.util.module_from_spec(spec)
     sys.modules.setdefault("support_eval_cli", cli)
     spec.loader.exec_module(cli)
-    base = {"mode": "deterministic", "dataset": {"name": "support_golden", "version": "v", "size": 10, "split": "dev"}}
+    base = {"mode": "deterministic", "dataset": {"name": "support_golden", "version": "v", "size": 10, "split": "dev", "excluded": 0}}
     dev = base | score(SYNTHETIC, ctx=CTX)
-    test = base | {"dataset": base["dataset"] | {"split": "test", "size": 1}} | score(
-        [_r(1, "network", "resolver", article_ids=["A"], actual_route="resolver", article="A")], ctx=CTX)
-    text = cli.format_compare(dev, test)
-    assert "dev n=10  test n=1" in text and "resolution_rate" in text and "0.3333" in text
-    assert "null" in text and "empty denominator" in text  # the test side has no escalation to measure
+    one = score([_r(1, "network", "resolver", article_ids=["A"], actual_route="resolver", article="A")], ctx=CTX)
+    validation = base | {"dataset": base["dataset"] | {"split": "validation", "size": 1}} | one
+    holdout = base | {"dataset": base["dataset"] | {"split": "holdout", "size": 1, "excluded": 4}} | one
+    regression = dev | {"dataset": base["dataset"] | {"split": "dev+validation", "size": 11}}
+    text = cli.format_compare({"dev": dev, "validation": validation, "holdout": holdout}, regression)
+    assert "10 (0)" in text and "1 (4)" in text and "resolution_rate" in text and "0.3333" in text
+    assert "null" in text and "empty denominator" in text  # one answered case: no escalation to measure
+    assert "regression gate (dev+validation, asserted by pytest)" in text and "never asserted" in text
     assert "wrong_escalation 2" in text and "wrong_article 1" in text
     assert text.endswith("FAILED")
     assert cli.failure_kind_counts(dev)[0] == ("wrong_escalation", 2)
-    full = cli.format_report(dev | {"by_split": {"dev": dev["metrics"], "test": test["metrics"]}})
+    full = cli.format_report(dev | {"by_split": {"dev": dev["metrics"], "holdout": holdout["metrics"]}})
     assert "(headline: dev)" in full and "failures (dev split)" in full
+    blind = cli.format_report(dev, failures=False)
+    assert "c2" not in blind and "not shown" in blind
