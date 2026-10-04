@@ -2,9 +2,9 @@
    the Shift light tokens only (docs/DESIGN_SYSTEM.md). It never leans on the console's component
    classes, which another stylesheet owns.
 
-   One bold idea, the fibre ribbon beside the display headline, and everything under it set
+   One bold idea, the agent dial beside the display headline, and everything under it set
    quietly: hairlines, left-aligned text under 62ch, the Mono for identifiers and measurements,
-   colour only where it means something. The pulse along the ribbon is the page's one motion. */
+   colour only where it means something. The sweep of the dial is the page's one motion. */
 
 .landing {
   --ld-max: 1200px;
@@ -141,13 +141,13 @@
 @media (prefers-reduced-motion: reduce) { .ld-top-cta { transition: none; } }
 
 /* --------------------------------------------------------------------- hero */
-/* Rhythm: 32 px headline to lead, 40 px lead to actions, 48 px to the ribbon when stacked. */
+/* Rhythm: 32 px headline to lead, 40 px lead to actions, 48 px to the dial when stacked. */
 .ld-hero { padding-top: 72px; }
 .ld-hero > .ld-wrap {
   display: grid;
   grid-template-columns: minmax(0, 11fr) minmax(0, 13fr);
   gap: 40px var(--ld-gap);
-  /* The ribbon sits on the headline block's centre line, not hung from its top edge. */
+  /* The dial sits on the headline block's centre line, not hung from its top edge. */
   align-items: center;
 }
 .ld-hero h1 {
@@ -160,6 +160,10 @@
   letter-spacing: -0.035em;
   text-wrap: balance;
 }
+/* Colour that carries meaning: the agents' sentence in the one action blue, the people's in the
+   violet that means "a person decides". Both pairs are over 5:1 on the canvas in either theme. */
+.ld-hero h1 .agents { display: block; color: var(--accent); text-wrap: balance; }
+.ld-hero h1 .people { display: block; color: var(--hitl); text-wrap: balance; }
 .ld-lead {
   max-width: 42ch;
   margin-top: 32px;
@@ -169,43 +173,57 @@
   text-wrap: pretty;
 }
 .ld-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 40px; }
-.ld-ribbon { min-width: 0; margin: 0; padding-top: 6px; }
-.ld-rb-stage { width: 100%; }
-.ld-rb-stage svg { display: block; width: 100%; height: auto; overflow: visible; }
-
-/* The drawing. */
-.ld-rb-conn { stroke: var(--line-strong); stroke-width: 1.5; }
-.ld-rb-strand { stroke-width: 3; stroke-linecap: round; }
-.ld-rb-strand-outline { stroke: var(--fibre-outline); stroke-width: 5; stroke-linecap: round; }
-.ld-rb-station { stroke-width: 2; }
-.ld-rb-label { font-family: var(--font); font-size: 13px; font-weight: 500; fill: var(--text); }
-.ld-rb-ms { font-family: var(--mono); font-size: 12px; fill: var(--muted); font-variant-numeric: tabular-nums; }
-.ld-rb-ms.hitl { fill: var(--hitl); font-weight: 600; }
-.ld-rb-ms.danger { fill: var(--danger); font-weight: 600; }
-.ld-rb-person circle { fill: var(--bg); stroke: var(--muted-dim); stroke-width: 1.5; stroke-dasharray: 2.5 2.5; }
-.ld-rb-person text { font-family: var(--font); font-size: 12px; fill: var(--muted-dim); }
-.ld-rb-person.lit circle { stroke: var(--hitl); stroke-width: 2; stroke-dasharray: none; }
-.ld-rb-person.lit text { fill: var(--hitl); font-weight: 600; }
-.ld-rb-pulse {
-  fill: none;
-  stroke: var(--text-strong);
-  stroke-width: 3;
-  stroke-linecap: round;
-  stroke-dasharray: 48 1600;
-  stroke-dashoffset: 1648;
-  animation: ld-pulse 4.4s linear infinite;
-}
-@keyframes ld-pulse {
-  from { stroke-dashoffset: 1648; }
+/* The hero figure: the agent dial, centred in its column, the caption under it. */
+.ld-hero-figure { width: 100%; max-width: 520px; min-width: 0; margin: 0 auto; }
+.ld-dial-stage { display: flex; justify-content: center; width: 100%; }
+.ld-dial { display: block; overflow: visible; }
+.ld-dial-track { fill: none; stroke: var(--line-strong); stroke-width: 1.5; }
+.ld-dial-bar { stroke: var(--line-strong); stroke-width: 6; stroke-linecap: round; }
+.ld-dial-bar.hitl { stroke: var(--hitl-line); }
+.ld-dial-arc { fill: none; stroke: var(--accent); stroke-width: 3; stroke-linecap: round; stroke-dasharray: 1000 1000; stroke-dashoffset: 0; }
+.ld-dial-arc.sweep { animation: ld-dial-sweep linear forwards; }
+@keyframes ld-dial-sweep {
+  from { stroke-dashoffset: 1000; }
   to { stroke-dashoffset: 0; }
 }
-@media (prefers-reduced-motion: reduce) {
-  .ld-rb-pulse { display: none; }
+.ld-dial-node { stroke-width: 2; transform-box: fill-box; transform-origin: center; }
+.ld-dial-node.done { fill: var(--accent); stroke: var(--bg); }
+.ld-dial-node.pending { fill: var(--bg); stroke: var(--line-strong); stroke-width: 1.5; }
+.ld-dial-node.hollow { fill: var(--bg); stroke: var(--muted-dim); stroke-width: 1.5; stroke-dasharray: 2 2; }
+.ld-dial-node.waiting { fill: var(--bg); stroke: var(--hitl); stroke-width: 2.5; }
+.ld-dial-node.failed { fill: var(--danger); stroke: var(--bg); }
+.ld-dial-node.will-light { animation: ld-dial-light 240ms var(--ease) both; }
+@keyframes ld-dial-light {
+  from { opacity: 0.25; transform: scale(0.4); }
+  to { opacity: 1; transform: scale(1); }
 }
-html[data-quiet="on"] .ld-rb-pulse { display: none; }
-/* The ribbon's labels keep 13/12 px on a phone; the drawing tightens its pitch instead. */
+.ld-dial-halo { fill: none; stroke: var(--hitl); stroke-width: 2; opacity: 0; transform-box: fill-box; transform-origin: center; animation: ld-dial-halo 2.4s ease-out infinite both; }
+@keyframes ld-dial-halo {
+  0% { transform: scale(1); opacity: 0.6; }
+  100% { transform: scale(2.8); opacity: 0; }
+}
+.ld-dial-person { fill: none; stroke: var(--hitl); stroke-width: 1.75; stroke-linecap: round; }
+.ld-dial-label { font-family: var(--font); font-size: 13px; font-weight: 500; fill: var(--text); }
+.ld-dial-label.hitl { fill: var(--hitl); font-weight: 600; }
+.ld-dial-ms { font-family: var(--mono); font-size: 11px; fill: var(--muted); font-variant-numeric: tabular-nums; }
+.ld-dial-ms.hitl { fill: var(--hitl); font-weight: 600; }
+.ld-dial-ticket { font-family: var(--mono); font-size: 30px; font-weight: 500; fill: var(--text-strong); font-variant-numeric: tabular-nums; }
+.ld-dial-took { font-family: var(--font); font-size: 13px; fill: var(--muted); }
+.ld-dial-took .n { font-family: var(--mono); fill: var(--text); }
+.ld-dial-state { font-family: var(--font); font-size: 13px; fill: var(--muted); }
+.ld-dial-state.hitl { fill: var(--hitl); font-weight: 600; }
+.ld-dial-state.danger { fill: var(--danger); font-weight: 600; }
+.ld-dial-empty { font-family: var(--font); font-size: 16px; font-weight: 600; fill: var(--text-strong); }
+.ld-dial.compact .ld-dial-label { font-size: 12px; }
+.ld-dial.compact .ld-dial-ticket { font-size: 20px; }
+.ld-dial.compact .ld-dial-took, .ld-dial.compact .ld-dial-state { font-size: 11px; }
+.ld-dial.compact .ld-dial-empty { font-size: 14px; }
+@media (prefers-reduced-motion: reduce) {
+  .ld-dial * { animation: none !important; }
+}
+html[data-quiet="on"] .ld-dial * { animation: none !important; }
 
-.ld-rb-caption {
+.ld-fig-caption {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
@@ -216,8 +234,8 @@ html[data-quiet="on"] .ld-rb-pulse { display: none; }
   font-size: var(--fs-md);
   line-height: 1.5;
 }
-.ld-rb-caption .ld-mono { color: var(--text); }
-.ld-rb-caption .hitl { color: var(--hitl); font-weight: 600; }
+.ld-fig-caption .ld-mono { color: var(--text); }
+.ld-fig-caption .hitl { color: var(--hitl); font-weight: 600; }
 
 /* ----------------------------------------------------------------- sections */
 .ld-section { margin-top: 104px; scroll-margin-top: 72px; }
@@ -436,7 +454,7 @@ html[data-quiet="on"] .ld-rb-pulse { display: none; }
 @media (max-width: 1023px) {
   .ld-hero > .ld-wrap { grid-template-columns: minmax(0, 1fr); gap: 48px; }
   .ld-hero h1 { max-width: 15ch; }
-  .ld-ribbon { max-width: 760px; }
+  .ld-hero-figure { max-width: 520px; }
 }
 @media (max-width: 900px) {
   .ld-section-head, .ld-evals-grid, .ld-decide-grid, .ld-foot-cta { grid-template-columns: minmax(0, 1fr); }
@@ -451,7 +469,7 @@ html[data-quiet="on"] .ld-rb-pulse { display: none; }
   .ld-top > .ld-wrap { gap: 12px; }
   .ld-hero { padding-top: 44px; }
   .ld-hero > .ld-wrap { gap: 40px; }
-  /* Capped near 2.5 to 2.75 rem, so the ribbon arrives within the first screen. */
+  /* Capped near 2.5 to 2.75 rem, so the dial arrives within the first screen. */
   .ld-hero h1 { font-size: clamp(2.5rem, 11vw, 2.75rem); }
   .ld-lead { margin-top: 24px; font-size: var(--fs-base); }
   .ld-actions { margin-top: 32px; }

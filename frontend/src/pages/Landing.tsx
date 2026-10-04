@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api";
-import FibreRibbon, { type RibbonRun } from "../components/landing/FibreRibbon";
+import AgentDial, { type DialRun } from "../components/landing/AgentDial";
 import SupportFlow from "../components/landing/SupportFlow";
 import {
   alarmSite,
@@ -26,7 +26,7 @@ import "./Landing.css";
 
 /**
  * The front door at "/", outside the console shell: the first thing a manager sees. One bold
- * idea, the twelve agents as a fibre ribbon beside the headline, and everything under it set
+ * idea, the twelve agents on a dial beside the headline, and everything under it set
  * quietly. Every figure on the page is read from the API; where a call fails or a lane is not
  * switched on, the page says so in a sentence and never shows a number it did not get.
  */
@@ -131,7 +131,7 @@ function pct(v: unknown): string {
   return Number.isFinite(n) ? `${Math.round(n * 1000) / 10}%` : "—";
 }
 
-/** The newest lifecycle run that opened a ticket (the ribbon's run), finished or still waiting. */
+/** The newest lifecycle run that opened a ticket (the dial's run), finished or still waiting. */
 function latestTicketRun(rows: any[] | null): any | null {
   if (!Array.isArray(rows)) return null;
   const sorted = rows
@@ -207,10 +207,19 @@ export default function Landing({ profile, metrics, runsRev }: { profile: any; m
   const supportLatest = useLoad(support.latest, []);
 
   const run = useMemo(() => latestTicketRun(runs.data), [runs.data]);
-  const ribbonRun: RibbonRun | null = useMemo(
+  const dialRun: DialRun | null = useMemo(
     () => (run ? { id: String(run.id), steps: displaySteps(run), status: run.status ?? null } : null),
     [run]
   );
+  // Steps handled per agent on record, for the dial's bars: Ingest and Correlate see every alarm,
+  // the rest only the ones that became tickets. Null until the rollup answers; no bars until then.
+  const counts = useMemo(() => {
+    const byNode = productivity.data?.steps?.by_node;
+    if (!Array.isArray(byNode) || byNode.length === 0) return null;
+    const out: Record<string, number> = {};
+    for (const n of byNode) if (n?.node) out[String(n.node)] = Number(n.steps || 0);
+    return out;
+  }, [productivity.data]);
   const autonomy = String(profile?.autonomy_level || productivity.data?.autonomy_level || "L2_GUARDED");
 
   // The header repeats the hero's button only once the hero's own has scrolled away: one
@@ -255,7 +264,9 @@ export default function Landing({ profile, metrics, runsRev }: { profile: any; m
         <section className="ld-hero" aria-labelledby="ld-h1">
           <div className="ld-wrap">
             <div className="ld-hero-copy">
-              <h1 id="ld-h1">Twelve agents work every alarm. People make the call.</h1>
+              <h1 id="ld-h1">
+                <span className="agents">Twelve agents work every alarm.</span> <span className="people">People make the call.</span>
+              </h1>
               <p className="ld-lead">
                 An alarm on the network becomes a filled-in ticket, a named vendor, a drafted broadcast and an exec brief in under a
                 second. P1 and P2 messages wait for a person, and every step is on record.
@@ -269,7 +280,7 @@ export default function Landing({ profile, metrics, runsRev }: { profile: any; m
                 </Link>
               </div>
             </div>
-            <Ribbon run={run} ribbonRun={ribbonRun} load={runs} />
+            <Dial run={run} dialRun={dialRun} counts={counts} load={runs} />
           </div>
         </section>
 
@@ -360,7 +371,7 @@ export default function Landing({ profile, metrics, runsRev }: { profile: any; m
           <div className="ld-foot-cta">
             <div>
               <h2>Watch the agents work an alarm</h2>
-              <p>Launch the heavy-rain storm on Mission control, watch the ribbon light up, then approve or reject the held broadcasts.</p>
+              <p>Launch the heavy-rain storm on Mission control, watch the dial fill, then approve or reject the held broadcasts.</p>
             </div>
             <div className="ld-actions">
               <Link className="ld-btn primary" to="/mission">
@@ -388,13 +399,13 @@ export default function Landing({ profile, metrics, runsRev }: { profile: any; m
 
 // -------------------------------------------------------------------- hero --
 
-function Ribbon({ run, ribbonRun, load }: { run: any | null; ribbonRun: RibbonRun | null; load: Load<any[]> }) {
+function Dial({ run, dialRun, counts, load }: { run: any | null; dialRun: DialRun | null; counts: Record<string, number> | null; load: Load<any[]> }) {
+  const ticket = run ? ticketNumberOf(run) : null;
+  const took = run ? sumDurations(run.steps) : null;
   let caption: ReactNode = null;
-  if (run && ribbonRun) {
+  if (run && dialRun) {
     const site = alarmSite(run.steps);
-    const ticket = ticketNumberOf(run);
-    const took = sumDurations(run.steps);
-    const held = normaliseStatus(stepsByNode(ribbonRun.steps).HITL?.status) === "waiting_hitl";
+    const held = normaliseStatus(stepsByNode(dialRun.steps).HITL?.status) === "waiting_hitl";
     caption = (
       <>
         <span>
@@ -425,12 +436,12 @@ function Ribbon({ run, ribbonRun, load }: { run: any | null; ribbonRun: RibbonRu
       </span>
     );
   } else if (load.state === "ok" || load.state === "missing") {
-    caption = <span>No alarm has been through the agents yet. Launch the storm on Mission control and watch the ribbon light up.</span>;
+    caption = <span>No alarm has been through the agents yet. Launch the storm on Mission control and watch the dial fill.</span>;
   }
   return (
-    <figure className="ld-ribbon">
-      <FibreRibbon run={ribbonRun} />
-      <figcaption className="ld-rb-caption" aria-live="polite">
+    <figure className="ld-hero-figure">
+      <AgentDial run={dialRun} counts={counts} ticket={ticket} tookMs={took} empty={!run && (load.state === "ok" || load.state === "missing")} />
+      <figcaption className="ld-fig-caption" aria-live="polite">
         {caption}
       </figcaption>
     </figure>
