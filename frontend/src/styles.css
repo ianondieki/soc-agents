@@ -7,8 +7,8 @@
  * done, amber for watch, red for broken. Everything else is ink on     *
  * navy. One accent, used for the primary action and the live rail.    *
  * Spacing on a 4 px scale; depth only on things that float.           *
- * Type: IBM Plex Sans (self-hosted; @font-face in the perf block below) *
- * on the six --fs-* steps; Plex Mono only for identifiers and          *
+ * Type: Atkinson Hyperlegible Next and Mono (self-hosted; perf block)   *
+ * on the --fs-* steps; the Mono only for identifiers and              *
  * measurements.                                                        *
  * ==================================================================== */
 
@@ -22,43 +22,21 @@
  * and never swaps it in after 3 s, so text does not reflow late on a slow link.         *
  * Reservations: content that arrives after the first paint lands in space already held. */
 @font-face {
-  font-family: "IBM Plex Sans";
+  font-family: "Atkinson Hyperlegible Next";
   font-style: normal;
-  font-weight: 400;
-  font-display: fallback;
-  src: url(/fonts/ibm-plex-sans-latin-400-normal.woff2) format("woff2");
+  font-weight: 200 800;
+  font-display: swap;
+  src: url(/fonts/atkinson-hyperlegible-next-latin-wght-normal.woff2) format("woff2-variations"),
+       url(/fonts/atkinson-hyperlegible-next-latin-wght-normal.woff2) format("woff2");
   unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
 }
 @font-face {
-  font-family: "IBM Plex Sans";
+  font-family: "Atkinson Hyperlegible Mono";
   font-style: normal;
-  font-weight: 500;
-  font-display: fallback;
-  src: url(/fonts/ibm-plex-sans-latin-500-normal.woff2) format("woff2");
-  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
-}
-@font-face {
-  font-family: "IBM Plex Sans";
-  font-style: normal;
-  font-weight: 600;
-  font-display: fallback;
-  src: url(/fonts/ibm-plex-sans-latin-600-normal.woff2) format("woff2");
-  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
-}
-@font-face {
-  font-family: "IBM Plex Mono";
-  font-style: normal;
-  font-weight: 400;
-  font-display: fallback;
-  src: url(/fonts/ibm-plex-mono-latin-400-normal.woff2) format("woff2");
-  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
-}
-@font-face {
-  font-family: "IBM Plex Mono";
-  font-style: normal;
-  font-weight: 500;
-  font-display: fallback;
-  src: url(/fonts/ibm-plex-mono-latin-500-normal.woff2) format("woff2");
+  font-weight: 200 800;
+  font-display: swap;
+  src: url(/fonts/atkinson-hyperlegible-mono-latin-wght-normal.woff2) format("woff2-variations"),
+       url(/fonts/atkinson-hyperlegible-mono-latin-wght-normal.woff2) format("woff2");
   unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
 }
 
@@ -90,89 +68,147 @@
 }
 /* ==== end perf block ==================================================================== */
 
+/* ==== Shift light tokens (docs/DESIGN_SYSTEM.md) ========================================= *
+ * The console follows the shift: <html data-theme="day|night">, set before the first paint by *
+ * index.html and kept current by lib/theme.ts (Auto = Day 06:00-18:59 EAT). Semantic names   *
+ * only; a page never uses a raw hex. Every text pair below is AA on --bg, --surface,          *
+ * --surface-nav and --surface-raised in both themes.                                          */
 :root {
-  --bg: #0b1322;
-  --surface: #121c2f;
-  --surface-2: #0d1627;
-  --surface-3: #182540;
-  --line: #22304a;
-  --line-strong: #34486c;
-  --text: #e6edf8;
-  --text-bright: #ffffff;
-  --muted: #a3b5cd;
-  --muted-dim: #8a9bb9;
-  --accent: #46c6f2;
-  --accent-ink: #06202f;
-  --accent-soft: rgba(70, 198, 242, 0.12);
-  --hitl: #c4a1ff;
-  --hitl-soft: rgba(196, 161, 255, 0.14);
-  --ok: #3ad98c;
-  --ok-soft: rgba(58, 217, 140, 0.12);
-  --warn: #f2c14e;
-  --warn-soft: rgba(242, 193, 78, 0.12);
-  --danger: #ff5c74;
-  --danger-soft: rgba(255, 92, 116, 0.14);
-  /* Each state colour in four strengths: the colour itself (an icon, a word, a solid border),
-     -line (a tinted hairline), -soft (a tinted fill, 12-14 %) and -faint (the 6-7 % fill the
-     Wallboard caps itself at). Text on a tinted fill uses the -text tint, never raw white. */
-  --accent-line: rgba(70, 198, 242, 0.45);
-  --accent-faint: rgba(70, 198, 242, 0.06);
-  --accent-hover: #63d2f6;
-  --hitl-line: rgba(196, 161, 255, 0.5);
-  --hitl-text: #dcc8ff;
-  --ok-line: rgba(58, 217, 140, 0.45);
-  --ok-faint: rgba(58, 217, 140, 0.07);
-  --ok-hover: #5be3a0;
-  --ok-ink: #04261a;
-  --warn-line: rgba(242, 193, 78, 0.45);
-  --warn-faint: rgba(242, 193, 78, 0.07);
-  --danger-line: rgba(255, 92, 116, 0.5);
-  --danger-text: #ffb4c0;
-  --muted-soft: rgba(163, 181, 205, 0.14);
-  --muted-faint: rgba(163, 181, 205, 0.07);
-  --surface-sunk: rgba(8, 16, 30, 0.72);
-  --bg-wall: #070c16;
-  --p1: #ff4d6a;
-  --p2: #ff9f1a;
-  --p3: #f0d000;
-  --p4: #8ba3c1;
-  /* Dark ink on the P1 pill in every mode: white on #ff4d6a is 3.2:1, this is 6.2:1. */
-  --p1-ink: #1a0005;
-  --p2-ink: #1a0f00;
-  --p3-ink: #1a1500;
-  --p4-ink: #0a1220;
   --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 24px; --s6: 32px; --s7: 48px;
-  --r-sm: 6px; --r-md: 10px; --r-lg: 14px;
-  /* Type scale (root 15 px): 12 / 13 / 14 / 15 / 18 / 21 / 30 px. Every rule uses only these.
-     --fs-display is the hero title and the big Showcase figures; nothing else. */
-  --fs-xs: 0.8rem; --fs-sm: 0.867rem; --fs-md: 0.933rem; --fs-base: 1rem; --fs-lg: 1.2rem; --fs-xl: 1.4rem;
-  --fs-display: 2rem;
-  /* The Wallboard is read from four metres on a 1080p screen: body >= 20 px, headline >= 32 px,
-     in px because the 15 px root would under-deliver. Only the Wallboard uses these two. */
+  /* Radii by hierarchy: controls 8, inner blocks and inputs 10, page-level panels 14. */
+  --r-sm: 8px; --r-md: 10px; --r-lg: 14px;
+  /* Type scale (root 16 px): 12 / 13 / 14 / 16 / 18 / 24 / 32 px; the display size is the landing
+     hero's alone. */
+  --fs-xs: 0.75rem; --fs-sm: 0.8125rem; --fs-md: 0.875rem; --fs-base: 1rem; --fs-lg: 1.125rem; --fs-xl: 1.5rem;
+  --fs-2xl: 2rem;
+  --fs-display: clamp(2.75rem, 5.6vw, 5.25rem);
+  /* The Wallboard is read from four metres on a 1080p screen: body >= 20 px, headline >= 32 px. */
   --fs-wall: 20px; --fs-wall-head: 36px;
-  --topbar-h: 48px;
-  --nav-w: 212px;
-  --shadow-float: 0 16px 40px -16px rgba(0, 0, 0, 0.7), 0 2px 6px -2px rgba(0, 0, 0, 0.5);
-  --font: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
-  --mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Menlo, monospace;
-  /* Names the older sheets below still use. */
+  --topbar-h: 56px;
+  --nav-w: 248px;
+  --nav-rail-w: 72px;
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --font: "Atkinson Hyperlegible Next", "Atkinson Hyperlegible", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "Atkinson Hyperlegible Mono", ui-monospace, "Cascadia Mono", Menlo, monospace;
+  font-family: var(--font);
+  font-size: 16px;
+  line-height: 1.5;
+  font-optical-sizing: auto;
+}
+
+/* Night: graphite, not navy. The default before any script runs. */
+:root,
+:root[data-theme="night"] {
+  color-scheme: dark;
+  --bg: #101318;
+  --surface: #171B22;
+  --surface-nav: #13161C;
+  --surface-raised: #1F242D;
+  --surface-sunk: #0C0F13;
+  --line: #272D37;
+  --line-strong: #363E4B;
+  --text: #E8ECF1;
+  --text-strong: #FFFFFF;
+  --muted: #A0A9B8;
+  --muted-dim: #8A93A3;
+  --accent: #7C9CFF;
+  --accent-ink: #0A1440;
+  --accent-hover: #96B0FF;
+  --hitl: #C9A2FF;
+  --hitl-text: #DCC8FF;
+  --ok: #45D49A;
+  --ok-ink: #04261A;
+  --ok-hover: #6BE0AE;
+  --warn: #F2BE55;
+  --danger: #FF6B7D;
+  --danger-text: #FFB4C0;
+  --p1: #FF4D6A; --p1-ink: #1A0005;
+  --p2: #FF9F1A; --p2-ink: #1A0F00;
+  --p3: #F0D000; --p3-ink: #1A1500;
+  --p4: #8FA0B8; --p4-ink: #0A1220;
+  --bg-wall: #0A0C10;
+  --shadow-float: 0 16px 40px -16px rgba(0, 0, 0, 0.72), 0 2px 6px -2px rgba(0, 0, 0, 0.5);
+  /* The twelve agents in fibre-optic colour-code order (TIA-598). Identity marks only. */
+  --fibre-1: #5E8BFF; --fibre-2: #FF9433; --fibre-3: #3CCB7F; --fibre-4: #B98458;
+  --fibre-5: #94A0B2; --fibre-6: #F4F6FA; --fibre-7: #FF5A70; --fibre-8: #0A0C10;
+  --fibre-9: #F2D03A; --fibre-10: #B48CFF; --fibre-11: #FF8DB5; --fibre-12: #3FD3DE;
+  --fibre-outline: #5A6474;
+}
+
+/* Day: white sheets on a cool mineral desk, ink-black text. */
+:root[data-theme="day"] {
+  color-scheme: light;
+  --bg: #EEF1F4;
+  --surface: #FFFFFF;
+  --surface-nav: #F7F8FA;
+  --surface-raised: #F2F4F7;
+  --surface-sunk: #E6EAEF;
+  --line: #DDE2E8;
+  --line-strong: #C5CCD6;
+  --text: #161B22;
+  --text-strong: #0A0D12;
+  --muted: #4F5968;
+  --muted-dim: #5F6977;
+  --accent: #2D52D6;
+  --accent-ink: #FFFFFF;
+  --accent-hover: #2443B8;
+  --hitl: #6E35C4;
+  --hitl-text: #5A2BA3;
+  --ok: #0B7444;
+  --ok-ink: #FFFFFF;
+  --ok-hover: #095F38;
+  --warn: #8A5600;
+  --danger: #C2223B;
+  --danger-text: #A51C33;
+  --p1: #D91E3E; --p1-ink: #FFFFFF;
+  --p2: #E07000; --p2-ink: #1A0F00;
+  --p3: #E8C200; --p3-ink: #1A1500;
+  --p4: #7A889C; --p4-ink: #0A1220;
+  --bg-wall: #0A0C10;
+  --shadow-float: 0 12px 32px -12px rgba(22, 27, 34, 0.2), 0 2px 6px -2px rgba(22, 27, 34, 0.08);
+  --fibre-1: #1F5FD6; --fibre-2: #E06A00; --fibre-3: #178A4C; --fibre-4: #8A5A34;
+  --fibre-5: #6B7787; --fibre-6: #FFFFFF; --fibre-7: #D3263F; --fibre-8: #11151B;
+  --fibre-9: #E2B800; --fibre-10: #7A3FD1; --fibre-11: #E0608E; --fibre-12: #0E9AA7;
+  --fibre-outline: #9AA4B2;
+}
+
+/* Derived strengths, one recipe for both themes: the colour itself (an icon, a word, a solid
+   border), -line (a tinted hairline), -soft (a tinted fill) and -faint. Text on a tinted fill uses
+   the -text tint or --text, never raw white. */
+:root {
+  --accent-soft: color-mix(in oklab, var(--accent) 13%, transparent);
+  --accent-line: color-mix(in oklab, var(--accent) 45%, transparent);
+  --accent-faint: color-mix(in oklab, var(--accent) 6%, transparent);
+  --hitl-soft: color-mix(in oklab, var(--hitl) 14%, transparent);
+  --hitl-line: color-mix(in oklab, var(--hitl) 50%, transparent);
+  --ok-soft: color-mix(in oklab, var(--ok) 12%, transparent);
+  --ok-line: color-mix(in oklab, var(--ok) 45%, transparent);
+  --ok-faint: color-mix(in oklab, var(--ok) 7%, transparent);
+  --warn-soft: color-mix(in oklab, var(--warn) 13%, transparent);
+  --warn-line: color-mix(in oklab, var(--warn) 45%, transparent);
+  --warn-faint: color-mix(in oklab, var(--warn) 7%, transparent);
+  --danger-soft: color-mix(in oklab, var(--danger) 13%, transparent);
+  --danger-line: color-mix(in oklab, var(--danger) 50%, transparent);
+  --muted-soft: color-mix(in oklab, var(--muted) 14%, transparent);
+  --muted-faint: color-mix(in oklab, var(--muted) 7%, transparent);
+  /* Older names the stylesheets still use: aliases of the tokens above. New code uses the new names. */
+  --text-bright: var(--text-strong);
+  --surface-2: var(--surface-nav);
+  --surface-3: var(--surface-raised);
   --bg-deep: var(--bg);
-  --bg2: var(--surface-2);
+  --bg2: var(--surface-nav);
   --panel: var(--surface);
   --panel-solid: var(--surface);
-  --panel-elevated: var(--surface-3);
+  --panel-elevated: var(--surface-raised);
+  --panel-line: var(--line-strong);
   --border: var(--line);
   --border-bright: var(--line-strong);
-  --accent-2: #5b8cff;
-  --glow-p1: rgba(255, 77, 106, 0.25);
-  --glow-accent: rgba(70, 198, 242, 0.2);
+  --accent-2: var(--accent);
+  --glow-p1: color-mix(in oklab, var(--p1) 25%, transparent);
+  --glow-accent: var(--accent-soft);
   --radius: var(--r-lg);
   color: var(--text);
   background: var(--bg);
-  font-family: var(--font);
-  font-size: 15px;
-  line-height: 1.5;
-  color-scheme: dark;
   accent-color: var(--accent);
 }
 
