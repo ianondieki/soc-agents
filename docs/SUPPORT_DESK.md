@@ -156,11 +156,13 @@ MSISDN). Realtime events through the hub: `support.created`, `support.escalated`
 ```ts
 type EvalReport = {
   run_id: string; ran_at: string; mode: "deterministic" | "llm";
-  dataset: { name: string; version: string; size: number };
+  dataset: { name: string; version: string; size: number; split: "all" | "dev" | "test" };  // split: added
   metrics: {
     resolution_rate: number;        // headline
     wrong_escalation_rate: number;  // headline
     missed_escalation_rate: number;
+    safety_missed_escalation_rate: number;  // added: the metric the safety gate reads
+    escalation_reason_accuracy: number;     // added: right person for the right reason
     containment_rate: number;
     triage_accuracy: number;
     routing_accuracy: number;
@@ -171,7 +173,8 @@ type EvalReport = {
   gates: { metric: string; op: ">=" | "<=" | "=="; threshold: number; value: number; passed: boolean }[];
   passed: boolean;
   confusion: { labels: ["resolver", "action", "human"]; matrix: number[][] };  // rows = expected, cols = actual
-  by_category: { category: string; n: number; resolution_rate: number; wrong_escalation_rate: number; triage_accuracy: number }[];
+  by_category: { category: string; n: number; resolution_rate: number | null;     // null: no case to measure
+                 wrong_escalation_rate: number | null; triage_accuracy: number | null }[];
   failures: { case_id: string; text: string; kind: "wrong_escalation" | "missed_escalation" | "wrong_route" |
               "wrong_category" | "wrong_article" | "wrong_tool" | "unresolved";
               expected: Record<string, unknown>; actual: Record<string, unknown> }[];
@@ -194,3 +197,81 @@ Definitions (the eval module's docstring repeats them):
 Default gates: resolution rate >= 0.80, wrong-escalation rate <= 0.10, missed-escalation rate on safety
 cases == 0, triage accuracy >= 0.85. The golden set (`tests/fixtures/support_eval/golden.jsonl`) mixes
 English, Kiswahili and Sheng code-switching, as complaints on a Kenyan network actually arrive.
+
+## Decisions the contract left open
+
+Recorded by the backend implementation (`src/noc_agents/support/`); each is a reading of the
+contract above, not a change to it, except where marked **refinement**.
+
+**Routes and statuses**
+
+- `route` on a stored complaint is where the case **ended**: `resolver` (answered), `action` (a tool
+  fixed it) or `human` (a person owns it). Triage's first choice is in the triage step's `detail.route`.
+  This is the route the eval compares with the golden label. A case a person approved stays `human`
+  with status `action_taken`.
+- When the action agent cannot identify a safe target (no transaction code and no amount matching
+  exactly one transfer, no bundle that expired early, no refundable charge, no open incident for the
+  place named) the **resolver answers instead** (`answered`, route `resolver`). `tool_failed` is kept
+  for a target that was identified and then refused or failed (already reversed, no account on record,
+  a second re-credit inside 30 days).
+- A call over its limit is recorded as `needs_approval` and the case is `awaiting_approval`. When an
+  earlier rule outranks it, or a later non-tool rule fires (repeat, angry high-value, low confidence),
+  a call that *would* have succeeded is **held, not run**: the person who now owns the case decides.
+- Approving re-runs the tool with the approval (validation and idempotency still apply). If it can no
+  longer complete (for example the transfer was reversed on another ticket) the call is `refused` and
+  the case goes back to `escalated` with `tool_failed`. Resolving a case supersedes (rejects) any call
+  still waiting for approval.
+- Nothing sets `closed` yet: the contract defines no route for it.
+
+**Intake and the public form**
+
+- An identical complaint (same MSISDN, same normalised text) within 2 minutes returns the complaint
+  already on file with **200** instead of 201; nothing new is created.
+- Rate limit: 5 complaints per MSISDN per 10 minutes (`config/support/policy.yaml`), in-process;
+  over it, **429** with `Retry-After`.
+- A caller without a support read role (anonymous, once `AUTH_DISABLED=false`) gets the **public view**
+  of the detail: same shape, but step `detail` is `{}`, tool `args` `{}` and `result` `null`, and
+  `customer.name` / `customer.account_ref` are only what the caller typed. Otherwise the form would tell
+  anyone who types a number whose it is and what is in that account. Replies greet the customer by the
+  name they gave, never the account holder's.
+- Validation: `body` 5..4000 characters after trimming; `msisdn` any of `07XXXXXXXX`, `01XXXXXXXX`,
+  `+2547…`, `2541…` (spaces and dashes allowed), stored as E.164 and shown only masked
+  (`+254 7•• ••• 412`); `subject` at most 90; `channel` one of the five.
+- With `AUTH_DISABLED=true` and `NOC_ENV=production` none of the routes is registered (the codebase's
+  production guard for personal data, as for the confidential complaints lane).
+
+**RBAC** -- "the operations floor" is `api/deps.SUPPORT_READERS`: `OPERATIONS` plus `management`.
+The vendor roles, `planning` and `legal` are out: a complaint is a customer's personal data.
+
+**Resolver (refinement)** -- "grounded" means the article reaches `grounding_threshold` (BM25, 4.0)
+**and** agrees with triage: it is in the category triage chose, or scores `cross_category_factor` (2x)
+the threshold. Citations are exactly the one article the reply came from. An article marked
+`escalate` in the knowledge base (`KB-SIM-SWAP-FRAUD`) is never answered from: landing on it adds the
+fraud flag, so a fraud complaint in words triage missed still reaches a person.
+
+**LLM** -- implemented: the triage tie-break (top two categories only; an accepted choice lifts
+confidence only to the low-confidence threshold), with the reg 41(2) transfer record written before
+the call. Not implemented: polishing the resolver's reply (the contract's "may").
+
+**Metrics** -- `GET /metrics` defaults to `hours=0` (all time). `escalated` counts cases with a person
+now (`escalated`, `in_progress`); `escalation_rate` counts cases that ever went to a person.
+`GET /complaints` `counts` are over all the operator's complaints, not the filtered page.
+
+**Evals**
+
+- Each case runs through `process_complaint` on its own in-memory copy of a template database that
+  holds the rain-storm scenario's open hub incidents; the live database and hub are never touched.
+- Reports are stored in the database (`support_eval_runs`, operator-scoped, every run kept);
+  `GET /evals/latest` returns the newest. `dataset.version` is the first 12 hex of the golden file's
+  sha256.
+- An empty denominator is `0.0` in `metrics` and `null` in `by_category`.
+- `tool_accuracy` counts the action agent's call whatever its status (an over-limit refund that chose
+  `issue_refund` chose right); resolution still requires it to succeed.
+- Golden line format and its consistency rules (route `human` exactly when `escalation_reason` is set,
+  `safety` exactly for the three safety reasons, `tool` for action cases and for tool-driven
+  escalations) are in the `support/evals.py` docstring; the loader refuses a line that breaks them.
+- CLI: `python tests/eval/support_eval.py [--split dev|test] [--json out.json] [--llm]`.
+
+**Schema** -- five tables (`support_complaints`, `support_steps`, `support_tool_calls`,
+`support_messages`, `support_eval_runs`), `SCHEMA_VERSION` 10. They are not yet classified in
+`config/retention.yaml`; the retention period for customer complaints is Legal's decision.

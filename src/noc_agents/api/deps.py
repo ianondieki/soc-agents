@@ -149,6 +149,16 @@ CONTRACT_ASKERS: tuple[str, ...] = OPERATIONS + ("planning", "legal")
 #: explicitly everywhere else, never granted by implication) and the conflict is an owner question.
 CONTRACT_OWNERS: tuple[str, ...] = ("legal", "admin")
 
+#: The support desk (docs/SUPPORT_DESK.md), which §9.3 predates and has no row for. The contract
+#: says "reads for the operations floor, writes for OPERATIONS"; read here as the operations
+#: roles plus ``management`` (the desk's resolution and escalation rates are a management
+#: number). The two vendor roles are OUT, deliberately, and so are ``planning`` and ``legal``:
+#: a support complaint is a customer's personal data -- name, number, what happened to their
+#: money -- and neither an MSP's coordinator nor a field engineer needs another operator's
+#: customer to do their job. Writes (claim, resolve, approve, reject, seed, run the evals) are
+#: OPERATIONS. ``POST /support/complaints`` is the public form and takes no role at all.
+SUPPORT_READERS: tuple[str, ...] = OPERATIONS + ("management",)
+
 # --- HITL decisions: who may act on a card depends on the card's TYPE ------------------
 # §9.3 spreads HITL decisions over four rows, so a route-level allow-list cannot express it:
 #   row 2  "HITL claim/approve/reject (broadcast, priority, assignment, power, schedule,

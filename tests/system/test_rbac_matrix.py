@@ -243,6 +243,11 @@ OUTSIDE: dict[str, tuple[frozenset[str], str]] = {
     "complaints.withdraw": (PERM["complaints.view"],
                             "§9.3 does not name withdraw; whoever may see the complaint "
                             "(the service decides own vs any)"),
+    "support.read": (frozenset({NOC, SS, DM, ADMIN, MGMT}),
+                     "no §9.3 row; docs/SUPPORT_DESK.md 'reads for the operations floor' = "
+                     "api/deps.SUPPORT_READERS (OPERATIONS + management; customer data, so no vendor roles)"),
+    "support.write": (frozenset({NOC, SS, DM, ADMIN}),
+                      "no §9.3 row; docs/SUPPORT_DESK.md 'writes (claim, resolve, approve) for OPERATIONS'"),
 }
 EXPECTED: dict[str, frozenset[str]] = {**PERM, **{k: v[0] for k, v in OUTSIDE.items()}}
 
@@ -385,6 +390,19 @@ ROUTE_MAP: dict[tuple[str, str], str] = {
     (G, "/api/v1/vendors"): "vendors.read",
     (P, "/api/v1/vendors"): "vendors.create",
     (P, "/api/v1/vendors/backfill"): "vendors.backfill",
+    # --- support.py (no §9.3 row; the contract's gates, docs/SUPPORT_DESK.md) ---------------
+    (G, "/api/v1/support/complaints"): "support.read",
+    (G, "/api/v1/support/complaints/{complaint_id}"): "support.read",
+    (G, "/api/v1/support/kb"): "support.read",
+    (G, "/api/v1/support/kb/search"): "support.read",
+    (G, "/api/v1/support/metrics"): "support.read",
+    (G, "/api/v1/support/evals/latest"): "support.read",
+    (P, "/api/v1/support/complaints/{complaint_id}/claim"): "support.write",
+    (P, "/api/v1/support/complaints/{complaint_id}/resolve"): "support.write",
+    (P, "/api/v1/support/complaints/{complaint_id}/actions/{tool_call_id}/approve"): "support.write",
+    (P, "/api/v1/support/complaints/{complaint_id}/actions/{tool_call_id}/reject"): "support.write",
+    (P, "/api/v1/support/evals/run"): "support.write",
+    (P, "/api/v1/support/demo/seed"): "support.write",
 }
 
 #: Open on purpose, each with its reason. The ops socket is no longer here: since A-14 it is
@@ -401,6 +419,9 @@ EXEMPT: dict[tuple[str, str], str] = {
     (G, "/docs"): "FastAPI's Swagger UI over /openapi.json (same open decision)",
     (G, "/docs/oauth2-redirect"): "part of FastAPI's Swagger UI (same open decision)",
     (G, "/redoc"): "FastAPI's ReDoc over /openapi.json (same open decision)",
+    (P, "/api/v1/support/complaints"): "the customer's public complaint form (docs/SUPPORT_DESK.md): rate-limited "
+                                       "per MSISDN, and a caller without a support read role gets the public view "
+                                       "(no step details, tool data or account holder)",
 }
 #: Mounted sub-applications, which are not routes and carry no ``require_role``: whatever the
 #: mounted app serves is served on its own terms. Each one needs a reason here, or the

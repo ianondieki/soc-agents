@@ -52,6 +52,9 @@ os.environ["CONTRACTS_ENABLED"] = "false"
 os.environ["COMPLAINTS_ENABLED"] = "false"
 os.environ["UPLOADS_ENABLED"] = "false"
 os.environ["CAPACITY_ENABLED"] = "false"
+# The support desk ships ON (its code default is true: a showcase lane with no outbound side
+# effects), so it is pinned to that default for the same reason the others are pinned to theirs.
+os.environ["SUPPORT_DESK_ENABLED"] = "true"
 for _key in (
     "GMAIL_ADDRESS",
     "GMAIL_APP_PASSWORD",

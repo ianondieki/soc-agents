@@ -32,6 +32,7 @@ from noc_agents.api.routers import (
     regulatory,
     scorecards,
     signals,
+    support,
     templates,
     vendors,
 )
@@ -56,6 +57,8 @@ ROUTERS: tuple[APIRouter, ...] = (
     admin.router,
     # Showcase: agent throughput and the toil-minutes model
     productivity.router,
+    # Showcase: the multi-agent customer support desk (docs/SUPPORT_DESK.md)
+    support.router,
 )
 
 __all__ = ["ROUTERS"]

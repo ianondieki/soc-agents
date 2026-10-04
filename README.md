@@ -126,6 +126,42 @@ what the operator profile's `productivity.toil_minutes` says it would have cost 
 | `/workflow` | Workflow map: the twelve hops, what each does, minutes by hand |
 | `/settings` | Role + **demo inject** (Westlands HUB, Coast, Nyanza, NEA, …) |
 
+## Support desk
+
+A multi-agent desk for **customer complaints**, beside the NOC it serves (contract:
+[`docs/SUPPORT_DESK.md`](docs/SUPPORT_DESK.md)). A customer registers a complaint online; a
+**triage agent** classifies it (category, urgency, sentiment, fraud / legal / safety flags,
+English, Kiswahili or Sheng); a **resolver** answers from a 20-article knowledge base only when
+the answer is grounded, citing the article; an **action agent** fixes the account through tools
+under policy limits (M-PESA wrong-number reversal, refunds, bundle re-credits, device settings)
+and links "no network in Nakuru" to the **live NOC incident** for Nakuru; hard cases go to a
+person with a reason. Every step is traced. Deterministic by default; tools act on demo fixtures
+and nothing is ever sent.
+
+- Code `src/noc_agents/support/`, routes `src/noc_agents/api/routers/support.py`, tables
+  `db/models_support.py`; policy, knowledge base and demo accounts in `config/support/`.
+- `SUPPORT_DESK_ENABLED` (default `true`; `false` makes every route 404).
+- Routes under `/api/v1/support`: `POST /complaints` (the public form, rate-limited per number),
+  `GET /complaints`, `GET /complaints/{id}`, `POST /complaints/{id}/claim|resolve`,
+  `POST /complaints/{id}/actions/{tool_call_id}/approve|reject`, `GET /kb`, `GET /kb/search?q=`,
+  `GET /metrics`, `GET /evals/latest`, `POST /evals/run`, `POST /demo/seed`.
+- Try it: `POST /api/v1/demo/rain-storm`, then `POST /api/v1/support/demo/seed` (a dozen
+  complaints across every route and status, the outage ones linked to the storm's tickets).
+
+**Evals.** The golden set `tests/fixtures/support_eval/golden.jsonl` (English, Kiswahili, Sheng;
+every route and escalation reason) runs through the real pipeline on throwaway in-memory
+databases and is gated on resolution rate >= 0.80, wrong-escalation rate <= 0.10, zero missed
+safety escalations and triage accuracy >= 0.85:
+
+```bash
+python tests/eval/support_eval.py             # deterministic; --split dev|test, --json out.json
+python tests/eval/support_eval.py --llm       # nightly comparison with LLM tie-breaks (needs LLM_ENABLED)
+python -m pytest -q tests/unit/test_support_*.py tests/system/test_support_api.py
+```
+
+`POST /api/v1/support/evals/run` runs the same suite in-process and keeps the report for
+`GET /api/v1/support/evals/latest`.
+
 ## Config
 
 - `config/default.yaml` — active profile  
@@ -144,6 +180,7 @@ set OPERATOR_PROFILE=airtel   # Windows PowerShell: $env:OPERATOR_PROFILE="airte
 - **`docs/MANAGER_DEMO.md`** — the ten-minute manager demo script and the questions you will get  
 - `docs/UI_WALKTHROUGH.md` — 5-minute team demo script  
 - **`docs/GAP_ANALYSIS_AND_ROADMAP.md`** — flaws found + hardening log + Phase B/C roadmap  
+- **`docs/SUPPORT_DESK.md`** — the customer support desk: flow, API, escalation policy, evals  
 
 ## Gmail demo email
 
