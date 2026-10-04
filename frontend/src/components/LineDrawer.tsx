@@ -101,7 +101,7 @@ export default function LineDrawer({
     <>
       <div
         onClick={onClose}
-        style={{ position: "fixed", inset: 0, background: "rgba(3, 7, 18, 0.55)", zIndex: 40 }}
+        style={{ position: "fixed", inset: 0, background: "var(--scrim)", zIndex: 40 }}
         aria-hidden="true"
       />
       <div
@@ -120,7 +120,7 @@ export default function LineDrawer({
           zIndex: 41,
           background: "var(--panel-solid)",
           borderLeft: "1px solid var(--border-bright)",
-          boxShadow: "-12px 0 40px rgba(0, 0, 0, 0.45)",
+          boxShadow: "var(--shadow-float)",
           padding: "1rem 1.1rem 2rem",
           outline: "none",
         }}
@@ -294,7 +294,7 @@ const SUBHEAD = { margin: "1.05rem 0 0.45rem", fontSize: "var(--fs-md)", color: 
 
 function Tile({ label, value, note }: { label: string; value: string; note?: string | null }) {
   return (
-    <div style={{ border: "1px solid var(--border)", borderRadius: 10, padding: "0.55rem 0.7rem", background: "rgba(8, 16, 30, 0.6)" }}>
+    <div style={{ border: "1px solid var(--border)", borderRadius: 10, padding: "0.55rem 0.7rem", background: "var(--surface-raised)" }}>
       <div style={{ fontSize: "var(--fs-xs)", color: "var(--muted)" }}>{label}</div>
       {/* A measurement: mono at 500, never bold and mono together. */}
       <div style={{ fontFamily: "var(--mono)", fontSize: "var(--fs-lg)", fontWeight: 500, color: "var(--text-bright)" }}>{value}</div>

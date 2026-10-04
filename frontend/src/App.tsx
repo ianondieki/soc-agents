@@ -1,9 +1,17 @@
-import { NavLink, Route, Routes, useLocation, useNavigate } from "react-router-dom";
-import { Suspense, lazy, useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { Link, Route, Routes, useLocation, useNavigate } from "react-router-dom";
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { api } from "./api";
 import { apiHealthy, subscribeHealth } from "./realtime/apiHealth";
 import { useRealtime } from "./realtime/useRealtime";
-import { RealtimeProvider, useSuppressedCount } from "./realtime/RealtimeContext";
+import { RealtimeProvider } from "./realtime/RealtimeContext";
+import { useTheme } from "./lib/theme";
+import { useNarrow } from "./lib/layout";
+import { Sidebar } from "./components/shell/Sidebar";
+import { PhoneMenu } from "./components/shell/PhoneMenu";
+import { DisplayMenu, type DisplayState } from "./components/shell/DisplayMenu";
+import { BrandMark } from "./components/shell/BrandMark";
+import { useSupportCount } from "./components/shell/useSupportCount";
+import { readRailPref, writeRailPref, type NavCounts } from "./components/shell/nav";
 import {
   STORM_DONE_KEY,
   STORM_IDLE,
@@ -18,8 +26,6 @@ import {
 import { detailOf } from "./lib/apiError";
 import { WAITING_WORD, autonomyMeaning, humanAutonomy, humanEnum, regionName } from "./lib/agents";
 import {
-  PROJECTOR_MEANING,
-  QUIET_MEANING,
   applyDisplay,
   printedLine,
   readDisplay,
@@ -81,58 +87,36 @@ function PageSkeleton() {
   );
 }
 
-/** The sidebar, grouped by who reaches for it: the shift, the agent story, quality, vendors,
- *  platform. Each label is its page's title, in sentence case. */
-const NAV_GROUPS: { title: string; links: { to: string; label: string; end?: boolean }[] }[] = [
-  {
-    title: "Operate",
-    links: [
-      { to: "/mission", label: "Mission control" },
-      { to: "/incidents", label: "Incident board" },
-      { to: "/hitl", label: "Approvals" },
-      { to: "/shift", label: "Shift desk" },
-      { to: "/wallboard", label: "Wallboard" },
-    ],
-  },
-  {
-    title: "Support",
-    links: [
-      { to: "/support", label: "Support desk" },
-      { to: "/complain", label: "Complaint form" },
-    ],
-  },
-  {
-    title: "Agents",
-    links: [
-      { to: "/showcase", label: "Showcase" },
-      { to: "/agents", label: "Agent observatory" },
-      { to: "/workflow", label: "Workflow map" },
-    ],
-  },
-  {
-    title: "Quality",
-    links: [
-      { to: "/problems", label: "Problems" },
-      { to: "/pirs", label: "Post-incident reviews" },
-      { to: "/regions", label: "Regions" },
-    ],
-  },
-  {
-    title: "Vendors",
-    links: [
-      { to: "/scorecards", label: "Vendor scorecards" },
-      { to: "/contracts", label: "Contracts" },
-      { to: "/maintenance", label: "Maintenance" },
-    ],
-  },
-  {
-    title: "Platform",
-    links: [
-      { to: "/audit", label: "Audit trail" },
-      { to: "/settings", label: "Settings" },
-    ],
-  },
-];
+/* The sidebar's groups live in components/shell/nav.ts; the sidebar, its rail and flyouts in
+   components/shell/Sidebar.tsx; the phone sheet in PhoneMenu.tsx; the Display panel in
+   DisplayMenu.tsx. */
+
+/** Tablets (761-1099 px) start on the 72 px rail; a person's own choice, once made, wins. */
+const TABLET_QUERY = "(max-width: 1099px)";
+const PHONE_QUERY = "(max-width: 760px)";
+
+/** "NOC Analyst" -> "NA"; "Grace Wanjiru" -> "GW". */
+function initialsOf(name: string): string {
+  const parts = String(name || "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  if (!parts.length) return "?";
+  const first = parts[0][0] || "";
+  const last = parts.length > 1 ? parts[parts.length - 1][0] || "" : "";
+  return (first + last).toUpperCase();
+}
+
+/** "noc_analyst" -> "NOC analyst", "shift_supervisor" -> "Shift supervisor". */
+function roleLabel(role: string): string {
+  const words = String(role || "")
+    .split(/[_\s]+/)
+    .filter(Boolean)
+    .map((w) => (w.toLowerCase() === "noc" ? "NOC" : w.toLowerCase()));
+  if (!words.length) return "";
+  if (words[0] !== "NOC") words[0] = words[0][0].toUpperCase() + words[0].slice(1);
+  return words.join(" ");
+}
 
 const SCROLLERS = ".list, .ticker, .table-scroll, .hitl-channel-body, .hitl-field-pre, .panel, .pre";
 
@@ -185,47 +169,6 @@ function useScrollableRegions(pathname: string, revisions: unknown) {
   }, [pathname, revisions]);
 }
 
-/** Quiet mode's toggle. Its own component, so the held-back count it names re-renders this button
- *  only, never App. */
-function QuietToggle({ on, onToggle }: { on: boolean; onToggle: () => void }) {
-  const suppressed = useSuppressedCount();
-  return (
-    <button
-      type="button"
-      className="btn sm"
-      onClick={onToggle}
-      aria-pressed={on}
-      title={QUIET_MEANING + (on && suppressed > 0 ? ` ${suppressed} non-critical lines held back.` : "")}
-    >
-      {on ? "Quiet mode on" : "Quiet mode"}
-    </button>
-  );
-}
-
-/** The two display toggles, Quiet mode and Projector: in the top bar from 961 px, inside the Menu
- *  below it (styles.css shows one pair or the other). What each does is also said in words on
- *  Settings, since a tablet never shows a title. */
-function DisplayToggles({
-  quiet,
-  onQuiet,
-  projector,
-  onProjector,
-}: {
-  quiet: boolean;
-  onQuiet: () => void;
-  projector: boolean;
-  onProjector: () => void;
-}) {
-  return (
-    <>
-      <QuietToggle on={quiet} onToggle={onQuiet} />
-      <button type="button" className="btn sm" onClick={onProjector} aria-pressed={projector} title={PROJECTOR_MEANING}>
-        Projector
-      </button>
-    </>
-  );
-}
-
 /** "Printed 02 Oct 2026, 15:24 EAT" at the foot of every printed page (a fixed element repeats on
  *  each sheet); nothing on screen. Re-rendered at the moment of printing. */
 function PrintFooter() {
@@ -261,10 +204,24 @@ export default function App() {
   // The metrics call alone failing is not an outage: the KPI strip says its counts are stale.
   const [metricsFailed, setMetricsFailed] = useState(false);
   const [manualTick, setManualTick] = useState(0);
-  const [navOpen, setNavOpen] = useState(false);
   const [guideOpen, setGuideOpen] = useState(false);
   const nav = useNavigate();
   const loc = useLocation();
+  const headerRef = useRef<HTMLElement>(null);
+
+  // The shell's shape: a phone has no sidebar; a tablet starts on the rail; a person's choice
+  // (localStorage "noc.nav.rail") wins over the width default once made.
+  const phone = useNarrow(PHONE_QUERY);
+  const tablet = useNarrow(TABLET_QUERY);
+  const [railPref, setRailPref] = useState<boolean | null>(readRailPref);
+  const rail = railPref ?? tablet;
+  const toggleRail = useCallback(() => {
+    setRailPref((p) => {
+      const next = !(p ?? tablet);
+      writeRailPref(next);
+      return next;
+    });
+  }, [tablet]);
 
   // The ticker lines and the run frames live in realtime.feed (an external store read by the few
   // components that show them), so App re-renders for a debounced flush, never for a frame.
@@ -365,23 +322,18 @@ export default function App() {
   };
   const toggleQuiet = () => setQuietMode(!quietMode);
 
-  // The phone menu closes on every route change.
-  useEffect(() => {
-    setNavOpen(false);
-  }, [loc.pathname]);
+  // The console follows the shift (lib/theme.ts): <html data-theme> re-resolves on every route
+  // change (the Wallboard is always Night) and when projector mode flips (also always Night).
+  const { pref: themePref, setPref: setThemePref } = useTheme(loc.pathname, projector);
+  const display: DisplayState = useMemo(
+    () => ({ pref: themePref, setPref: setThemePref, quiet: quietMode, onQuiet: toggleQuiet, projector, onProjector: toggleProjector }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [themePref, setThemePref, quietMode, projector]
+  );
 
-  // With 40 px touch targets the sidebar can be taller than a tablet's screen: keep the current
-  // page's link in view inside it.
-  useEffect(() => {
-    const navEl = document.querySelector<HTMLElement>(".nav");
-    const link = navEl?.querySelector<HTMLElement>("a.active");
-    if (!navEl || !link || navEl.scrollHeight <= navEl.clientHeight + 1) return;
-    const top = link.offsetTop;
-    const bottom = top + link.offsetHeight;
-    if (top < navEl.scrollTop || bottom > navEl.scrollTop + navEl.clientHeight) {
-      navEl.scrollTop = Math.max(0, top - navEl.clientHeight / 2);
-    }
-  }, [loc.pathname]);
+  // Counts on the sidebar's groups: approvals waiting (Operate) and support cases with a person
+  // (Support; nothing until that route exists).
+  const supportCount = useSupportCount();
 
   // A region that scrolls must be reachable from the keyboard (WCAG 2.1.1). Lists, tickers,
   // message bodies and, on a phone, panels holding a wide table all scroll; which ones do
@@ -524,6 +476,9 @@ export default function App() {
   // "L2 guarded", explained: what the agents may do on their own at this level (Settings says it too).
   const autonomyTitle = autonomyMeaning(profile?.autonomy_level) || orgMeta;
   const pending: number | null = typeof metrics?.hitl_pending === "number" ? metrics.hitl_pending : metrics ? 0 : null;
+  const navCounts: NavCounts = useMemo(() => ({ operate: pending, support: supportCount }), [pending, supportCount]);
+  const userName = String(session?.display_name || "NOC Analyst");
+  const userTitle = `${userName}${session?.role ? `, ${roleLabel(String(session.role))}` : ""}`;
 
   if (isLanding || isComplain) {
     return (
@@ -565,7 +520,7 @@ export default function App() {
 
   return (
     <RealtimeProvider value={realtime}>
-      <div className="app">
+      <div className={"app" + (phone ? " phone" : rail ? " rail" : "")}>
         <a
           className="skip-link"
           href="#main"
@@ -576,49 +531,21 @@ export default function App() {
         >
           Skip to content
         </a>
-        <nav className={"nav" + (navOpen ? " open" : "")} aria-label="Main">
-          <div className="nav-brand-row">
-            <div className="brand">Kenya NOC</div>
-            <button
-              type="button"
-              className="btn nav-toggle"
-              aria-expanded={navOpen}
-              aria-controls="nav-links"
-              onClick={() => setNavOpen((o) => !o)}
-            >
-              {navOpen ? "Close" : "Menu"}
-            </button>
-          </div>
-          <div className="nav-links" id="nav-links">
-            {NAV_GROUPS.map((g) => (
-              <div key={g.title} className="nav-group">
-                <div className="nav-group-title">{g.title}</div>
-                <div className="nav-group-links">
-                  {g.links.map((l) => (
-                    <NavLink key={l.to} to={l.to} end={l.end}>
-                      {l.label}
-                    </NavLink>
-                  ))}
-                </div>
-              </div>
-            ))}
-            {/* Below 960 px the display toggles live here, in the Menu, not in the top bar. */}
-            <div className="nav-group nav-display">
-              <div className="nav-group-title">Display</div>
-              <div className="nav-display-row">
-                <DisplayToggles quiet={quietMode} onQuiet={toggleQuiet} projector={projector} onProjector={toggleProjector} />
-              </div>
-            </div>
-          </div>
-        </nav>
+        {!phone && <Sidebar rail={rail} onToggleRail={toggleRail} counts={navCounts} />}
         <div className="main">
-          <header className="topbar">
+          <header className="topbar" ref={headerRef}>
+            {/* On a phone the brand moves up here (there is no sidebar) and the identity line
+                takes the second row. */}
+            {phone && (
+              <Link to="/" className="brand topbar-brand" title="Front page">
+                <BrandMark />
+                <span>Kenya NOC</span>
+              </Link>
+            )}
             <div className="topbar-left">
-              <span className="topbar-org">
-                <span className="topbar-id">{org}</span>
-                <span className="topbar-meta chip-wide" title={autonomyTitle}>
-                  {orgMeta}
-                </span>
+              <span className="topbar-id">{org}</span>
+              <span className="topbar-meta" title={autonomyTitle}>
+                {orgMeta}
               </span>
               {/* Healthy is not news: "Live" stays a muted word; only a broken link turns red, and
                   never in the first seconds while the stream is still connecting. */}
@@ -637,23 +564,34 @@ export default function App() {
                 onClick={() => nav("/hitl")}
                 title="Open Approvals"
               >
-                {pending == null ? "Approvals" : pending > 0 ? `${pending} ${WAITING_WORD}` : "No decisions waiting"}
+                {/* One width for every state on a desktop; the short form below 1100 px. */}
+                <span className="topbar-decisions-long">
+                  {pending == null ? "Approvals" : pending > 0 ? `${pending} ${WAITING_WORD}` : "No decisions waiting"}
+                </span>
+                <span className="topbar-decisions-short">{pending && pending > 0 ? `${pending} waiting` : "Approvals"}</span>
               </button>
-              <span className="topbar-user chip-wide">{session.display_name}</span>
-              <button
-                type="button"
-                className="btn sm"
-                onClick={() => setGuideOpen((o) => !o)}
-                aria-pressed={guideOpen}
-                aria-controls={guideOpen ? "guide-bar" : undefined}
-                data-guide-toggle=""
-                title="A five-step walkthrough for presenting the prototype"
-              >
-                Guided demo
-              </button>
-              <span className="topbar-display">
-                <DisplayToggles quiet={quietMode} onQuiet={toggleQuiet} projector={projector} onProjector={toggleProjector} />
-              </span>
+              {!phone && (
+                <>
+                  <button
+                    type="button"
+                    className="btn sm topbar-guide"
+                    onClick={() => setGuideOpen((o) => !o)}
+                    aria-pressed={guideOpen}
+                    aria-controls={guideOpen ? "guide-bar" : undefined}
+                    data-guide-toggle=""
+                    title="A five-step walkthrough for presenting the prototype"
+                  >
+                    Guided demo
+                  </button>
+                  <DisplayMenu d={display} />
+                  <span className="avatar" title={userTitle} role="img" aria-label={userTitle}>
+                    {initialsOf(userName)}
+                  </span>
+                </>
+              )}
+              {phone && (
+                <PhoneMenu anchorRef={headerRef} counts={navCounts} display={display} guideOpen={guideOpen} onGuide={() => setGuideOpen((o) => !o)} />
+              )}
             </div>
           </header>
           {/* Two calls in a row failed: one sentence for the floor. How to start the backend is in

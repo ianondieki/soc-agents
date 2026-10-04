@@ -115,7 +115,7 @@
 /* The platform diagram. Under 880 px of room it scrolls sideways inside its figure. */
 .sc-arch { margin: var(--s3) 0 0; overflow-x: auto; }
 .sc-arch svg { display: block; width: 100%; min-width: 880px; height: auto; }
-.sc-arch-box { fill: var(--surface-2); stroke: var(--line-strong); }
+.sc-arch-box { fill: var(--surface-raised); stroke: var(--line-strong); }
 .sc-arch-box.human { stroke: var(--hitl); }
 .sc-arch-adapt { fill: var(--accent-soft); stroke: var(--line); stroke-dasharray: 4 4; }
 .sc-arch-agents { fill: var(--accent-soft); stroke: var(--accent); }
@@ -132,7 +132,7 @@
 .sc-rung { display: grid; gap: 2px; padding: var(--s2) var(--s3); border: 1px solid transparent; border-radius: var(--r-md); }
 .sc-rung strong { color: var(--muted); font-size: var(--fs-sm); }
 .sc-rung span { color: var(--muted); font-size: var(--fs-sm); line-height: 1.45; }
-.sc-rung.current { border-color: color-mix(in srgb, var(--accent) 45%, transparent); background: var(--accent-soft); }
+.sc-rung.current { border-color: var(--accent-line); background: var(--accent-soft); }
 .sc-rung.current strong { color: var(--text-bright); }
 .sc-rung.current span { color: var(--text); }
 

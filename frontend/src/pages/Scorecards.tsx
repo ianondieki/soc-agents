@@ -318,7 +318,7 @@ export default function Scorecards({ session }: { session: Session }) {
                         openCard(r.id);
                       }
                     }}
-                    style={{ cursor: "pointer", background: selected === r.id ? "rgba(62, 203, 255, 0.07)" : undefined }}
+                    style={{ cursor: "pointer", background: selected === r.id ? "var(--accent-soft)" : undefined }}
                   >
                     <td>
                       <strong>{r.vendor_code || r.vendor_id}</strong>
@@ -410,7 +410,7 @@ const FAILURE_BOX = {
   alignItems: "flex-start",
   margin: "0.5rem 0 0.75rem",
   padding: "0.6rem 0.75rem",
-  border: "1px solid rgba(255, 193, 77, 0.45)",
-  background: "rgba(255, 193, 77, 0.07)",
+  border: "1px solid var(--warn-line)",
+  background: "var(--warn-faint)",
   borderRadius: 10,
 } as const;

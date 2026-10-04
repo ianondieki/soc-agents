@@ -89,7 +89,7 @@ export default function ScorecardLinesTable({
               const k = kpiView(g.kpi);
               return [
                 <tr key={"kpi-" + g.kpi}>
-                  <td colSpan={COLS} style={{ background: "rgba(62, 203, 255, 0.05)" }}>
+                  <td colSpan={COLS} style={{ background: "var(--surface-raised)" }}>
                     <div className="head-row">
                       <strong>{k.label}</strong>
                       {k.hint ? <span className="muted">{k.hint}</span> : null}
@@ -110,7 +110,7 @@ export default function ScorecardLinesTable({
                     <tr
                       key={line.id}
                       onClick={() => onSelect(line)}
-                      style={{ cursor: "pointer", background: selected ? "rgba(62, 203, 255, 0.07)" : undefined }}
+                      style={{ cursor: "pointer", background: selected ? "var(--accent-soft)" : undefined }}
                     >
                       <td>{priorityLabel(line.priority)}</td>
                       <td style={{ ...MONO, color: "var(--text-bright)" }}>{pair.raw}</td>

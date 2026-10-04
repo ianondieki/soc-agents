@@ -532,14 +532,14 @@ const NOTICE = {
   alignItems: "flex-start",
   margin: "0 0 0.75rem",
   padding: "0.6rem 0.75rem",
-  border: "1px solid rgba(255, 193, 77, 0.45)",
-  background: "rgba(255, 193, 77, 0.07)",
+  border: "1px solid var(--warn-line)",
+  background: "var(--warn-faint)",
   borderRadius: 10,
 } as const;
 
 const WITHHELD_BOX = {
   border: "3px solid var(--p1)",
-  background: "rgba(255, 59, 92, 0.12)",
+  background: "var(--danger-soft)",
   borderRadius: 12,
   padding: "0.8rem 1rem",
   margin: "0 0 0.9rem",
@@ -547,7 +547,7 @@ const WITHHELD_BOX = {
 
 function Fact({ label, value, note, small, mono }: { label: string; value: string; note?: string | null; small?: boolean; mono?: boolean }) {
   return (
-    <div style={{ border: "1px solid var(--border)", borderRadius: 10, padding: "0.5rem 0.65rem", background: "rgba(8, 16, 30, 0.6)" }}>
+    <div style={{ border: "1px solid var(--border)", borderRadius: 10, padding: "0.5rem 0.65rem", background: "var(--surface-raised)" }}>
       <div style={{ fontSize: "var(--fs-xs)", color: "var(--muted)" }}>{label}</div>
       <div
         style={{

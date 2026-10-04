@@ -147,9 +147,9 @@
   align-items: baseline;
   gap: var(--s1) var(--s4);
   cursor: default;
-  background: var(--surface-2);
+  background: var(--surface-raised);
 }
-.hitl-row.decided:hover { background: var(--surface-2); }
+.hitl-row.decided:hover { background: var(--surface-raised); }
 .hitl-row.decided:focus { outline: none; }
 .hitl-row.decided:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .hitl-row.decided > .pill { align-self: center; }
