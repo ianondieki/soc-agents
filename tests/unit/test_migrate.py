@@ -54,6 +54,8 @@ NEW_TABLES = {
     # schema_version 8 — the additive tables that ride on the same bump as the hitl_tasks rebuild
     "memory_episodes",                                  # §7.11 memory M1 (db/models_memory.py)
     "vendor_scorecards", "vendor_scorecard_lines",      # §7.6 vendor scorecards (db/models_scorecards.py)
+    # schema_version 10 — the support desk (docs/SUPPORT_DESK.md, db/models_support.py)
+    "support_complaints", "support_steps", "support_tool_calls", "support_messages", "support_eval_runs",
 }
 # schema_version 8, the one exception to "additive": hitl_tasks is rebuilt so that incident_id
 # can be NULL. It appears in neither set above — it is a v1 table that is REPLACED, not added —
@@ -63,7 +65,8 @@ HITL_REBUILD_DESTRUCTIVE = [
     "ALTER TABLE hitl_tasks__v8_rebuild RENAME TO hitl_tasks",
 ]
 # schema_version 9 adds no table and no column (see SCHEMA_VERSION's comment in db/migrate.py):
-# the sets above are unchanged, and the v1 path below must show NO scorecard DROP either.
+# the v1 path below must show NO scorecard DROP either. schema_version 10 adds the five support
+# tables above and no column, so the ALTER list below is unchanged by it.
 NEW_INCIDENT_COLUMNS = {
     "restored_source", "restored_by", "vendor_id", "context_json",
     "planned_maintenance", "access_risk", "child_site_ids_json", "assignment_confidence",

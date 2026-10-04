@@ -1,0 +1,366 @@
+# Support desk knowledge base (docs/SUPPORT_DESK.md). Loaded by src/noc_agents/support/kb.py.
+#
+# DEMO CONTENT. Generic product names and generic procedures written for a training system:
+# nothing here states any real operator's policy, tariff, short code or turnaround time. An
+# operator adopting the desk replaces this file with its own approved articles.
+#
+# Each article:
+#   id        stable id the resolver cites (KB-<AREA>-<TOPIC>)
+#   title     what the floor sees
+#   category  one of the desk's categories (network, data_bundles, mpesa, billing,
+#             sim_and_fraud, device_settings, roaming, account, other)
+#   summary   one sentence
+#   keywords  the words customers actually use, English, Kiswahili and Sheng; retrieval
+#             weighs them as heavily as the title
+#   body      the agent-facing article (markdown)
+#   reply     the customer-facing template. Placeholders: {name} (customer name, or
+#             "there"), {ref} (the complaint reference), {msisdn_masked}. Nothing else.
+#   updated_at  ISO date of the last review
+#   escalate  optional escalation reason code: an article the resolver must NEVER answer
+#             from. Retrieval landing on it is itself evidence of that risk, so the desk
+#             escalates with this reason instead (belt and braces behind triage's flags).
+
+version: 1
+articles:
+
+  - id: KB-MPESA-REVERSAL
+    title: M-PESA sent to the wrong number - reversal request
+    category: mpesa
+    summary: How a transfer sent to the wrong number is reversed, and when it needs a person.
+    keywords: [wrong number, sent to the wrong person, reverse, reversal, reverse transaction, nimetuma pesa kwa namba mbaya, nimekosea namba, namba mbaya, rudisha pesa, pesa imeenda kwa mtu mwingine, nimetuma kimakosa, tuma vibaya, wrong recipient, mistaken transfer]
+    updated_at: "2026-09-28"
+    body: |
+      A customer who sent money to the wrong number can ask for a reversal using the
+      10-character transaction code from the confirmation SMS.
+
+      - **Within 24 hours, up to KES 5,000, recipient has not withdrawn:** the desk reverses it
+        automatically and the money returns to the sender's account.
+      - **Older, larger, or already withdrawn:** a person reviews it; the recipient is contacted
+        and the funds are held where the balance allows.
+      - Never ask for the customer's PIN. Never promise a reversal of money already withdrawn.
+    reply: |
+      Hi {name}, we have received your request {ref} to reverse an M-PESA transfer sent to the wrong
+      number. Please keep the 10-character transaction code from your confirmation SMS. If the
+      transfer is recent and the recipient has not withdrawn it, the reversal is processed
+      automatically; otherwise our team reviews it and contacts you. We will never ask for your PIN.
+
+  - id: KB-MPESA-FAILED
+    title: M-PESA transaction delayed, pending or failed
+    category: mpesa
+    summary: What happens when a payment shows as deducted but the recipient has not received it.
+    keywords: [transaction failed, failed transaction, pending, delayed, money deducted not received, pesa haijafika, haijafika, imekwama, paybill, till number, buy goods, lipa na mpesa, sijapokea confirmation, no confirmation message, stuck transaction]
+    updated_at: "2026-09-28"
+    body: |
+      Most delayed transactions complete within a few minutes once the network catches up.
+
+      - A transaction that **failed** after the balance was debited is reversed to the sender
+        automatically, usually within a few hours.
+      - A **pending** paybill or till payment completes or reverses on its own; the customer
+        should not pay twice.
+      - If nothing has changed after 24 hours, the case is raised with the payments team using
+        the transaction code.
+    reply: |
+      Hi {name}, thank you for reporting this ({ref}). When an M-PESA payment is delayed or fails
+      after your balance was debited, it either completes or is reversed to you automatically,
+      usually within a few hours. Please do not pay a second time. If nothing has changed within
+      24 hours, reply with the transaction code and we will chase it with the payments team.
+
+  - id: KB-DATA-BUNDLE-EXPIRED
+    title: Data bundle expired early or was not applied
+    category: data_bundles
+    summary: Checking bundle validity and re-crediting a bundle that expired early or never applied.
+    keywords: [bundle expired, expired early, bundle not applied, bundle not received, data imeisha, bundles zimeisha, bando imeisha, bando imeisha mapema, mbs zimeisha, bundle haijaingia, nimenunua bundle, data finished quickly, data imeliwa, validity, bundle balance]
+    updated_at: "2026-09-27"
+    body: |
+      Check the bundle's purchase time, validity and usage on the account.
+
+      - A bundle that **expired before its validity** or **was paid for but never applied** can
+        be re-credited once every 30 days per line.
+      - Heavy background usage (app updates, video autoplay, cloud backup) is the most common
+        reason a bundle runs out fast; point the customer to the data usage settings.
+      - A second re-credit inside 30 days needs a person.
+    reply: |
+      Hi {name}, sorry about your data bundle ({ref}). A bundle that expired before its validity, or
+      was paid for but never applied, can be re-credited once every 30 days per line; reply with the
+      bundle name and when you bought it and we will check it. To make bundles last longer, switch
+      off automatic app updates and video autoplay on mobile data.
+
+  - id: KB-AIRTIME-DEDUCTED
+    title: Airtime deducted without a service
+    category: billing
+    summary: Airtime that disappeared without a call, SMS, bundle or subscription to show for it.
+    keywords: [airtime deducted, airtime imekatwa, credo imekatwa, salio imekatwa, nimekatwa, money deducted, deducted without reason, airtime disappeared, airtime imepotea, balance reduced, credit deducted, unexplained deduction]
+    updated_at: "2026-09-27"
+    body: |
+      Look at the charges on the account for the time the customer names.
+
+      - A deduction with **no matching service** is refunded; refunds up to KES 500 are applied
+        automatically, larger ones need a person.
+      - A deduction for a **content subscription** is handled under premium SMS (KB-BILLING-PREMIUM-SMS).
+      - Out-of-bundle browsing after a bundle runs out is a valid charge; explain it, do not refund it.
+    reply: |
+      Hi {name}, thank you for raising this ({ref}). Airtime is used by calls, SMS, bundles,
+      subscriptions and browsing after a bundle runs out. A deduction with no matching service is
+      refunded to your airtime balance: reply with the time and the amount and we will check it.
+
+  - id: KB-BILLING-PREMIUM-SMS
+    title: Stopping premium SMS and content subscriptions
+    category: billing
+    summary: How a customer stops unwanted content subscriptions and gets charges reviewed.
+    keywords: [premium sms, premium messages, content subscription, subscription, unsubscribe, stop messages, horoscope sms, jokes sms, betting tips sms, messages za ajabu, sms za ajabu, nimekatwa kila siku, jiondoa, ondoa subscription, stop subscription, daily charges]
+    updated_at: "2026-09-26"
+    body: |
+      Content services must stop when the customer asks.
+
+      - The customer replies **STOP** to the short code that sends the messages, or uses the
+        "My subscriptions" option in the self-service menu to see and cancel every active service.
+      - Charges for a subscription the customer never asked for are refunded (auto up to KES 500).
+      - Blocking all premium content on the line can be requested; it stops future sign-ups too.
+    reply: |
+      Hi {name}, sorry for the unwanted messages ({ref}). To stop a content subscription, reply STOP
+      to the short code that sends them, or open "My subscriptions" in the self-service menu to see
+      and cancel every active service. If you were charged for a service you never subscribed to,
+      tell us and we will review and refund the charges.
+
+  - id: KB-NETWORK-OUTAGE
+    title: No network or outage in my area
+    category: network
+    summary: What to tell a customer who has no network, and how it ties to a live outage ticket.
+    keywords: [no network, network down, outage, no signal, hakuna network, hakuna mtandao, mtandao umepotea, network imepotea, network iko chini, network inapotea, hakuna signal, emergency calls only, sos only, no service, cannot make or receive calls, cant call, network problem in my area, area outage]
+    updated_at: "2026-09-29"
+    body: |
+      First check for an open network incident in the customer's town or region.
+
+      - **Open incident found:** link the complaint to it; the customer is told engineers are
+        already working on it and the reference of the ticket.
+      - **No incident:** restart the phone, check the SIM in another phone, and confirm whether
+        neighbours on the same network are affected; the report is passed to the network team.
+      - Heavy rain can take down microwave links and power at sites; restoration times depend on
+        site access.
+    reply: |
+      Hi {name}, sorry you are without network ({ref}). Please restart your phone and, if you can,
+      check whether others nearby on our network are affected. We have passed your report to our
+      network team and will update you as soon as service in your area is confirmed restored.
+
+  - id: KB-NETWORK-SLOW-DATA
+    title: Slow mobile data
+    category: network
+    summary: Troubleshooting slow internet on mobile data.
+    keywords: [slow data, slow internet, internet iko slow, data ni slow, speed iko chini, inaload polepole, buffering, pages not loading, low speed, internet inazunguka, slow browsing, cannot browse, cant browse, siwezi browse, 4g slow, poor internet]
+    updated_at: "2026-09-25"
+    body: |
+      - Confirm the phone is on 4G/5G (not 2G) and that "data saver" or a VPN is not throttling it.
+      - Restart the phone; check the internet (APN) settings (KB-DEVICE-APN).
+      - Congestion at busy hours slows a cell; persistent slowness at one location is passed to
+        network planning with the location.
+    reply: |
+      Hi {name}, sorry your internet is slow ({ref}). Please check that your phone is set to 4G or 5G,
+      switch off any data saver or VPN, and restart the phone. If it stays slow in the same place,
+      reply with the area and the time of day and we will pass it to our network team.
+
+  - id: KB-NETWORK-CALL-DROPS
+    title: Calls dropping
+    category: network
+    summary: Troubleshooting dropped calls.
+    keywords: [call drops, calls dropping, dropped calls, calls zinakatika, simu inakatika, call inakatika, calls cut, call drop, kukatika kwa simu, calls ending abruptly, poor call quality]
+    updated_at: "2026-09-25"
+    body: |
+      - Ask where and when the drops happen: one place points at the cell, everywhere points at
+        the handset or SIM.
+      - Enable VoLTE / 4G calling where the phone supports it; restart the phone.
+      - A worn SIM causes drops; offer a free SIM replacement (KB-SIM-PUK-REPLACEMENT).
+    reply: |
+      Hi {name}, sorry your calls are dropping ({ref}). Please restart your phone and, if it supports
+      it, switch on 4G calling (VoLTE). If the drops happen in one place, reply with the area so our
+      network team can check the site; if they happen everywhere, a SIM replacement often fixes it.
+
+  - id: KB-DEVICE-APN
+    title: Internet and MMS (APN) settings on a phone
+    category: device_settings
+    summary: Sending the configuration SMS and setting the APN by hand.
+    keywords: [apn, internet settings, mms settings, configure internet, configuration settings, new phone no internet, simu mpya haina internet, settings za internet, data not working on new phone, access point name, mobile data not connecting, setup internet]
+    updated_at: "2026-09-24"
+    body: |
+      - The desk can send the **configuration SMS** that sets internet (APN) and MMS on most phones.
+      - Manual setting: Settings > Mobile network > Access Point Names; the APN name is in the
+        operator's device guide.
+      - Mobile data must be switched on and the line must have a bundle or airtime.
+    reply: |
+      Hi {name}, thank you for getting in touch ({ref}). Most phones set up internet and MMS from a
+      configuration SMS: open it, tap install or save, then restart the phone and switch on mobile
+      data. If you did not receive one, reply with your phone model and we will send the settings.
+
+  - id: KB-SIM-SWAP-FRAUD
+    title: SIM swap and account fraud (escalate)
+    category: sim_and_fraud
+    summary: Suspected SIM swap or account takeover always goes to the fraud team.
+    escalate: fraud_or_sim_swap
+    keywords: [sim swap, swapped my sim, sim imeswapiwa, laini imeswapiwa, laini yangu imebadilishwa, someone is using my mpesa, pin changed, account hacked, fraud, conman, mlaghai, unauthorised withdrawal, money stolen from mpesa]
+    updated_at: "2026-09-29"
+    body: |
+      **Always escalate to the fraud team; the desk never resolves these automatically.**
+
+      - Advise the customer to visit a shop with their ID if their line has stopped working.
+      - Never ask for the PIN; advise them to change it from a trusted phone as soon as the line
+        is back.
+      - Record the time the line stopped working and any unknown transactions.
+    reply: |
+      Hi {name}, thank you for alerting us ({ref}). Your report has gone straight to our fraud team,
+      who will contact you. Do not share your PIN or any one-time code with anyone, including people
+      claiming to be from us. If your line has stopped working, visit one of our shops with your ID.
+
+  - id: KB-LOST-PHONE-BLOCK
+    title: Lost or stolen phone - blocking the line
+    category: sim_and_fraud
+    summary: Blocking a line after a phone is lost or stolen, and getting the number back.
+    keywords: [lost phone, stolen phone, phone stolen, simu imeibiwa, nimepoteza simu, nimeibiwa simu, block my line, funga laini, block sim, phone snatched, simu imepotea, report stolen phone]
+    updated_at: "2026-09-26"
+    body: |
+      - The line is blocked after the customer confirms their identity; a blocked line cannot make
+        calls or M-PESA transactions.
+      - The number is restored on a replacement SIM at a shop with the customer's ID.
+      - A police abstract is needed for an insurance claim, not for blocking the line.
+    reply: |
+      Hi {name}, sorry about your phone ({ref}). To protect your money and your number, call customer
+      care from another phone or visit one of our shops with your ID to block the line. You will get
+      the same number back on a replacement SIM. Do not share your PIN with anyone.
+
+  - id: KB-SIM-PUK-REPLACEMENT
+    title: PUK code and SIM replacement
+    category: sim_and_fraud
+    summary: Unlocking a PUK-locked SIM and replacing a damaged one.
+    keywords: [puk, puk code, sim locked, sim imelock, laini imejifunga, sim imejifunga, pin blocked sim, replace sim, sim replacement, damaged sim, sim card not detected, laini imeharibika, no sim card, insert sim]
+    updated_at: "2026-09-24"
+    body: |
+      - A SIM locks after three wrong SIM PINs; the PUK is given after the customer confirms their
+        identity. Ten wrong PUKs destroy the SIM and it must be replaced.
+      - A replacement SIM keeps the number and M-PESA account; it needs the customer's ID at a shop.
+    reply: |
+      Hi {name}, we can help with your SIM ({ref}). If it asks for a PUK, call customer care from
+      another phone and you will be given the code after a few identity questions. Please do not
+      guess it: too many wrong attempts destroy the SIM. A damaged SIM is replaced at any of our
+      shops with your ID, and you keep your number.
+
+  - id: KB-ROAMING
+    title: Roaming activation and charges
+    category: roaming
+    summary: Switching on roaming before travel and understanding roaming charges.
+    keywords: [roaming, international roaming, travelling abroad, nikiwa nje ya nchi, safari nje, roaming charges, roaming bundle, activate roaming, uganda, tanzania, rwanda, dubai, abroad no network, roaming haifanyi]
+    updated_at: "2026-09-23"
+    body: |
+      - Roaming is switched on from the self-service menu before travel; data roaming must also be
+        on in the phone settings.
+      - Roaming bundles are cheaper than pay-as-you-go roaming; incoming calls abroad are charged.
+      - Charges appear on the account up to 48 hours after use because partner networks bill late.
+    reply: |
+      Hi {name}, thank you for getting in touch ({ref}). Switch on roaming from the self-service menu
+      before you travel and turn on data roaming in your phone settings. A roaming bundle costs less
+      than pay-as-you-go, and roaming charges can appear up to 48 hours after use.
+
+  - id: KB-POSTPAID-BILL
+    title: Postpaid bill dispute
+    category: billing
+    summary: Explaining a postpaid bill and raising a dispute on a specific charge.
+    keywords: [postpaid bill, my bill, bill is too high, bili, bili iko juu, invoice, statement, bill dispute, dispute charge, monthly bill, overcharged on bill, itemised bill]
+    updated_at: "2026-09-22"
+    body: |
+      - Ask for the bill period and the line item; most high bills are out-of-bundle usage or
+        roaming that arrived late.
+      - An itemised bill is sent on request.
+      - A disputed line item is suspended from collection while it is reviewed.
+    reply: |
+      Hi {name}, thank you for querying your bill ({ref}). Reply with the bill period and the charge you
+      dispute, and ask for an itemised statement if you would like one; a disputed charge is put on
+      hold while we review it, and we will explain or correct it.
+
+  - id: KB-BILLING-DOUBLE-CHARGE
+    title: Charged twice - double charge refund
+    category: billing
+    summary: Refunding a purchase or charge that was taken twice.
+    keywords: [charged twice, double charge, double charged, deducted twice, nimekatwa mara mbili, mara mbili, paid twice for bundle, duplicate charge, charged two times, double deduction]
+    updated_at: "2026-09-27"
+    body: |
+      - Match the two charges on the account (same amount, same item, minutes apart).
+      - The duplicate is refunded; up to KES 500 automatically, larger amounts need a person.
+    reply: |
+      Hi {name}, sorry you were charged twice ({ref}). When a purchase is charged twice, the duplicate
+      is refunded to your balance. Reply with the time and the amount of the two charges if you have
+      not received a refund confirmation SMS, and we will check it.
+
+  - id: KB-AIRTIME-ADVANCE
+    title: Airtime advance repayment
+    category: billing
+    summary: How borrowed airtime is repaid on the next top-up.
+    keywords: [airtime advance, borrowed airtime, okoa, okoa jahazi, deni ya airtime, nilikopa credo, credo ya mkopo, loan airtime, airtime loan repayment, top up deducted for loan, airtime debt]
+    updated_at: "2026-09-22"
+    body: |
+      - Borrowed airtime, plus its service fee, is recovered automatically from the next top-up.
+      - A top-up smaller than the debt is taken in full and the rest is recovered next time.
+      - The outstanding amount is shown in the self-service menu.
+    reply: |
+      Hi {name}, thank you for asking ({ref}). Airtime you borrowed, plus its service fee, is recovered
+      automatically from your next top-up; if the top-up is smaller than what you owe, the rest is
+      recovered on the following one. You can see the outstanding amount in the self-service menu.
+
+  - id: KB-HOME-FIBRE
+    title: Home fibre internet down
+    category: network
+    summary: Troubleshooting a home fibre connection before booking a technician.
+    keywords: [home fibre, fibre, fiber, home internet, wifi ya nyumbani, router, router red light, los light, fibre down, wifi haifanyi, home wifi not working, no internet at home]
+    updated_at: "2026-09-24"
+    body: |
+      - A red **LOS** light on the router means the fibre signal is not reaching the house: a
+        technician visit is booked.
+      - Otherwise restart the router (off for 30 seconds) and check the cables.
+      - Check for an area outage before booking a visit.
+    reply: |
+      Hi {name}, sorry your home internet is down ({ref}). Please switch the router off for 30 seconds
+      and back on, and check the cables. If a red LOS light stays on, reply and we will book a
+      technician visit.
+
+  - id: KB-REGULATOR-COMPLAINT
+    title: How to escalate a complaint to the regulator
+    category: other
+    summary: The customer's right to escalate an unresolved complaint, and how.
+    keywords: [regulator, escalate my complaint, escalate complaint, not satisfied, sijaridhika, complaint not resolved, where else can i complain, consumer rights, complain further, unresolved complaint, appeal]
+    updated_at: "2026-09-21"
+    body: |
+      - Every complaint gets a reference and a final response.
+      - A customer who is not satisfied with the final response may escalate to the communications
+        regulator's consumer complaints office, quoting the reference.
+      - Data protection complaints go to the data protection regulator.
+    reply: |
+      Hi {name}, thank you for telling us ({ref}). Every complaint receives a final response from us.
+      If you are not satisfied with it, you may escalate to the communications regulator's consumer
+      complaints office, quoting this reference. We would like the chance to put it right first:
+      reply and a supervisor will review your case.
+
+  - id: KB-ACCOUNT-REGISTRATION
+    title: Line registration and account ownership
+    category: account
+    summary: Registering a line, correcting registration details and transferring ownership.
+    keywords: [register sim, registration, register my line, laini haijasajiliwa, sajili laini, id number, line registered in another name, owner of the line, transfer ownership, change owner, update details, wrong name on line]
+    updated_at: "2026-09-21"
+    body: |
+      - Lines are registered against the holder's ID at a shop or authorised agent.
+      - Ownership moves only with both the current and the new holder present, with their IDs.
+      - Wrong details are corrected at a shop; nothing is changed over the phone.
+    reply: |
+      Hi {name}, thank you for getting in touch ({ref}). Line registration and changes of ownership are
+      done in person at any of our shops or authorised agents with your ID; for a transfer, the
+      current and the new owner both attend with their IDs.
+
+  - id: KB-PORTING
+    title: Moving my number to or from another network (porting)
+    category: account
+    summary: Keeping a number when switching networks.
+    keywords: [porting, port my number, mnp, keep my number, switch network, change network, hamia mtandao, hamia mtandao mwingine, kuhamia mtandao, nibaki na namba yangu, hama network, move number to another network, transfer number]
+    updated_at: "2026-09-20"
+    body: |
+      - Porting is requested at the network the customer is joining, with their ID.
+      - The number moves within a few working days; airtime and bundles do not move.
+      - The mobile money account is separate and is closed or moved by its own process.
+    reply: |
+      Hi {name}, thank you for asking ({ref}). To keep your number when you change networks, apply at
+      the network you are joining with your ID. The move takes a few working days; airtime and bundles
+      do not transfer, so use them up first.

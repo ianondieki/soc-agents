@@ -1,0 +1,105 @@
+# Support desk policy (docs/SUPPORT_DESK.md). Loaded and validated by
+# src/noc_agents/support/policy.py; a key this file misses takes the default written there,
+# and a value of the wrong type or an unknown escalation reason_code fails the load loudly.
+#
+# Everything a person might want to argue about lives here, not in code: the limits the
+# action agent may act within on its own, the thresholds below which the desk refuses to
+# answer, the escalation order, and the gates the eval suite must pass. The CONDITIONS of
+# the escalation rules are code (support/escalation.py), keyed by reason_code; this file
+# owns their ORDER and the plain sentence each one shows to the customer and the floor.
+
+version: 1
+
+# --- resolver ---------------------------------------------------------------------------
+# BM25 score the best knowledge-base article must reach before the resolver may answer.
+# Below it the desk escalates with `not_grounded` instead of guessing. Calibrated on the
+# starter golden set and a probe set: off-topic questions that share a word or two with an
+# article ("become an M-PESA agent", "hire purchase") score 2.8-3.6; a one-word exact match
+# ("PUK") scores about 4.5 (BM25 caps a single term near idf x 2.5); a real match on the
+# problem scores 7 and up ("no network" 7, "calls dropping" 9, most articles 13-30).
+grounding_threshold: 4.0
+# An article from a category OTHER than the one triage chose must score this many times the
+# threshold before the resolver may answer from it: two agents agreeing is the normal bar,
+# overwhelming lexical evidence the exception. Stops "mtandao mwingine" (another network)
+# being answered from the M-PESA reversal article because both mention "another".
+cross_category_factor: 2.0
+# Ranking prior for articles in the category triage chose (multiplies the BM25 score).
+# It only reorders; grounding is always judged on the raw score.
+category_boost: 0.25
+
+# --- triage -----------------------------------------------------------------------------
+# Triage confidence below this escalates with `low_confidence`.
+low_confidence_threshold: 0.55
+# With LLM_ENABLED, a confidence below this (and at least the top two categories scored)
+# may be put to the model as a tie-break. Never in tests (tests/conftest.py).
+llm_tiebreak_below: 0.55
+
+# --- action agent: the auto limits (contract "Tools") -----------------------------------
+refund_auto_limit_kes: 500
+reversal_auto_limit_kes: 5000
+reversal_window_hours: 24
+recredit_cooldown_days: 30
+
+# --- intake -----------------------------------------------------------------------------
+# An identical complaint (same MSISDN, same normalised text) inside this window returns the
+# complaint already on file instead of opening a second one.
+dedupe_window_seconds: 120
+# Public form: at most `max_requests` complaints per MSISDN per `window_seconds`.
+rate_limit:
+  max_requests: 5
+  window_seconds: 600
+
+# --- escalation inputs ------------------------------------------------------------------
+repeat:
+  window_days: 7
+  nth: 3            # the third complaint in the window, same MSISDN, same category
+high_value_tiers: [platinum, gold]
+
+# Hours until a reply is due, by triage urgency.
+sla_hours:
+  critical: 1
+  high: 4
+  normal: 24
+  low: 72
+
+# --- escalation order: first matching rule wins -----------------------------------------
+# `reason` is shown to the floor and, inside the holding reply, to the customer: plain,
+# honest, no blame. `advice`, where present, follows it in the holding reply. `when` is
+# documentation only (the predicate is in escalation.py).
+escalation:
+  - reason_code: fraud_or_sim_swap
+    when: SIM swap, account takeover, someone else using the M-PESA account, an unknown PIN change
+    reason: it may involve fraud or unauthorised access to your line, so our fraud team handles it personally
+    advice: Do not share your PIN or any one-time code with anyone, including callers who say they are from us.
+  - reason_code: legal_or_regulator
+    when: a lawyer, a court, the Communications Authority (CA, CAK), the ODPC, a formal demand
+    reason: it raises a legal or regulatory matter, which a senior member of staff must answer
+  - reason_code: threat_or_safety
+    when: threats, self-harm, harassment
+    reason: your safety matters to us and a person should speak with you directly
+    advice: If you or someone else is in immediate danger, call the emergency services on 999 or 112 now.
+  - reason_code: over_refund_limit
+    when: a refund above the auto limit, or a reversal above the limit or older than the window
+    reason: the amount or age of the transaction is beyond what can be approved automatically
+  - reason_code: repeat_unresolved
+    when: the same customer's third complaint in 7 days on the same category
+    reason: this is not the first time you have raised it this week, so a person will take ownership
+  - reason_code: angry_high_value
+    when: angry sentiment on a high-value account
+    reason: we want a senior member of the team to look at this personally
+  - reason_code: low_confidence
+    when: triage confidence below the threshold
+    reason: we want to be sure we understand your complaint correctly before we act on it
+  - reason_code: not_grounded
+    when: the best knowledge-base article scores below the grounding threshold
+    reason: we could not find a verified answer and would rather check than guess
+  - reason_code: tool_failed
+    when: a tool call failed or was refused by policy and no safe alternative exists
+    reason: we could not complete the fix automatically, so a person will finish it
+
+# --- eval gates (support/evals.py) ------------------------------------------------------
+eval_gates:
+  - {metric: resolution_rate, op: ">=", threshold: 0.80}
+  - {metric: wrong_escalation_rate, op: "<=", threshold: 0.10}
+  - {metric: safety_missed_escalation_rate, op: "==", threshold: 0.0}
+  - {metric: triage_accuracy, op: ">=", threshold: 0.85}

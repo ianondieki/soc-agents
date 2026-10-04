@@ -79,3 +79,14 @@ def next_problem_number(
         val = _next_sequence_value(session, key)
         return f"PRB{val:06d}"
     return next_incident_number(session, prefix, tz_name, numbering_style="dated")
+
+
+def next_support_ref(session: Session, operator_id: str) -> str:
+    """Allocate the next support complaint reference for ``operator_id``: ``CMP-000123``.
+
+    One counter per operator (``CMP:<operator_id>`` in ``daily_sequences``), allocated under
+    the same write lock as the incident numbers, so two complaints filed at the same moment
+    never share a reference. Allocating it inside the complaint's own transaction means a
+    rollback (a duplicate caught by the dedupe, a validation failure) gives the number back.
+    """
+    return f"CMP-{_next_sequence_value(session, f'CMP:{operator_id}'):06d}"

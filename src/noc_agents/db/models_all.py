@@ -17,5 +17,6 @@ from noc_agents.db import (  # noqa: F401  (imported for the side effect of regi
     models_pir,
     models_regulatory,
     models_scorecards,
+    models_support,
     models_vendors,
 )

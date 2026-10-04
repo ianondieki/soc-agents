@@ -230,7 +230,10 @@ from noc_agents.db.models import Base, HitlTaskRow, IncidentRow, SchemaVersionRo
 #     can reach an existing table's constraints. _refresh_check_constraints recreates the table
 #     from the model when -- and only when -- it is EMPTY; a populated one is left alone and
 #     warned about. No new table or column: the bump exists so the step runs once, with a backup.
-SCHEMA_VERSION = 9  # bump per release that adds tables/columns
+# 10 = the support desk (docs/SUPPORT_DESK.md, db/models_support.py): support_complaints,
+#     support_steps, support_tool_calls, support_messages, support_eval_runs. New tables only,
+#     created by the ordinary additive pass behind the usual pre-migration backup.
+SCHEMA_VERSION = 10  # bump per release that adds tables/columns
 
 # Why the bump is not optional when a release adds COLUMNS, even though new TABLES seem to
 # appear without one: init_db() calls Base.metadata.create_all() after migrate_additive(),

@@ -1,0 +1,177 @@
+# Demo customer accounts for the support desk's action agent (docs/SUPPORT_DESK.md "Tools").
+# Loaded and validated by src/noc_agents/support/accounts.py.
+#
+# FICTIONAL. The numbers sit in the synthetic +254 700 000 xxx / +254 110 000 xxx blocks, the
+# names are invented, and every balance, transaction and bundle is made up. The tools READ this
+# file and never write it: the effect of a refund or a reversal is recorded on the tool call
+# (support_tool_calls.result_json), and the "already refunded / already reversed / re-credited
+# in the last 30 days" checks read those rows back. Times are relative ("hours_ago",
+# "days_ago") so the fixture never goes stale.
+#
+# M-PESA codes are 10 upper-case letters and digits, the shape customers copy from the
+# confirmation SMS.
+
+version: 1
+accounts:
+
+  - msisdn: "+254700000412"
+    name: Wanjiku Kamau
+    account_ref: ACC-100412
+    plan: prepaid
+    tier: silver
+    airtime_balance_kes: 120
+    mpesa_balance_kes: 3400
+    device: Tecno Spark 20
+    transactions:
+      - {code: SJK4H7QW2L, type: sent, amount_kes: 1500, counterparty: Brian Otieno, counterparty_msisdn: "+254700009908", hours_ago: 3, status: completed, recipient_withdrawn: false}
+      - {code: SJK2P9LM4R, type: paybill, amount_kes: 2300, counterparty: City Water Services, hours_ago: 26, status: completed}
+
+  - msisdn: "+254700000118"
+    name: Otieno Odhiambo
+    account_ref: ACC-100118
+    plan: prepaid
+    tier: gold
+    airtime_balance_kes: 450
+    mpesa_balance_kes: 21000
+    device: Samsung Galaxy A35
+    transactions:
+      - {code: SHR2M9PL4Q, type: sent, amount_kes: 12000, counterparty: Peter Mwangi, counterparty_msisdn: "+254700009377", hours_ago: 2, status: completed, recipient_withdrawn: false}
+
+  - msisdn: "+254700000233"
+    name: Achieng Atieno
+    account_ref: ACC-100233
+    plan: prepaid
+    tier: bronze
+    airtime_balance_kes: 35
+    mpesa_balance_kes: 600
+    device: Itel A70
+    transactions:
+      - {code: SGT7KD2PQ1, type: sent, amount_kes: 800, counterparty: Mary Njeri, counterparty_msisdn: "+254700009150", hours_ago: 40, status: completed, recipient_withdrawn: false}
+
+  - msisdn: "+254700000345"
+    name: Kiprotich Langat
+    account_ref: ACC-100345
+    plan: prepaid
+    tier: silver
+    airtime_balance_kes: 80
+    mpesa_balance_kes: 1250
+    device: Infinix Hot 40
+    bundles:
+      - {id: BND-345-01, name: Weekly 2GB, size_mb: 2048, price_kes: 250, bought_hours_ago: 30, validity_hours: 168, used_mb: 1100, status: expired_early}
+
+  - msisdn: "+254700000456"
+    name: Fatuma Hassan
+    account_ref: ACC-100456
+    plan: prepaid
+    tier: bronze
+    airtime_balance_kes: 20
+    mpesa_balance_kes: 300
+    device: Tecno Pop 8
+    last_recredit_days_ago: 10
+    bundles:
+      - {id: BND-456-01, name: Daily 1GB, size_mb: 1024, price_kes: 99, bought_hours_ago: 2, validity_hours: 24, used_mb: 0, status: not_applied}
+
+  - msisdn: "+254700000567"
+    name: Mwangi Njoroge
+    account_ref: ACC-100567
+    plan: prepaid
+    tier: silver
+    airtime_balance_kes: 15
+    mpesa_balance_kes: 2100
+    device: Samsung Galaxy A15
+    charges:
+      - {id: CHG-567-01, kind: airtime_deduction, description: Unmatched airtime deduction, amount_kes: 50, hours_ago: 5, refundable: true}
+
+  - msisdn: "+254700000678"
+    name: Njeri Wambui
+    account_ref: ACC-100678
+    plan: postpaid
+    tier: gold
+    airtime_balance_kes: 0
+    mpesa_balance_kes: 8900
+    device: iPhone 13
+    charges:
+      - {id: CHG-678-01, kind: bundle_purchase, description: Weekly 1.5GB bundle, amount_kes: 99, hours_ago: 1, refundable: false}
+      - {id: CHG-678-02, kind: duplicate, description: Weekly 1.5GB bundle (duplicate), amount_kes: 99, hours_ago: 1, refundable: true}
+
+  - msisdn: "+254700000789"
+    name: Omondi Ouma
+    account_ref: ACC-100789
+    plan: prepaid
+    tier: silver
+    airtime_balance_kes: 60
+    mpesa_balance_kes: 950
+    device: Oppo A18
+    charges:
+      - {id: CHG-789-01, kind: premium_sms, description: Daily betting tips subscription (30 days), amount_kes: 1500, hours_ago: 6, refundable: true}
+
+  - msisdn: "+254700000890"
+    name: Chebet Jepkosgei
+    account_ref: ACC-100890
+    plan: business_postpaid
+    tier: platinum
+    airtime_balance_kes: 0
+    mpesa_balance_kes: 145000
+    device: Samsung Galaxy S24
+    bundles:
+      - {id: BND-890-01, name: Business 50GB, size_mb: 51200, price_kes: 3000, bought_hours_ago: 72, validity_hours: 720, used_mb: 51200, status: expired_early}
+
+  - msisdn: "+254700000901"
+    name: Halima Abdi
+    account_ref: ACC-100901
+    plan: prepaid
+    tier: silver
+    airtime_balance_kes: 200
+    mpesa_balance_kes: 4300
+    device: Xiaomi Redmi 13C
+    complaint_history:
+      - {category: network, days_ago: 5, outcome: auto_resolved}
+      - {category: network, days_ago: 2, outcome: auto_resolved}
+
+  - msisdn: "+254110000112"
+    name: Juma Bakari
+    account_ref: ACC-110112
+    plan: prepaid
+    tier: bronze
+    airtime_balance_kes: 50
+    mpesa_balance_kes: 700
+    device: Samsung Galaxy A05
+
+  - msisdn: "+254700001023"
+    name: Wafula Barasa
+    account_ref: ACC-101023
+    plan: prepaid
+    tier: silver
+    airtime_balance_kes: 75
+    mpesa_balance_kes: 5200
+    device: Tecno Camon 30
+
+  - msisdn: "+254700001134"
+    name: Nyambura Gathoni
+    account_ref: ACC-101134
+    plan: postpaid
+    tier: gold
+    airtime_balance_kes: 0
+    mpesa_balance_kes: 32000
+    device: Google Pixel 8a
+
+  - msisdn: "+254700001245"
+    name: Ochieng Okoth
+    account_ref: ACC-101245
+    plan: prepaid
+    tier: bronze
+    airtime_balance_kes: 10
+    mpesa_balance_kes: 150
+    device: Itel S24
+    transactions:
+      - {code: SKL3N8RT5V, type: sent, amount_kes: 2000, counterparty: John Kamau, counterparty_msisdn: "+254700009612", hours_ago: 1, status: completed, recipient_withdrawn: true}
+
+  - msisdn: "+254700001356"
+    name: Kerubo Moraa
+    account_ref: ACC-101356
+    plan: prepaid
+    tier: silver
+    airtime_balance_kes: 5
+    mpesa_balance_kes: 1800
+    device: Nokia G42
+    airtime_advance_outstanding_kes: 50

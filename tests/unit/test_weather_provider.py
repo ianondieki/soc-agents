@@ -559,8 +559,11 @@ def test_external_signals_table_shape_and_schema_version(tmp_db):
     # can reach an existing table's constraints; the bump makes _refresh_check_constraints run
     # once, behind a backup -- recreating an EMPTY table from the model, warning about a
     # populated one (db/migrate.py "THE SECOND EXCEPTION", tests/unit/test_migrate_checks.py).
+    # It fired again on 9 -> 10: the support desk's five new tables (db/models_support.py) --
+    # additive CREATE TABLE only, no column on an existing table, no rebuild; reviewed against
+    # test_migrate.py's NEW_TABLES, literal moved.
     # Keep the canary; move it deliberately, with the reason recorded, every time.
-    assert session.execute(text("SELECT MAX(version) FROM schema_version")).scalar() == SCHEMA_VERSION == 9
+    assert session.execute(text("SELECT MAX(version) FROM schema_version")).scalar() == SCHEMA_VERSION == 10
 
     now = datetime(2026, 9, 17, 11, 0)
     common = dict(operator_id=OPERATOR, source=OPEN_METEO, source_url="mock://", region_code="NBI_W", fetched_at=now, valid_until=now, payload_json="{}", external_id="NBI_W:2026-09-17T11:00Z")
