@@ -657,7 +657,7 @@ export default function App() {
                   />
                 }
               />
-              <Route path="/support" element={<SupportDesk session={session} />} />
+              <Route path="/support" element={<SupportDesk session={session} tick={revisions.support + manualTick} />} />
               <Route
                 path="/showcase"
                 element={<Showcase profile={profile} metrics={metrics} runsRev={revisions.runs + manualTick} />}

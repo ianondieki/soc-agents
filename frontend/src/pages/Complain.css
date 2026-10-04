@@ -1,0 +1,187 @@
+/* The public complaint form at /complain. Owned by pages/Complain.tsx; scoped under .cp and built
+   from the Shift light tokens only. A standalone page outside the console shell: its own slim
+   header, one short form on the canvas, then the result. The one motion is the result's steps
+   appearing one at a time; reduced motion and quiet mode show them at once. */
+
+.cp {
+  --cp-max: 640px;
+  --cp-gutter: 24px;
+  display: flex;
+  flex-direction: column;
+  min-height: 100dvh;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: var(--fs-base);
+  line-height: 1.5;
+}
+@media (max-width: 600px) {
+  .cp { --cp-gutter: 16px; }
+}
+.cp h1, .cp h2, .cp p { margin: 0; }
+.cp h1:focus { outline: none; }
+.cp-wrap { width: 100%; max-width: calc(var(--cp-max) + 2 * var(--cp-gutter)); margin: 0 auto; padding: 0 var(--cp-gutter); }
+.cp-mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
+/* ------------------------------------------------------------------ header */
+.cp-top { position: sticky; top: 0; z-index: 20; background: var(--bg); border-bottom: 1px solid var(--line); }
+.cp-top > .cp-wrap { display: flex; align-items: center; justify-content: space-between; gap: var(--s4); height: 56px; }
+.cp-brand { display: inline-flex; align-items: center; gap: 10px; color: var(--text-strong); font-size: var(--fs-base); font-weight: 600; letter-spacing: -0.01em; white-space: nowrap; }
+.cp-brand:hover { text-decoration: none; }
+.cp-top-actions { display: flex; align-items: center; gap: var(--s2); }
+.cp-quiet-link { padding: 6px 8px; border-radius: var(--r-sm); color: var(--muted); font-size: var(--fs-sm); font-weight: 500; }
+.cp-quiet-link:hover { color: var(--text-strong); text-decoration: none; background: var(--surface-raised); }
+.cp-icon-btn {
+  display: inline-grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background-color 160ms var(--ease), color 160ms var(--ease);
+}
+.cp-icon-btn:hover { background: var(--surface-raised); color: var(--text-strong); }
+
+/* -------------------------------------------------------------------- main */
+.cp-main { flex: 1 1 auto; padding: var(--s7) 0 var(--s7); }
+.cp-main:focus { outline: none; }
+.cp h1 { max-width: 20ch; color: var(--text-strong); font-size: var(--fs-2xl); font-weight: 700; letter-spacing: -0.02em; line-height: 1.15; text-wrap: balance; }
+.cp-lead { max-width: 56ch; margin-top: var(--s3); color: var(--muted); font-size: var(--fs-base); line-height: 1.5; text-wrap: pretty; }
+.cp h2 { color: var(--text-strong); font-size: var(--fs-lg); font-weight: 600; letter-spacing: -0.01em; line-height: 1.3; }
+
+/* -------------------------------------------------------------------- form */
+.cp-form { display: flex; flex-direction: column; }
+.cp-form > .cp-lead { margin-bottom: var(--s6); }
+.cp-field { display: flex; flex-direction: column; gap: var(--s2); max-width: 36rem; }
+.cp-field + .cp-field { margin-top: var(--s5); }
+.cp-field label, .cp-label-row label { color: var(--text-strong); font-size: var(--fs-md); font-weight: 600; line-height: 1.4; }
+.cp-label-row { display: flex; align-items: baseline; justify-content: space-between; gap: var(--s3); }
+.cp-count { color: var(--muted-dim); font-size: var(--fs-sm); white-space: nowrap; }
+.cp-count.over { color: var(--danger); font-weight: 600; }
+.cp-field input, .cp-field textarea { width: 100%; min-height: 44px; padding: 10px 12px; font-size: var(--fs-base); }
+.cp-field textarea { min-height: 7.5rem; line-height: 1.5; }
+.cp-field input[aria-invalid="true"], .cp-field textarea[aria-invalid="true"] { border-color: var(--danger); }
+.cp-hint { color: var(--muted); font-size: var(--fs-sm); line-height: 1.45; }
+.cp-error { color: var(--danger-text); font-size: var(--fs-sm); font-weight: 500; line-height: 1.45; }
+.cp-alert {
+  margin-bottom: var(--s5);
+  padding: var(--s3) var(--s4);
+  border: 1px solid var(--danger-line);
+  border-radius: var(--r-md);
+  background: var(--danger-soft);
+  color: var(--danger-text);
+  font-size: var(--fs-md);
+  line-height: 1.5;
+}
+
+/* Example prompts: the customer's own kinds of problem, a tap fills the box. */
+.cp-examples { margin-top: var(--s2); }
+.cp-examples-label { display: block; margin-bottom: var(--s2); color: var(--muted); font-size: var(--fs-sm); }
+.cp-chips { display: flex; flex-wrap: wrap; gap: var(--s2); }
+.cp-chip {
+  min-height: 32px;
+  padding: 4px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  font: 500 var(--fs-sm) / 1.3 var(--font);
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 160ms var(--ease), border-color 160ms var(--ease), color 160ms var(--ease);
+}
+.cp-chip:hover { border-color: var(--accent); background: var(--surface-raised); color: var(--text-strong); }
+.cp-chip:active { background: var(--surface-sunk); }
+
+.cp-submit { display: flex; flex-direction: column; align-items: flex-start; gap: var(--s3); margin-top: var(--s6); max-width: 36rem; }
+.cp-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 0 20px;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-strong);
+  font: 600 15px / 1 var(--font);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 160ms var(--ease), border-color 160ms var(--ease), color 160ms var(--ease);
+}
+.cp-btn:hover { text-decoration: none; }
+.cp-btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.cp-btn.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+.cp-btn.secondary { border-color: var(--line-strong); background: var(--surface); }
+.cp-btn.secondary:hover { background: var(--surface-raised); }
+.cp-btn:disabled { opacity: 0.6; cursor: progress; }
+
+/* ------------------------------------------------------------------ result */
+.cp-result { display: flex; flex-direction: column; }
+.cp-ref { display: grid; gap: var(--s1); margin-top: var(--s6); padding: var(--s4) 0 var(--s5); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.cp-ref-label { color: var(--muted); font-size: var(--fs-sm); }
+.cp-ref-num { color: var(--text-strong); font-size: clamp(2rem, 7vw, 2.75rem); font-weight: 600; letter-spacing: 0.01em; line-height: 1.1; }
+
+/* The sequence: a dot and a line down the left, one step per beat. */
+.cp-what { margin-top: var(--s6); }
+.cp-steps { margin: var(--s4) 0 0; padding: 0; list-style: none; }
+.cp-step {
+  position: relative;
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  column-gap: var(--s3);
+  padding-bottom: var(--s4);
+  animation: cp-step-in 420ms var(--ease) both;
+}
+.cp-step::before { content: ""; position: absolute; left: 11px; top: 22px; bottom: 0; width: 2px; background: var(--line); }
+.cp-step:last-child::before { display: none; }
+.cp-step-dot { grid-row: 1 / span 2; width: 24px; height: 24px; margin-top: 1px; border: 1px solid var(--line-strong); border-radius: 50%; background: var(--surface); }
+.cp-step-dot::after { content: ""; position: absolute; left: 8px; top: 9px; width: 8px; height: 8px; border-radius: 50%; background: var(--text-strong); }
+.cp-step.hitl .cp-step-dot { border-color: var(--hitl-line); background: var(--hitl-soft); }
+.cp-step.hitl .cp-step-dot::after { background: var(--hitl); }
+.cp-step.warn .cp-step-dot::after { background: var(--warn); }
+.cp-step-head { color: var(--text-strong); font-size: var(--fs-base); font-weight: 600; line-height: 1.4; padding-top: 2px; }
+.cp-step.hitl .cp-step-head { color: var(--hitl-text); }
+.cp-step-line { grid-column: 2; max-width: 56ch; margin-top: 2px; color: var(--muted); font-size: var(--fs-md); line-height: 1.5; }
+@keyframes cp-step-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+
+.cp-reply { margin-top: var(--s4); animation: cp-step-in 420ms var(--ease) both; }
+.cp-reply-body {
+  margin: var(--s3) 0;
+  max-width: 60ch;
+  padding: var(--s4);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  color: var(--text);
+  font-size: var(--fs-base);
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.cp-result-actions { display: flex; flex-wrap: wrap; gap: var(--s3); margin-top: var(--s6); animation: cp-step-in 420ms var(--ease) both; }
+
+/* Motion off: everything is simply there. */
+.cp-result.still .cp-step, .cp-result.still .cp-reply, .cp-result.still .cp-result-actions { animation: none; }
+@media (prefers-reduced-motion: reduce) {
+  .cp-step, .cp-reply, .cp-result-actions { animation: none; }
+  .cp-chip, .cp-btn, .cp-icon-btn { transition: none; }
+}
+:root[data-quiet="on"] .cp-step, :root[data-quiet="on"] .cp-reply, :root[data-quiet="on"] .cp-result-actions { animation: none; }
+
+/* ------------------------------------------------------------------ footer */
+.cp-foot { margin-top: auto; padding: var(--s5) 0; border-top: 1px solid var(--line); color: var(--muted-dim); font-size: var(--fs-sm); }
+
+@media (max-width: 600px) {
+  .cp-main { padding: var(--s6) 0; }
+  .cp h1 { font-size: var(--fs-xl); }
+  .cp-top > .cp-wrap { gap: var(--s2); }
+  .cp-brand span { font-size: var(--fs-md); }
+  .cp-submit .cp-btn, .cp-result-actions .cp-btn { width: 100%; }
+}

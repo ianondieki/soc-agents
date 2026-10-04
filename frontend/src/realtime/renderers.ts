@@ -34,7 +34,8 @@ export type Slice =
   | "ledger"
   | "signals"
   | "scheduler"
-  | "pir";
+  | "pir"
+  | "support";
 
 export const ALL_SLICES: readonly Slice[] = [
   "incidents",
@@ -47,6 +48,7 @@ export const ALL_SLICES: readonly Slice[] = [
   "signals",
   "scheduler",
   "pir",
+  "support",
 ];
 
 export type Revisions = Record<Slice, number>;
@@ -63,6 +65,7 @@ export function zeroRevisions(): Revisions {
     signals: 0,
     scheduler: 0,
     pir: 0,
+    support: 0,
   };
 }
 
@@ -304,6 +307,29 @@ export const RENDERERS: Readonly<Record<string, RendererSpec>> = {
     why: "housekeeping.post_send_redaction_scan found contact-detail patterns in a SENT payload ({outbox_id, kind, incident_number, sent_at, email_matches, phone_matches, paths, note} — counts and paths, never the value); an audit row was written and the Wallboard shows a red chip",
   },
 
+  // ---- the Support desk (docs/SUPPORT_DESK.md): complaints, not alarms -----
+  "support.created": {
+    slices: ["support"],
+    incidentScoped: false,
+    ticker: true,
+    critical: false,
+    why: "support/desk.py emits {id, ref, status, route, category, urgency} after the pipeline commits; the Support desk's queue, figures and open case refetch, nothing on the NOC side moves (its sidebar count polls /support/metrics on its own)",
+  },
+  "support.escalated": {
+    slices: ["support"],
+    incidentScoped: false,
+    ticker: true,
+    critical: true,
+    why: "a complaint is now waiting for a person (the same payload, plus the reason when the desk sends one); like a HITL card, quiet mode never hides it",
+  },
+  "support.updated": {
+    slices: ["support"],
+    incidentScoped: false,
+    ticker: true,
+    critical: false,
+    why: "a claim, a resolution or a decision on a held tool call changed one case's status; the desk refetches, the NOC lists do not",
+  },
+
   // ---- housekeeping --------------------------------------------------------
   "monitor.chase": {
     slices: ["incidents", "audit"],
@@ -452,7 +478,53 @@ export function isMock(p: Record<string, any> | null | undefined): boolean {
 /** What a mock email did, for the ticker and Settings: it was kept, and nothing was delivered. */
 export const MOCK_EMAIL_LINE = "Not delivered: email sending is off in this demo";
 
+/* The Support desk's three frames carry ids and labels only (no names, numbers or text): the
+ * reference, the category and where the case is. Kept to a few words here rather than importing
+ * lib/support, which would put the desk's vocabulary in the shell chunk. */
+const SUPPORT_CATEGORY: Readonly<Record<string, string>> = {
+  network: "network",
+  data_bundles: "data bundles",
+  mpesa: "M-PESA",
+  billing: "billing",
+  sim_and_fraud: "SIM and fraud",
+  device_settings: "device settings",
+  roaming: "roaming",
+  account: "account",
+  other: "other",
+};
+const SUPPORT_STATUS: Readonly<Record<string, string>> = {
+  answered: "answered by the resolver",
+  action_taken: "fixed by the action agent",
+  awaiting_approval: "a tool call waits for approval",
+  escalated: "with a person",
+  in_progress: "claimed by a person",
+  resolved: "resolved by a person",
+  closed: "closed",
+};
+const SUPPORT_REASON: Readonly<Record<string, string>> = {
+  fraud_or_sim_swap: "fraud or SIM swap",
+  legal_or_regulator: "a legal or regulatory matter",
+  threat_or_safety: "a threat or safety concern",
+  over_refund_limit: "over the refund limit",
+  repeat_unresolved: "a repeat complaint",
+  angry_high_value: "an angry high-value customer",
+  low_confidence: "low triage confidence",
+  not_grounded: "no grounded article",
+  tool_failed: "a tool call failed",
+};
+function supportLine(p: Record<string, any>, tail: string): string {
+  const cat = SUPPORT_CATEGORY[String(p.category ?? "")] ?? "";
+  return [p.ref ? String(p.ref) : "a complaint", cat, tail].filter(Boolean).join(", ");
+}
+
 const DESCRIBERS: Readonly<Record<string, (p: Record<string, any>) => string>> = {
+  // support/desk.py _emit: {id, ref, status, route, category, urgency} (+ reason_code on an escalation)
+  "support.created": (p) => supportLine(p, SUPPORT_STATUS[String(p.status ?? "")] ?? ""),
+  "support.escalated": (p) => {
+    const why = SUPPORT_REASON[String(p.reason_code ?? p.reason ?? "")] ?? "";
+    return supportLine(p, why ? `needs a person: ${why}` : "needs a person");
+  },
+  "support.updated": (p) => supportLine(p, p.status ? `now ${SUPPORT_STATUS[String(p.status)] ?? String(p.status).replace(/_/g, " ")}` : ""),
   // services/notify.record_email_outcome: {incident_number, mode, to, detail, status}. A mock
   // send's detail names env vars ("No DEMO_EMAIL_TO / GMAIL_ADDRESS — …") or lists the
   // addresses it would have used; the floor reads what happened, not how to configure it.
@@ -522,6 +594,7 @@ const KEY_EVENT_TYPES: ReadonlySet<string> = new Set([
   "regulatory.deadline",
   "scheduler.job_failed",
   "security.redaction_miss",
+  "support.escalated",
 ]);
 
 export function isKeyEvent(ev: NocEvent): boolean {
