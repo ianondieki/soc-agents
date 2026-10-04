@@ -332,38 +332,6 @@ export default function Evals({ report, state, error, running, onRun, onRetry, r
           </h2>
           <p className="sd-ev-note">Rows are the route the gold set expects; columns the route the desk chose. The diagonal is correct.</p>
           <Matrix labels={r.confusion.labels} matrix={r.confusion.matrix} />
-          {splits && (
-            <>
-              <h3 className="sd-ev-sub">By split</h3>
-              <p className="sd-ev-note">{splitNote}.</p>
-              <div className="table-scroll sd-splits">
-                <table>
-                  <thead>
-                    <tr>
-                      <th scope="col">Metric</th>
-                      {splitKeys.map((k) => (
-                        <th key={k} scope="col" className="num">
-                          {SPLIT_WORD[k]?.short ?? k}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(Object.keys(METRIC_DEFS) as (keyof EvalMetrics)[]).map((k) => (
-                      <tr key={k}>
-                        <th scope="row">{METRIC_DEFS[k].label}</th>
-                        {splitKeys.map((sk) => (
-                          <td key={sk} className="num">
-                            {metricText(k, splits[sk][k])}
-                          </td>
-                        ))}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </>
-          )}
         </section>
 
         <section className="panel" aria-labelledby="sd-ev-cat">
@@ -411,6 +379,41 @@ export default function Evals({ report, state, error, running, onRun, onRetry, r
           <p className="sd-ev-note">A dash means the set has no case of that kind to measure.</p>
         </section>
       </div>
+
+      {splits && (
+        <section className="panel" aria-labelledby="sd-ev-split">
+          <h2 id="sd-ev-split" className="panel-title">
+            By split
+          </h2>
+          <p className="sd-ev-note">{splitNote}.</p>
+          <div className="table-scroll sd-splits">
+            <table>
+              <thead>
+                <tr>
+                  <th scope="col">Metric</th>
+                  {splitKeys.map((k) => (
+                    <th key={k} scope="col" className="num">
+                      {SPLIT_WORD[k]?.short ?? k}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {(Object.keys(METRIC_DEFS) as (keyof EvalMetrics)[]).map((k) => (
+                  <tr key={k}>
+                    <th scope="row">{METRIC_DEFS[k].label}</th>
+                    {splitKeys.map((sk) => (
+                      <td key={sk} className="num">
+                        {metricText(k, splits[sk][k])}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
 
       <section className="panel" aria-labelledby="sd-ev-fail">
         <div className="head-row">
