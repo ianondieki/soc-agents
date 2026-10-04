@@ -438,6 +438,7 @@ export const REASON_WORD: Record<string, string> = {
   fraud_or_sim_swap: "fraud or SIM swap reported",
   legal_or_regulator: "a legal or regulatory matter",
   threat_or_safety: "a threat or safety concern",
+  needs_verification: "the transfer needs verifying with the customer",
   over_refund_limit: "over the automatic refund limit",
   repeat_unresolved: "third complaint in a week",
   angry_high_value: "angry high-value customer",

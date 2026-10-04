@@ -505,6 +505,7 @@ const SUPPORT_REASON: Readonly<Record<string, string>> = {
   fraud_or_sim_swap: "fraud or SIM swap",
   legal_or_regulator: "a legal or regulatory matter",
   threat_or_safety: "a threat or safety concern",
+  needs_verification: "a transfer to verify",
   over_refund_limit: "over the refund limit",
   repeat_unresolved: "a repeat complaint",
   angry_high_value: "an angry high-value customer",
