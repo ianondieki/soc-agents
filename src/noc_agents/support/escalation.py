@@ -26,6 +26,7 @@ from noc_agents.support.policy import SupportPolicy
 @dataclass(frozen=True)
 class EscalationFacts:
     risk_flags: tuple[str, ...] = ()
+    unverified: bool = False  # a reversal was asked for without a transaction code (policy: needs_verification)
     over_limit: bool = False  # the action agent's planned call needs a person's approval
     repeat_count: int = 1  # complaints in the window on this category, this one included
     sentiment: str = "calm"
@@ -51,6 +52,10 @@ def _flag(code: str) -> Predicate:
         return "triage raised the risk flag" if code in facts.risk_flags else None
 
     return predicate
+
+
+def _needs_verification(facts: EscalationFacts, policy: SupportPolicy) -> str | None:
+    return "the reversal was asked for without the transaction code, so a person verifies it first" if facts.unverified else None
 
 
 def _over_limit(facts: EscalationFacts, policy: SupportPolicy) -> str | None:
@@ -90,6 +95,7 @@ PREDICATES: dict[str, Predicate] = {
     "fraud_or_sim_swap": _flag("fraud_or_sim_swap"),
     "legal_or_regulator": _flag("legal_or_regulator"),
     "threat_or_safety": _flag("threat_or_safety"),
+    "needs_verification": _needs_verification,
     "over_refund_limit": _over_limit,
     "repeat_unresolved": _repeat,
     "angry_high_value": _angry_high_value,

@@ -27,7 +27,7 @@ articles:
     title: M-PESA sent to the wrong number - reversal request
     category: mpesa
     summary: How a transfer sent to the wrong number is reversed, and when it needs a person.
-    keywords: [wrong number, sent to the wrong person, reverse, reversal, reverse transaction, nimetuma pesa kwa namba mbaya, nimekosea namba, namba mbaya, rudisha pesa, pesa imeenda kwa mtu mwingine, nimetuma kimakosa, tuma vibaya, wrong recipient, mistaken transfer]
+    keywords: [wrong number, sent to the wrong person, reverse, reversal, reverse transaction, nimetuma pesa kwa namba mbaya, nimekosea namba, namba mbaya, rudisha pesa, pesa imeenda kwa mtu mwingine, nimetuma kimakosa, tuma vibaya, wrong recipient, mistaken transfer, namba isiyo sahihi, mtu nisiyemjua, stranger, sina code, sina message ya code, deleted the message, nilifuta message, refuses to send it back, hapokei simu, not picking, hajanirudishia, anakataa kurudisha, mnirudishie pesa, rudisheni pesa, mrudishe pesa, nirudishie pesa, wrong namba, namba noma, nilikosea, kwa makosa, by mistake, mistakenly, sent to the wrong, sent money to a wrong number]
     updated_at: "2026-09-28"
     body: |
       A customer who sent money to the wrong number can ask for a reversal using the
@@ -48,7 +48,7 @@ articles:
     title: M-PESA transaction delayed, pending or failed
     category: mpesa
     summary: What happens when a payment shows as deducted but the recipient has not received it.
-    keywords: [transaction failed, failed transaction, pending, delayed, money deducted not received, pesa haijafika, haijafika, imekwama, paybill, till number, buy goods, lipa na mpesa, sijapokea confirmation, no confirmation message, stuck transaction]
+    keywords: [transaction failed, failed transaction, pending, delayed, money deducted not received, pesa haijafika, haijafika, imekwama, paybill, till number, buy goods, lipa na mpesa, sijapokea confirmation, no confirmation message, stuck transaction, nililipa, nimelipa, pesa imetoka, pesa ikatoka, pesa zimetoka, money left my account, money has left, deducted but not received, hajapokea, hajapata, hawajapokea, business says not received, cashier, dere hajapata, fare, supermarket, kplc, token, meter, being processed, request is being processed, processing, still pending, shows pending, inasema pending, no token, haijaingia kwa till, haijafika kwa, haijaenda, haikuenda, paybill haijaingia]
     updated_at: "2026-09-28"
     body: |
       Most delayed transactions complete within a few minutes once the network catches up.
@@ -69,7 +69,7 @@ articles:
     title: Data bundle expired early or was not applied
     category: data_bundles
     summary: Checking bundle validity and re-crediting a bundle that expired early or never applied.
-    keywords: [bundle expired, expired early, bundle not applied, bundle not received, data imeisha, bundles zimeisha, bando imeisha, bando imeisha mapema, mbs zimeisha, bundle haijaingia, nimenunua bundle, data finished quickly, data imeliwa, validity, bundle balance]
+    keywords: [bundle expired, expired early, bundle not applied, bundle not received, data imeisha, bundles zimeisha, bando imeisha, bando imeisha mapema, mbs zimeisha, bundle haijaingia, nimenunua bundle, data finished quickly, data imeliwa, validity, bundle balance, showing expired, already expired, inasema expired, has not reflected, haijareflect, haijaonekana, sijaona bundle, nilibuy bundle, nilinunua bundle, bundle ya daily, bundle ya weekly, weekly bundle, daily bundle, monthly bundle, died after, imeisha baada ya, zimeisha baada ya, used barely, sijatumia, hardly used, restore my bundle, rudisha bundle, data imeisha haraka, bundle imeisha haraka, mnakula bundles, mnaiba data, recredit, re-credit, mb zimeisha, gb]
     updated_at: "2026-09-27"
     body: |
       Check the bundle's purchase time, validity and usage on the account.
@@ -89,7 +89,7 @@ articles:
     title: Airtime deducted without a service
     category: billing
     summary: Airtime that disappeared without a call, SMS, bundle or subscription to show for it.
-    keywords: [airtime deducted, airtime imekatwa, credo imekatwa, salio imekatwa, nimekatwa, money deducted, deducted without reason, airtime disappeared, airtime imepotea, balance reduced, credit deducted, unexplained deduction]
+    keywords: [airtime deducted, airtime imekatwa, credo imekatwa, salio imekatwa, nimekatwa, money deducted, deducted without reason, airtime disappeared, airtime imepotea, balance reduced, credit deducted, unexplained deduction, credo imeliwa, airtime imeliwa, salio imeliwa, credo inaliwa, mnakula credo, airtime vanished, airtime disappearing, airtime inapotea, bila kupiga, sijapiga simu, without calling, made no calls, credo yangu imepotea, credo imepotea, credo inaisha, airtime inaisha haraka, by noon it is gone, shillings disappeared, bob imepotea, nakatwa, nilikatwa, wamekata credo]
     updated_at: "2026-09-27"
     body: |
       Look at the charges on the account for the time the customer names.
@@ -107,7 +107,7 @@ articles:
     title: Stopping premium SMS and content subscriptions
     category: billing
     summary: How a customer stops unwanted content subscriptions and gets charges reviewed.
-    keywords: [premium sms, premium messages, content subscription, subscription, unsubscribe, stop messages, horoscope sms, jokes sms, betting tips sms, messages za ajabu, sms za ajabu, nimekatwa kila siku, jiondoa, ondoa subscription, stop subscription, daily charges]
+    keywords: [premium sms, premium messages, content subscription, subscription, unsubscribe, stop messages, horoscope sms, jokes sms, betting tips sms, messages za ajabu, sms za ajabu, nimekatwa kila siku, jiondoa, ondoa subscription, stop subscription, daily charges, horoscope, mambo ya nyota, nyota, jokes, betting, tips, nakatwa kila siku, kila siku nakatwa, sms kila asubuhi, ujumbe kila siku, sijawahi kujiunga, sikujiunga, sijajiunga, sikuomba, sijaomba, mniondoe, niondoe, ondoeni, stop these messages, stop the messages, unwanted messages, unwanted sms, content, 5 bob kila siku, daily deduction, promo messages]
     updated_at: "2026-09-26"
     body: |
       Content services must stop when the customer asks.
@@ -126,7 +126,7 @@ articles:
     title: No network or outage in my area
     category: network
     summary: What to tell a customer who has no network, and how it ties to a live outage ticket.
-    keywords: [no network, network down, outage, no signal, hakuna network, hakuna mtandao, mtandao umepotea, network imepotea, network iko chini, network inapotea, hakuna signal, emergency calls only, sos only, no service, cannot make or receive calls, cant call, network problem in my area, area outage]
+    keywords: [no network, network down, outage, no signal, hakuna network, hakuna mtandao, mtandao umepotea, network imepotea, network iko chini, network inapotea, hakuna signal, emergency calls only, sos only, no service, cannot make or receive calls, cant call, network problem in my area, area outage, mtandao haupo, network haupo, network imeenda, net imeenda, hakuna bar, no bars, bars zimepotea, haina signal, sina network, haina network, network haifanyi, mtandao haufanyi, no coverage, poor network, weak signal, no reception, umepotea, network imekufa, hamna network, network iko down, down since morning, calls not going through, simu haipiti, simu haziingii, cant receive calls, cannot receive calls, kupiga simu haiwezekani, since the rain, baada ya mvua, tangu mvua]
     updated_at: "2026-09-29"
     body: |
       First check for an open network incident in the customer's town or region.
@@ -146,7 +146,7 @@ articles:
     title: Slow mobile data
     category: network
     summary: Troubleshooting slow internet on mobile data.
-    keywords: [slow data, slow internet, internet iko slow, data ni slow, speed iko chini, inaload polepole, buffering, pages not loading, low speed, internet inazunguka, slow browsing, cannot browse, cant browse, siwezi browse, 4g slow, poor internet]
+    keywords: [slow data, slow internet, internet iko slow, data ni slow, speed iko chini, inaload polepole, buffering, pages not loading, low speed, internet inazunguka, slow browsing, cannot browse, cant browse, siwezi browse, 4g slow, poor internet, net iko slow, iko slow, slow sana, haziload, haiload, haifunguki, hazifunguki, hakuna page inafunguka, pages not opening, not loading, data haifanyi, data not working, internet haifanyi, siwezi kubrowse, connected but no internet, inaonyesha 4g, 4g lakini, niko na bundle lakini, i have bundles but, bundles ziko lakini, upload, uploading slow, download slow, whatsapp haifunguki, status haziload, video inabuffer, net imekuwa slow, killing my business]
     updated_at: "2026-09-25"
     body: |
       - Confirm the phone is on 4G/5G (not 2G) and that "data saver" or a VPN is not throttling it.
@@ -162,7 +162,7 @@ articles:
     title: Calls dropping
     category: network
     summary: Troubleshooting dropped calls.
-    keywords: [call drops, calls dropping, dropped calls, calls zinakatika, simu inakatika, call inakatika, calls cut, call drop, kukatika kwa simu, calls ending abruptly, poor call quality]
+    keywords: [call drops, calls dropping, dropped calls, calls zinakatika, simu inakatika, call inakatika, calls cut, call drop, kukatika kwa simu, calls ending abruptly, poor call quality, simu zinakata, simu inakata, zinakata, inakata, call inakata, calls zinakata, calls cut off, cuts after, inakata baada ya, after a few seconds, baada ya sekunde, call ends, hangs up by itself, simu inajikata, inajikata, every two minutes, kila dakika]
     updated_at: "2026-09-25"
     body: |
       - Ask where and when the drops happen: one place points at the cell, everywhere points at
@@ -178,7 +178,7 @@ articles:
     title: Internet and MMS (APN) settings on a phone
     category: device_settings
     summary: Sending the configuration SMS and setting the APN by hand.
-    keywords: [apn, internet settings, mms settings, configure internet, configuration settings, new phone no internet, simu mpya haina internet, settings za internet, data not working on new phone, access point name, mobile data not connecting, setup internet]
+    keywords: [apn, internet settings, mms settings, configure internet, configuration settings, new phone no internet, simu mpya haina internet, settings za internet, data not working on new phone, access point name, mobile data not connecting, setup internet, nitumie settings, nitumieni settings, tuma settings, settings za mms, settings za data, send me settings, send the config, config, configs, new phone no data, set apn manually, manually, apn name, which apn, mms haziendi, mms not sending, cannot send pictures, picha haziendi, picture messages, haina internet, internet haifanyi kwa simu mpya, tecno, infinix, samsung, itel, oppo, xiaomi, nokia, iphone]
     updated_at: "2026-09-24"
     body: |
       - The desk can send the **configuration SMS** that sets internet (APN) and MMS on most phones.
@@ -195,7 +195,7 @@ articles:
     category: sim_and_fraud
     summary: Suspected SIM swap or account takeover always goes to the fraud team.
     escalate: fraud_or_sim_swap
-    keywords: [sim swap, swapped my sim, sim imeswapiwa, laini imeswapiwa, laini yangu imebadilishwa, someone is using my mpesa, pin changed, account hacked, fraud, conman, mlaghai, unauthorised withdrawal, money stolen from mpesa]
+    keywords: [sim swap, swapped my sim, sim imeswapiwa, laini imeswapiwa, laini yangu imebadilishwa, someone is using my mpesa, pin changed, account hacked, fraud, conman, mlaghai, unauthorised withdrawal, money stolen from mpesa, sim imebadilishwa, laini imebadilishwa, sim was replaced, sim replaced without, line replaced, number active on whatsapp, my number is on whatsapp, akijifanya customer care, fake customer care, nimeconiwa, conned, tapeliwa, nimetapeliwa, scam, scammed, scammer, pesa zimeibiwa, nimeibiwa pesa, money missing from mpesa, withdrew without my, sikutoa, sijatoa, pin was changed, pin imebadilishwa, ameingia mpesa, mse ameingia, ametoa pesa, sikuwa na simu]
     updated_at: "2026-09-29"
     body: |
       **Always escalate to the fraud team; the desk never resolves these automatically.**
@@ -213,7 +213,7 @@ articles:
     title: Lost or stolen phone - blocking the line
     category: sim_and_fraud
     summary: Blocking a line after a phone is lost or stolen, and getting the number back.
-    keywords: [lost phone, stolen phone, phone stolen, simu imeibiwa, nimepoteza simu, nimeibiwa simu, block my line, funga laini, block sim, phone snatched, simu imepotea, report stolen phone]
+    keywords: [lost phone, stolen phone, phone stolen, simu imeibiwa, nimepoteza simu, nimeibiwa simu, block my line, funga laini, block sim, phone snatched, simu imepotea, report stolen phone, robbed, police abstract, police, kwa mat, kwa matatu, fungeni line, funga line, zima laini, zima line, block my number, block the sim, block my sim, simu iliibiwa, wameiba simu, imeibiwa jana, before they use my mpesa, kabla hawajatumia mpesa, lock my line, mugged]
     updated_at: "2026-09-26"
     body: |
       - The line is blocked after the customer confirms their identity; a blocked line cannot make
@@ -229,7 +229,7 @@ articles:
     title: PUK code and SIM replacement
     category: sim_and_fraud
     summary: Unlocking a PUK-locked SIM and replacing a damaged one.
-    keywords: [puk, puk code, sim locked, sim imelock, laini imejifunga, sim imejifunga, pin blocked sim, replace sim, sim replacement, damaged sim, sim card not detected, laini imeharibika, no sim card, insert sim]
+    keywords: [puk, puk code, sim locked, sim imelock, laini imejifunga, sim imejifunga, pin blocked sim, replace sim, sim replacement, damaged sim, sim card not detected, laini imeharibika, no sim card, insert sim, mtoto aliweka pin, pin mbaya mara tatu, wrong pin three times, wrong pin, pin wrong, inauliza puk, inaniuliza puk, asking for puk, naipata wapi, no sim, sim not detected, not being detected, sim haisomeki, sim imeharibika, old sim, sim ya zamani, sim imechoka, new sim, replacement sim, badilisha sim, badilisha laini]
     updated_at: "2026-09-24"
     body: |
       - A SIM locks after three wrong SIM PINs; the PUK is given after the customer confirms their
@@ -245,7 +245,7 @@ articles:
     title: Roaming activation and charges
     category: roaming
     summary: Switching on roaming before travel and understanding roaming charges.
-    keywords: [roaming, international roaming, travelling abroad, nikiwa nje ya nchi, safari nje, roaming charges, roaming bundle, activate roaming, uganda, tanzania, rwanda, dubai, abroad no network, roaming haifanyi]
+    keywords: [roaming, international roaming, travelling abroad, nikiwa nje ya nchi, safari nje, roaming charges, roaming bundle, activate roaming, uganda, tanzania, rwanda, dubai, abroad no network, roaming haifanyi, kampala, dar es salaam, kigali, arusha, juba, ethiopia, south africa, johannesburg, london, qatar, doha, saudi, niko nje ya nchi, niko nje, nasafiri, nikisafiri, kusafiri, ninasafiri, travelling to, going abroad, trip, flight, when i come back, after i came back, charged for roaming, roaming bill, data roaming, no network in uganda, simu haina network nje ya kenya, international]
     updated_at: "2026-09-23"
     body: |
       - Roaming is switched on from the self-service menu before travel; data roaming must also be
@@ -261,7 +261,7 @@ articles:
     title: Postpaid bill dispute
     category: billing
     summary: Explaining a postpaid bill and raising a dispute on a specific charge.
-    keywords: [postpaid bill, my bill, bill is too high, bili, bili iko juu, invoice, statement, bill dispute, dispute charge, monthly bill, overcharged on bill, itemised bill]
+    keywords: [postpaid bill, my bill, bill is too high, bili, bili iko juu, invoice, statement, bill dispute, dispute charge, monthly bill, overcharged on bill, itemised bill, bill yangu, bili yangu, bill imekuja, bill ya mwezi, this month, mwezi huu, kawaida, higher than usual, much higher, itemised statement, itemized, accountant, office line, explain my bill, nielezeeni bili, my bill is]
     updated_at: "2026-09-22"
     body: |
       - Ask for the bill period and the line item; most high bills are out-of-bundle usage or
@@ -277,7 +277,7 @@ articles:
     title: Charged twice - double charge refund
     category: billing
     summary: Refunding a purchase or charge that was taken twice.
-    keywords: [charged twice, double charge, double charged, deducted twice, nimekatwa mara mbili, mara mbili, paid twice for bundle, duplicate charge, charged two times, double deduction]
+    keywords: [charged twice, double charge, double charged, deducted twice, nimekatwa mara mbili, mara mbili, paid twice for bundle, duplicate charge, charged two times, double deduction, two messages one minute apart, deducted mara mbili, nimelipia mara mbili, paid twice, nililipa mara mbili, double, duplicate bundle, same bundle twice, twice for the same]
     updated_at: "2026-09-27"
     body: |
       - Match the two charges on the account (same amount, same item, minutes apart).
@@ -291,7 +291,7 @@ articles:
     title: Airtime advance repayment
     category: billing
     summary: How borrowed airtime is repaid on the next top-up.
-    keywords: [airtime advance, borrowed airtime, okoa, okoa jahazi, deni ya airtime, nilikopa credo, credo ya mkopo, loan airtime, airtime loan repayment, top up deducted for loan, airtime debt]
+    keywords: [airtime advance, borrowed airtime, okoa, okoa jahazi, deni ya airtime, nilikopa credo, credo ya mkopo, loan airtime, airtime loan repayment, top up deducted for loan, airtime debt, niliokoa, nilichukua okoa, okoa ya, top up yangu yote imekatwa, nikaweka 100 na imekatwa, nimeweka airtime imekatwa, deni ya okoa, repayment, recovered from top up, yote ikaenda, mbona imekatwa, borrowed, loan]
     updated_at: "2026-09-22"
     body: |
       - Borrowed airtime, plus its service fee, is recovered automatically from the next top-up.
@@ -306,7 +306,7 @@ articles:
     title: Home fibre internet down
     category: network
     summary: Troubleshooting a home fibre connection before booking a technician.
-    keywords: [home fibre, fibre, fiber, home internet, wifi ya nyumbani, router, router red light, los light, fibre down, wifi haifanyi, home wifi not working, no internet at home]
+    keywords: [home fibre, fibre, fiber, home internet, wifi ya nyumbani, router, router red light, los light, fibre down, wifi haifanyi, home wifi not working, no internet at home, home wifi, box ina red light, red light, los, router red, wifi imekufa, wifi iko off, internet ya nyumbani, home internet off, restarted the router, blinking red]
     updated_at: "2026-09-24"
     body: |
       - A red **LOS** light on the router means the fibre signal is not reaching the house: a
@@ -322,7 +322,7 @@ articles:
     title: How to escalate a complaint to the regulator
     category: other
     summary: The customer's right to escalate an unresolved complaint, and how.
-    keywords: [regulator, escalate my complaint, escalate complaint, not satisfied, sijaridhika, complaint not resolved, where else can i complain, consumer rights, complain further, unresolved complaint, appeal]
+    keywords: [regulator, escalate my complaint, escalate complaint, not satisfied, sijaridhika, complaint not resolved, where else can i complain, consumer rights, complain further, unresolved complaint, appeal, nipeleke wapi malalamiko, kupeleka wapi malalamiko, malalamiko, kulalamika, lalamika, sijaridhika na majibu, majibu mliyonipa, not happy with your response, unhappy with the response, where do i take my complaint, complain about you, escalate further, next level, supervisor, manager, speak to a manager, ombudsman, consumer complaints, final response, haki zangu, my rights]
     updated_at: "2026-09-21"
     body: |
       - Every complaint gets a reference and a final response.
@@ -339,7 +339,7 @@ articles:
     title: Line registration and account ownership
     category: account
     summary: Registering a line, correcting registration details and transferring ownership.
-    keywords: [register sim, registration, register my line, laini haijasajiliwa, sajili laini, id number, line registered in another name, owner of the line, transfer ownership, change owner, update details, wrong name on line]
+    keywords: [register sim, registration, register my line, laini haijasajiliwa, sajili laini, id number, line registered in another name, owner of the line, transfer ownership, change owner, update details, wrong name on line, not registered, unregistered, haijaregister, inasema not registered, jina langu, kwa jina la, in my name, to my name, under my name, my late, late brother, late father, late mother, deceased, aliyefariki, marehemu, death certificate, transfer the line, transfer this line, kuihamisha, hamisha laini, badilisha jina, change the name on the line, kusajili, usajili, register my sim, kitambulisho, registered under, registered to someone else, not in my name, line ownership, mwenye laini, mmiliki]
     updated_at: "2026-09-21"
     body: |
       - Lines are registered against the holder's ID at a shop or authorised agent.
@@ -354,7 +354,7 @@ articles:
     title: Moving my number to or from another network (porting)
     category: account
     summary: Keeping a number when switching networks.
-    keywords: [porting, port my number, mnp, keep my number, switch network, change network, hamia mtandao, hamia mtandao mwingine, kuhamia mtandao, nibaki na namba yangu, hama network, move number to another network, transfer number]
+    keywords: [porting, port my number, mnp, keep my number, switch network, change network, hamia mtandao, hamia mtandao mwingine, kuhamia mtandao, nibaki na namba yangu, hama network, move number to another network, transfer number, kuhama, hama kwenda, network ingine, network nyingine, mtandao ingine, nibaki na number, nibaki na line, number yangu ibaki, namba ibaki, same number, keep my old number, retain my number, coming from another network, moving to another network, port in, port out, inachukua siku ngapi, how many days, what do i need to bring, join your network, jiunge na network yenu, switch to you, move to your network, leave your network, another provider, provider]
     updated_at: "2026-09-20"
     body: |
       - Porting is requested at the network the customer is joining, with their ID.

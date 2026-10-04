@@ -1,5 +1,6 @@
 """The support eval suite: metric arithmetic on a hand-computed synthetic set, the golden set's
-validation, report storage, and the starter golden set against the contract's default gates."""
+validation, report storage, the split rules, and the held-out TEST split against the contract's
+default gates (the dev split is tuned against and proves nothing)."""
 
 from __future__ import annotations
 
@@ -13,6 +14,7 @@ from noc_agents.db.models import Base
 from noc_agents.support.context import default_context
 from noc_agents.support.evals import (
     GOLDEN_PATH,
+    HEADLINE_SPLIT,
     CaseResult,
     Expected,
     GoldenCase,
@@ -108,9 +110,19 @@ def test_gates_and_the_per_category_table():
     assert "roaming" not in rows
 
 
-def test_an_empty_denominator_is_zero_in_the_headline_metrics():
-    m = score([_r(1, "network", "resolver", article_ids=["A"], actual_route="resolver", article="A")], ctx=CTX)["metrics"]
-    assert m["wrong_escalation_rate"] == 0.0 and m["missed_escalation_rate"] == 0.0 and m["resolution_rate"] == 1.0
+def test_an_empty_denominator_is_null_and_fails_its_gate_with_a_note():
+    report = score([_r(1, "network", "resolver", article_ids=["A"], actual_route="resolver", article="A")], ctx=CTX)
+    m = report["metrics"]
+    assert m["wrong_escalation_rate"] is None and m["missed_escalation_rate"] is None  # no escalation happened
+    assert m["safety_missed_escalation_rate"] is None and m["tool_accuracy"] is None
+    assert m["resolution_rate"] == 1.0 and m["triage_accuracy"] == 1.0
+    gates = {g["metric"]: g for g in report["gates"]}
+    # No safety case does not mean no missed safety escalation: the gate fails and says why.
+    assert gates["safety_missed_escalation_rate"]["passed"] is False and gates["safety_missed_escalation_rate"]["value"] is None
+    assert "empty denominator" in gates["safety_missed_escalation_rate"]["note"]
+    assert gates["wrong_escalation_rate"]["passed"] is False
+    assert gates["resolution_rate"]["passed"] is True and gates["resolution_rate"]["note"] is None
+    assert report["passed"] is False
 
 
 # ------------------------------------------------------------------------- the golden set
@@ -160,7 +172,7 @@ def test_duplicate_ids_and_bad_json_are_refused_and_comments_are_skipped(tmp_pat
     assert [c.id for c in cases] == ["x1"] and len(version) == 12
 
 
-def test_the_starter_golden_set_covers_every_route_every_reason_and_both_splits():
+def test_the_golden_set_covers_every_route_every_reason_and_both_splits():
     cases, _ = load_golden()
     assert {c.expected.route for c in cases} == set(ROUTES)
     assert {c.expected.escalation_reason for c in cases} - {None} == set(REASON_CODES)
@@ -170,21 +182,51 @@ def test_the_starter_golden_set_covers_every_route_every_reason_and_both_splits(
     assert len(load_golden(split="test")[0]) + len(load_golden(split="dev")[0]) == len(cases)
 
 
-def test_the_starter_golden_set_passes_the_contracts_default_gates():
+@pytest.mark.parametrize("split", ["dev", "test"])
+def test_both_splits_keep_safety_cases_so_the_safety_gate_has_evidence(split):
+    cases, _ = load_golden(split=split)
+    reasons = {c.expected.escalation_reason for c in cases if c.expected.safety}
+    assert reasons == {"fraud_or_sim_swap", "legal_or_regulator", "threat_or_safety"}
+    assert sum(1 for c in cases if c.expected.safety) >= 3
+    assert len([c for c in cases if c.expected.route in ("resolver", "action")]) >= 10  # resolution has a denominator
+
+
+def test_a_full_run_reports_both_splits_and_takes_the_held_out_test_split_as_the_headline():
+    report = run_eval(operator_id="safaricom")
+    assert HEADLINE_SPLIT == "test" and report["dataset"]["split"] == "test"
+    assert report["dataset"]["size"] == len(load_golden(split="test")[0])
+    assert set(report["by_split"]) == {"dev", "test"}
+    assert report["by_split"]["test"] == report["metrics"]
+    assert set(report["by_split"]["dev"]) == set(report["metrics"])
+    assert {f["case_id"] for f in report["failures"]} <= {c.id for c in load_golden(split="test")[0]}
+    assert report["mode"] == "deterministic"
+    assert report["dataset"]["name"] == "support_golden" and report["dataset"]["version"] == load_golden()[1]
+    only_dev = run_eval(operator_id="safaricom", split="dev")
+    assert only_dev["dataset"]["split"] == "dev" and set(only_dev["by_split"]) == {"dev"}
+
+
+def test_a_golden_file_without_a_test_split_is_judged_on_all_of_it(tmp_path):
+    report = run_eval(operator_id="safaricom", path=_write(tmp_path, [_line()]))
+    assert report["dataset"]["split"] == "all" and report["dataset"]["size"] == 1
+    assert set(report["by_split"]) == {"dev"}
+
+
+def test_the_held_out_test_split_passes_the_contracts_default_gates():
+    """The gate: the TEST split, which no tuning has seen, against config/support/policy.yaml."""
     report = run_eval(operator_id="safaricom")
     gates = {g["metric"]: g for g in report["gates"]}
     assert set(gates) == {"resolution_rate", "wrong_escalation_rate", "safety_missed_escalation_rate", "triage_accuracy"}
     assert gates["resolution_rate"]["threshold"] == 0.80 and gates["wrong_escalation_rate"]["threshold"] == 0.10
     assert gates["triage_accuracy"]["threshold"] == 0.85 and gates["safety_missed_escalation_rate"]["op"] == "=="
-    assert report["passed"], json.dumps(report["failures"], indent=1)
-    assert report["mode"] == "deterministic" and report["dataset"]["size"] == len(load_golden()[0])
-    assert report["dataset"]["name"] == "support_golden" and report["dataset"]["version"] == load_golden()[1]
+    assert report["dataset"]["split"] == "test"
+    assert report["passed"], json.dumps({"metrics": report["metrics"], "failures": report["failures"]}, indent=1)
 
 
 def test_a_run_is_reproducible_case_for_case():
     first, second = run_eval(operator_id="safaricom", split="test"), run_eval(operator_id="safaricom", split="test")
+    no_timing = lambda m: {k: v for k, v in m.items() if k != "p50_ms"}  # noqa: E731
     strip = lambda r: {k: v for k, v in r.items() if k not in ("run_id", "ran_at")} | {  # noqa: E731
-        "metrics": {k: v for k, v in r["metrics"].items() if k != "p50_ms"}}
+        "metrics": no_timing(r["metrics"]), "by_split": {s: no_timing(m) for s, m in r["by_split"].items()}}
     assert strip(first) == strip(second)
     assert first["dataset"]["split"] == "test"
 
@@ -208,3 +250,28 @@ def test_reports_are_stored_per_operator_and_the_latest_wins(tmp_path):
 
 def test_the_golden_path_is_the_contracts():
     assert GOLDEN_PATH.as_posix().endswith("tests/fixtures/support_eval/golden.jsonl")
+
+
+# ------------------------------------------------------------------------------- the CLI
+
+
+def test_the_cli_compare_view_puts_dev_and_test_side_by_side_with_the_top_failure_kinds():
+    import importlib.util
+    import sys
+
+    spec = importlib.util.spec_from_file_location("support_eval_cli", GOLDEN_PATH.parents[2] / "eval" / "support_eval.py")
+    cli = importlib.util.module_from_spec(spec)
+    sys.modules.setdefault("support_eval_cli", cli)
+    spec.loader.exec_module(cli)
+    base = {"mode": "deterministic", "dataset": {"name": "support_golden", "version": "v", "size": 10, "split": "dev"}}
+    dev = base | score(SYNTHETIC, ctx=CTX)
+    test = base | {"dataset": base["dataset"] | {"split": "test", "size": 1}} | score(
+        [_r(1, "network", "resolver", article_ids=["A"], actual_route="resolver", article="A")], ctx=CTX)
+    text = cli.format_compare(dev, test)
+    assert "dev n=10  test n=1" in text and "resolution_rate" in text and "0.3333" in text
+    assert "null" in text and "empty denominator" in text  # the test side has no escalation to measure
+    assert "wrong_escalation 2" in text and "wrong_article 1" in text
+    assert text.endswith("FAILED")
+    assert cli.failure_kind_counts(dev)[0] == ("wrong_escalation", 2)
+    full = cli.format_report(dev | {"by_split": {"dev": dev["metrics"], "test": test["metrics"]}})
+    assert "(headline: dev)" in full and "failures (dev split)" in full

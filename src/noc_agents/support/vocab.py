@@ -41,6 +41,7 @@ REASON_CODES: tuple[str, ...] = (
     "fraud_or_sim_swap",
     "legal_or_regulator",
     "threat_or_safety",
+    "needs_verification",
     "over_refund_limit",
     "repeat_unresolved",
     "angry_high_value",

@@ -22,20 +22,35 @@ article's, reviewed once, not generated per complaint -- and the complaint cites
 article with its score. One citation, the article the reply came from, so "cited the right
 article" (the eval's resolution test) means "answered from the right article".
 
-Ranking may prefer the category triage chose (``category_boost``); grounding never does.
+A question about price ("how much is the daily bundle") is answered only from an article that
+talks about prices or charges; a troubleshooting article that merely shares the nouns declines.
+
+Ranking may prefer the category triage chose (``category_boost``); grounding never does. Among
+grounded articles, one in triage's category is answered from unless a cross-category one
+scores ``cross_category_factor`` times it (:func:`_prefer_agreement`).
 """
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
 from noc_agents.support.kb import Article, Hit, KnowledgeBase
 from noc_agents.support.policy import SupportPolicy
-from noc_agents.support.text import clean
+from noc_agents.support.text import clean, normalise
 
 #: The only placeholders a reply template may use.
 PLACEHOLDERS: frozenset[str] = frozenset({"name", "ref", "msisdn_masked"})
+
+#: A question about what something costs. It is answered only from an article that talks about
+#: prices or charges (:data:`PRICE_TERMS`): the bundle troubleshooting article shares every word
+#: with "how much is the daily 1GB bundle" except the one that matters.
+PRICE_QUESTION = re.compile(
+    r"\b(?:how much|what does it cost|what will it cost|price|prices|pricing|cost|costs|tariff|tariffs|rates|bei|"
+    r"ni ngapi|ni pesa ngapi|inauzwa|charges for|charge for|what do you charge|how expensive)\b"
+)
+PRICE_TERMS: tuple[str, ...] = ("price", "cost", "tariff", "charge", "charges", "charged", "fee", "bei", "rates")
 
 
 class _Placeholders(dict):
@@ -91,6 +106,8 @@ def resolve(
     """Retrieve, judge grounding, and fill the best grounded article's reply (or decline)."""
     hits = kb.search(text, limit=3, prefer_category=category, category_boost=policy.category_boost)
     passing = [h for h in hits if h.score >= policy.grounding_threshold]
+    if PRICE_QUESTION.search(normalise(text)):
+        passing = [h for h in passing if h.article.escalate or _talks_about_prices(h.article)]
     if passing and passing[0].article.escalate:  # safety first: no category agreement needed
         top = passing[0]
         return ResolverResult(True, top.article, top.score, hits, escalate=top.article.escalate)
@@ -98,9 +115,30 @@ def resolve(
     if not grounded:
         best = hits[0] if hits else None
         return ResolverResult(False, best.article if best else None, best.score if best else 0.0, hits)
-    top = grounded[0]
+    top = _prefer_agreement(grounded, category, policy)
     reply = fill(top.article.reply, name=name, ref=ref, msisdn_masked=msisdn_masked)
     return ResolverResult(True, top.article, top.score, hits, reply)
+
+
+def _talks_about_prices(article: Article) -> bool:
+    words = set(normalise(" ".join((article.title, article.summary, article.body, *article.keywords))).split())
+    return any(term in words for term in PRICE_TERMS)
+
+
+def _prefer_agreement(grounded: list[Hit], category: str | None, policy: SupportPolicy) -> Hit:
+    """The best grounded article in triage's own category, unless a cross-category article ahead
+    of it scores ``cross_category_factor`` times its score: two agents agreeing beats one louder
+    one ("nimelipa mara mbili?" asked about a pending till payment is an M-PESA question, however
+    strongly "mara mbili" pulls the double-charge article)."""
+    own = next((h for h in grounded if h.article.category == category), None)
+    if own is None:
+        return grounded[0]
+    for hit in grounded:
+        if hit is own:
+            return own
+        if hit.score >= own.score * policy.cross_category_factor:
+            return hit
+    return own
 
 
 def _agrees(hit: Hit, category: str | None, policy: SupportPolicy) -> bool:

@@ -34,9 +34,18 @@ so a run is the same today as next year.
   wrong reason is still a defect, and the failure kinds have no slot for it.
 * ``p50_ms``                 = median wall time of ``process_complaint`` per case.
 
-A rate whose denominator is empty is 0.0 in ``metrics`` (no escalations means no wrong ones)
-and ``null`` in ``by_category``, where "this category had no resolvable case" is common and a
-0 % would read as a failure.
+A rate whose denominator is empty is ``null`` everywhere (``metrics``, ``by_split``,
+``by_category``): a split with no safety case has not shown a safety-missed rate of 0, it has
+shown nothing, so a gate whose metric is ``null`` **fails** and says why in its ``note``.
+
+**Splits and the headline.** The golden set has two splits. ``dev`` is the starter set and its
+growth; the lexicon, triage weights and knowledge-base keywords are tuned against it, so its
+numbers are not evidence of anything but fit. ``test`` is held out: written blind from the
+contract and the policy before any tuning, then frozen -- never relabelled to match the desk,
+never used to choose a fix; only its before/after numbers are read. A full run reports both in
+``by_split`` and takes the **test** split as the headline (``metrics``, ``gates``, ``passed``,
+``confusion``, ``by_category``, ``failures``; ``dataset.split == "test"``), which is what the
+pytest gate and ``POST /evals/run`` judge.
 
 **The golden set** (``tests/fixtures/support_eval/golden.jsonl``), one JSON object per line::
 
@@ -84,6 +93,8 @@ from noc_agents.support.vocab import CATEGORIES, LANGUAGES, REASON_CODES, ROUTES
 GOLDEN_PATH = ROOT / "tests" / "fixtures" / "support_eval" / "golden.jsonl"
 DATASET_NAME = "support_golden"
 SPLITS: tuple[str, ...] = ("dev", "test")
+#: The split a full run is judged on (see :func:`run_eval`): the held-out one.
+HEADLINE_SPLIT = "test"
 #: Tools that are bookkeeping around the action agent's real call, never "the" call.
 _BOOKKEEPING_TOOLS: frozenset[str] = frozenset({"lookup_account", "update_ticket"})
 _LABELS: tuple[str, ...] = ("resolver", "action", "human")
@@ -290,17 +301,17 @@ def run_case(session: Session, case: GoldenCase, *, operator_id: str, ctx: Suppo
 # ---------------------------------------------------------------------------------- scoring
 
 
-def _rate(numerator: int, denominator: int) -> float:
-    """A headline rate; an empty denominator is 0.0 (no escalations means no wrong ones)."""
-    return round(numerator / denominator, 4) if denominator else 0.0
-
-
-def _rate_or_none(numerator: int, denominator: int) -> float | None:
-    """A per-category rate; an empty denominator is None, not a misleading 0 %."""
+def _rate(numerator: int, denominator: int) -> float | None:
+    """A rate; an empty denominator is ``None`` (JSON ``null``), never a number. A split with no
+    safety case has not shown a safety-missed rate of 0 -- it has shown nothing, and a gate that
+    reads ``None`` fails (:func:`score`)."""
     return round(numerator / denominator, 4) if denominator else None
 
 
-def _metrics(results: list[CaseResult]) -> dict[str, float]:
+_rate_or_none = _rate  # the per-category table uses the same rule
+
+
+def _metrics(results: list[CaseResult]) -> dict[str, float | None]:
     resolvable = [r for r in results if r.resolvable]
     escalated = [r for r in results if r.escalated]
     gold_human = [r for r in results if r.case.expected.route == "human"]
@@ -385,8 +396,15 @@ def score(results: list[CaseResult], *, ctx: SupportContext) -> dict[str, Any]:
     gates = []
     for gate in ctx.policy.eval_gates:
         value = metrics.get(gate.metric)
-        passed = value is not None and gate.passes(float(value))
-        gates.append({"metric": gate.metric, "op": gate.op, "threshold": gate.threshold, "value": value, "passed": passed})
+        note = None
+        if value is None:
+            passed = False
+            note = (f"{gate.metric} has no case to measure (empty denominator): the gate cannot pass on no "
+                    f"evidence; add cases that exercise it")
+        else:
+            passed = gate.passes(float(value))
+        gates.append({"metric": gate.metric, "op": gate.op, "threshold": gate.threshold, "value": value,
+                      "passed": passed, "note": note})
     return {
         "metrics": metrics,
         "gates": gates,
@@ -413,6 +431,13 @@ def run_eval(
 
     ``port`` switches the run to ``mode: "llm"`` (triage tie-breaks may use the model); without
     it the run is deterministic, which is what CI, the API and the gates use.
+
+    **Splits.** ``by_split`` holds the metrics of every split that ran. The headline
+    (``metrics``, ``gates``, ``passed``, ``confusion``, ``by_category``, ``failures``) is the split
+    the desk is judged on: with ``split=None`` every case runs and the headline is the held-out
+    **test** split (``dataset.split == "test"``, ``dataset.size`` = its cases) whenever the file
+    has one, because the dev split is what the lexicon was tuned against and its numbers are
+    not evidence. A file with no test cases keeps ``split: "all"``.
     """
     ctx = ctx or default_context()
     cases, version = load_golden(path, split=split)
@@ -424,12 +449,16 @@ def run_eval(
                 results.append(run_case(session, case, operator_id=operator_id, ctx=ctx, port=port))
     finally:
         databases.close()
+    by_split = {name: group for name in SPLITS if (group := [r for r in results if r.case.split == name])}
+    headline_split = split or (HEADLINE_SPLIT if HEADLINE_SPLIT in by_split else "all")
+    headline = by_split.get(headline_split, results)
     return {
         "run_id": new_id(),
         "ran_at": iso_z(now or utcnow()),
         "mode": "llm" if port is not None else "deterministic",
-        "dataset": {"name": DATASET_NAME, "version": version, "size": len(cases), "split": split or "all"},
-        **score(results, ctx=ctx),
+        "dataset": {"name": DATASET_NAME, "version": version, "size": len(headline), "split": headline_split},
+        **score(headline, ctx=ctx),
+        "by_split": {name: _metrics(group) for name, group in by_split.items()},
     }
 
 

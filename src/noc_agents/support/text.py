@@ -31,6 +31,54 @@ _MPESA = re.compile(r"\bm[\s\-_.]*pesa\b", re.IGNORECASE)
 _APOSTROPHES = re.compile(r"['\u2019`]")
 _NON_WORD = re.compile(r"[^\w\s]+", re.UNICODE)
 _SPACES = re.compile(r"\s+")
+#: "2gb", "500mb", "70bob", "6am": a number glued to its unit becomes two words, so "gb" and
+#: "bob" are matchable and "2 gb" and "2gb" are the same complaint.
+_UNIT = re.compile(r"(?<=\d)(gb|mb|tb|kb|bob|kshs|ksh|kes|shs|sh|hrs|hr|mins|min|am|pm|days|day)\b")
+
+#: Misspellings and SMS / Sheng spellings -> the word the lexicons and the index know. Applied
+#: inside :func:`normalise` (whole words, after lower-casing), so triage phrases, retrieval, the
+#: gazetteer and the dedupe hash all see one spelling. Literal and small on purpose: a wrong
+#: fold here changes every layer at once. "net" is Sheng for the network / the internet.
+VARIANTS: dict[str, str] = {
+    # network and internet
+    "net": "network", "netwrk": "network", "netwok": "network", "netwerk": "network", "ntwk": "network",
+    "nework": "network", "netowrk": "network", "networc": "network", "netwark": "network", "netwrok": "network",
+    "intenet": "internet", "internt": "internet", "inernet": "internet", "intrnet": "internet", "intanet": "internet",
+    "signol": "signal", "singal": "signal", "signel": "signal", "sigal": "signal",
+    # bundles
+    "bundel": "bundle", "bundels": "bundles", "bandle": "bundle", "bandles": "bundles", "bundl": "bundle",
+    "bundls": "bundles", "bundless": "bundles", "bundes": "bundles", "bunddle": "bundle", "bundled": "bundle",
+    "expird": "expired", "expierd": "expired", "exipred": "expired", "expred": "expired", "expaired": "expired",
+    # money, airtime, billing
+    "reffund": "refund", "refand": "refund", "refun": "refund", "refudn": "refund", "rifund": "refund",
+    "airtym": "airtime", "airtim": "airtime", "airtme": "airtime", "kredo": "credo", "kredit": "credit",
+    "chraged": "charged", "charjed": "charged", "chargd": "charged", "chagred": "charged",
+    "twise": "twice", "twce": "twice", "dubble": "double",
+    "subscibed": "subscribed", "subcribed": "subscribed", "suscribed": "subscribed", "subscribd": "subscribed",
+    "subscibe": "subscribe", "subcribe": "subscribe", "unsubcribe": "unsubscribe", "unsuscribe": "unsubscribe",
+    "mpsa": "mpesa", "mpesaa": "mpesa", "mpessa": "mpesa",
+    "transction": "transaction", "tranzaction": "transaction", "transacton": "transaction", "trasaction": "transaction",
+    "revers": "reverse", "reverce": "reverse", "reversse": "reverse", "reversl": "reversal",
+    "rong": "wrong", "wrng": "wrong", "worng": "wrong",
+    "nambari": "namba", "numba": "namba", "nmba": "namba",
+    # messages
+    "msg": "message", "msgs": "messages", "mesage": "message", "mesages": "messages", "meseji": "messages",
+    "massages": "messages", "mssage": "message", "mssages": "messages", "txt": "sms", "txts": "sms",
+    # phone, SIM, settings
+    "fon": "phone", "phne": "phone", "phon": "phone", "simcard": "sim card",
+    "setings": "settings", "settins": "settings", "sttings": "settings", "seting": "setting",
+    "recieve": "receive", "recive": "receive", "receve": "receive", "recieved": "received", "recived": "received",
+    "recieving": "receiving", "registerd": "registered", "regestered": "registered", "registred": "registered",
+    # everyday SMS shorthand
+    "pls": "please", "plz": "please", "plse": "please", "pliz": "please", "plis": "please",
+    "u": "you", "ur": "your", "dnt": "dont", "cnt": "cant", "wat": "what", "wen": "when",
+    "coz": "because", "cos": "because", "abt": "about", "b4": "before", "mornin": "morning", "morng": "morning",
+    "nite": "night", "tonite": "tonight", "yday": "yesterday", "2day": "today", "2moro": "tomorrow",
+    "thru": "through", "thx": "thanks", "tnx": "thanks", "nw": "now", "wit": "with", "wid": "with",
+    "lil": "little", "litle": "little", "evry": "every", "evrything": "everything", "sumone": "someone",
+    "ppl": "people", "wrk": "work", "wrking": "working", "workin": "working", "hv": "have", "hav": "have",
+}
+_VARIANT = re.compile(r"\b(" + "|".join(sorted(map(re.escape, VARIANTS), key=len, reverse=True)) + r")\b")
 
 
 def clean(text: str | None) -> str:
@@ -40,9 +88,12 @@ def clean(text: str | None) -> str:
 
 def normalise(text: str | None) -> str:
     """Lower case, ``M-PESA`` folded to ``mpesa``, apostrophes dropped ("Murang'a" = "Muranga"),
-    other punctuation replaced by spaces, whitespace collapsed."""
+    other punctuation replaced by spaces, whitespace collapsed, a number split from its unit
+    ("2gb" -> "2 gb") and common misspellings folded (:data:`VARIANTS`: "netwrk" -> "network")."""
     folded = _APOSTROPHES.sub("", _MPESA.sub("mpesa", clean(text)).lower())
-    return _SPACES.sub(" ", _NON_WORD.sub(" ", folded).replace("_", " ")).strip()
+    words = _SPACES.sub(" ", _NON_WORD.sub(" ", folded).replace("_", " ")).strip()
+    words = _UNIT.sub(r" \1", words)
+    return _VARIANT.sub(lambda m: VARIANTS[m.group(1)], words)
 
 
 def body_hash(text: str | None) -> str:
@@ -50,9 +101,24 @@ def body_hash(text: str | None) -> str:
     return hashlib.sha256(normalise(text).encode("utf-8")).hexdigest()
 
 
+#: Words a customer drops into the middle of a phrase without changing it: "cant even call",
+#: "hakuna hata bar", "block my line". A multi-word phrase matches with up to two of them
+#: between any two of its words.
+FILLERS: tuple[str, ...] = (
+    "even", "hata", "kabisa", "really", "just", "also", "pia", "sana", "tu", "completely", "totally", "yet",
+    "bado", "still", "again", "tena", "ever", "kweli", "aki", "ebu", "at", "all", "hii", "hiyo", "hizi", "hizo",
+    "hapa", "huku", "yangu", "zangu", "wangu", "langu", "yetu", "zetu", "yenu", "yake", "my", "the", "a", "an",
+    "our", "your", "this", "that", "these", "those", "whole", "entire", "yote", "zote", "nzima", "mzima", "so",
+    "very", "too",
+)
+_FILLER_GAP = r"(?:\s+(?:" + "|".join(FILLERS) + r")){0,2}\s+"
+
+
 def phrase_pattern(phrase: str) -> re.Pattern[str]:
-    """A whole-word regex for ``phrase`` over :func:`normalise`-d text."""
-    return re.compile(r"(?<!\w)" + re.escape(normalise(phrase)) + r"(?!\w)")
+    """A whole-word regex for ``phrase`` over :func:`normalise`-d text, tolerating up to two
+    :data:`FILLERS` between consecutive words of a multi-word phrase."""
+    words = normalise(phrase).split()
+    return re.compile(r"(?<!\w)" + _FILLER_GAP.join(re.escape(w) for w in words) + r"(?!\w)")
 
 
 # ---------------------------------------------------------------------------- tokens
@@ -83,7 +149,7 @@ SYNONYMS: dict[str, str] = {
     "subscribed": "subscription", "subscribe": "subscription", "unsubscribe": "subscription",
     # bundles
     "bando": "bundle", "bundles": "bundle", "mbs": "data", "megabytes": "data",
-    "imeisha": "expired", "zimeisha": "expired", "imeliwa": "expired", "finished": "expired",
+    "imeisha": "expired", "zimeisha": "expired", "finished": "expired",
     "expire": "expired", "haijaingia": "notapplied",
     # SIM, phone, fraud
     "laini": "sim", "line": "sim", "simu": "phone", "handset": "phone",
@@ -97,6 +163,32 @@ SYNONYMS: dict[str, str] = {
     "nibaki": "keep", "kubaki": "keep", "mwingine": "another", "nyingine": "another",
     # roaming
     "nje": "abroad", "travelling": "abroad", "traveling": "abroad", "overseas": "abroad",
+    "kampala": "uganda", "kigali": "rwanda", "arusha": "tanzania", "nasafiri": "abroad", "nikisafiri": "abroad",
+    "kusafiri": "abroad", "ninasafiri": "abroad",
+    # outages and data, Kiswahili and Sheng verb forms
+    "haupo": "lost", "haipo": "lost", "umepotea": "lost", "imeenda": "lost", "zimepotea": "lost", "imekufa": "lost",
+    "zinakata": "drop", "inakata": "drop", "kukata": "drop", "inajikata": "drop", "zinajikata": "drop",
+    "haziload": "loading", "haiload": "loading", "inaload": "loading", "load": "loading", "loads": "loading",
+    "haifunguki": "loading", "hazifunguki": "loading", "inafunguka": "loading", "haifungui": "loading",
+    "haifanyi": "notworking", "hazifanyi": "notworking", "haufanyi": "notworking", "hamna": "no",
+    # payments
+    "nililipa": "paid", "nimelipa": "paid", "nilipa": "paid", "lipa": "pay", "ikatoka": "deducted",
+    "imetoka": "deducted", "zimetoka": "deducted", "zilitoka": "deducted", "hajapata": "notreceived",
+    "hawajapokea": "notreceived", "hawajapata": "notreceived", "haijaenda": "notreceived",
+    "haikuenda": "notreceived", "nakatwa": "deducted", "nilikatwa": "deducted", "wamekata": "deducted",
+    "inaliwa": "expired", "vanished": "disappeared", "imeliwa": "expired",
+    # fraud and theft
+    "ameingia": "hacked", "aliingia": "hacked", "wameingia": "hacked", "conned": "fraud", "nimeconiwa": "fraud",
+    "coniwa": "fraud", "tapeliwa": "fraud", "nimetapeliwa": "fraud", "scam": "fraud", "scammed": "fraud",
+    "scammer": "fraud", "scammers": "fraud", "ameiba": "stolen", "wameiba": "stolen", "iliibiwa": "stolen",
+    "robbed": "stolen", "mugged": "stolen",
+    # account
+    "unregistered": "register", "haijaregister": "register", "kusajili": "register",
+    "usajili": "register", "jina": "name", "kuihamisha": "transfer", "hamisha": "transfer", "kuhamisha": "transfer",
+    "kuhama": "switch", "ingine": "another", "aliyefariki": "deceased", "alifariki": "deceased", "marehemu": "deceased",
+    "ibaki": "keep", "retain": "keep",
+    # device
+    "config": "configuration", "configs": "configuration", "setting": "settings",
 }
 
 #: Function words in English and Kiswahili that carry no support meaning.
@@ -111,6 +203,9 @@ STOPWORDS: frozenset[str] = frozenset(
     kuna iko niko tu sana lakini bado pia au kama sasa leo jana mimi wewe nyinyi sisi tafadhali
     kila nini huku
     naomba nisaidie saidia asante habari jambo bwana mama hapo hapa juu kwenye
+    tena hata even kabisa really hivyo bana manze msee mse buda bro aki ebu kwani mbona basi yaani flani
+    fulani ile yule wale hao hilo lile zile nyingi mingi vile venye ivo hivi ati eti ndio ndiyo hapana ok okay
+    guys team
     """.split()
 )
 
@@ -148,10 +243,11 @@ def terms(text: str | None) -> list[str]:
 
     Bigrams are what let "sent to the wrong number" outscore an article that merely mentions
     a number and, elsewhere, something wrong; they are built after stop-word removal, so
-    "wrong number" and "namba mbaya" (mapped to the same two words) meet as one term.
+    "wrong number" and "namba mbaya" (mapped to the same two words) meet as one term. A word
+    repeated ("network network") is not a phrase and makes no bigram.
     """
     words = _mapped_words(text)
-    bigrams = [f"{a}_{b}" for a, b in zip(words, words[1:], strict=False) if b != "no"]
+    bigrams = [f"{a}_{b}" for a, b in zip(words, words[1:], strict=False) if b != "no" and a != b]
     return tokens(text) + bigrams
 
 
@@ -217,15 +313,82 @@ _AMOUNT = re.compile(
 _CODE = re.compile(r"\b(?=(?:[A-Za-z0-9]*\d){2})(?=(?:[A-Za-z0-9]*[A-Za-z]){2})[A-Za-z0-9]{10}\b")
 
 
+_SW_UNITS = {"moja": 1, "mbili": 2, "tatu": 3, "nne": 4, "tano": 5, "sita": 6, "saba": 7, "nane": 8, "tisa": 9}
+_SW_TENS = {"kumi": 10, "ishirini": 20, "thelathini": 30, "arobaini": 40, "hamsini": 50, "sitini": 60,
+            "sabini": 70, "themanini": 80, "tisini": 90}
+_SW_SCALES = {"laki": 100_000, "elfu": 1_000, "mia": 100}
+_EN_SMALL = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9,
+             "ten": 10, "eleven": 11, "twelve": 12, "thirteen": 13, "fourteen": 14, "fifteen": 15, "sixteen": 16,
+             "seventeen": 17, "eighteen": 18, "nineteen": 19, "twenty": 20, "thirty": 30, "forty": 40, "fifty": 50,
+             "sixty": 60, "seventy": 70, "eighty": 80, "ninety": 90}
+
+
+def _sw_small(words: list[str], i: int) -> tuple[int, int]:
+    """A Kiswahili number under 100 at ``words[i]`` ("kumi na mbili"); (value, next index), value 0 if none."""
+    value = 0
+    if i < len(words) and words[i] in _SW_TENS:
+        value, i = _SW_TENS[words[i]], i + 1
+        if i + 1 < len(words) and words[i] == "na" and words[i + 1] in _SW_UNITS:
+            value, i = value + _SW_UNITS[words[i + 1]], i + 2
+    elif i < len(words) and words[i] in _SW_UNITS:
+        value, i = _SW_UNITS[words[i]], i + 1
+    return value, i
+
+
+def _word_amounts(norm: str) -> list[int]:
+    """Amounts written in words: "elfu moja na mia tano" (1,500), "mia sita" (600), "two thousand five
+    hundred". A number word without a scale word ("mara mbili", twice) is not an amount."""
+    words, found, i = norm.split(), [], 0
+    while i < len(words):
+        if words[i] in _SW_SCALES:  # Kiswahili: the scale comes first, "elfu kumi na mbili" = 12,000
+            total = 0
+            while i < len(words) and words[i] in _SW_SCALES:
+                scale = _SW_SCALES[words[i]]
+                small, i = _sw_small(words, i + 1)
+                total += scale * (small or 1)
+                if i + 1 < len(words) and words[i] == "na" and words[i + 1] in _SW_SCALES:
+                    i += 1
+                    continue
+                if i + 1 < len(words) and words[i] == "na":
+                    small, j = _sw_small(words, i + 1)
+                    if small:
+                        total, i = total + small, j
+                break
+            found.append(total)
+            continue
+        if words[i] in _EN_SMALL:  # English: "two thousand five hundred"
+            current, total, scaled, j = 0, 0, False, i
+            while j < len(words):
+                w = words[j]
+                if w in _EN_SMALL:
+                    current += _EN_SMALL[w]
+                elif w == "hundred":
+                    current, scaled = (current or 1) * 100, True
+                elif w == "thousand":
+                    total, current, scaled = total + (current or 1) * 1000, 0, True
+                elif w == "and" and j + 1 < len(words) and words[j + 1] in _EN_SMALL:
+                    pass
+                else:
+                    break
+                j += 1
+            if scaled:
+                found.append(total + current)
+            i = j if j > i else i + 1
+            continue
+        i += 1
+    return found
+
+
 def extract_amounts(text: str | None) -> list[int]:
-    """Shilling amounts mentioned in ``text``, in order (``1.5k`` -> 1500). Phone numbers are skipped."""
+    """Shilling amounts mentioned in ``text``, in order (``1.5k`` -> 1500), then any written in words
+    ("elfu moja na mia tano" -> 1500). Phone numbers are skipped."""
     found: list[int] = []
     for plain, thousands in _AMOUNT.findall(clean(text)):
         if thousands:
             found.append(int(float(thousands) * 1000))
         elif plain:
             found.append(int(plain.replace(",", "")))
-    return found
+    return found + _word_amounts(normalise(text))
 
 
 def extract_mpesa_codes(text: str | None) -> list[str]:

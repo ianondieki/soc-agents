@@ -175,3 +175,39 @@ accounts:
     mpesa_balance_kes: 1800
     device: Nokia G42
     airtime_advance_outstanding_kes: 50
+
+  # --- boundary accounts for the held-out eval split (added with the test split, before any tuning) ---
+
+  - msisdn: "+254700001467"
+    name: Kipchoge Rotich
+    account_ref: ACC-101467
+    plan: prepaid
+    tier: bronze
+    airtime_balance_kes: 12
+    mpesa_balance_kes: 2600
+    device: Tecno Spark Go
+    charges:
+      - {id: CHG-1467-01, kind: airtime_deduction, description: Unmatched airtime deduction, amount_kes: 480, hours_ago: 3, refundable: true}
+
+  - msisdn: "+254700001578"
+    name: "Wairimu Ndung'u"
+    account_ref: ACC-101578
+    plan: prepaid
+    tier: silver
+    airtime_balance_kes: 95
+    mpesa_balance_kes: 4100
+    device: Infinix Smart 8
+    charges:
+      - {id: CHG-1578-01, kind: premium_sms, description: Daily horoscope subscription (30 days), amount_kes: 520, hours_ago: 4, refundable: true}
+
+  - msisdn: "+254700001689"
+    name: Baraka Mwinyi
+    account_ref: ACC-101689
+    plan: prepaid
+    tier: silver
+    airtime_balance_kes: 140
+    mpesa_balance_kes: 9800
+    device: Samsung Galaxy A25
+    transactions:
+      - {code: SLM5Q8WX3N, type: sent, amount_kes: 4800, counterparty: Grace Wanjiru, counterparty_msisdn: "+254700009244", hours_ago: 23, status: completed, recipient_withdrawn: false}
+      - {code: SLN6R9YZ4P, type: sent, amount_kes: 600, counterparty: Dennis Kiprop, counterparty_msisdn: "+254700009731", hours_ago: 25, status: completed, recipient_withdrawn: false}

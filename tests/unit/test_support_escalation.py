@@ -29,6 +29,7 @@ def test_the_shipped_policy_lists_every_reason_in_the_contracts_order_with_the_c
         (EscalationFacts(risk_flags=("fraud_or_sim_swap",), confidence=0.9), "fraud_or_sim_swap"),
         (EscalationFacts(risk_flags=("legal_or_regulator",), confidence=0.9), "legal_or_regulator"),
         (EscalationFacts(risk_flags=("threat_or_safety",), confidence=0.9), "threat_or_safety"),
+        (EscalationFacts(unverified=True, confidence=0.9), "needs_verification"),
         (EscalationFacts(over_limit=True, confidence=0.9), "over_refund_limit"),
         (EscalationFacts(repeat_count=3, confidence=0.9), "repeat_unresolved"),
         (EscalationFacts(sentiment="angry", tier="platinum", confidence=0.9), "angry_high_value"),

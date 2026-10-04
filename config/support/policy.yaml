@@ -78,6 +78,10 @@ escalation:
     when: threats, self-harm, harassment
     reason: your safety matters to us and a person should speak with you directly
     advice: If you or someone else is in immediate danger, call the emergency services on 999 or 112 now.
+  - reason_code: needs_verification
+    when: an M-PESA reversal asked for on the public form without the 10-character transaction code (the form cannot prove the caller owns the number)
+    reason: a person needs to verify the transfer with you first, because the request did not include the transaction code from your M-PESA confirmation SMS
+    advice: Please have the confirmation SMS with the 10-character transaction code ready; we never ask for your PIN.
   - reason_code: over_refund_limit
     when: a refund above the auto limit, or a reversal above the limit or older than the window
     reason: the amount or age of the transaction is beyond what can be approved automatically
