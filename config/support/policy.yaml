@@ -82,7 +82,7 @@ escalation:
     advice: If you or someone else is in immediate danger, call the emergency services on 999 or 112 now.
   - reason_code: needs_verification
     when: an M-PESA reversal asked for on the public form without the 10-character transaction code (the form cannot prove the caller owns the number)
-    reason: a person needs to verify the transfer with you first, because the request did not include the transaction code from your M-PESA confirmation SMS
+    reason: the request did not include the transaction code from your M-PESA confirmation SMS, so we need to verify the transfer with you first
     advice: Please have the confirmation SMS with the 10-character transaction code ready; we never ask for your PIN.
   - reason_code: over_refund_limit
     when: a refund above the auto limit, or a reversal above the limit or older than the window
@@ -101,13 +101,13 @@ escalation:
     reason: we could not find a verified answer and would rather check than guess
   - reason_code: tool_failed
     when: a tool call failed or was refused by policy and no safe alternative exists
-    reason: we could not complete the fix automatically, so a person will finish it
+    reason: we could not complete the fix automatically
 
 # Told to the CUSTOMER (the reply and the public view) instead of the real reason when the real
 # one was read from the account -- over_refund_limit, repeat_unresolved, angry_high_value,
 # tool_failed. Whoever typed a number must not learn that line's limits, complaint history or
 # tier from the reply. Staff always see the real reason.
-account_review_reason: a member of our team needs to check the account details before we can finish this
+account_review_reason: we need to check some account details before we can finish this
 
 # --- eval gates (support/evals.py) ------------------------------------------------------
 eval_gates:

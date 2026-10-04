@@ -404,3 +404,15 @@ def test_a_broken_support_config_is_503_naming_the_file_not_500(client, monkeypa
     for method, path in (("GET", f"{BASE}/complaints"), ("POST", f"{BASE}/complaints"), ("GET", f"{BASE}/kb")):
         r = client.request(method, path, json={"body": "My calls keep dropping", "msisdn": "0711004100"})
         assert r.status_code == 503 and "config/support/policy.yaml" in r.json()["detail"], (method, path, r.text)
+
+
+def test_a_malformed_golden_set_makes_the_eval_run_503_naming_the_line_not_500(client, monkeypatch):
+    from noc_agents.support import evals
+
+    def malformed(**_kwargs):
+        raise evals.GoldenSetError("golden.jsonl:127: split must be one of ('dev', 'validation')")
+
+    monkeypatch.setattr(evals, "run_eval", malformed)
+    r = client.post(f"{BASE}/evals/run")
+    assert r.status_code == 503, r.text
+    assert "golden.jsonl:127" in r.json()["detail"]

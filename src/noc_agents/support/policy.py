@@ -77,7 +77,7 @@ class SupportPolicy(_Strict):
     sla_hours: dict[str, int] = Field(default_factory=lambda: {"critical": 1, "high": 4, "normal": 24, "low": 72})
     escalation: tuple[EscalationRule, ...]
     #: What the customer is told instead of an account-derived reason (escalation.ACCOUNT_REASONS).
-    account_review_reason: str = "a member of our team needs to check the account details before we can finish this"
+    account_review_reason: str = "we need to check some account details before we can finish this"
     eval_gates: tuple[EvalGate, ...] = ()
 
     @model_validator(mode="after")

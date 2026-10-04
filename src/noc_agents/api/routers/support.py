@@ -314,6 +314,9 @@ def run_evals() -> dict[str, Any]:
         report = evals.run_eval(operator_id=operator_id, ctx=default_context())
     except FileNotFoundError:
         raise HTTPException(503, "the golden set is not installed on this deployment") from None
+    except evals.GoldenSetError as exc:
+        # A malformed golden file is a deployment fault, not a crash: say which line, keep the last report.
+        raise HTTPException(503, f"the golden set is invalid: {exc}") from None
     session = get_session()
     try:
         evals.store_report(session, operator_id, report)
