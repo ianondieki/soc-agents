@@ -191,7 +191,8 @@ export interface EvalReport {
   run_id: string;
   ran_at: string;
   mode: "deterministic" | "llm";
-  dataset: { name: string; version: string; size: number; split: "all" | "dev" | "test" };
+  /** `split` is the headline split ("holdout" on a full run); `excluded` counts contested cases left out. */
+  dataset: { name: string; version: string; size: number; split: string; excluded?: number };
   metrics: EvalMetrics;
   gates: EvalGate[];
   passed: boolean;
@@ -204,8 +205,9 @@ export interface EvalReport {
     triage_accuracy: number | null;
   }[];
   failures: EvalFailure[];
-  /** In flight from the eval team: the top-level metrics are then the held-out test split. */
-  by_split?: { dev: EvalMetrics; test: EvalMetrics };
+  /** Per split (dev, validation, holdout; older reports: dev, test). The top-level metrics are the
+   *  headline split's, named in `dataset.split`. */
+  by_split?: Record<string, EvalMetrics>;
 }
 
 // ---------------------------------------------------------------------------------- API

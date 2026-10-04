@@ -838,7 +838,8 @@ function Evals({ evals }: { evals: Load<any> }) {
             })}
           </ul>
           <p className="ld-eval-meta">
-            {r.dataset?.size ? <>{plural(Number(r.dataset.size), "labelled case")}</> : "Labelled set"}
+            {r.dataset?.size ? <>{plural(Number(r.dataset.size), r.dataset.split === "holdout" ? "blind holdout case" : "labelled case")}</> : "Labelled set"}
+            {r.dataset?.split === "holdout" ? <> written by an author who never saw the code</> : null}
             {r.dataset?.name ? <>, {r.dataset.name}{r.dataset.version ? ` v${r.dataset.version}` : ""}</> : null}; {r.mode === "llm" ? "with the LLM" : "deterministic"}; ran{" "}
             <span className="ld-mono">{fmtDateTime(r.ran_at)}</span> EAT
             {typeof r.metrics?.p50_ms === "number" ? <>; median {fmtMs(r.metrics.p50_ms)} a case</> : null}.{" "}

@@ -19,12 +19,21 @@ import {
 } from "../../lib/support";
 import { fmtDateTime } from "../../lib/time";
 
+/** Splits in the order they were written, and how the page names them. */
+const SPLIT_ORDER = ["dev", "validation", "test", "holdout"];
+const SPLIT_WORD: Record<string, { short: string; long: string }> = {
+  dev: { short: "Dev", long: "dev split" },
+  validation: { short: "Validation", long: "validation split" },
+  test: { short: "Test", long: "held-out test split" },
+  holdout: { short: "Holdout", long: "blind holdout" },
+};
+
 /**
  * The eval suite: the desk scored on a labelled set against fixed gates. Two headline figures
  * (resolution rate, wrong-escalation rate) each drawn against its gate, the two other gates, the
  * supporting metrics each with its one-sentence meaning, the route confusion matrix, the
- * per-category table, the failures grouped by kind, and the dataset facts. Dev and test splits
- * sit side by side when the report carries them.
+ * per-category table, the failures grouped by kind, and the dataset facts. Every split the report
+ * carries (dev, validation, holdout) sits side by side.
  */
 
 export interface EvalsProps {
@@ -223,8 +232,11 @@ export default function Evals({ report, state, error, running, onRun, onRetry, r
   const headline = ["resolution_rate", "wrong_escalation_rate"].map((k) => gateFor(r, k)).filter((g): g is EvalGate => !!g);
   const others = r.gates.filter((g) => !headline.includes(g));
   const failed = r.gates.filter((g) => !g.passed).length;
-  const splits = r.by_split && r.by_split.dev && r.by_split.test ? r.by_split : null;
-  const splitWord = r.dataset.split === "all" ? "whole set" : `${r.dataset.split} split`;
+  // The splits in the order they were written, each with what it is: tuned on, seen, or never seen.
+  const splitKeys = r.by_split ? SPLIT_ORDER.filter((k) => r.by_split?.[k]) : [];
+  const splits = splitKeys.length >= 2 ? r.by_split! : null;
+  const splitWord = r.dataset.split === "all" ? "whole set" : SPLIT_WORD[r.dataset.split]?.long ?? `${r.dataset.split} split`;
+  const excluded = r.dataset.excluded ? `, ${r.dataset.excluded} contested left out` : "";
 
   return (
     <div className="sd-evals">
@@ -240,7 +252,8 @@ export default function Evals({ report, state, error, running, onRun, onRetry, r
             </span>
             <span>
               {r.dataset.size} cases, {splitWord}
-              {splits ? " (test scored above)" : ""}
+              {excluded}
+              {splits ? " (scored above)" : ""}
             </span>
             <span>{r.mode === "llm" ? "with the LLM tie-break" : "deterministic"}</span>
             <span>
@@ -296,26 +309,32 @@ export default function Evals({ report, state, error, running, onRun, onRetry, r
           <Matrix labels={r.confusion.labels} matrix={r.confusion.matrix} />
           {splits && (
             <>
-              <h3 className="sd-ev-sub">Dev and test splits</h3>
+              <h3 className="sd-ev-sub">By split</h3>
+              <p className="sd-ev-note">
+                Dev is what the rules were tuned on; validation was written blind, then seen; the holdout was written
+                blind by another author and is never tuned against.
+              </p>
               <div className="table-scroll sd-splits">
                 <table>
                   <thead>
                     <tr>
                       <th scope="col">Metric</th>
-                      <th scope="col" className="num">
-                        Dev
-                      </th>
-                      <th scope="col" className="num">
-                        Test
-                      </th>
+                      {splitKeys.map((k) => (
+                        <th key={k} scope="col" className="num">
+                          {SPLIT_WORD[k]?.short ?? k}
+                        </th>
+                      ))}
                     </tr>
                   </thead>
                   <tbody>
                     {(Object.keys(METRIC_DEFS) as (keyof EvalMetrics)[]).map((k) => (
                       <tr key={k}>
                         <th scope="row">{METRIC_DEFS[k].label}</th>
-                        <td className="num">{metricText(k, splits.dev[k])}</td>
-                        <td className="num">{metricText(k, splits.test[k])}</td>
+                        {splitKeys.map((sk) => (
+                          <td key={sk} className="num">
+                            {metricText(k, splits[sk][k])}
+                          </td>
+                        ))}
                       </tr>
                     ))}
                   </tbody>
