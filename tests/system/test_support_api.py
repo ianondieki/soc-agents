@@ -124,6 +124,7 @@ def test_an_identical_complaint_within_two_minutes_is_200_with_the_same_case(cli
         {"body": "x" * 4001, "msisdn": "0711002003"},
         {"body": "My calls keep dropping", "msisdn": "020 123 4567"},
         {"body": "My calls keep dropping", "msisdn": "+255712345678"},
+        {"body": "My calls keep dropping", "msisdn": "071234567\uff18"},  # a fullwidth digit is not a digit
         {"body": "My calls keep dropping", "msisdn": "0711002003", "channel": "fax"},
         {"body": "My calls keep dropping", "msisdn": "0711002003", "subject": "s" * 91},
         {"msisdn": "0711002003"},
@@ -238,10 +239,19 @@ def test_reject_sends_the_case_back(client):
 
 
 def test_evals_latest_is_404_until_a_run_then_the_run(client):
+    """The flow and the report's internal consistency -- not model quality, which is the gate
+    test's job (tests/unit/test_support_evals.py)."""
     assert client.get(f"{BASE}/evals/latest").status_code == 404
-    report = client.post(f"{BASE}/evals/run").json()
-    assert set(report) >= {"run_id", "ran_at", "mode", "dataset", "metrics", "gates", "passed", "confusion", "by_category", "failures"}
-    assert report["passed"] is True and report["mode"] == "deterministic"
+    run = client.post(f"{BASE}/evals/run")
+    assert run.status_code == 200
+    report = run.json()
+    assert set(report) >= {"run_id", "ran_at", "mode", "dataset", "metrics", "gates", "passed", "confusion",
+                           "by_category", "failures", "by_split"}
+    assert report["mode"] == "deterministic"
+    assert report["passed"] == all(g["passed"] for g in report["gates"]) and report["gates"]
+    assert report["dataset"]["split"] == "test"  # the headline is the held-out split
+    assert set(report["by_split"]) == {"dev", "test"} and report["metrics"] == report["by_split"]["test"]
+    assert sum(map(sum, report["confusion"]["matrix"])) == report["dataset"]["size"]
     latest = client.get(f"{BASE}/evals/latest")
     assert latest.status_code == 200 and latest.json()["run_id"] == report["run_id"]
 
@@ -311,3 +321,85 @@ def test_no_support_route_exists_in_an_unauthenticated_production_deployment(mon
         monkeypatch.setenv("NOC_ENV", "demo")
         importlib.reload(router_module)
     assert router_module.router.routes
+
+
+# --------------------------------------------------------------- review round: hardening
+
+
+def _other_operators_case(client) -> tuple[str, str]:
+    """A parked airtel case in the same database file: rows the safaricom API must not see."""
+    from noc_agents.db.models import get_session, utcnow
+    from noc_agents.db.models_support import SupportComplaintRow, SupportToolCallRow
+
+    session = get_session()
+    try:
+        row = SupportComplaintRow(operator_id="airtel", ref="CMP-900001", msisdn="+254733000001",
+                                  msisdn_masked="+254 7•• ••• 001", body_hash="h", status="awaiting_approval",
+                                  route="human", sla_due_at=utcnow())
+        session.add(row)
+        session.flush()
+        call = SupportToolCallRow(complaint_id=row.id, tool="issue_refund", status="needs_approval", subject_ref="X")
+        session.add(call)
+        session.commit()
+        return row.id, call.id
+    finally:
+        session.close()
+
+
+def test_another_operators_case_is_404_on_every_route(client):
+    cid, call_id = _other_operators_case(client)
+    assert client.get(f"{BASE}/complaints/{cid}").status_code == 404
+    assert client.post(f"{BASE}/complaints/{cid}/claim").status_code == 404
+    assert client.post(f"{BASE}/complaints/{cid}/resolve", json={"reply": "Resolved for you."}).status_code == 404
+    assert client.post(f"{BASE}/complaints/{cid}/actions/{call_id}/approve").status_code == 404
+    assert client.post(f"{BASE}/complaints/{cid}/actions/{call_id}/reject", json={"reason": "no"}).status_code == 404
+    assert cid not in client.get(f"{BASE}/complaints", params={"limit": 200}).text
+
+
+def test_approving_a_held_call_on_an_unclaimed_case_is_409_until_someone_claims_it(client):
+    detail = _file(client, "You people are THIEVES!! My Business 50GB bundle expired early again", msisdn="0700000890").json()
+    cid = detail["complaint"]["id"]
+    held = next(t for t in detail["tool_calls"] if t["status"] == "needs_approval")
+    assert detail["complaint"]["status"] == "escalated"
+    assert client.post(f"{BASE}/complaints/{cid}/actions/{held['id']}/approve").status_code == 409
+    assert client.post(f"{BASE}/complaints/{cid}/claim").status_code == 200
+    assert client.post(f"{BASE}/complaints/{cid}/actions/{held['id']}/approve").json()["complaint"]["status"] == "action_taken"
+
+
+def test_a_public_duplicate_gets_only_the_reference_and_status(enforced):
+    first = _file(enforced, "My calls keep dropping near the stage", msisdn="0711003001", name="Achieng Atieno")
+    again = _file(enforced, "my calls keep dropping near the stage", msisdn="0711003001", name="Someone Else")
+    assert (first.status_code, again.status_code) == (201, 200)
+    c = again.json()["complaint"]
+    assert (c["ref"], c["status"]) == (first.json()["complaint"]["ref"], first.json()["complaint"]["status"])
+    assert c["reply"] is None and c["customer"]["name"] is None and "Achieng" not in again.text
+    assert again.json()["steps"] == again.json()["tool_calls"] == again.json()["messages"] == []
+
+
+def test_a_staff_duplicate_still_gets_the_full_detail(client):
+    first = _file(client, "My calls keep dropping near the bridge", msisdn="0711003002", name="Achieng Atieno")
+    again = _file(client, "My calls keep dropping near the bridge", msisdn="0711003002")
+    assert again.status_code == 200 and again.json()["complaint"]["customer"]["name"] == "Achieng Atieno"
+    assert again.json()["steps"] == first.json()["steps"]
+
+
+def test_one_address_cannot_cycle_through_numbers(client):
+    from noc_agents.support.policy import load_policy
+
+    allowed = load_policy().rate_limit.per_ip_max_requests
+    for n in range(allowed):
+        assert _file(client, f"How do I activate roaming, question {n}?", msisdn=f"07110040{n:02d}").status_code == 201
+    refused = _file(client, "How do I activate roaming, one more?", msisdn="0711004099")
+    assert refused.status_code == 429 and int(refused.headers["Retry-After"]) >= 1
+
+
+def test_a_broken_support_config_is_503_naming_the_file_not_500(client, monkeypatch):
+    from noc_agents.support import context
+
+    def broken():
+        raise ValueError("escalation must list each contract reason code exactly once")
+
+    monkeypatch.setattr(context, "load_policy", broken)
+    for method, path in (("GET", f"{BASE}/complaints"), ("POST", f"{BASE}/complaints"), ("GET", f"{BASE}/kb")):
+        r = client.request(method, path, json={"body": "My calls keep dropping", "msisdn": "0711004100"})
+        assert r.status_code == 503 and "config/support/policy.yaml" in r.json()["detail"], (method, path, r.text)

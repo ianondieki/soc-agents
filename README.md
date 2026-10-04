@@ -146,7 +146,7 @@ and nothing is ever sent.
 - Code `src/noc_agents/support/`, routes `src/noc_agents/api/routers/support.py`, tables
   `db/models_support.py`; policy, knowledge base and demo accounts in `config/support/`.
 - `SUPPORT_DESK_ENABLED` (default `true`; `false` makes every route 404).
-- Routes under `/api/v1/support`: `POST /complaints` (the public form, rate-limited per number),
+- Routes under `/api/v1/support`: `POST /complaints` (the public form, rate-limited per number and per address),
   `GET /complaints`, `GET /complaints/{id}`, `POST /complaints/{id}/claim|resolve`,
   `POST /complaints/{id}/actions/{tool_call_id}/approve|reject`, `GET /kb`, `GET /kb/search?q=`,
   `GET /metrics`, `GET /evals/latest`, `POST /evals/run`, `POST /demo/seed`.

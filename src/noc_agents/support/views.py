@@ -5,13 +5,26 @@ operator-owned reads (``api/deps``): another operator's complaint is not filtere
 fetch, it is never fetched.
 
 **Two views of a complaint.** Staff (anyone holding a support read role, and everyone in the
-demo with ``AUTH_DISABLED=true``) see the full trace. The PUBLIC view -- what an anonymous
-caller of ``POST /complaints`` gets back once auth is on -- has the same shape with the
-account-derived parts blanked: step details, tool arguments and results, the account holder's
-name and the account reference. Without that, the public form would be an oracle: type any
-number, read that line's owner, balances and recent M-PESA transfers from the action agent's
-``lookup_account`` result. The customer still gets the reply, the reference, the citations and
-the step summaries, which are written to carry no account data.
+demo with ``AUTH_DISABLED=true``) see the full trace, with the VERIFIED account holder and
+account reference first. The PUBLIC view -- what an anonymous caller of ``POST /complaints``
+gets back once auth is on -- has the same shape but is BUILT from facts the caller already holds,
+never filtered from the staff trace, because a filter leaks whatever it forgets:
+
+* the steps are a fixed outline (received, sorted, then answered / fixed / passed to a person),
+  so whether the action agent found something to act on, planned a call or gave up shows nowhere;
+* the only tool call shown is the one that FIXED the case (name and status, nothing else); a
+  parked, held or refused call would tell the caller about the account's limits or history;
+* ``awaiting_approval`` reads as ``escalated``, and an account-derived escalation reason
+  (``escalation.ACCOUNT_REASONS``) reads as ``account_review`` with the policy's generic sentence;
+* the customer block carries only the name the caller typed and the masked number they typed.
+
+Without that the public form is an oracle: type any number, learn whose it is, what was sent from
+it and what its limits are. The reply needs no filtering -- every reply is written to echo only
+what the customer typed (``actions.success_reply``, ``escalation.customer_facing``).
+
+A public caller whose submission hits the two-minute dedupe gets :func:`duplicate_view`: the
+reference and status of the case on file and nothing else of it -- the first submission may have
+come from someone else, with their name on it.
 """
 
 from __future__ import annotations
@@ -32,6 +45,8 @@ from noc_agents.db.models_support import (
     SupportToolCallRow,
 )
 from noc_agents.services.clock import iso_z
+from noc_agents.support.escalation import ACCOUNT_REASONS, ACCOUNT_REVIEW_CODE
+from noc_agents.support.policy import SupportPolicy, load_policy
 from noc_agents.support.vocab import CATEGORIES
 
 DEFAULT_LIST_LIMIT = 50
@@ -63,16 +78,25 @@ def _linked_incident(session: Session, row: SupportComplaintRow) -> dict[str, An
     return {"id": inc.id, "incident_number": inc.incident_number, "title": inc.title, "status": inc.status}
 
 
-def complaint_out(session: Session, row: SupportComplaintRow, *, public: bool = False) -> dict[str, Any]:
-    """The contract's ``Complaint``."""
-    escalation = None
-    if row.escalation_reason_code:
-        escalation = {
-            "reason_code": row.escalation_reason_code,
-            "reason": row.escalation_reason,
-            "at": iso_z(row.escalated_at),
-            "claimed_by": row.claimed_by,
-        }
+def _escalation_out(row: SupportComplaintRow, *, public: bool, policy: SupportPolicy) -> dict[str, Any] | None:
+    if not row.escalation_reason_code:
+        return None
+    code, reason = row.escalation_reason_code, row.escalation_reason
+    if public and code in ACCOUNT_REASONS:
+        code, reason = ACCOUNT_REVIEW_CODE, policy.account_review_reason
+    return {
+        "reason_code": code,
+        "reason": reason,
+        "at": iso_z(row.escalated_at),
+        "claimed_by": None if public else row.claimed_by,
+    }
+
+
+def complaint_out(session: Session, row: SupportComplaintRow, *, public: bool = False,
+                  policy: SupportPolicy | None = None) -> dict[str, Any]:
+    """The contract's ``Complaint``; ``public`` gives the caller-safe view (module docstring)."""
+    policy = policy or load_policy()
+    status = "escalated" if public and row.status == "awaiting_approval" else row.status
     return {
         "id": row.id,
         "ref": row.ref,
@@ -80,7 +104,8 @@ def complaint_out(session: Session, row: SupportComplaintRow, *, public: bool = 
         "updated_at": iso_z(row.updated_at),
         "channel": row.channel,
         "customer": {
-            "name": row.customer_name if public else (row.customer_name or row.account_holder),
+            # Staff: the verified holder first; the public: only what the caller typed.
+            "name": row.customer_name if public else (row.account_holder or row.customer_name),
             "msisdn_masked": row.msisdn_masked,
             "account_ref": None if public else row.account_ref,
         },
@@ -91,10 +116,10 @@ def complaint_out(session: Session, row: SupportComplaintRow, *, public: bool = 
         "urgency": row.urgency,
         "sentiment": row.sentiment,
         "route": row.route,
-        "status": row.status,
+        "status": status,
         "outcome": row.outcome,
         "confidence": row.confidence,
-        "escalation": escalation,
+        "escalation": _escalation_out(row, public=public, policy=policy),
         "reply": row.reply,
         "citations": _loads(row.citations_json, []),
         "linked_incident": _linked_incident(session, row),
@@ -102,24 +127,24 @@ def complaint_out(session: Session, row: SupportComplaintRow, *, public: bool = 
     }
 
 
-def step_out(row: SupportStepRow, *, public: bool = False) -> dict[str, Any]:
+def step_out(row: SupportStepRow) -> dict[str, Any]:
     return {
         "seq": row.seq,
         "agent": row.agent,
         "action": row.action,
         "summary": row.summary,
-        "detail": {} if public else _loads(row.detail_json, {}),
+        "detail": _loads(row.detail_json, {}),
         "duration_ms": row.duration_ms,
         "at": iso_z(row.at),
     }
 
 
-def tool_call_out(row: SupportToolCallRow, *, public: bool = False) -> dict[str, Any]:
+def tool_call_out(row: SupportToolCallRow) -> dict[str, Any]:
     return {
         "id": row.id,
         "tool": row.tool,
-        "args": {} if public else _loads(row.args_json, {}),
-        "result": None if public else _loads(row.result_json, None),
+        "args": _loads(row.args_json, {}),
+        "result": _loads(row.result_json, None),
         "status": row.status,
         "policy": row.policy,
         "at": iso_z(row.at),
@@ -127,31 +152,83 @@ def tool_call_out(row: SupportToolCallRow, *, public: bool = False) -> dict[str,
     }
 
 
-def message_out(row: SupportMessageRow) -> dict[str, Any]:
-    return {"id": row.id, "author": row.author, "name": row.name, "body": row.body, "at": iso_z(row.at)}
+def message_out(row: SupportMessageRow, *, public: bool = False) -> dict[str, Any]:
+    name = None if public and row.author == "staff" else row.name
+    return {"id": row.id, "author": row.author, "name": name, "body": row.body, "at": iso_z(row.at)}
 
 
-def detail(session: Session, row: SupportComplaintRow, *, public: bool = False) -> dict[str, Any]:
+#: The public outline's last step, by where the case ended: (agent, action, summary).
+_PUBLIC_OUTCOME: dict[str, tuple[str, str, str]] = {
+    "resolver": ("resolver", "answered", "Answered from our help articles."),
+    "action": ("action", "called_tool", "Fixed by our action agent."),
+    "human": ("escalation", "escalated", "Passed to a member of our team."),
+}
+#: Tools that are bookkeeping around the fix, never "the" fix.
+_BOOKKEEPING_TOOLS = frozenset({"lookup_account", "update_ticket"})
+
+
+def _public_steps(row: SupportComplaintRow, steps: list[SupportStepRow]) -> list[dict[str, Any]]:
+    """The fixed outline: received, sorted, and where it ended -- the same shape for every account."""
+    if not steps:
+        return []
+    first, last = steps[0], steps[-1]
+    sorted_step = next((s for s in steps if s.agent == "triage"), None)
+    outline = [("intake", "received", "Your complaint was received.", first.duration_ms, first.at)]
+    if sorted_step is not None:
+        outline.append(("triage", "classified", f"Sorted as {row.category.replace('_', ' ')}.",
+                        sorted_step.duration_ms, sorted_step.at))
+    rest = sum(s.duration_ms for s in steps if s is not first and s is not sorted_step)
+    agent, action, summary = _PUBLIC_OUTCOME[row.route]
+    outline.append((agent, action, summary, rest, last.at))
+    return [{"seq": n, "agent": a, "action": act, "summary": text, "detail": {}, "duration_ms": ms, "at": iso_z(at)}
+            for n, (a, act, text, ms, at) in enumerate(outline, start=1)]
+
+
+def _public_calls(calls: list[SupportToolCallRow]) -> list[dict[str, Any]]:
+    """Only the call that fixed the case, by name and status -- nothing about how it was decided."""
+    return [{"id": c.id, "tool": c.tool, "args": {}, "result": None, "status": c.status, "policy": None,
+             "at": iso_z(c.at), "decided_by": None}
+            for c in calls if c.tool not in _BOOKKEEPING_TOOLS and c.status in ("ok", "approved")][:1]
+
+
+def detail(session: Session, row: SupportComplaintRow, *, public: bool = False,
+           policy: SupportPolicy | None = None) -> dict[str, Any]:
     """``{ complaint, steps, tool_calls, messages }``, each list in the order it happened."""
-    steps = session.scalars(
+    steps = list(session.scalars(
         select(SupportStepRow).where(SupportStepRow.complaint_id == row.id).order_by(SupportStepRow.seq)
-    ).all()
-    calls = session.scalars(
+    ).all())
+    calls = list(session.scalars(
         select(SupportToolCallRow)
         .where(SupportToolCallRow.complaint_id == row.id)
         .order_by(SupportToolCallRow.at, SupportToolCallRow.id)
-    ).all()
+    ).all())
     messages = session.scalars(
         select(SupportMessageRow)
         .where(SupportMessageRow.complaint_id == row.id)
         .order_by(SupportMessageRow.at, SupportMessageRow.id)
     ).all()
     return {
-        "complaint": complaint_out(session, row, public=public),
-        "steps": [step_out(s, public=public) for s in steps],
-        "tool_calls": [tool_call_out(c, public=public) for c in calls],
-        "messages": [message_out(m) for m in messages],
+        "complaint": complaint_out(session, row, public=public, policy=policy),
+        "steps": _public_steps(row, steps) if public else [step_out(s) for s in steps],
+        "tool_calls": _public_calls(calls) if public else [tool_call_out(c) for c in calls],
+        "messages": [message_out(m, public=public) for m in messages],
     }
+
+
+def duplicate_view(row: SupportComplaintRow, *, msisdn_masked: str) -> dict[str, Any]:
+    """What a PUBLIC caller gets for a submission the dedupe matched: the case's reference and
+    status, and nothing else of it. Every key of the contract's shape is present (so a client
+    reads it like any detail); the rest are empty, and the masked number is the caller's own."""
+    complaint = {key: None for key in (
+        "id", "created_at", "updated_at", "channel", "language", "subject", "body", "category", "urgency",
+        "sentiment", "route", "outcome", "confidence", "escalation", "reply", "linked_incident", "sla_due_at")}
+    complaint.update({
+        "ref": row.ref,
+        "status": "escalated" if row.status == "awaiting_approval" else row.status,
+        "customer": {"name": None, "msisdn_masked": msisdn_masked, "account_ref": None},
+        "citations": [],
+    })
+    return {"complaint": complaint, "steps": [], "tool_calls": [], "messages": []}
 
 
 def _counts(session: Session, operator_id: str, column: Any) -> dict[str, int]:

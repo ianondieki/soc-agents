@@ -21,7 +21,10 @@ in words which rule allowed, limited or refused the call; it is what the UI show
 ``incidents`` table; a refund's or a reversal's *effect* is the result recorded on the call.
 Idempotency reads those records back: a code that was already reversed, or a charge already
 refunded, is refused rather than paid twice -- the dangerous double-action a support bot must
-never take. ``subject_ref`` is the key for that lookup.
+never take -- and so is a second request while the first still waits for a person's approval.
+``subject_ref`` is the key for that lookup. The checks are only as good as the isolation they
+run under, so every caller runs a tool inside SQLite's write lock (``desk._write_lock``): two
+complaints, or two approvals, about one transfer are serialised and the second sees the first.
 
 **``fallback``** marks a refusal the desk can recover from safely, by letting the resolver
 answer from the knowledge base: nothing on the account is eligible for a re-credit (so the
@@ -71,6 +74,9 @@ class ToolEnv:
     account: Account | None
     policy: SupportPolicy
     now: datetime
+    #: Set when a person approves a parked call: that call is the one running, so it does not
+    #: count as "another call already waiting for approval".
+    approving_call_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -135,6 +141,40 @@ def _done_before(env: ToolEnv, tool: str, *, subject_ref: str | None = None, sin
     return env.session.scalar(stmt)
 
 
+def _waiting_before(env: ToolEnv, tool: str, subject_ref: str) -> SupportComplaintRow | None:
+    """The complaint on which ``tool`` on ``subject_ref`` already waits for a person's approval, if any.
+
+    Two complaints about the same transfer must not park two reversals of it: a person approving
+    both would be paying twice but for the second call's refusal. The second is refused at once,
+    pointing at the first.
+    """
+    stmt = (
+        select(SupportComplaintRow)
+        .join(SupportToolCallRow, SupportComplaintRow.id == SupportToolCallRow.complaint_id)
+        .where(
+            SupportComplaintRow.operator_id == env.operator_id,
+            SupportComplaintRow.msisdn == env.msisdn,
+            SupportToolCallRow.tool == tool,
+            SupportToolCallRow.subject_ref == subject_ref,
+            SupportToolCallRow.status == "needs_approval",
+        )
+        .limit(1)
+    )
+    if env.approving_call_id is not None:
+        stmt = stmt.where(SupportToolCallRow.id != env.approving_call_id)
+    return env.session.scalar(stmt)
+
+
+def _already(env: ToolEnv, tool: str, subject_ref: str, done: str) -> ToolOutcome | None:
+    """Refused when ``tool`` already ran on ``subject_ref`` for this customer, or waits for approval."""
+    if _done_before(env, tool, subject_ref=subject_ref):
+        return _refused(f"{subject_ref} has already been {done}", subject_ref=subject_ref)
+    waiting = _waiting_before(env, tool, subject_ref)
+    if waiting is not None:
+        return _refused(f"{subject_ref} is already waiting for a person's approval on {waiting.ref}", subject_ref=subject_ref)
+    return None
+
+
 def _kes(amount: int) -> str:
     return f"KES {amount:,}"
 
@@ -160,8 +200,8 @@ def issue_refund(env: ToolEnv, args: dict[str, Any], approved: bool = False) -> 
         raise ToolArgError(f"amount_kes must be between 1 and the charge's {_kes(charge.amount_kes)}")
     if not charge.refundable:
         return _refused(f"'{charge.description}' was a delivered service, so it is not refundable", subject_ref=charge_id, fallback=True)
-    if _done_before(env, "issue_refund", subject_ref=charge_id):
-        return _refused(f"charge {charge_id} has already been refunded", subject_ref=charge_id)
+    if (refusal := _already(env, "issue_refund", charge_id, "refunded")) is not None:
+        return refusal
     limit = env.policy.refund_auto_limit_kes
     if amount > limit and not approved:
         return ToolOutcome("needs_approval", None, f"refunds above {_kes(limit)} need a person's approval ({_kes(amount)} requested)", subject_ref=charge_id)
@@ -185,8 +225,8 @@ def reverse_mpesa(env: ToolEnv, args: dict[str, Any], approved: bool = False) ->
     txn = account.transaction(code)
     if txn is None or txn.type != "sent":
         return _refused(f"no transfer with code {code} was sent from this number", subject_ref=code)
-    if _done_before(env, "reverse_mpesa", subject_ref=code):
-        return _refused(f"transaction {code} has already been reversed", subject_ref=code)
+    if (refusal := _already(env, "reverse_mpesa", code, "reversed")) is not None:
+        return refusal
     policy = env.policy
     over = []
     if txn.hours_ago > policy.reversal_window_hours:
@@ -225,6 +265,9 @@ def recredit_bundle(env: ToolEnv, args: dict[str, Any], approved: bool = False) 
     if recent is not None or (last_days is not None and last_days < cooldown):
         when = f"{last_days:g} days ago" if recent is None else f"within the last {cooldown} days"
         return _refused(f"one re-credit per {cooldown} days; the last one was {when}", subject_ref=bundle_id)
+    waiting = _waiting_before(env, "recredit_bundle", bundle_id)
+    if waiting is not None:
+        return _refused(f"{bundle_id} is already waiting for a person's approval on {waiting.ref}", subject_ref=bundle_id)
     result = {
         "bundle_id": bundle_id,
         "name": bundle.name,

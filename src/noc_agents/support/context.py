@@ -11,14 +11,19 @@ it switches on.
 
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass
+
+import yaml
 
 from noc_agents.config import AppSettings, get_settings
 from noc_agents.support.accounts import AccountBook, load_accounts
 from noc_agents.support.kb import KnowledgeBase, load_kb
 from noc_agents.support.places import Gazetteer
 from noc_agents.support.policy import SupportPolicy, load_policy
+
+log = logging.getLogger(__name__)
 
 ENABLED_ENV = "SUPPORT_DESK_ENABLED"
 _FALSE = {"0", "false", "no", "off"}
@@ -54,13 +59,31 @@ def gazetteer_for(settings: AppSettings) -> Gazetteer:
     return _GAZETTEERS[operator.operator_id]
 
 
+class SupportConfigError(RuntimeError):
+    """A file under ``config/support/`` is missing or invalid. The API answers 503 with this message:
+    the desk cannot run without its policy, and a 500 per route would hide which file is wrong."""
+
+
 def default_context(settings: AppSettings | None = None) -> SupportContext:
-    """The shipped configuration for the active (or given) operator profile."""
+    """The shipped configuration for the active (or given) operator profile.
+
+    Raises :class:`SupportConfigError` naming the file when one cannot be read or does not
+    validate (the loaders cache only successes, so the next request after a fix succeeds).
+    """
     settings = settings or get_settings()
+    loaded = {}
+    for name, loader in (("policy.yaml", load_policy), ("knowledge_base.yaml", load_kb), ("accounts.yaml", load_accounts)):
+        try:
+            loaded[name] = loader()
+        except (OSError, yaml.YAMLError, ValueError) as exc:  # pydantic's ValidationError is a ValueError
+            first_line = str(exc).strip().splitlines()[0] if str(exc).strip() else ""
+            message = f"config/support/{name} could not be loaded ({type(exc).__name__}: {first_line})"
+            log.error("support desk: %s", message)
+            raise SupportConfigError(message) from exc
     return SupportContext(
-        policy=load_policy(),
-        kb=load_kb(),
-        accounts=load_accounts(),
+        policy=loaded["policy.yaml"],
+        kb=loaded["knowledge_base.yaml"],
+        accounts=loaded["accounts.yaml"],
         gazetteer=gazetteer_for(settings),
         timezone=settings.operator.timezone,
     )

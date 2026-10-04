@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import timedelta
 
 import pytest
+from sqlalchemy import select
 
 from noc_agents.db.models import IncidentRow, new_id, utcnow
 from noc_agents.db.models_support import SupportComplaintRow, SupportToolCallRow
@@ -32,9 +33,10 @@ def _env(session, msisdn: str, *, account: bool = True, operator_id: str = OP) -
     return ToolEnv(session, operator_id, e164, BOOK.find(e164) if account else None, POLICY, utcnow())
 
 
-def _done(session, msisdn: str, tool: str, subject_ref: str | None, *, days_ago: float = 0, status: str = "ok") -> None:
-    """A prior complaint from ``msisdn`` on which ``tool`` already ran."""
-    complaint = SupportComplaintRow(operator_id=OP, ref=f"CMP-{new_id()[:8]}", msisdn=normalise_msisdn(msisdn),
+def _done(session, msisdn: str, tool: str, subject_ref: str | None, *, days_ago: float = 0, status: str = "ok",
+          operator_id: str = OP) -> None:
+    """A prior complaint from ``msisdn`` on which ``tool`` already ran (or, with a status, stands)."""
+    complaint = SupportComplaintRow(operator_id=operator_id, ref=f"CMP-{new_id()[:8]}", msisdn=normalise_msisdn(msisdn),
                                     msisdn_masked="x", body_hash="h", sla_due_at=utcnow())
     session.add(complaint)
     session.flush()
@@ -121,6 +123,25 @@ def test_a_reversal_is_never_paid_twice(session):
     assert out.status == "refused" and "already been reversed" in out.policy
     # ...not even with a person's approval
     assert run_tool("reverse_mpesa", _env(session, "0700000412"), {"transaction_code": "SJK4H7QW2L"}, approved=True).status == "refused"
+
+
+@pytest.mark.parametrize("msisdn,operator_id", [("0700000999", OP), ("0700000412", "airtel")])
+def test_the_same_code_or_charge_done_for_another_number_or_operator_is_not_already_done(session, msisdn, operator_id):
+    _done(session, msisdn, "reverse_mpesa", "SJK4H7QW2L", operator_id=operator_id)
+    _done(session, msisdn, "issue_refund", "CHG-567-01", operator_id=operator_id)
+    _done(session, msisdn, "recredit_bundle", "BND-345-01", days_ago=1, operator_id=operator_id)
+    assert run_tool("reverse_mpesa", _env(session, "0700000412"), {"transaction_code": "SJK4H7QW2L"}).status == "ok"
+    assert run_tool("issue_refund", _env(session, "0700000567"), {"charge_id": "CHG-567-01"}).status == "ok"
+    assert run_tool("recredit_bundle", _env(session, "0700000345"), {"bundle_id": "BND-345-01"}).status == "ok"
+
+
+def test_a_call_already_waiting_for_approval_blocks_a_second_one_but_not_its_own_approval(session):
+    _done(session, "0700000118", "reverse_mpesa", "SHR2M9PL4Q", status="needs_approval")
+    waiting = run_tool("reverse_mpesa", _env(session, "0700000118"), {"transaction_code": "SHR2M9PL4Q"}, approved=True)
+    assert waiting.status == "refused" and "already waiting for a person's approval" in waiting.policy
+    parked = session.scalar(select(SupportToolCallRow).where(SupportToolCallRow.status == "needs_approval"))
+    own = ToolEnv(session, OP, "+254700000118", BOOK.find("+254700000118"), POLICY, utcnow(), approving_call_id=parked.id)
+    assert run_tool("reverse_mpesa", own, {"transaction_code": "SHR2M9PL4Q"}, approved=True).status == "ok"
 
 
 def test_only_a_transfer_sent_from_this_number_can_be_reversed(session):

@@ -28,7 +28,8 @@ class _Strict(BaseModel):
 
 
 class RateLimit(_Strict):
-    max_requests: int = Field(5, ge=1)
+    max_requests: int = Field(5, ge=1)  # per MSISDN
+    per_ip_max_requests: int = Field(30, ge=1)  # per client address, so one caller cannot cycle numbers
     window_seconds: int = Field(600, ge=1)
 
 
@@ -75,6 +76,8 @@ class SupportPolicy(_Strict):
     high_value_tiers: tuple[str, ...] = ("platinum", "gold")
     sla_hours: dict[str, int] = Field(default_factory=lambda: {"critical": 1, "high": 4, "normal": 24, "low": 72})
     escalation: tuple[EscalationRule, ...]
+    #: What the customer is told instead of an account-derived reason (escalation.ACCOUNT_REASONS).
+    account_review_reason: str = "a member of our team needs to check the account details before we can finish this"
     eval_gates: tuple[EvalGate, ...] = ()
 
     @model_validator(mode="after")

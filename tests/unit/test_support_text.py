@@ -91,3 +91,11 @@ def test_amounts_are_read_in_every_customer_spelling_and_phone_numbers_are_not_a
 def test_mpesa_codes_need_letters_and_digits():
     assert extract_mpesa_codes("code SJK4H7QW2L and sjk2p9lm4r") == ["SJK4H7QW2L", "SJK2P9LM4R"]
     assert extract_mpesa_codes("everything 0712345678 ABCDEFGHIJ") == []
+
+
+@pytest.mark.parametrize("raw", ["071234567８", "０712345678", "07123٤٥678", "+25471234१67８"])
+def test_only_ascii_digits_make_a_number(raw):
+    """Review finding 3: ``\\d`` matched fullwidth and Arabic-Indic digits, so one number had many
+    spellings -- many rate-limit keys, dedupe hashes and repeat counts."""
+    with pytest.raises(InvalidMsisdn):
+        normalise_msisdn(raw)

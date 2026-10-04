@@ -7,7 +7,7 @@ import json
 from datetime import timedelta
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from noc_agents.db.models import utcnow
 from noc_agents.db.models_support import SupportComplaintRow, SupportToolCallRow
@@ -84,10 +84,22 @@ def test_an_outage_with_no_open_incident_is_answered_and_the_search_is_on_record
 
 
 def test_nothing_safe_to_act_on_falls_back_to_the_resolver(session):
-    # A reversal with no code and no account: the desk asks for the code rather than guessing.
-    c = _detail(session, _file(session, "I sent money to the wrong number yesterday, please reverse", "0711000500").complaint)["complaint"]
+    # A refund asked for by a number with no refundable charge: the resolver explains instead.
+    c = _detail(session, _file(session, "please refund me, I was charged wrongly for airtime", "0700001023").complaint)["complaint"]
     assert (c["route"], c["status"]) == ("resolver", "answered")
-    assert c["citations"][0]["article_id"] == "KB-MPESA-REVERSAL"
+    assert c["citations"][0]["article_id"] == "KB-AIRTIME-DEDUCTED"
+
+
+@pytest.mark.parametrize("msisdn", ["0700000412", "0711000500"])  # a transfer of 1,500 on file / no account at all
+def test_a_reversal_without_a_typed_code_needs_verification_and_reads_nothing(session, msisdn):
+    """Policy 2026-10-04: no code in the customer's own words, no reversal -- and nothing reads the
+    account, so the case looks the same whether or not the number sent 1,500 to anyone."""
+    detail = _detail(session, _file(session, "I sent 1500 to the wrong number please reverse it", msisdn).complaint)
+    c = detail["complaint"]
+    assert (c["route"], c["status"], c["escalation"]["reason_code"]) == ("human", "escalated", "needs_verification")
+    assert detail["tool_calls"] == []  # not even lookup_account
+    assert [s["action"] for s in detail["steps"]] == ["received", "classified", "needs_verification", "escalated"]
+    assert "transaction code" in c["reply"] and "SJK4H7QW2L" not in json.dumps(detail)
 
 
 @pytest.mark.parametrize(
@@ -112,8 +124,21 @@ def test_a_call_over_its_limit_is_parked_for_approval_and_a_call_that_would_succ
     parked = _detail(session, _file(session, "Nimetuma 12000 kwa namba mbaya, code ni SHR2M9PL4Q.", "0700000118").complaint)
     assert [(t["tool"], t["status"]) for t in parked["tool_calls"]] == [("lookup_account", "ok"), ("reverse_mpesa", "needs_approval")]
     held = _detail(session, _file(session, "You are THIEVES!! My Business 50GB bundle expired early", "0700000890").complaint)
-    assert [t["tool"] for t in held["tool_calls"]] == ["lookup_account"]  # the re-credit did NOT run
-    assert held["steps"][-1]["detail"]["held_tool"] == "recredit_bundle"
+    # The re-credit did NOT run -- but it is on record, one approval away, not lost in a step detail.
+    assert [(t["tool"], t["status"]) for t in held["tool_calls"]] == [("lookup_account", "ok"), ("recredit_bundle", "needs_approval")]
+    assert held["tool_calls"][1]["policy"].startswith("held for a person (angry_high_value)")
+    assert held["complaint"]["status"] == "escalated" and held["steps"][-1]["detail"]["held_tool"] == "recredit_bundle"
+
+
+def test_a_held_call_runs_once_a_person_has_claimed_the_case_and_approves_it(session):
+    row = _file(session, "You are THIEVES!! My Business 50GB bundle expired early", "0700000890").complaint
+    call = session.scalar(select(SupportToolCallRow).where(SupportToolCallRow.complaint_id == row.id,
+                                                           SupportToolCallRow.status == "needs_approval"))
+    with pytest.raises(desk.DeskConflict, match="not waiting for an approval"):
+        desk.approve(session, row, call.id, actor="DM", ctx=CTX)  # escalated and unclaimed: claim it first
+    desk.claim(session, row, actor="DM")
+    desk.approve(session, row, call.id, actor="DM", ctx=CTX)
+    assert row.status == "action_taken" and session.get(SupportToolCallRow, call.id).status == "approved"
 
 
 def test_the_third_complaint_in_a_week_on_one_category_escalates(session):
@@ -254,23 +279,36 @@ def test_approving_runs_the_tool_with_the_approval_and_the_status_follows(sessio
         desk.approve(session, row, call.id, actor="Duty Manager", ctx=CTX)
 
 
-def test_rejecting_sends_the_case_back_to_a_person(session):
+def test_rejecting_sends_the_case_back_to_the_queue_unclaimed(session):
     row, call = _parked(session)
     with pytest.raises(desk.DeskInputError):
         desk.reject(session, row, call.id, actor="DM", reason="  ")
+    desk.claim(session, row, actor="DM")
     desk.reject(session, row, call.id, actor="DM", reason="recipient disputes it")
     assert row.status == "escalated" and row.escalation_reason_code == "over_refund_limit"
+    assert (row.claimed_by, row.claimed_at) == (None, None)  # escalated means back in the queue
     assert session.get(SupportToolCallRow, call.id).policy == "rejected by DM: recipient disputes it"
 
 
-def test_an_approval_that_can_no_longer_complete_escalates_with_tool_failed(session):
+def test_a_second_complaint_about_a_parked_transfer_does_not_park_a_second_reversal(session):
+    first, _ = _parked(session)
+    second = _detail(session, _file(session, "Nimetuma 12000 kwa namba mbaya SHR2M9PL4Q, rudisha tafadhali", "0700000118").complaint)
+    refused = next(t for t in second["tool_calls"] if t["tool"] == "reverse_mpesa")
+    assert refused["status"] == "refused" and first.ref in refused["policy"]
+    assert second["complaint"]["escalation"]["reason_code"] == "tool_failed"
+    assert session.scalar(select(func.count()).select_from(SupportToolCallRow).where(
+        SupportToolCallRow.tool == "reverse_mpesa", SupportToolCallRow.status == "needs_approval")) == 1
+
+
+def test_an_approval_that_can_no_longer_complete_escalates_with_tool_failed_and_unclaims(session):
     row, call = _parked(session)
-    first = _file(session, "Nimetuma 12000 kwa namba mbaya SHR2M9PL4Q, rudisha tafadhali", "0700000118").complaint
-    other_call = session.scalar(select(SupportToolCallRow).where(SupportToolCallRow.complaint_id == first.id,
-                                                                 SupportToolCallRow.status == "needs_approval"))
-    desk.approve(session, first, other_call.id, actor="DM", ctx=CTX)  # reversed on the second ticket
-    desk.approve(session, row, call.id, actor="DM", ctx=CTX)  # ...so the first can no longer run
+    desk.claim(session, row, actor="DM")
+    # The same transfer was reversed meanwhile on another of this customer's cases.
+    session.add(SupportToolCallRow(complaint_id=row.id, tool="reverse_mpesa", status="ok", subject_ref="SHR2M9PL4Q"))
+    session.commit()
+    desk.approve(session, row, call.id, actor="DM", ctx=CTX)
     assert row.status == "escalated" and row.escalation_reason_code == "tool_failed"
+    assert (row.claimed_by, row.claimed_at) == (None, None)
     assert session.get(SupportToolCallRow, call.id).status == "refused"
 
 
@@ -293,18 +331,6 @@ def test_resolving_supersedes_a_pending_approval(session):
 
 
 # ---------------------------------------------------------------------------- the views
-
-
-def test_the_public_view_blanks_everything_derived_from_the_account(session):
-    row = _file(session, "I sent KES 1,500 to the wrong number, code SJK4H7QW2L, please reverse.", "0700000412").complaint
-    public = _detail(session, row, public=True)
-    assert public["complaint"]["customer"] == {"name": None, "msisdn_masked": "+254 7•• ••• 412", "account_ref": None}
-    assert all(s["detail"] == {} for s in public["steps"])
-    assert all(t["args"] == {} and t["result"] is None for t in public["tool_calls"])
-    assert "Wanjiku" not in json.dumps(public) and "Brian" not in json.dumps(public)
-    assert public["complaint"]["reply"] == row.reply  # the customer still gets the answer
-    staff = _detail(session, row)
-    assert staff["complaint"]["customer"]["name"] == "Wanjiku Kamau" and staff["tool_calls"][0]["result"]["found"]
 
 
 def test_the_queue_filters_searches_and_counts(session):
@@ -332,3 +358,46 @@ def test_metrics(session):
     assert m["by_category"]["roaming"] == 1 and set(m["by_category"]) >= {"network", "other"}
     assert views.metrics(session, OP, hours=24, now=now)["total"] == 3
     assert views.metrics(session, "airtel", hours=0, now=now)["total"] == 0
+
+
+# ------------------------------------------------------------------- the LLM tie-break (stub port)
+
+TIED = "bundle data imeisha, sent 1500 wrong number SJK4H7QW2L reverse"  # data_bundles 0.545 vs mpesa, by the rules
+
+
+class _StubPort:
+    """Answers every tie-break with one category; never reaches a model."""
+
+    provider = "stub"
+
+    def __init__(self, category: str) -> None:
+        self.category, self.calls = category, 0
+
+    def draft(self, **kwargs):
+        from noc_agents.support.triage import TieBreak
+
+        self.calls += 1
+        return TieBreak(category=self.category), None
+
+
+def test_a_tiebreak_never_moves_money_the_call_is_held_for_a_person(session):
+    port = _StubPort("mpesa")
+    detail = _detail(session, _file(session, TIED, "0700000412", port=port).complaint)
+    c = detail["complaint"]
+    assert port.calls == 1 and detail["steps"][1]["detail"]["source"] == "llm_tiebreak"
+    assert (c["route"], c["status"], c["escalation"]["reason_code"]) == ("human", "escalated", "low_confidence")
+    reversal = next(t for t in detail["tool_calls"] if t["tool"] == "reverse_mpesa")
+    assert reversal["status"] == "needs_approval"  # parked for a person: not run, not lost
+    assert "tie-break" in detail["steps"][-1]["detail"]["evidence"]
+
+
+def test_without_the_model_the_rules_alone_escalate_the_same_text(session):
+    c = _detail(session, _file(session, TIED, "0700000412").complaint)["complaint"]
+    assert c["escalation"]["reason_code"] == "low_confidence" and c["status"] == "escalated"
+
+
+def test_a_tiebreak_may_still_choose_the_article(session):
+    port = _StubPort("billing")
+    row = _file(session, "Nimenunua bundle lakini airtime pia imekatwa, sielewi kinachoendelea", "0711000990", port=port).complaint
+    assert port.calls == 1 and row.category == "billing"
+    assert (row.status, json.loads(row.citations_json)[0]["article_id"]) == ("answered", "KB-AIRTIME-DEDUCTED")

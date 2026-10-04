@@ -44,9 +44,11 @@ recredit_cooldown_days: 30
 # An identical complaint (same MSISDN, same normalised text) inside this window returns the
 # complaint already on file instead of opening a second one.
 dedupe_window_seconds: 120
-# Public form: at most `max_requests` complaints per MSISDN per `window_seconds`.
+# Public form: at most `max_requests` complaints per MSISDN, and `per_ip_max_requests` per client
+# address, in any `window_seconds`. The per-address limit stops one caller cycling through numbers.
 rate_limit:
   max_requests: 5
+  per_ip_max_requests: 30
   window_seconds: 600
 
 # --- escalation inputs ------------------------------------------------------------------
@@ -100,6 +102,12 @@ escalation:
   - reason_code: tool_failed
     when: a tool call failed or was refused by policy and no safe alternative exists
     reason: we could not complete the fix automatically, so a person will finish it
+
+# Told to the CUSTOMER (the reply and the public view) instead of the real reason when the real
+# one was read from the account -- over_refund_limit, repeat_unresolved, angry_high_value,
+# tool_failed. Whoever typed a number must not learn that line's limits, complaint history or
+# tier from the reply. Staff always see the real reason.
+account_review_reason: a member of our team needs to check the account details before we can finish this
 
 # --- eval gates (support/evals.py) ------------------------------------------------------
 eval_gates:

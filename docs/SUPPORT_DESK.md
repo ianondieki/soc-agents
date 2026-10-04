@@ -67,7 +67,7 @@ A complaint goes to a person when any of these holds; the first matching rule is
 | `fraud_or_sim_swap` | SIM swap, account takeover, "someone is using my M-PESA", unknown PIN change |
 | `legal_or_regulator` | a lawyer, court, "Communications Authority", CA, CAK, ODPC, a formal demand |
 | `threat_or_safety` | threats, self-harm, harassment |
-| `needs_verification` | an M-PESA reversal asked for on the public form **without** the 10-character transaction code: a person verifies the transfer with the customer first, because the form cannot prove the caller owns the number. Not a safety reason. (Policy decision of 2026-10-04; the desk-side implementation lands after the eval work.) |
+| `needs_verification` | an M-PESA reversal asked for on the public form **without** the 10-character transaction code: a person verifies the transfer with the customer first, because the form cannot prove the caller owns the number. Not a safety reason. Nothing reads the account and no tool call is planned. (Policy decision of 2026-10-04.) |
 | `over_refund_limit` | a refund above the auto limit (default KES 500) or a reversal above KES 5,000 or older than 24h |
 | `repeat_unresolved` | the same customer's third complaint in 7 days on the same category |
 | `angry_high_value` | angry sentiment on a high-value account |
@@ -287,34 +287,58 @@ contract above, not a change to it, except where marked **refinement**.
   fixed it) or `human` (a person owns it). Triage's first choice is in the triage step's `detail.route`.
   This is the route the eval compares with the golden label. A case a person approved stays `human`
   with status `action_taken`.
-- When the action agent cannot identify a safe target (no transaction code and no amount matching
-  exactly one transfer, no bundle that expired early, no refundable charge, no open incident for the
-  place named) the **resolver answers instead** (`answered`, route `resolver`). `tool_failed` is kept
-  for a target that was identified and then refused or failed (already reversed, no account on record,
-  a second re-credit inside 30 days).
-- A call over its limit is recorded as `needs_approval` and the case is `awaiting_approval`. When an
-  earlier rule outranks it, or a later non-tool rule fires (repeat, angry high-value, low confidence),
-  a call that *would* have succeeded is **held, not run**: the person who now owns the case decides.
+- When the action agent cannot identify a safe target (no bundle that expired early, no refundable
+  charge, no open incident for the place named) the **resolver answers instead** (`answered`, route
+  `resolver`). `tool_failed` is kept for a target that was identified and then refused or failed (already
+  reversed, not on this account, a second re-credit inside 30 days, the same transfer or charge already
+  waiting for approval on another case). A reversal is identified only by a code the customer typed
+  (`needs_verification` otherwise, see the public form below).
+- A call over its limit is recorded as `needs_approval` and the case is `awaiting_approval`. When another
+  rule sends the case to a person (repeat, angry high-value, low confidence...), a call that *would* have
+  succeeded is **held**: recorded as `needs_approval` with the policy "held for a person (<reason>)", not
+  run, and one approval away once a person has claimed the case (approve answers 409 on an unclaimed
+  `escalated` case).
+- **A tie-break never moves money.** When the category came from the LLM tie-break and the planned call
+  moves money (`reverse_mpesa`, `issue_refund`, `recredit_bundle`), the call is held and the case escalates
+  with `low_confidence`; the model may choose which article answers, never a payment.
 - Approving re-runs the tool with the approval (validation and idempotency still apply). If it can no
   longer complete (for example the transfer was reversed on another ticket) the call is `refused` and
   the case goes back to `escalated` with `tool_failed`. Resolving a case supersedes (rejects) any call
-  still waiting for approval.
+  still waiting for approval. `escalated` always means *in the queue, unclaimed*: rejecting a call or a
+  failed approval clears `claimed_by`.
+- **Concurrency.** Every human action (claim, resolve, approve, reject) takes SQLite's write lock
+  (`BEGIN IMMEDIATE`) before it reads the case and re-reads it under the lock; the pipeline takes it
+  before the action agent plans. Two simultaneous approvals run the tool once (the second gets 409), two
+  claims make one owner, and two complaints about one transfer park one reversal.
 - Nothing sets `closed` yet: the contract defines no route for it.
 
 **Intake and the public form**
 
 - An identical complaint (same MSISDN, same normalised text) within 2 minutes returns the complaint
-  already on file with **200** instead of 201; nothing new is created.
-- Rate limit: 5 complaints per MSISDN per 10 minutes (`config/support/policy.yaml`), in-process;
-  over it, **429** with `Retry-After`.
-- A caller without a support read role (anonymous, once `AUTH_DISABLED=false`) gets the **public view**
-  of the detail: same shape, but step `detail` is `{}`, tool `args` `{}` and `result` `null`, and
-  `customer.name` / `customer.account_ref` are only what the caller typed. Otherwise the form would tell
-  anyone who types a number whose it is and what is in that account. Replies greet the customer by the
-  name they gave, never the account holder's.
+  already on file with **200** instead of 201; nothing new is created. A caller without a support read
+  role gets only that case's `ref` and `status` (every other key empty; the masked number is their own):
+  the first submission may have come from someone else, with their name on it.
+- Rate limit: 5 complaints per MSISDN and 30 per client address per 10 minutes
+  (`config/support/policy.yaml`), in-process, memory hard-capped (oldest keys evicted first); over either,
+  **429** with `Retry-After`.
+- **Every intake is unverified**, so the reply never reveals anything the caller did not type: it states
+  what was done and echoes only the code, amount or bundle name the customer's own message contained
+  ("we have refunded the charge to the airtime balance of +254 7•• ••• 567"); an account-derived escalation
+  reason (`over_refund_limit`, `repeat_unresolved`, `angry_high_value`, `tool_failed`) is told to the
+  customer as the policy's `account_review_reason`. Replies greet by the name the caller gave, never the
+  account holder's.
+- A caller without a support read role (anonymous, once `AUTH_DISABLED=false`) gets the **public view**,
+  built from facts the caller holds rather than filtered from the staff trace: the steps are a fixed outline
+  (received, sorted, then answered / fixed / passed to a person); the only tool call is the one that fixed
+  the case, by name and status; `awaiting_approval` reads `escalated`; an account-derived reason reads
+  `account_review` (a public-only code, never stored); `customer` holds only what the caller typed. Staff
+  see the full trace, with the **verified** account holder and account reference; the reference a caller
+  typed is kept in the intake step's `detail.account_ref_claimed`.
 - Validation: `body` 5..4000 characters after trimming; `msisdn` any of `07XXXXXXXX`, `01XXXXXXXX`,
-  `+2547…`, `2541…` (spaces and dashes allowed), stored as E.164 and shown only masked
+  `+2547…`, `2541…` (spaces and dashes allowed; ASCII digits only -- a fullwidth or Arabic-Indic digit is
+  a 422, or one number would have many spellings), stored as E.164 and shown only masked
   (`+254 7•• ••• 412`); `subject` at most 90; `channel` one of the five.
+- A missing or invalid file under `config/support/` makes every route answer **503** naming the file.
 - With `AUTH_DISABLED=true` and `NOC_ENV=production` none of the routes is registered (the codebase's
   production guard for personal data, as for the confidential complaints lane).
 
@@ -323,9 +347,8 @@ contract above, not a change to it, except where marked **refinement**.
   10-character transaction code and the transfer is within limits; a reversal asked for without a code
   goes to a person with `needs_verification`. Refunds and bundle re-credits still run automatically (they
   only ever credit the caller's own number), but the reply must never reveal anything the caller did not
-  type (no codes, amounts, charge descriptions or bundle names). The reason code, policy entry and
-  escalation predicate (`EscalationFacts.unverified`) are in place; `desk.py`/`actions.py` set the fact in a
-  follow-up change.
+  type (no codes, amounts, charge descriptions or bundle names). Implemented in `support/actions.py`
+  (`needs_verification`) and `support/desk.py`; the case records no tool call at all.
 
 **RBAC** -- "the operations floor" is `api/deps.SUPPORT_READERS`: `OPERATIONS` plus `management`.
 The vendor roles, `planning` and `legal` are out: a complaint is a customer's personal data.
@@ -353,8 +376,9 @@ described ("mse flani ameingia M-PESA yangu") through a few regexes; amounts in 
 mia tano"); and the configuration-SMS tool is not used for a how-to question, a manual set-up or a router.
 
 **LLM** -- implemented: the triage tie-break (top two categories only; an accepted choice lifts
-confidence only to the low-confidence threshold), with the reg 41(2) transfer record written before
-the call. Not implemented: polishing the resolver's reply (the contract's "may").
+confidence only to the low-confidence threshold, and a money-moving call it leads to is held, above),
+with the reg 41(2) transfer record written before the call. Not implemented: polishing the resolver's
+reply (the contract's "may").
 
 **Metrics** -- `GET /metrics` defaults to `hours=0` (all time). `escalated` counts cases with a person
 now (`escalated`, `in_progress`); `escalation_rate` counts cases that ever went to a person.

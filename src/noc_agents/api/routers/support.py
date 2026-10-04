@@ -11,11 +11,16 @@ out in ``api/deps.SUPPORT_READERS``: reads for the operations floor plus managem
 ``AUTH_DISABLED=true``, like every gate in this codebase.
 
 **The one public route.** ``POST /complaints`` is the customer's registration form, so it
-takes no role. Three things make that safe: it is rate-limited per MSISDN
-(``support/ratelimit.py``); a caller without a support read role gets the PUBLIC view of the
-result (``support/views.py``: no step details, no tool arguments or results, no account
-holder name), so the form cannot be used to read whose a number is or what is in their
-account; and the greeting in a reply only ever uses the name the caller typed.
+takes no role. What makes that safe: it is rate-limited per MSISDN and per client address
+(``support/ratelimit.py``); a reversal runs only on a transaction code the caller typed
+(``needs_verification`` otherwise); every reply echoes only what the caller typed; and a caller
+without a support read role gets the PUBLIC view of the result (``support/views.py``), built from
+facts the caller already holds -- so the form cannot be used to learn whose a number is, what
+was sent from it or what its limits are. A public submission that hits the dedupe gets only the
+reference and status of the case on file.
+
+**Configuration.** If a file under ``config/support/`` is missing or invalid every route answers
+503 naming the file, rather than 500 per request.
 
 **The flag is a 404, not a 403** (the ``complaints``/``pir`` precedent): with
 ``SUPPORT_DESK_ENABLED=false`` every route here answers 404, the public form included.
@@ -43,23 +48,27 @@ from noc_agents.api.deps import OPERATIONS, SUPPORT_READERS, _actor, _settings
 from noc_agents.db.models import get_session, utcnow
 from noc_agents.db.models_support import SupportComplaintRow
 from noc_agents.support import desk, evals, views
-from noc_agents.support.context import ENABLED_ENV, default_context, support_desk_enabled
+from noc_agents.support.context import ENABLED_ENV, SupportConfigError, default_context, support_desk_enabled
 from noc_agents.support.llm_port import triage_port
 from noc_agents.support.ratelimit import complaint_limiter
 from noc_agents.support.seed import seed_demo
-from noc_agents.support.text import InvalidMsisdn, clean, normalise_msisdn
+from noc_agents.support.text import InvalidMsisdn, clean, mask_msisdn, normalise_msisdn
 from noc_agents.support.vocab import CATEGORIES, CHANNELS, ROUTES, STATUSES
 
 PREFIX = "/api/v1/support"
 
 
-def require_support_enabled() -> None:
-    """404 the whole lane while ``SUPPORT_DESK_ENABLED`` is off."""
+def require_support_ready() -> None:
+    """404 the whole lane while ``SUPPORT_DESK_ENABLED`` is off; 503 while its configuration is broken."""
     if not support_desk_enabled():
         raise HTTPException(404, f"the support desk is not enabled on this deployment ({ENABLED_ENV}=false)")
+    try:
+        default_context()
+    except SupportConfigError as exc:
+        raise HTTPException(503, f"the support desk is unavailable: {exc}") from None
 
 
-_lane = APIRouter(prefix=PREFIX, tags=["support"], dependencies=[Depends(require_support_enabled)])
+_lane = APIRouter(prefix=PREFIX, tags=["support"], dependencies=[Depends(require_support_ready)])
 
 Channel = Literal["web", "sms", "app", "call_centre", "social"]
 StatusFilter = Literal["answered", "action_taken", "awaiting_approval", "escalated", "in_progress", "resolved", "closed"]
@@ -139,14 +148,18 @@ def _desk_errors(exc: Exception) -> HTTPException:
 @_lane.post("/complaints", status_code=201)
 def register_complaint(body: ComplaintIn, request: Request, response: Response) -> dict[str, Any]:
     """Register a complaint and run the whole desk. 201 with the detail; 200 with the complaint
-    already on file when the same number sent the same text in the last two minutes; 429 when
-    the number has hit the form's rate limit."""
+    already on file when the same number sent the same text in the last two minutes (only its
+    reference and status, to a public caller); 429 when the number or the client address has hit
+    the form's rate limit."""
     ctx = default_context()
     limit = ctx.policy.rate_limit
-    retry = complaint_limiter.check(f"{_operator_id()}:{body.msisdn}", max_requests=limit.max_requests,
-                                    window_seconds=limit.window_seconds)
+    client = request.client.host if request.client else "unknown"
+    retry = complaint_limiter.check(
+        [(f"msisdn:{_operator_id()}:{body.msisdn}", limit.max_requests), (f"ip:{client}", limit.per_ip_max_requests)],
+        window_seconds=limit.window_seconds,
+    )
     if retry is not None:
-        raise HTTPException(429, "too many complaints from this number; please wait before trying again",
+        raise HTTPException(429, "too many complaints; please wait before trying again",
                             headers={"Retry-After": str(max(1, int(retry) + 1))})
     principal = auth.current_principal(request)
     # A support reader (everyone in the demo, auth off) sees the trace; anyone else the public view.
@@ -164,7 +177,9 @@ def register_complaint(body: ComplaintIn, request: Request, response: Response) 
             raise _desk_errors(exc) from None
         if not result.created:
             response.status_code = 200
-        return views.detail(session, result.complaint, public=public)
+            if public:
+                return views.duplicate_view(result.complaint, msisdn_masked=mask_msisdn(body.msisdn))
+        return views.detail(session, result.complaint, public=public, policy=ctx.policy)
     finally:
         session.close()
 

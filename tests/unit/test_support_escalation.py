@@ -99,3 +99,14 @@ def test_the_holding_reply_is_honest_and_carries_the_advice():
     assert "PIN" in reply
     safety = POLICY.rule("threat_or_safety")
     assert "999" in holding_reply(Escalation(safety.reason_code, safety.reason, safety.advice, ""), name="there", ref="CMP-1", due="x")
+
+
+def test_a_missing_or_invalid_config_file_is_a_named_support_config_error(monkeypatch):
+    from noc_agents.support import context
+
+    def missing():
+        raise FileNotFoundError(2, "No such file or directory")
+
+    monkeypatch.setattr(context, "load_kb", missing)
+    with pytest.raises(context.SupportConfigError, match=r"config/support/knowledge_base\.yaml"):
+        context.default_context()

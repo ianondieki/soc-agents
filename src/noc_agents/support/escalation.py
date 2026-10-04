@@ -32,6 +32,10 @@ class EscalationFacts:
     sentiment: str = "calm"
     tier: str | None = None
     confidence: float = 1.0
+    #: The category came from the LLM tie-break AND the planned call moves money (a reversal, a
+    #: refund, a re-credit). Complaint text is the caller's to write, so a model's choice between two
+    #: categories may pick the article, never a payment: the low-confidence rule holds the call.
+    model_decided_money: bool = False
     grounded: bool | None = None  # None: the resolver did not run
     tool_failed: bool = False
 
@@ -79,6 +83,8 @@ def _low_confidence(facts: EscalationFacts, policy: SupportPolicy) -> str | None
     threshold = policy.low_confidence_threshold
     if facts.confidence < threshold:
         return f"triage confidence {facts.confidence:.2f} is below {threshold:.2f}"
+    if facts.model_decided_money:
+        return "the category came from the LLM tie-break, and a model's choice never moves money on its own"
     return None
 
 
@@ -119,6 +125,22 @@ def evaluate(facts: EscalationFacts, policy: SupportPolicy) -> Escalation | None
     """The first matching rule in policy order, or None when the desk may finish the case itself."""
     hits = matching(facts, policy)
     return hits[0] if hits else None
+
+
+#: Reasons decided from the ACCOUNT (its limits, history, tier, state), not from the caller's words.
+#: Whoever types a number on the public form reads the reply, so these are never named to the
+#: customer: the reply and the public view say :data:`ACCOUNT_REVIEW_CODE` with the policy's
+#: ``account_review_reason`` instead. Staff see the real reason. The other reasons (the safety
+#: flags, needs_verification, low confidence, not grounded) come from the text the caller typed.
+ACCOUNT_REASONS: frozenset[str] = frozenset({"over_refund_limit", "repeat_unresolved", "angry_high_value", "tool_failed"})
+ACCOUNT_REVIEW_CODE = "account_review"
+
+
+def customer_facing(escalation: Escalation, policy: SupportPolicy) -> Escalation:
+    """``escalation`` as the customer may read it: an account-derived reason becomes the generic review."""
+    if escalation.reason_code not in ACCOUNT_REASONS:
+        return escalation
+    return Escalation(ACCOUNT_REVIEW_CODE, policy.account_review_reason, "", "")
 
 
 def holding_reply(escalation: Escalation, *, name: str, ref: str, due: str) -> str:

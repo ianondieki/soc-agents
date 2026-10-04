@@ -398,7 +398,10 @@ def extract_mpesa_codes(text: str | None) -> list[str]:
 
 # ----------------------------------------------------------------------------- MSISDN
 
-_MSISDN = re.compile(r"^(?:\+?254|0)?([71]\d{8})$")
+#: ASCII digits only, spelled ``[0-9]``: in Python ``\d`` also matches "８" (fullwidth) or "٨"
+#: (Arabic-Indic), and a number spelled with one would normalise to a DIFFERENT string than the
+#: same number in ASCII -- its own rate-limit key, dedupe hash and repeat count.
+_MSISDN = re.compile(r"^(?:\+?254|0)?([71][0-9]{8})$")
 _MSISDN_SEPARATORS = re.compile(r"[\s\-().]")
 
 
@@ -409,7 +412,8 @@ class InvalidMsisdn(ValueError):
 def normalise_msisdn(raw: str | None) -> str:
     """``07xx``, ``01xx``, ``+2547xx``, ``2541xx`` (spaces and dashes allowed) -> ``+2547XXXXXXXX``.
 
-    Raises :class:`InvalidMsisdn` for anything else, including landlines and foreign numbers.
+    Raises :class:`InvalidMsisdn` for anything else, including landlines, foreign numbers and
+    any digit that is not ASCII ``0-9``.
     """
     digits = _MSISDN_SEPARATORS.sub("", raw or "")
     match = _MSISDN.match(digits)
