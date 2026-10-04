@@ -22,7 +22,7 @@ BASE = sys.argv[2] if len(sys.argv) > 2 else "http://127.0.0.1:8000"
 os.makedirs(OUT, exist_ok=True)
 
 ROUTES = [
-    "/", "/showcase", "/incidents", "/hitl", "/shift", "/agents", "/workflow", "/problems", "/regions",
+    "/", "/mission", "/support", "/complain", "/showcase", "/incidents", "/hitl", "/shift", "/agents", "/workflow", "/problems", "/regions",
     "/maintenance", "/audit", "/contracts", "/pirs", "/scorecards", "/wallboard", "/settings",
 ]
 VIEWPORTS = {"1440": (1440, 900), "375": (375, 812)}

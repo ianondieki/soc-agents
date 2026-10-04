@@ -7,7 +7,7 @@ presenter from narrating code.
 
 1. Start the stack: `bash scripts/run_all.sh` (Windows: `scripts\run_all.ps1`). It builds the
    UI and serves everything on <http://127.0.0.1:8000>.
-2. Open two browser windows side by side: one on Mission Control (`/`), one on the Approvals page
+2. Open two browser windows side by side: one on Mission Control (`/mission`; `/` is now the front page), one on the Approvals page
    (`/hitl`). Two windows make the "a person approves it" moment visible.
 3. If the board is not empty, go to Settings and note the storm button on Mission Control will
    add to it; a clean start is `rm data/noc_agents.db` before step 1.

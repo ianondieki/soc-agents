@@ -114,9 +114,14 @@ what the operator profile's `productivity.toil_minutes` says it would have cost 
 
 ## UI map
 
+The console follows the shift: Day theme 06:00-18:59 EAT, Night otherwise (pin either from **Display**). Sidebar groups open and close like dropdowns; **Collapse sidebar** folds it to a rail whose icons open a menu of their pages. Design rules: `docs/DESIGN_SYSTEM.md`.
+
 | Route | Purpose |
 |-------|---------|
-| `/` | Mission Control: KPIs, the **agent rail** following the newest alarm live, incidents, ticker, HITL |
+| `/` | Front door: the twelve agents drawn as a fibre ribbon carrying the latest real run, the four desks live, the support evals, the autonomy ladder |
+| `/mission` | Mission Control: KPIs, the **agent rail** following the newest alarm live, incidents, ticker, HITL |
+| `/support` | Support desk: complaint queue with the full agent trace, cases waiting for a person, knowledge base, evals |
+| `/complain` | Public online complaint form; shows the customer what each agent did |
 | `/showcase` | For managers: live numbers, the twelve steps before/after, platform diagram, autonomy ladder, toil model |
 | `/incidents/:id` | Workspace: agent-filled ticket fields + the rail of the run that opened the ticket |
 | `/hitl` | Shared claim/approve/reject queue |
