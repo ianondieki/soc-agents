@@ -140,12 +140,14 @@
   display: grid;
   grid-template-columns: minmax(0, 11fr) minmax(0, 13fr);
   gap: 40px var(--ld-gap);
-  align-items: start;
+  /* The ribbon sits on the headline block's centre line, not hung from its top edge. */
+  align-items: center;
 }
 .ld-hero h1 {
   max-width: 14ch;
+  /* Four lines at desktop widths, not five: the display size stops a step below the token's cap. */
+  font-size: min(var(--fs-display), 4.5rem);
   color: var(--text-strong);
-  font-size: var(--fs-display);
   font-weight: 800;
   line-height: 1;
   letter-spacing: -0.035em;
@@ -153,7 +155,7 @@
 }
 .ld-lead {
   max-width: 42ch;
-  margin-top: 28px;
+  margin-top: 32px;
   color: var(--muted);
   font-size: var(--fs-lg);
   line-height: 1.5;
@@ -443,7 +445,7 @@ html[data-quiet="on"] .ld-rb-pulse { display: none; }
   .ld-topnav { display: none; }
   .ld-top > .ld-wrap { gap: 12px; }
   .ld-hero { padding-top: 44px; }
-  .ld-lead { margin-top: 20px; font-size: var(--fs-base); }
+  .ld-lead { margin-top: 24px; font-size: var(--fs-base); }
   .ld-section { margin-top: 64px; }
   .ld-section > .ld-wrap { padding-top: 32px; }
   .ld-section h2, .ld-foot h2 { font-size: var(--fs-xl); }

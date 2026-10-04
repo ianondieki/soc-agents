@@ -59,7 +59,8 @@ export default function FibreRibbon({ run }: { run: RibbonRun | null }) {
   const compact = W < 560;
   const pitch = compact ? 24 : 32;
   const labelW = compact ? 78 : 100;
-  const msW = compact ? 56 : 84;
+  // Wide enough for the longest word the column prints ("not needed", "released") in the Mono.
+  const msW = compact ? 74 : 84;
   const r = compact ? 4.5 : 5.5;
   const H = pitch * 13;
   const x0 = labelW + 12;
