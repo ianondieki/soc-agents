@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api";
-import { humanEnum, priorityTitle } from "../lib/agents";
+import { humanEnum, ownerName, priorityTitle, regionName } from "../lib/agents";
 import { detailOf } from "../lib/apiError";
 import { IconAlert, IconDot, IconPause } from "../lib/icons";
 import { fmtDateTime } from "../lib/time";
@@ -16,7 +16,7 @@ function splitSite(site: unknown): { code: string; name: string } {
   return cut < 0 ? { code: s, name: "" } : { code: s.slice(0, cut), name: s.slice(cut + 1) };
 }
 
-export default function ShiftDesk({ tick }: { tick: number }) {
+export default function ShiftDesk({ tick, profile }: { tick: number; profile?: any }) {
   // null until the first answer, so loading never reads as an empty ledger.
   const [ledger, setLedger] = useState<any[] | null>(null);
   const [failed, setFailed] = useState(false);
@@ -76,7 +76,7 @@ export default function ShiftDesk({ tick }: { tick: number }) {
           </button>
         </div>
       </div>
-      {handover && <Handover h={handover} />}
+      {handover && <Handover h={handover} profile={profile} />}
       <div className="panel">
         <div className="panel-head">
           <h2 className="panel-title">Shift ledger</h2>
@@ -112,7 +112,7 @@ export default function ShiftDesk({ tick }: { tick: number }) {
                     </div>
                     <div className="facts">
                       {site.name && <span>{site.name}</span>}
-                      <span>{r.owner}</span>
+                      <span>{ownerName(r.owner)}</span>
                       <span>{humanEnum(r.shift_type)}</span>
                       <span className="mono">{fmtDateTime(r.row_written_at)}</span>
                     </div>
@@ -156,8 +156,8 @@ export default function ShiftDesk({ tick }: { tick: number }) {
                       <span className="mono">{site.code}</span>
                       {site.name && <div className="muted">{site.name}</div>}
                     </td>
-                    <td className="mono">{r.region_code}</td>
-                    <td>{r.owner}</td>
+                    <td title={r.region_code}>{regionName(r.region_code, profile)}</td>
+                    <td className="owner-cell">{ownerName(r.owner)}</td>
                     <td>{humanEnum(r.shift_type)}</td>
                   </tr>
                 );
@@ -180,7 +180,7 @@ export default function ShiftDesk({ tick }: { tick: number }) {
  * watchlist it carries as a table, and the email text exactly as it will leave. A mock or
  * queued email is never called "sent".
  */
-function Handover({ h }: { h: any }) {
+function Handover({ h, profile }: { h: any; profile?: any }) {
   const rows: any[] = Array.isArray(h?.incidents) ? h.incidents : [];
   const gate = h?.hitl || {};
   const to: string[] = Array.isArray(h?.email?.to) ? h.email.to : [];
@@ -238,8 +238,8 @@ function Handover({ h }: { h: any }) {
                   <span className={`pill ${r.priority}`} title={priorityTitle(r.priority)}>{r.priority}</span>
                 </td>
                 <td className="mono">{r.site_id}</td>
-                <td className="mono">{r.region_code}</td>
-                <td>{r.owner}</td>
+                <td title={r.region_code}>{regionName(r.region_code, profile)}</td>
+                <td className="owner-cell">{ownerName(r.owner)}</td>
                 <td>{humanEnum(r.status)}</td>
                 <td>
                   {r.mpesa_risk ? (

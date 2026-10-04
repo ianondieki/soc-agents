@@ -228,7 +228,7 @@ export default function Wallboard({
     <div className="wallboard">
       <div className="wb-head">
         <h1>
-          NOC WALLBOARD <span className="wb-head-sub">SAFARICOM DEMO</span>
+          NOC wallboard <span className="wb-head-sub">Safaricom demo</span>
         </h1>
         <div className="wb-head-right">
           <div className="chips">
@@ -257,12 +257,12 @@ export default function Wallboard({
         <div className="wb-flags wb-flags-head">
           {dropMpesa && (
             <span className="danger">
-              M‑PESA AT RISK on {mpesaCount} of {list.length} tickets
+              M‑PESA at risk on {mpesaCount} of {list.length} tickets
             </span>
           )}
           {dropDecision && (
             <span className="hitl">
-              DECISION WAITING on {decisionCount} of {list.length} tickets
+              Decision waiting on {decisionCount} of {list.length} tickets
             </span>
           )}
         </div>
@@ -295,8 +295,8 @@ export default function Wallboard({
       {offGrid.length > 0 && (
         <div className="wb-escalation-strip" role="alert">
           <div className="wb-line">
-            <span>DECISION WAITING</span>
-            <span>UNCLAIMED PAST T+30</span>
+            <span>Decision waiting</span>
+            <span>Unclaimed past T+30</span>
           </div>
           {offGrid.map((c) => (
             <div key={c.id} className="wb-line muted">
@@ -358,13 +358,13 @@ export default function Wallboard({
                   stay one height. */}
               {anyTileFlag && (
                 <div className="wb-flags">
-                  {flags.mpesa && <span className="danger">M‑PESA AT RISK</span>}
-                  {flags.decision && <span className="hitl">DECISION WAITING</span>}
+                  {flags.mpesa && <span className="danger">M‑PESA at risk</span>}
+                  {flags.decision && <span className="hitl">Decision waiting</span>}
                 </div>
               )}
               {esc && (
                 <div className="wb-escalated-line wb-line">
-                  <span>DECISION WAITING</span>
+                  <span>Decision waiting</span>
                   <span>
                     {labelFor(esc.task_type)} unclaimed
                     {esc.unclaimed_minutes != null ? ` ${esc.unclaimed_minutes} min` : ""}

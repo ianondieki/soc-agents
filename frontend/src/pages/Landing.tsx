@@ -213,6 +213,19 @@ export default function Landing({ profile, metrics, runsRev }: { profile: any; m
   );
   const autonomy = String(profile?.autonomy_level || productivity.data?.autonomy_level || "L2_GUARDED");
 
+  // The header repeats the hero's button only once the hero's own has scrolled away: one
+  // primary action on screen at a time. Dormant, it stays in the tab order and shows itself
+  // the moment focus reaches it; with no IntersectionObserver it simply stays visible.
+  const heroCtaRef = useRef<HTMLAnchorElement>(null);
+  const [heroCtaVisible, setHeroCtaVisible] = useState(false);
+  useEffect(() => {
+    const el = heroCtaRef.current;
+    if (!el || typeof IntersectionObserver === "undefined") return;
+    const io = new IntersectionObserver(([entry]) => setHeroCtaVisible(!!entry?.isIntersecting), { rootMargin: "-56px 0px 0px 0px" });
+    io.observe(el);
+    return () => io.disconnect();
+  }, []);
+
   return (
     <div className="landing">
       <a className="ld-skip" href="#main">
@@ -231,7 +244,7 @@ export default function Landing({ profile, metrics, runsRev }: { profile: any; m
           </nav>
           <div className="ld-top-actions">
             <ThemeButton />
-            <Link className="ld-btn primary sm ld-top-cta" to="/mission">
+            <Link className={"ld-btn primary sm ld-top-cta" + (heroCtaVisible ? " is-dormant" : "")} to="/mission">
               Open mission control
             </Link>
           </div>
@@ -248,7 +261,7 @@ export default function Landing({ profile, metrics, runsRev }: { profile: any; m
                 second. P1 and P2 messages wait for a person, and every step is on record.
               </p>
               <div className="ld-actions">
-                <Link className="ld-btn primary" to="/mission">
+                <Link className="ld-btn primary" to="/mission" ref={heroCtaRef}>
                   Open mission control
                 </Link>
                 <Link className="ld-btn secondary" to="/complain">
@@ -311,7 +324,7 @@ export default function Landing({ profile, metrics, runsRev }: { profile: any; m
             <div className="ld-section-head">
               <h2 id="ld-decide">Where people decide</h2>
               <p className="ld-section-lead">
-                This deployment runs at {humanAutonomy(autonomy)}. The level is one setting; the list on the right does not move with it.
+                This deployment runs at {humanAutonomy(autonomy)}. The level is one setting; what is never automated does not move with it.
               </p>
             </div>
             <div className="ld-decide-grid">
@@ -346,7 +359,7 @@ export default function Landing({ profile, metrics, runsRev }: { profile: any; m
         <div className="ld-wrap">
           <div className="ld-foot-cta">
             <div>
-              <h2>See it work an alarm</h2>
+              <h2>Watch the agents work an alarm</h2>
               <p>Launch the heavy-rain storm on Mission control, watch the ribbon light up, then approve or reject the held broadcasts.</p>
             </div>
             <div className="ld-actions">

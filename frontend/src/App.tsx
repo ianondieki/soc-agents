@@ -479,6 +479,9 @@ export default function App() {
   const navCounts: NavCounts = useMemo(() => ({ operate: pending, support: supportCount }), [pending, supportCount]);
   const userName = String(session?.display_name || "NOC Analyst");
   const userTitle = `${userName}${session?.role ? `, ${roleLabel(String(session.role))}` : ""}`;
+  const liveBad = !apiOk || link === "down";
+  const liveText = !apiOk ? "API unreachable" : link === "live" ? "Live" : link === "connecting" ? "Connecting…" : "Reconnecting";
+  const liveTitle = !apiOk ? "The API is not answering" : "Live updates from the agents";
 
   if (isLanding || isComplain) {
     return (
@@ -548,13 +551,10 @@ export default function App() {
                 {orgMeta}
               </span>
               {/* Healthy is not news: "Live" stays a muted word; only a broken link turns red, and
-                  never in the first seconds while the stream is still connecting. */}
-              <span
-                className={"topbar-live" + (!apiOk || link === "down" ? " bad" : "")}
-                role="status"
-                title={!apiOk ? "The API is not answering" : "Live updates from the agents"}
-              >
-                {!apiOk ? "API unreachable" : link === "live" ? "Live" : link === "connecting" ? "Connecting…" : "Reconnecting"}
+                  never in the first seconds while the stream is still connecting. On a phone it
+                  is a dot, with the words for a screen reader. */}
+              <span className={"topbar-live" + (liveBad ? " bad" : "") + (phone ? " dot" : "")} role="status" title={liveTitle}>
+                {phone ? <span className="sr-only">{liveText}</span> : liveText}
               </span>
             </div>
             <div className="topbar-right">
@@ -590,7 +590,22 @@ export default function App() {
                 </>
               )}
               {phone && (
-                <PhoneMenu anchorRef={headerRef} counts={navCounts} display={display} guideOpen={guideOpen} onGuide={() => setGuideOpen((o) => !o)} />
+                <PhoneMenu
+                  anchorRef={headerRef}
+                  counts={navCounts}
+                  display={display}
+                  guideOpen={guideOpen}
+                  onGuide={() => setGuideOpen((o) => !o)}
+                  identity={
+                    <>
+                      <span className="topbar-id">{org}</span>
+                      <span className="topbar-meta" title={autonomyTitle}>
+                        {orgMeta}
+                      </span>
+                      <span className={"topbar-live" + (liveBad ? " bad" : "")}>{liveText}</span>
+                    </>
+                  }
+                />
               )}
             </div>
           </header>
@@ -653,7 +668,7 @@ export default function App() {
               />
               <Route path="/incidents/:id" element={<IncidentWorkspace session={session} />} />
               <Route path="/hitl" element={<HitlInbox session={session} tick={revisions.hitl + manualTick} />} />
-              <Route path="/shift" element={<ShiftDesk tick={revisions.ledger + manualTick} />} />
+              <Route path="/shift" element={<ShiftDesk tick={revisions.ledger + manualTick} profile={profile} />} />
               <Route path="/agents" element={<Agents tick={revisions.runs + manualTick} />} />
               <Route path="/workflow" element={<WorkflowMap profile={profile} />} />
               <Route path="/problems" element={<Problems tick={revisions.problems + manualTick} />} />

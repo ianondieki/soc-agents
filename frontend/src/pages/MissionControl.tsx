@@ -3,7 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { api } from "../api";
 import { isStorming, stormCounts, stormStopLine, type StormState } from "../lib/demo";
 import LiveRunPanel, { RunState } from "../components/LiveRunPanel";
-import { MPESA_TITLE, alarmSite, humanEnum, humanGraph, humanStatus, nodeLabel, priorityTitle, regionName, runOutcomeOf, triggerWord } from "../lib/agents";
+import { MPESA_TITLE, alarmSite, humanEnum, humanGraph, humanStatus, nodeLabel, ownerName, priorityTitle, regionName, runOutcomeOf, triggerWord } from "../lib/agents";
 import { detailOf } from "../lib/apiError";
 import { IconDot } from "../lib/icons";
 import { labelFor, sortQueue } from "../lib/hitl";
@@ -389,7 +389,8 @@ function MissionControl({
           <Kpi label="Open tickets" value={metrics?.open_total} />
           <Kpi label="P1 critical" value={metrics?.by_priority?.P1} tone="p1" />
           <Kpi label="P2 major" value={metrics?.by_priority?.P2} tone="p2" />
-          <Kpi label="Decisions waiting" value={metrics?.hitl_pending} tone="hitl" />
+          {/* Neutral ink: the violet for "a person decides" is on the top bar and in Approvals. */}
+          <Kpi label="Decisions waiting" value={metrics?.hitl_pending} />
           <Kpi label="Past restore SLA" value={metrics?.sla_risk} tone="warn" />
           <Kpi label="Vendor silent" value={metrics?.silent_at_risk} tone="warn" />
           <Kpi label="Open problems" value={metrics?.problems_open} />
@@ -454,7 +455,7 @@ function MissionControl({
                   <div className="facts">
                     {i.region_code && <span title={i.region_code}>{regionName(i.region_code, profile)}</span>}
                     {i.failure_domain && <span>{humanEnum(i.failure_domain)}</span>}
-                    {(i.responsible_msp || i.assignee_name) && <span>{i.responsible_msp || i.assignee_name}</span>}
+                    {(i.responsible_msp || i.assignee_name) && <span>{ownerName(i.responsible_msp || i.assignee_name)}</span>}
                     {i.child_sites_down ? <span>{i.child_sites_down} child sites down</span> : null}
                     {i.mpesa_risk ? (
                       <span className="attn danger" title={MPESA_TITLE}>
@@ -507,17 +508,20 @@ function MissionControl({
                   ) : (
                     <span />
                   )}
-                  {/* One line: what (INC number), which decision, who holds it; the site on the right. */}
+                  {/* What (INC number) and which decision on the first line; who holds it and the
+                      site under them, so the row fits the narrower Approvals column. */}
                   <div className="row-main">
                     <div className="row-title">
                       <Link className={t.incident_number ? "row-id" : undefined} to={to}>
                         {hitlSubject(t)}
                       </Link>
                       <span>{labelFor(t.task_type)}</span>
-                      <span className="muted">{t.claimed_by ? `claimed by ${t.claimed_by}` : "unclaimed"}</span>
+                    </div>
+                    <div className="facts">
+                      <span>{t.claimed_by ? `claimed by ${t.claimed_by}` : "unclaimed"}</span>
+                      {t.site_id && <span className="mono">{t.site_id}</span>}
                     </div>
                   </div>
-                  <span className="muted dim mono">{t.site_id}</span>
                 </div>
               );
             })}
@@ -684,8 +688,8 @@ function MissionControl({
           ) : (
             <div className="region-bars">
               {regions.map(([k, v]) => (
-                <div key={k} className="region-bar-row" title={regionName(k, profile)}>
-                  <span className="muted mono">{k}</span>
+                <div key={k} className="region-bar-row" title={k}>
+                  <span className="muted region-bar-name">{regionName(k, profile)}</span>
                   <div className="region-bar-track">
                     {/* Grows with transform, not width: a compositor animation, no layout. */}
                     <div className="region-bar-fill" style={{ transform: `scaleX(${Math.min(1, (Number(v) || 0) / maxRegion)})` }} />

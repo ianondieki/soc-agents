@@ -205,6 +205,20 @@ export function regionName(code: unknown, profile: any): string {
   return typeof label === "string" && label.trim() ? label.replace(/-/g, "\u2011") : c;
 }
 
+/**
+ * Who holds a ticket, as a name: a vendor or role enum through `humanEnum` and capitalised as a
+ * name ("EGYPRO_FIBRE" -> "Egypro Fibre", "FIELD_ENGINEER" -> "Field Engineer"); a code the floor
+ * writes as one word or with a hyphen ("TETRANET", "ATC", "NOC-QUEUE") stays as written.
+ */
+export function ownerName(value: unknown): string {
+  const raw = String(value ?? "").trim();
+  if (!/^[A-Z]+(_[A-Z]+)+$/.test(raw)) return raw;
+  return humanEnum(raw)
+    .split(" ")
+    .map((w) => (/^[a-z]/.test(w) ? w[0].toUpperCase() + w.slice(1) : w))
+    .join(" ");
+}
+
 /** The run status as a person reads it: "done", "waiting for a decision", "failed", "running". */
 export function runStatusWord(status: unknown): string {
   const s = String(status ?? "").toUpperCase();

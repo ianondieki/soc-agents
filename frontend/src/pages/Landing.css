@@ -23,7 +23,8 @@
 .landing *, .landing *::before, .landing *::after { box-sizing: border-box; }
 .landing :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
 .landing a { color: inherit; }
-.landing h1, .landing h2, .landing h3, .landing h4, .landing p { margin: 0; }
+/* A zero-specificity reset, so a class below (.ld-lead's margin-top) always wins over it. */
+.landing :where(h1, h2, h3, h4, p) { margin: 0; }
 
 /* The console's base layer styles every table for a data grid (sticky 40px header on a surface,
    44px rows, hover fills). The landing's two tables are set like text: reset first, then style. */
@@ -85,7 +86,7 @@
 .ld-btn.secondary { border-color: var(--line-strong); }
 .ld-btn.secondary:hover { background: var(--surface-raised); }
 .ld-btn.sm { height: 36px; padding: 0 14px; font-size: var(--fs-md); }
-.ld-btn.text { height: auto; padding: 0; color: var(--accent); font-weight: 600; font-size: inherit; }
+.ld-btn.text { height: auto; min-height: 32px; padding: 0; color: var(--accent); font-weight: 600; font-size: inherit; }
 .ld-btn.text:hover { text-decoration: underline; text-underline-offset: 3px; }
 .ld-icon-btn {
   display: inline-flex;
@@ -133,8 +134,14 @@
 .ld-topnav a { padding: 6px 0; color: var(--muted); font-size: var(--fs-md); font-weight: 500; text-decoration: none; }
 .ld-topnav a:hover { color: var(--text-strong); }
 .ld-top-actions { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+/* Dormant while the hero's own button is on screen; it comes back if focus reaches it. */
+.ld-top-cta { transition: opacity 200ms var(--ease), transform 200ms var(--ease); }
+.ld-top-cta.is-dormant { opacity: 0; transform: translateY(-4px); pointer-events: none; }
+.ld-top-cta.is-dormant:focus-visible { opacity: 1; transform: none; pointer-events: auto; }
+@media (prefers-reduced-motion: reduce) { .ld-top-cta { transition: none; } }
 
 /* --------------------------------------------------------------------- hero */
+/* Rhythm: 32 px headline to lead, 40 px lead to actions, 48 px to the ribbon when stacked. */
 .ld-hero { padding-top: 72px; }
 .ld-hero > .ld-wrap {
   display: grid;
@@ -161,7 +168,7 @@
   line-height: 1.5;
   text-wrap: pretty;
 }
-.ld-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 32px; }
+.ld-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 40px; }
 .ld-ribbon { min-width: 0; margin: 0; padding-top: 6px; }
 .ld-rb-stage { width: 100%; }
 .ld-rb-stage svg { display: block; width: 100%; height: auto; overflow: visible; }
@@ -196,10 +203,7 @@
   .ld-rb-pulse { display: none; }
 }
 html[data-quiet="on"] .ld-rb-pulse { display: none; }
-@media (max-width: 560px) {
-  .ld-rb-label { font-size: 12px; }
-  .ld-rb-ms, .ld-rb-person text { font-size: 11px; }
-}
+/* The ribbon's labels keep 13/12 px on a phone; the drawing tightens its pitch instead. */
 
 .ld-rb-caption {
   display: flex;
@@ -207,7 +211,7 @@ html[data-quiet="on"] .ld-rb-pulse { display: none; }
   align-items: baseline;
   gap: 4px 16px;
   min-height: 1.5em;
-  margin-top: 14px;
+  margin-top: 20px;
   color: var(--muted);
   font-size: var(--fs-md);
   line-height: 1.5;
@@ -424,12 +428,13 @@ html[data-quiet="on"] .ld-rb-pulse { display: none; }
   line-height: 1.5;
 }
 .ld-foot-links { display: flex; flex-wrap: wrap; gap: 4px 20px; }
-.ld-foot-links a { color: var(--muted); text-decoration: none; }
+.ld-foot-links a { display: inline-flex; align-items: center; min-height: 28px; color: var(--muted); text-decoration: none; }
+@media (pointer: coarse) { .ld-foot-links a, .ld-btn.text { min-height: 44px; } }
 .ld-foot-links a:hover { color: var(--text-strong); text-decoration: underline; text-underline-offset: 3px; }
 
 /* -------------------------------------------------------------- responsive */
 @media (max-width: 1023px) {
-  .ld-hero > .ld-wrap { grid-template-columns: minmax(0, 1fr); }
+  .ld-hero > .ld-wrap { grid-template-columns: minmax(0, 1fr); gap: 48px; }
   .ld-hero h1 { max-width: 15ch; }
   .ld-ribbon { max-width: 760px; }
 }
@@ -445,7 +450,11 @@ html[data-quiet="on"] .ld-rb-pulse { display: none; }
   .ld-topnav { display: none; }
   .ld-top > .ld-wrap { gap: 12px; }
   .ld-hero { padding-top: 44px; }
+  .ld-hero > .ld-wrap { gap: 40px; }
+  /* Capped near 2.5 to 2.75 rem, so the ribbon arrives within the first screen. */
+  .ld-hero h1 { font-size: clamp(2.5rem, 11vw, 2.75rem); }
   .ld-lead { margin-top: 24px; font-size: var(--fs-base); }
+  .ld-actions { margin-top: 32px; }
   .ld-section { margin-top: 64px; }
   .ld-section > .ld-wrap { padding-top: 32px; }
   .ld-section h2, .ld-foot h2 { font-size: var(--fs-xl); }

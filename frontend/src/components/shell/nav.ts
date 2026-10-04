@@ -15,6 +15,8 @@ export type NavGroupDef = {
   links: NavLinkDef[];
   /** How a count on this group reads to a screen reader: "4 waiting for a decision". */
   countLabel?: (n: number) => string;
+  /** "hitl" when the count means a person holds something (Support); neutral ink otherwise. */
+  countTone?: "hitl";
 };
 
 export const NAV_GROUPS: NavGroupDef[] = [
@@ -36,6 +38,7 @@ export const NAV_GROUPS: NavGroupDef[] = [
     title: "Support",
     icon: Headset,
     countLabel: (n) => `${n} with a person`,
+    countTone: "hitl",
     links: [
       { to: "/support", label: "Support desk" },
       { to: "/complain", label: "Complaint form" },

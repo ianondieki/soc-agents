@@ -48,7 +48,7 @@ function rightText(node: string, step: RailStep | undefined, st: NodeStatus): { 
 function personText(st: NodeStatus, decision: string | undefined): string {
   if (st === "waiting_hitl") return "waiting for a person";
   if (st === "decided") return `${decision ?? "decided"} by a person`;
-  if (st === "not_needed") return "no approval needed";
+  if (st === "not_needed") return ""; // the ms column already says "not needed"
   return "a person decides";
 }
 
@@ -58,9 +58,9 @@ export default function FibreRibbon({ run }: { run: RibbonRun | null }) {
   const W = measured || 640;
   const compact = W < 560;
   const pitch = compact ? 24 : 32;
-  const labelW = compact ? 78 : 100;
+  const labelW = compact ? 84 : 100;
   // Wide enough for the longest word the column prints ("not needed", "released") in the Mono.
-  const msW = compact ? 74 : 84;
+  const msW = compact ? 80 : 84;
   const r = compact ? 4.5 : 5.5;
   const H = pitch * 13;
   const x0 = labelW + 12;
@@ -117,9 +117,11 @@ export default function FibreRibbon({ run }: { run: RibbonRun | null }) {
           {/* The person between Approval and Broadcast. */}
           <g className={"ld-rb-person" + (personLit ? " lit" : "")}>
             <circle cx={sx(7)} cy={personY} r={compact ? 5.5 : 6.5} />
-            <text x={sx(7) + (compact ? 11 : 13)} y={personY + 4}>
-              {personText(hitlStatus, by["HITL"]?.decision)}
-            </text>
+            {personText(hitlStatus, by["HITL"]?.decision) && (
+              <text x={sx(7) + (compact ? 11 : 13)} y={personY + 4}>
+                {personText(hitlStatus, by["HITL"]?.decision)}
+              </text>
+            )}
           </g>
 
           {/* The pulse: remounted for each new run so its animation starts again. */}

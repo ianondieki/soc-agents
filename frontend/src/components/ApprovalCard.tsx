@@ -187,6 +187,9 @@ export default function ApprovalCard({
   onReject,
 }: ApprovalCardProps) {
   const [reason, setReasonState] = useState(initialReason);
+  // The quick reasons appear once Reject has been pressed without a reason (or a reason is
+  // missing), so the decision footer stays short until a rejection is on the table.
+  const [rejectArmed, setRejectArmed] = useState(false);
   const setReason = (value: string) => {
     setReasonState(value);
     onReasonChange?.(value);
@@ -254,7 +257,10 @@ export default function ApprovalCard({
   };
   const reject = () => {
     if (busy || receipt) return;
-    if (!trimmed) return void needReason(); // the API 400s on an empty reason
+    if (!trimmed) {
+      setRejectArmed(true);
+      return void needReason(); // the API 400s on an empty reason
+    }
     onReject(trimmed);
   };
   const claim = () => {
@@ -464,7 +470,7 @@ export default function ApprovalCard({
               )}
               <button
                 type="button"
-                className="btn good hitl-approve"
+                className="btn primary hitl-approve"
                 onClick={approve}
                 aria-disabled={busy ? true : undefined}
                 title={spec.effect}
@@ -484,30 +490,37 @@ export default function ApprovalCard({
               </button>
             </div>
           </div>
-          <div className="hitl-reason-quick">
-            {/* These are reasons to reject; picking one fills the box, it does not decide. */}
-            <span className="hitl-quick-label" id={`${headingId}-quick`}>
-              Reject because
-            </span>
-            <span className="hitl-quick-list" role="group" aria-labelledby={`${headingId}-quick`}>
-              {REJECT_REASONS.map((r) => (
-                <button
-                  key={r}
-                  type="button"
-                  className="chip hitl-quick"
-                  onClick={() => {
-                    setReason(r);
-                    setReasonMissing(false);
-                  }}
-                  title="Put this reason in the box"
-                  tabIndex={receipt ? -1 : undefined}
-                >
-                  {r}
-                </button>
-              ))}
-            </span>
-            {!claimed && <span className="hitl-hint">Claim first so two people do not act on the same card.</span>}
-          </div>
+          {(rejectArmed || reasonMissing || !claimed) && (
+            <div className="hitl-reason-quick">
+              {/* These are reasons to reject; picking one fills the box, it does not decide. They
+                  show once Reject has been pressed without a reason. */}
+              {(rejectArmed || reasonMissing) && (
+                <>
+                  <span className="hitl-quick-label" id={`${headingId}-quick`}>
+                    Reject because
+                  </span>
+                  <span className="hitl-quick-list" role="group" aria-labelledby={`${headingId}-quick`}>
+                    {REJECT_REASONS.map((r) => (
+                      <button
+                        key={r}
+                        type="button"
+                        className="chip hitl-quick"
+                        onClick={() => {
+                          setReason(r);
+                          setReasonMissing(false);
+                        }}
+                        title="Put this reason in the box"
+                        tabIndex={receipt ? -1 : undefined}
+                      >
+                        {r}
+                      </button>
+                    ))}
+                  </span>
+                </>
+              )}
+              {!claimed && <span className="hitl-hint">Claim first so two people do not act on the same card.</span>}
+            </div>
+          )}
         </div>
         {receipt && (
           <div className="hitl-receipt" tabIndex={-1} ref={receiptRef}>

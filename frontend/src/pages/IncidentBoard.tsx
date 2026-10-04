@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api } from "../api";
-import { MPESA_TITLE, humanEnum, humanStatus, priorityTitle, regionName } from "../lib/agents";
+import { MPESA_TITLE, humanEnum, humanStatus, ownerName, priorityTitle, regionName } from "../lib/agents";
 import { IconDot } from "../lib/icons";
 import { ONE_COL, useNarrow } from "../lib/layout";
 
@@ -21,14 +21,7 @@ const settle = (typed: string) => typed.trim().slice(0, SEARCH_MAX);
  * hyphen included (it is what the floor searches and copies); the cell keeps it on one line
  * (`.owner-cell`, white-space: nowrap). The same rule as the Wallboard's owner line.
  */
-function ownerName(value: unknown): string {
-  const raw = String(value ?? "").trim();
-  if (!/^[A-Z]+(_[A-Z]+)+$/.test(raw)) return raw;
-  return humanEnum(raw)
-    .split(" ")
-    .map((w) => (/^[a-z]/.test(w) ? w[0].toUpperCase() + w.slice(1) : w))
-    .join(" ");
-}
+/* ownerName now lives in lib/agents.ts, shared with Mission control and the Shift desk. */
 
 // The phone-layout helpers moved to lib/layout.ts; re-exported here so older imports still work.
 export { NARROW_QUERY, ONE_COL, useNarrow } from "../lib/layout";

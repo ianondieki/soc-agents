@@ -158,7 +158,8 @@ export function DisplayMenu({ d }: { d: DisplayState }) {
   useLayoutEffect(() => {
     if (!open) return;
     place();
-    const first = panelRef.current?.querySelector<HTMLElement>('[role="radio"][aria-checked="true"], button');
+    const panel = panelRef.current;
+    const first = panel?.querySelector<HTMLElement>('[role="radio"][aria-checked="true"]') ?? panel?.querySelector<HTMLElement>("button");
     first?.focus({ preventScroll: true });
   }, [open, place]);
 
@@ -217,6 +218,7 @@ export function DisplayMenu({ d }: { d: DisplayState }) {
           ref={panelRef}
           id="display-menu"
           className="menu display-menu"
+          role="dialog"
           aria-label="Display"
           style={{ top: pos.top, right: pos.right }}
           onBlur={onPanelBlur}

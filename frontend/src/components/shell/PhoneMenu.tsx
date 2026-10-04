@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type FocusEvent, type ReactNode, type RefObject } from "react";
 import { useLocation } from "react-router-dom";
 import { Menu, X } from "lucide-react";
 import { DisplayControls, Switch, type DisplayState } from "./DisplayMenu";
@@ -17,6 +17,7 @@ export function PhoneMenu({
   display,
   guideOpen,
   onGuide,
+  identity,
 }: {
   /** The top bar: the sheet hangs from its bottom edge. */
   anchorRef: RefObject<HTMLElement>;
@@ -24,6 +25,8 @@ export function PhoneMenu({
   display: DisplayState;
   guideOpen: boolean;
   onGuide: () => void;
+  /** The operator, its autonomy and shift, and the live state: the line the phone bar has no room for. */
+  identity?: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
   const [top, setTop] = useState(56);
@@ -74,6 +77,14 @@ export function PhoneMenu({
     };
   }, [open, close, measure]);
 
+  // Tab out of the sheet (past its last control, or Shift+Tab before its first) closes it and
+  // puts focus back on the Menu button, so focus never lands behind the sheet.
+  const onSheetBlur = (e: FocusEvent<HTMLDivElement>) => {
+    const to = e.relatedTarget as Node | null;
+    if (!to || sheetRef.current?.contains(to) || btnRef.current?.contains(to)) return;
+    close(true);
+  };
+
   return (
     <>
       <button
@@ -90,7 +101,16 @@ export function PhoneMenu({
       {open && (
         <>
           <div className="sheet-scrim" style={{ top }} onClick={() => close(false)} aria-hidden="true" />
-          <div ref={sheetRef} id="phone-menu" className="sheet" role="region" aria-label="Menu" style={{ top, maxHeight: `calc(100dvh - ${top}px)` }}>
+          <div
+            ref={sheetRef}
+            id="phone-menu"
+            className="sheet"
+            role="region"
+            aria-label="Menu"
+            style={{ top, maxHeight: `calc(100dvh - ${top}px)` }}
+            onBlur={onSheetBlur}
+          >
+            {identity && <div className="sheet-identity">{identity}</div>}
             <div className="sheet-nav">
               <NavGroups pathname={pathname} counts={counts} idPrefix="sheet" />
             </div>

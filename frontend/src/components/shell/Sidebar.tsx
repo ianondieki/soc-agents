@@ -19,6 +19,8 @@ import { NAV_GROUPS, groupKeyOf, linksIn, readOpenGroups, roveFocus, writeOpenGr
  */
 
 const ICON = { size: 18, strokeWidth: 1.75 } as const;
+/* Group headers are the quiet layer (12 px, muted): a 16 px icon sits level with them. */
+const HEAD_ICON = { size: 16, strokeWidth: 1.75 } as const;
 
 /** Which groups are open: the stored state, plus the current page's group. */
 export function useOpenGroups(pathname: string) {
@@ -77,9 +79,9 @@ export function NavGroup({
         aria-controls={panelId}
         onClick={() => onToggle(group.key)}
       >
-        <Icon {...ICON} aria-hidden="true" />
+        <Icon {...HEAD_ICON} aria-hidden="true" />
         <span className="nav-group-name">{group.title}</span>
-        <CountBadge n={count} label={group.countLabel} className="nav-count" />
+        <CountBadge n={count} label={group.countLabel} className={"nav-count" + (group.countTone ? ` ${group.countTone}` : "")} />
         <ChevronDown className="nav-chevron" size={16} strokeWidth={1.75} aria-hidden="true" />
       </button>
       <div className="nav-group-panel" id={panelId}>
@@ -298,12 +300,37 @@ export function Sidebar({ rail, onToggleRail, counts }: { rail: boolean; onToggl
                   onKeyDown={onIconKey(g.key)}
                 >
                   <Icon {...ICON} aria-hidden="true" />
-                  {typeof n === "number" && n > 0 && (
-                    <span className="nav-rail-count" aria-hidden="true">
-                      {n > 99 ? "99+" : n}
-                    </span>
-                  )}
+                  {typeof n === "number" && n > 0 && <span className={"nav-rail-count" + (g.countTone ? ` ${g.countTone}` : "")} aria-hidden="true" />}
                 </button>
+                {/* The flyout lives after its own button (still position: fixed), so Tab moves on
+                    from its last page to the next group's icon. */}
+                {expanded && fg && (
+                  <div
+                    ref={flyoutRef}
+                    id="nav-flyout"
+                    className="nav-flyout"
+                    role="group"
+                    aria-label={fg.title}
+                    style={{ top: flyout.top }}
+                    onKeyDown={onFlyoutKey}
+                    onBlur={onFlyoutBlur}
+                    onPointerEnter={() => window.clearTimeout(closeTimer.current)}
+                    onPointerLeave={(e) => {
+                      if (e.pointerType === "mouse" && flyout.byHover) closeTimer.current = window.setTimeout(() => closeFlyout(false), HOVER_CLOSE_MS);
+                    }}
+                  >
+                    <div className="nav-flyout-title">{fg.title}</div>
+                    <ul className="nav-links">
+                      {fg.links.map((l) => (
+                        <li key={l.to}>
+                          <NavLink to={l.to} end={l.end}>
+                            {l.label}
+                          </NavLink>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
               </li>
             );
           })}
@@ -313,33 +340,6 @@ export function Sidebar({ rail, onToggleRail, counts }: { rail: boolean; onToggl
             <PanelLeftOpen {...ICON} aria-hidden="true" />
           </button>
         </div>
-        {flyout && fg && (
-          <div
-            ref={flyoutRef}
-            id="nav-flyout"
-            className="nav-flyout"
-            role="group"
-            aria-label={fg.title}
-            style={{ top: flyout.top }}
-            onKeyDown={onFlyoutKey}
-            onBlur={onFlyoutBlur}
-            onPointerEnter={() => window.clearTimeout(closeTimer.current)}
-            onPointerLeave={(e) => {
-              if (e.pointerType === "mouse" && flyout.byHover) closeTimer.current = window.setTimeout(() => closeFlyout(false), HOVER_CLOSE_MS);
-            }}
-          >
-            <div className="nav-flyout-title">{fg.title}</div>
-            <ul className="nav-links">
-              {fg.links.map((l) => (
-                <li key={l.to}>
-                  <NavLink to={l.to} end={l.end}>
-                    {l.label}
-                  </NavLink>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
       </nav>
     );
   }

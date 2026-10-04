@@ -26,10 +26,11 @@
  * Owned by the performance pass; the rest of this file is the design system's. Keep    *
  * these rules together, here at the top.                                               *
  *                                                                                       *
- * Fonts: the five Latin faces are served from /fonts (frontend/public/fonts), no CDN,   *
- * and index.html preloads the three Sans weights so they are usually in hand before the *
- * first paint. font-display: fallback gives a face 100 ms before the fallback paints    *
- * and never swaps it in after 3 s, so text does not reflow late on a slow link.         *
+ * Fonts: two variable Latin faces are served from /fonts (frontend/public/fonts), no CDN, *
+ * and index.html preloads both so they are usually in hand before the first paint.      *
+ * font-display: swap paints at once in the metric-adjusted fallbacks below (Arial and   *
+ * Courier New with size-adjust and ascent/descent overrides fitted to the Atkinson       *
+ * metrics), so the swap moves almost nothing when the real face lands.                  *
  * Reservations: content that arrives after the first paint lands in space already held. */
 @font-face {
   font-family: "Atkinson Hyperlegible Next";
@@ -48,6 +49,24 @@
   src: url(/fonts/atkinson-hyperlegible-mono-latin-wght-normal.woff2) format("woff2-variations"),
        url(/fonts/atkinson-hyperlegible-mono-latin-wght-normal.woff2) format("woff2");
   unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+/* Fallbacks shaped like the real faces, so a late swap does not reflow the page. */
+@font-face {
+  font-family: "Atkinson Next Fallback";
+  src: local("Arial"), local("Liberation Sans"), local("Helvetica");
+  size-adjust: 101%;
+  ascent-override: 95%;
+  descent-override: 24%;
+  line-gap-override: 0%;
+}
+@font-face {
+  font-family: "Atkinson Mono Fallback";
+  src: local("Courier New"), local("Liberation Mono"), local("Menlo");
+  size-adjust: 97%;
+  ascent-override: 95%;
+  descent-override: 24%;
+  line-gap-override: 0%;
 }
 
 /* The route fallback (App.tsx PageSkeleton): a title bar and a lead bar the height of the
@@ -95,8 +114,8 @@
   --nav-w: 248px;
   --nav-rail-w: 72px;
   --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
-  --font: "Atkinson Hyperlegible Next", "Atkinson Hyperlegible", system-ui, -apple-system, "Segoe UI", sans-serif;
-  --mono: "Atkinson Hyperlegible Mono", ui-monospace, "Cascadia Mono", Menlo, monospace;
+  --font: "Atkinson Hyperlegible Next", "Atkinson Next Fallback", "Atkinson Hyperlegible", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "Atkinson Hyperlegible Mono", "Atkinson Mono Fallback", ui-monospace, "Cascadia Mono", Menlo, monospace;
   font-family: var(--font);
   font-size: 16px;
   line-height: 1.5;
@@ -225,6 +244,8 @@
 
 * { box-sizing: border-box; }
 html, body, #root { min-height: 100%; }
+/* Focus and anchor targets land below the sticky top bar, never under it. */
+html { scroll-padding-top: calc(var(--topbar-h) + 12px); }
 body {
   margin: 0;
   background: var(--bg);
@@ -336,43 +357,48 @@ input, select, textarea, button { caret-color: var(--accent); }
 .nav-group + .nav-group { margin-top: 2px; }
 .nav-group-btn {
   display: grid;
-  grid-template-columns: 18px minmax(0, 1fr) auto 16px;
+  grid-template-columns: 16px minmax(0, 1fr) auto 16px;
   align-items: center;
   gap: 10px;
   width: 100%;
-  height: 36px;
+  height: 34px;
   padding: 0 8px 0 10px;
   border: 0;
   border-radius: var(--r-sm);
   background: transparent;
-  color: var(--text);
-  font: 600 var(--fs-sm) / 1 var(--font);
+  color: var(--muted-dim);
+  font: 600 var(--fs-xs) / 1 var(--font);
   text-align: left;
   cursor: pointer;
   transition: background-color 160ms var(--ease), color 160ms var(--ease);
 }
 .nav-group-btn:hover { background: var(--surface-raised); color: var(--text-strong); }
 .nav-group-btn:active { background: var(--surface-sunk); }
-.nav-group-btn > svg:first-child { color: var(--muted); transition: color 160ms var(--ease); }
+.nav-group-btn > svg:first-child { color: var(--muted-dim); transition: color 160ms var(--ease); }
+.nav-group-btn:hover > svg:first-child { color: var(--text-strong); }
 .nav-group.active .nav-group-btn > svg:first-child { color: var(--accent); }
+.nav-group.active .nav-group-btn { color: var(--text); }
 .nav-group-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.nav-chevron { color: var(--muted-dim); transition: transform 200ms var(--ease); }
+.nav-chevron { grid-column: 4; color: var(--muted-dim); transition: transform 200ms var(--ease); }
 .nav-group.open .nav-chevron { transform: rotate(180deg); }
-.nav-count,
-.nav-rail-count {
+/* A count on a group: neutral ink for Operate (the decisions figure already has its violet on
+   the top bar and in Approvals); violet only on Support, where it means a person holds a case. */
+.nav-count {
+  grid-column: 3;
   display: inline-grid;
   place-items: center;
   min-width: 20px;
   height: 20px;
   padding: 0 6px;
   border-radius: 999px;
-  background: var(--hitl);
-  color: var(--hitl-ink);
+  background: var(--muted-soft);
+  color: var(--text);
   font-size: 11px;
   font-weight: 700;
   line-height: 1;
   font-variant-numeric: tabular-nums;
 }
+.nav-count.hitl { background: var(--hitl); color: var(--hitl-ink); }
 .nav-group-panel { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 200ms var(--ease); }
 .nav-group.open .nav-group-panel { grid-template-rows: 1fr; }
 /* Closed pages are out of the tab order (visibility), a beat after the fold so the fold is seen. */
@@ -384,19 +410,19 @@ input, select, textarea, button { caret-color: var(--accent); }
   display: flex;
   align-items: center;
   min-height: 36px;
-  padding: 0 10px 0 38px;
+  padding: 0 10px 0 36px;
   border-radius: var(--r-sm);
-  color: var(--muted);
-  font-size: var(--fs-sm);
+  color: var(--text);
+  font-size: var(--fs-md);
   font-weight: 500;
   line-height: 1.3;
   transition: background-color 160ms var(--ease), color 160ms var(--ease);
 }
 .nav-links a:hover { background: var(--surface-raised); color: var(--text-strong); text-decoration: none; }
 .nav-links a:active { background: var(--surface-sunk); }
-.nav-links a.active, .nav-links a.active:hover { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
-/* The current page's mark sits in the icon column, under the group's icon. */
-.nav-links a.active::before { content: ""; position: absolute; left: 16px; top: 50%; width: 6px; height: 6px; margin-top: -3px; border-radius: 50%; background: var(--accent); }
+.nav-links a.active, .nav-links a.active:hover { color: var(--accent); font-weight: 600; }
+/* The current page: one 2 px accent marker inside the link's own padding, in the icon column. */
+.nav-links a.active::before { content: ""; position: absolute; left: 12px; top: 50%; width: 2px; height: 16px; margin-top: -8px; border-radius: 2px; background: var(--accent); }
 .nav-foot { flex: none; padding: 10px; border-top: 1px solid var(--line); }
 .nav-collapse {
   display: flex;
@@ -418,7 +444,7 @@ input, select, textarea, button { caret-color: var(--accent); }
 /* The rail: one icon per group; the flyout beside it lists the group's pages. */
 .nav.rail .nav-brand { justify-content: center; padding: 0; }
 .nav.rail .brand { width: 36px; margin: 0; padding: 0; justify-content: center; }
-.nav-rail-list { display: grid; gap: 4px; justify-items: center; flex: 1 1 auto; min-height: 0; overflow-y: auto; list-style: none; margin: 0; padding: var(--s3) 0; }
+.nav-rail-list { display: grid; align-content: start; gap: 4px; justify-items: center; flex: 1 1 auto; min-height: 0; overflow-y: auto; list-style: none; margin: 0; padding: var(--s3) 0; }
 .nav.rail .nav-foot { display: grid; justify-items: center; padding: 10px 0; }
 .nav-rail-btn {
   position: relative;
@@ -436,7 +462,10 @@ input, select, textarea, button { caret-color: var(--accent); }
 .nav-rail-btn:hover, .nav-rail-btn[aria-expanded="true"] { background: var(--surface-raised); color: var(--text-strong); }
 .nav-rail-btn:active { background: var(--surface-sunk); }
 .nav-rail-btn.active { background: var(--accent-soft); color: var(--accent); }
-.nav-rail-count { position: absolute; top: 1px; right: 1px; min-width: 18px; height: 18px; padding: 0 5px; font-size: 10px; box-shadow: 0 0 0 2px var(--surface-nav); }
+/* The count on the rail is a dot beside the icon (the number is in the button's name). */
+.nav-rail-count { position: absolute; top: 7px; right: 8px; width: 7px; height: 7px; border-radius: 50%; background: var(--text); box-shadow: 0 0 0 2px var(--surface-nav); }
+.nav-rail-count.hitl { background: var(--hitl); }
+.nav-rail-btn.active .nav-rail-count { box-shadow: 0 0 0 2px var(--accent-soft); }
 .nav-flyout {
   position: fixed;
   left: calc(var(--nav-rail-w) + 6px);
@@ -554,14 +583,21 @@ input, select, textarea, button { caret-color: var(--accent); }
 
 /* Phone: the brand moves into the top bar, the identity line takes the second row, and the
    Menu drops a sheet over the page. */
-.topbar-brand { order: 1; }
-/* Two rows, one fixed height (84 px: the sticky offsets below the bar count on it). */
-.app.phone { --topbar-h: 84px; }
-.app.phone .topbar { flex-wrap: wrap; height: var(--topbar-h); padding: 0 var(--s4); row-gap: 0; overflow: hidden; }
-.app.phone .topbar-right { order: 2; height: 52px; margin-left: auto; }
-.app.phone .topbar-left { order: 3; flex: none; width: 100%; height: 31px; flex-wrap: nowrap; align-items: flex-start; gap: var(--s3); margin-top: -4px; overflow: hidden; }
-.app.phone .topbar-meta { display: block; flex: 0 1 auto; }
-.app.phone .topbar-live { flex: none; }
+/* One 56 px row: the mark (its wordmark goes first on the narrowest phones), the live dot, the
+   decisions count and Menu. The operator and shift move to the top of the menu sheet. */
+.app.phone .topbar { padding: 0 var(--s4); gap: var(--s2); }
+.app.phone .topbar-left { flex: 1 1 auto; justify-content: flex-end; }
+/* Scoped to the bar: the same spans render again at the top of the menu sheet. */
+.app.phone .topbar-left > .topbar-id, .app.phone .topbar-left > .topbar-meta { display: none; }
+.app.phone .topbar-right { flex: none; }
+/* Live as a dot: the words stay for a screen reader (sr-only inside). */
+.topbar-live.dot { width: 20px; height: 20px; padding: 0; display: inline-grid; place-items: center; }
+.topbar-live.dot::before { position: static; margin: 0; width: 8px; height: 8px; }
+@media (max-width: 399px) { .app.phone .topbar-brand > span { display: none; } }
+.sheet-identity { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s1) var(--s3); padding: 10px 10px 12px; font-size: var(--fs-sm); color: var(--muted); }
+.sheet-identity .topbar-id { display: inline; color: var(--text-strong); font-size: var(--fs-md); font-weight: 600; }
+.sheet-identity .topbar-meta { display: inline; }
+.sheet-identity .topbar-live { padding-left: 14px; }
 .phone-menu-btn { gap: 6px; }
 .sheet-scrim { position: fixed; left: 0; right: 0; bottom: 0; z-index: 40; background: var(--scrim); }
 .sheet {
@@ -672,14 +708,15 @@ button.chip:active { background: var(--surface-sunk); }
 .kpi .label { color: var(--muted); font-size: var(--fs-sm); font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .kpi .value {
   margin-top: 6px;
-  font-family: var(--mono);
+  font-family: var(--font);
   font-size: var(--fs-2xl);
-  font-weight: 600;
+  font-weight: 700;
   line-height: 1.1;
   letter-spacing: -0.02em;
   color: var(--text-strong);
   font-variant-numeric: tabular-nums;
 }
+/* Nothing to see: a quiet zero, never a coloured one. */
 .kpi .value.zero { color: var(--muted-dim); font-weight: 500; }
 /* A figure worth a look takes its state colour; zero never does. */
 .kpi .value.p1 { color: var(--p1); }
@@ -693,10 +730,17 @@ button.chip:active { background: var(--surface-sunk); }
 .kpis-note { margin: var(--s2) 0 0; padding: 0 var(--s1); font-size: var(--fs-sm); }
 /* Phones: tighter tiles, the figure one step down, so seven figures take two screens' worth less. */
 @media (max-width: 600px) {
-  .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .kpi { padding: var(--s3) var(--s4); }
-  .kpi .label { font-size: var(--fs-xs); }
+  .kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .kpi { padding: var(--s3) var(--s3); }
+  .kpi .label { font-size: var(--fs-xs); white-space: normal; line-height: 1.3; min-height: 2.6em; }
   .kpi .value { font-size: var(--fs-xl); margin-top: 4px; }
+  /* Mission control's strip: Open, Decisions and P1 first; the rest wrap below. */
+  .kpis > .kpi:nth-child(1) { order: 1; }
+  .kpis > .kpi:nth-child(4) { order: 2; }
+  .kpis > .kpi:nth-child(2) { order: 3; }
+  .kpis > .kpi:nth-child(3) { order: 4; }
+  .kpis > .kpi:nth-child(n + 5) { order: 5; }
+  .kpis .kpi:last-child:nth-child(3n + 1) { grid-column: span 3; }
 }
 /* Tablets (701-1120 px): two rows, 4 + 3, every tile full width of its share (no empty slab). */
 @media (min-width: 701px) and (max-width: 1120px) {
@@ -706,8 +750,10 @@ button.chip:active { background: var(--surface-sunk); }
 }
 
 .grid-2 { display: grid; grid-template-columns: 1.25fr 1fr; gap: var(--s4); }
-/* Two equal columns that stay side by side down to 761 px (Mission control's two lists). */
-.grid-2.even { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+/* Mission control's two lists: the tickets take two thirds, Approvals one; equal on a tablet;
+   stacked on a phone. */
+.grid-2.even { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); }
+@media (max-width: 1099px) { .grid-2.even { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 760px) { .grid-2.even { grid-template-columns: minmax(0, 1fr); } }
 .grid-3 { display: grid; grid-template-columns: 1.15fr 1fr 0.9fr; gap: var(--s4); }
 @media (max-width: 1100px) {
@@ -799,7 +845,7 @@ button.chip:active { background: var(--surface-sunk); }
    line with its words: <label class="check"><input type="checkbox"/>Notify</label>. */
 .note-form { display: grid; gap: var(--s3); min-width: 0; }
 .note-form label, .note-form .field { display: grid; gap: var(--s1); min-width: 0; color: var(--muted); font-size: var(--fs-sm); font-weight: 500; }
-.note-form label.check { display: flex; align-items: center; gap: var(--s2); color: var(--text); }
+.note-form label.check { display: flex; align-items: center; gap: var(--s2); min-height: 32px; color: var(--text); cursor: pointer; }
 .note-form input:not([type="checkbox"]):not([type="radio"]), .note-form select, .note-form textarea { width: 100%; min-width: 0; }
 .note-form-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); gap: var(--s3); }
 .note-form-actions { display: flex; flex-wrap: wrap; gap: var(--s2) var(--s3); align-items: center; }
@@ -828,6 +874,7 @@ details[open] > summary::before { transform: rotate(45deg); }
    something. The first line of every cell shares one baseline, so a priority pill sits on the
    title's line. */
 .list { display: flex; flex-direction: column; max-height: 440px; overflow: auto; }
+.list > * { flex-shrink: 0; }
 /* A list that shows its first few rows in full and links to its page ("Show all"). */
 .list.peek, .ticker.peek { max-height: none; overflow: visible; }
 .list-foot { display: flex; justify-content: flex-end; padding: var(--s2) var(--s2) 0; border-top: 1px solid var(--line); font-size: var(--fs-sm); }
@@ -852,11 +899,14 @@ details[open] > summary::before { transform: rotate(45deg); }
 @media (max-width: 600px) {
   .row.split { grid-template-columns: auto minmax(0, 1fr); row-gap: 2px; }
   .row.split > :last-child { grid-column: 2; }
+  .row > .status { grid-column: 2; }
+  .row:has(> .status) { row-gap: 2px; }
 }
 .row .muted { font-size: var(--fs-xs); }
 .row-main { min-width: 0; }
 .row-title { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 var(--s3); color: var(--text-strong); font-size: var(--fs-md); font-weight: 500; }
 .row-id { font-family: var(--mono); font-weight: 500; font-size: var(--fs-sm); color: var(--text-strong); }
+a.row-id { display: inline-block; padding: 6px 0; margin: -6px 0; }
 .row .facts { font-size: var(--fs-xs); gap: 0 var(--s4); margin-top: 2px; }
 .row.flash { animation: rowFlash 1.6s ease-out; }
 @keyframes rowFlash {
@@ -1006,7 +1056,8 @@ td .muted { font-size: var(--fs-xs); }
 .live-dot.off { background: var(--muted-dim); box-shadow: none; animation: none; }
 
 .region-bars { display: flex; flex-direction: column; gap: 0.5rem; }
-.region-bar-row { display: grid; grid-template-columns: 52px 1fr 28px; gap: var(--s2); align-items: center; }
+.region-bar-row { display: grid; grid-template-columns: minmax(5.5rem, auto) 1fr 28px; gap: var(--s2); align-items: center; }
+.region-bar-name { font-size: var(--fs-sm); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .region-bar-track { height: 8px; border-radius: 4px; background: var(--surface-sunk); overflow: hidden; }
 /* The fill is full width and scaled (style="transform: scaleX(.4)"), so a count change animates
    on the compositor instead of re-laying out the row. */
@@ -1667,7 +1718,7 @@ textarea { width: 100%; min-height: 90px; line-height: 1.5; resize: vertical; }
 .rail-hop.succeeded .rail-btn { border-color: var(--ok-line); }
 .rail-hop.waiting_hitl .rail-dot { background: var(--hitl); border-color: var(--hitl); }
 .rail-hop.waiting_hitl .rail-btn { border-color: var(--hitl-line); background: var(--hitl-soft); }
-.rail-hop.waiting_hitl .rail-meta { color: var(--hitl-text); }
+.rail-hop.waiting_hitl .rail-meta, .rail-hop.waiting_hitl .rail-agent { color: var(--hitl-text); }
 /* A hop a person has decided: done, in the done colour, with the decision as its word. */
 .rail-hop.decided .rail-dot { background: var(--ok); border-color: var(--ok); }
 .rail-hop.decided .rail-btn { border-color: var(--ok-line); }
@@ -1697,6 +1748,14 @@ textarea { width: 100%; min-height: 90px; line-height: 1.5; resize: vertical; }
   animation: railSweep 1.6s linear infinite;
 }
 @keyframes railSweep { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
+/* The full rail (a ticket's run): an even grid, six hops a row from 900 px (four, then three,
+   below), so twelve steps read as a pipeline instead of wrapping eight and four. The link after
+   the last hop on a row is hidden by the wrap marking. */
+.rail:not(.rail-compact):not(.rail-grid) .rail-track { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: var(--s3) 0; align-items: stretch; }
+.rail:not(.rail-compact):not(.rail-grid) .rail-hop { min-width: 0; }
+.rail:not(.rail-compact):not(.rail-grid) .rail-btn { flex: 1 1 auto; min-width: 0; }
+@media (max-width: 899px) { .rail:not(.rail-compact):not(.rail-grid) .rail-track { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+@media (max-width: 599px) { .rail:not(.rail-compact):not(.rail-grid) .rail-track { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 /* Compact (Mission control): twelve hops of >= 72 px with 8 px links fit the 988 px row at 1280. */
 .rail-compact .rail-btn { min-width: 72px; padding: 0.3rem 0.25rem; }
 .rail-compact .rail-link { width: 8px; }
@@ -1819,8 +1878,10 @@ textarea { width: 100%; min-height: 90px; line-height: 1.5; resize: vertical; }
 /* Tap targets: every control a finger reaches is at least 40 px tall, on a phone and on any
    touch screen (an iPad is wider than a phone but has no mouse). */
 @media (max-width: 700px), (pointer: coarse) {
-  .btn, .btn.sm, button.chip, summary, .nav-links a, .nav-group-btn, .nav-collapse, .seg > button, .list-foot a, .menu-item { min-height: 40px; }
-  input:not([type="checkbox"]):not([type="radio"]), select { min-height: 40px; }
+  .btn, .btn.sm, button.chip, summary, .nav-links a, .nav-group-btn, .nav-collapse, .nav-rail-btn, .seg > button, .list-foot a, .menu-item, .note-form label.check { min-height: 44px; }
+  input:not([type="checkbox"]):not([type="radio"]), select { min-height: 44px; }
+  input[type="checkbox"], input[type="radio"] { width: 20px; height: 20px; }
+  a.row-id { padding: 10px 0; margin: -10px 0; }
   .list-foot a { display: flex; align-items: center; }
 }
 @media (max-width: 700px) {
@@ -1831,7 +1892,6 @@ textarea { width: 100%; min-height: 90px; line-height: 1.5; resize: vertical; }
   select { max-width: 100%; }
   .wb-alarm-chip { white-space: normal; font-size: var(--fs-base); max-width: 100%; }
   .wallboard { padding: var(--s4); }
-  .kpis .kpi:last-child:nth-child(odd) { grid-column: span 2; }
   .table-wide table { min-width: 100%; }
   .table-wide .col-what, .table-wide .col-agent { display: none; }
   .phone-only { display: block; }
