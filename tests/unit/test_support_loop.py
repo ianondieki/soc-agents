@@ -657,8 +657,9 @@ def test_the_notice_state_on_outages_and_the_incident_panel(session):
     assert set(s["notice"]) == {"state", "card_id", "recipients", "sent_at", "reason", "held_by", "held_at"}
     panel = loop.incident_customers(session, sent)
     assert set(panel) == {"customers", "told", "waiting", "still_down", "notice", "complaints", "follow_up"}
+    # Staff only: how each complaint was matched to the outage (site, county, wide area, person).
     assert set(panel["complaints"][0]) == {"id", "ref", "msisdn_masked", "status", "told_restored_at", "still_down_at",
-                                           "closure_reason"}
+                                           "closure_reason", "link_strength"}
     assert panel["complaints"][0]["msisdn_masked"].startswith("+254 7•• •• ") and panel["follow_up"] is None
     assert (panel["customers"], panel["told"], len(panel["complaints"])) == (1, 1, 2)
     assert "+2547" not in json.dumps(panel)  # masked numbers only
