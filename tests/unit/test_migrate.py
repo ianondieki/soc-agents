@@ -392,6 +392,12 @@ V11_ALTERS = [
     "ALTER TABLE support_complaints ADD COLUMN still_down_at DATETIME",
     "ALTER TABLE support_messages ADD COLUMN channel VARCHAR(16)",
 ]
+# schema_version 12 (close the loop, revision 2): three nullable columns on v11 tables.
+V12_ALTERS = [
+    "ALTER TABLE support_complaints ADD COLUMN link_strength VARCHAR(16)",
+    "ALTER TABLE support_notices ADD COLUMN restore_note TEXT",
+    "ALTER TABLE support_surges ADD COLUMN outcome VARCHAR(16)",
+]
 V11_INDEXES = {"ix_support_complaints_operator_incident", "ix_support_complaints_operator_place"}
 
 
@@ -407,7 +413,7 @@ def _make_v10_file(tmp_path: Path) -> Path:
             con.execute(f"DROP TABLE {table}")
         for index in sorted(V11_INDEXES):
             con.execute(f"DROP INDEX {index}")
-        for statement in V11_ALTERS:
+        for statement in V11_ALTERS + [a for a in V12_ALTERS if a.split()[2] == "support_complaints"]:
             table, column = statement.split()[2], statement.split()[5]
             con.execute(f"ALTER TABLE {table} DROP COLUMN {column}")
         con.execute(
@@ -418,7 +424,7 @@ def _make_v10_file(tmp_path: Path) -> Path:
             " 'h', 'network', 'normal', 'calm', 'action', 'action_taken', 0.9, '{}', '[]', '2026-10-02 10:00:00', 5)")
         con.execute("INSERT INTO support_messages (id, complaint_id, author, body, at) VALUES ('m1', 'c1', 'customer',"
                     " 'No network in Kayole', '2026-10-01 10:00:00')")
-        con.execute("UPDATE schema_version SET version = 10 WHERE version = 11")  # a fresh file has one row
+        con.execute("UPDATE schema_version SET version = 10 WHERE version = 12")  # a fresh file has one row
         con.commit()
     finally:
         con.close()
@@ -431,10 +437,11 @@ def test_a_v10_file_gains_the_close_the_loop_tables_and_columns_additively(tmp_p
     backups = tmp_path / "backups"
     engine = init_db(_url(db), backup_dir=backups)
     report = migrate.LAST_REPORT
-    assert (report.from_version, report.to_version) == (10, SCHEMA_VERSION) == (10, 11)
+    assert (report.from_version, report.to_version) == (10, SCHEMA_VERSION) == (10, 12)
     creates = {s.split()[5] for s in report.applied if s.startswith("CREATE TABLE IF NOT EXISTS ")}
-    assert creates == V11_TABLES
-    assert [s for s in report.applied if s.startswith("ALTER TABLE ")] == V11_ALTERS
+    assert creates == V11_TABLES  # created whole, v12's columns included
+    assert [s for s in report.applied if s.startswith("ALTER TABLE ")] == (
+        V11_ALTERS[:5] + [V12_ALTERS[0]] + V11_ALTERS[5:])  # in model order: complaints, then messages
     assert V11_INDEXES <= _indexes(db, "support_complaints")
     # Additive only: nothing dropped, renamed or rebuilt, and the v10 rows are untouched.
     assert not [s for s in report.applied if s.split()[0] in ("DROP", "UPDATE", "DELETE")]
@@ -442,6 +449,27 @@ def test_a_v10_file_gains_the_close_the_loop_tables_and_columns_additively(tmp_p
                        "FROM support_complaints WHERE id = 'c1'") == "No network in Kayole|NULL|NULL"
     assert _scalar(db, "SELECT COALESCE(channel, 'NULL') FROM support_messages WHERE id = 'm1'") == "NULL"
     # Behind the usual pre-migration backup, which still holds the v10 file as it was.
-    written = sorted(backups.glob("v10.10-to-11.*.db"))
+    written = sorted(backups.glob("v10.10-to-12.*.db"))
     assert len(written) == 1 and "support_surges" not in _tables(written[0])
+    engine.dispose()
+
+
+def test_a_v11_file_gains_the_revision_two_columns_additively(tmp_path, restore_db_globals):
+    """v11 -> v12: three nullable ADD COLUMNs on tables v11 created, nothing else."""
+    db = tmp_path / "v11.db"
+    engine = init_db(_url(db), backup_dir=tmp_path / "unused")
+    engine.dispose()
+    con = sqlite3.connect(db)
+    try:
+        for statement in V12_ALTERS:
+            con.execute(f"ALTER TABLE {statement.split()[2]} DROP COLUMN {statement.split()[5]}")
+        con.execute("UPDATE schema_version SET version = 11 WHERE version = 12")
+        con.commit()
+    finally:
+        con.close()
+    engine = init_db(_url(db), backup_dir=tmp_path / "backups")
+    report = migrate.LAST_REPORT
+    assert (report.from_version, report.to_version) == (11, 12)
+    assert [s for s in report.applied if not s.startswith("CREATE INDEX")] == V12_ALTERS
+    assert len(list((tmp_path / "backups").glob("v11.11-to-12.*.db"))) == 1
     engine.dispose()

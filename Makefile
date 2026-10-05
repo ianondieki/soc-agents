@@ -11,7 +11,7 @@ demo:
 	python -m noc_agents.scripts.demo_safaricom
 
 run:
-	python -m uvicorn noc_agents.main:app --app-dir src --host 0.0.0.0 --port 8000 --reload
+	python -m uvicorn noc_agents.main:app --app-dir src --host 0.0.0.0 --port 8000 --reload --no-proxy-headers
 
 run-ui:
 	cd frontend && npm run dev

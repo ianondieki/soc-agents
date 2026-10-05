@@ -396,6 +396,42 @@ def extract_mpesa_codes(text: str | None) -> list[str]:
     return [code.upper() for code in _CODE.findall(clean(text))]
 
 
+#: What :func:`redact_untyped` treats as an amount: a figure after a currency word, or a
+#: comma-grouped figure. ``bare=True`` adds a bare 4-7 digit figure that is not part of a word, a
+#: reference, a time, a USSD code or a phone number -- for text a person typed, where "12000" is an
+#: amount; never for the desk's own replies, whose bare figures are short codes and USSD strings.
+_REDACT_AMOUNT = re.compile(
+    r"(?i)\b(?:kes|kshs?|shs?)\.?\s*\d[\d,]*(?:\.\d+)?"
+    r"|(?<![\w.\-+:*#/])\d{1,3}(?:,\d{3})+(?![\d,])"
+)
+_REDACT_BARE = re.compile(r"(?<![\w.\-+:*#/])\d{4,7}(?![\w,.:*#/])")
+REDACTED_CODE = "[code]"
+REDACTED_AMOUNT = "[amount]"
+
+
+def redact_untyped(text: str | None, typed: str | None, *, bare: bool = False) -> str:
+    """``text`` with every M-PESA code and every amount that ``typed`` does not contain replaced by
+    a placeholder: the echo-only rule, applied to text a caller is about to read. A code or amount
+    the caller typed themselves stays; anything that came from somewhere else (an account, a staff
+    member typing on the caller's behalf) does not."""
+    codes = set(extract_mpesa_codes(typed))
+    amounts = set(extract_amounts(typed))
+
+    def code(match: re.Match[str]) -> str:
+        return match.group(0) if match.group(0).upper() in codes else REDACTED_CODE
+
+    def amount(match: re.Match[str]) -> str:
+        figure = re.search(r"\d[\d,]*", match.group(0))
+        value = int(figure.group(0).replace(",", "")) if figure else None
+        if value is not None and value in amounts:
+            return match.group(0)
+        prefix = match.group(0)[: figure.start()] if figure else ""
+        return f"{prefix}{REDACTED_AMOUNT}"
+
+    out = _REDACT_AMOUNT.sub(amount, _CODE.sub(code, text or ""))
+    return _REDACT_BARE.sub(amount, out) if bare else out
+
+
 # ----------------------------------------------------------------------------- MSISDN
 
 #: ASCII digits only, spelled ``[0-9]``: in Python ``\d`` also matches "８" (fullwidth) or "٨"
@@ -423,6 +459,14 @@ def normalise_msisdn(raw: str | None) -> str:
 
 
 def mask_msisdn(msisdn: str) -> str:
-    """``+254700000412`` -> ``+254 7•• ••• 412``: the network prefix and the last three digits only."""
+    """``+254700000412`` -> ``+254 7•• ••• 412``: the network prefix and the last three digits only.
+    The CUSTOMER-facing form (replies, the public view): it echoes the number the caller typed."""
     national = normalise_msisdn(msisdn)[4:]
     return f"+254 {national[0]}•• ••• {national[-3:]}"
+
+
+def mask_msisdn_staff(msisdn: str) -> str:
+    """``+254700000412`` -> ``+254 7•• •• 0412``: the form STAFF see (docs/CLOSE_THE_LOOP.md 7.2).
+    Four digits, so two numbers on one card never look like one; still never the whole number."""
+    national = normalise_msisdn(msisdn)[4:]
+    return f"+254 {national[0]}•• •• {national[-4:]}"

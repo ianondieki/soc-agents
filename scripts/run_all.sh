@@ -55,4 +55,7 @@ echo "Press 'Launch heavy-rain storm (live)' on Mission control to start the dem
 echo "Managers: open http://127.0.0.1:${PORT}/showcase  ·  Presenters: press 'Guided demo' in the top bar."
 echo
 
-exec "$PY" -m uvicorn noc_agents.main:app --app-dir src --host 127.0.0.1 --port "$PORT"
+# --no-proxy-headers: X-Forwarded-For is never trusted here (the support desk rate-limits by client
+# address; a forged header must not buy a fresh allowance). Behind a real reverse proxy, set
+# SUPPORT_TRUSTED_PROXIES to its address instead (docs/CLOSE_THE_LOOP.md decisions).
+exec "$PY" -m uvicorn noc_agents.main:app --app-dir src --host 127.0.0.1 --port "$PORT" --no-proxy-headers

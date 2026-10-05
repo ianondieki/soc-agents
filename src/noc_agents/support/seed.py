@@ -176,7 +176,7 @@ def _link_by_call_centre(session: Session, row: SupportComplaintRow, inc: Incide
     """The seeding person, as a call-centre agent, links a no-place complaint to the site serving
     the caller: a ``human`` step in the trace, like every other person's action."""
     desk._locked(session, row)
-    row.linked_incident_id, row.updated_at = inc.id, at
+    row.linked_incident_id, row.link_strength, row.updated_at = inc.id, "person", at
     desk._human_step(session, row, "linked_incident",
                      f"Linked to {inc.incident_number} ({inc.site_name}) by {actor}: the caller is served by that site.",
                      {"incident_id": inc.id, "incident_number": inc.incident_number, "linked_by": actor,

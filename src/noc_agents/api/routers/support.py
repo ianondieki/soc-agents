@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from typing import Any, Literal, get_args
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
@@ -160,7 +161,7 @@ def register_complaint(body: ComplaintIn, request: Request, response: Response) 
     the form's rate limit."""
     ctx = default_context()
     limit = ctx.policy.rate_limit
-    client = request.client.host if request.client else "unknown"
+    client = client_address(request)  # the direct peer unless it is a trusted proxy
     retry = complaint_limiter.check(
         [(f"msisdn:{_operator_id()}:{body.msisdn}", limit.max_requests), (f"ip:{client}", limit.per_ip_max_requests)],
         window_seconds=limit.window_seconds,
@@ -357,21 +358,56 @@ def seed_complaints(principal: auth.Principal = Depends(require_role(*OPERATIONS
 
 # ------------------------------------------------------- close the loop: the Track page (public)
 
-#: A Track request is two short strings and an optional note; anything bigger is not one.
+#: A Track request is two short strings and an optional note; anything bigger is not one. Checked
+#: on ``Content-Length`` before reading and again while streaming, so an oversized body is never
+#: buffered; it answers the same 404 as every other malformed body (decision in the contract).
 MAX_TRACK_BODY_BYTES = 4096
+#: Comma-separated proxy addresses whose ``X-Forwarded-For`` is believed. Unset (the default): the
+#: limiter's address is the direct peer, so a forged header never buys a fresh allowance. Run
+#: uvicorn with ``--no-proxy-headers`` too (scripts/run_all.*), or its own middleware rewrites the
+#: peer from the header before this code sees it.
+TRUSTED_PROXIES_ENV = "SUPPORT_TRUSTED_PROXIES"
+
+
+def client_address(request: Request) -> str:
+    """The address the rate limits key on: the direct peer, or -- only when that peer is a trusted
+    proxy -- the client address that proxy appended to ``X-Forwarded-For`` (the rightmost entry)."""
+    peer = request.client.host if request.client else "unknown"
+    trusted = {p.strip() for p in (os.getenv(TRUSTED_PROXIES_ENV) or "").split(",") if p.strip()}
+    if peer in trusted:
+        forwarded = [p.strip() for p in (request.headers.get("x-forwarded-for") or "").split(",") if p.strip()]
+        if forwarded:
+            return forwarded[-1]
+    return peer
 
 
 def _not_found() -> HTTPException:
     return HTTPException(404, loop.NOT_FOUND)
 
 
+def _too_many(retry: float) -> HTTPException:
+    return HTTPException(429, "too many requests; please wait before trying again",
+                         headers={"Retry-After": str(max(1, int(retry) + 1))})
+
+
 async def _track_body(request: Request) -> dict[str, Any] | None:
     """The JSON object sent, or None for anything else -- which the caller answers with the same 404."""
-    raw = await request.body()
-    if not raw or len(raw) > MAX_TRACK_BODY_BYTES:
+    declared = request.headers.get("content-length")
+    if declared is not None:
+        try:
+            if int(declared) > MAX_TRACK_BODY_BYTES:
+                return None
+        except ValueError:
+            return None
+    raw = bytearray()
+    async for chunk in request.stream():
+        raw += chunk
+        if len(raw) > MAX_TRACK_BODY_BYTES:
+            return None  # stop reading: the rest is never buffered
+    if not raw:
         return None
     try:
-        data = json.loads(raw)
+        data = json.loads(bytes(raw))
     except ValueError:
         return None
     return data if isinstance(data, dict) else None
@@ -382,19 +418,39 @@ def _ref_of(data: dict[str, Any] | None) -> str | None:
     return ref.strip().upper()[:32] if isinstance(ref, str) and ref.strip() else None
 
 
-def _track_limit(request: Request, ref: str | None) -> None:
-    """Per client address (20 per 10 minutes) and per reference (10 per 10 minutes): the reference
-    limit is what stops one reference being tried against every number. The desk's own limiter,
-    under keys of its own; every request counts, a malformed one included."""
+def _address_limit(request: Request) -> None:
+    """Every Track request counts against its client address (20 per 10 minutes)."""
     rule = default_context().policy.track
-    client = request.client.host if request.client else "unknown"
-    limits = [(f"track-ip:{client}", rule.per_ip_max_requests)]
-    if ref:
-        limits.append((f"track-ref:{_operator_id()}:{ref}", rule.per_ref_max_requests))
-    retry = complaint_limiter.check(limits, window_seconds=rule.window_seconds)
+    retry = complaint_limiter.check([(f"track-ip:{client_address(request)}", rule.per_ip_max_requests)],
+                                    window_seconds=rule.window_seconds)
     if retry is not None:
-        raise HTTPException(429, "too many requests; please wait before trying again",
-                            headers={"Retry-After": str(max(1, int(retry) + 1))})
+        raise _too_many(retry)
+
+
+def _failure_keys(ref: str, msisdn: str) -> tuple[str, str]:
+    return f"track-ref:{_operator_id()}:{ref}", f"track-msisdn:{_operator_id()}:{msisdn}"
+
+
+def _failure_budget(ref: str, msisdn: str) -> None:
+    """Refuse (429) a pair whose reference or number has used up its FAILED-attempt budget: 10 per
+    10 minutes per reference (walking numbers), 10 per day per number (walking references). Only a
+    failure spends it, so a customer's own look-ups never lock them out (MINOR 8)."""
+    rule = default_context().policy.track
+    ref_key, msisdn_key = _failure_keys(ref, msisdn)
+    waits = [w for w in (
+        complaint_limiter.peek([(ref_key, rule.per_ref_max_failures)], window_seconds=rule.window_seconds),
+        complaint_limiter.peek([(msisdn_key, rule.per_msisdn_max_failures)], window_seconds=rule.per_msisdn_window_seconds),
+    ) if w is not None]
+    if waits:
+        raise _too_many(max(waits))
+
+
+def _failed(ref: str, msisdn: str) -> HTTPException:
+    rule = default_context().policy.track
+    ref_key, msisdn_key = _failure_keys(ref, msisdn)
+    complaint_limiter.record([ref_key], window_seconds=rule.window_seconds)
+    complaint_limiter.record([msisdn_key], window_seconds=rule.per_msisdn_window_seconds)
+    return _not_found()
 
 
 def _pair(data: dict[str, Any] | None) -> tuple[str, str] | None:
@@ -408,22 +464,24 @@ def _pair(data: dict[str, Any] | None) -> tuple[str, str] | None:
 
 
 def _tracked_or_404(ref: str, msisdn: str) -> dict[str, Any]:
+    _failure_budget(ref, msisdn)
     session = get_session()
     try:
         row = loop.find_tracked(session, _operator_id(), ref, msisdn)
         if row is None:
-            raise _not_found()
+            raise _failed(ref, msisdn)
         return loop.tracked(session, row, policy=default_context().policy)
     finally:
         session.close()
 
 
 def _still_down_or_404(ref: str, msisdn: str, note: str | None) -> dict[str, Any]:
+    _failure_budget(ref, msisdn)
     session = get_session()
     try:
         row = loop.find_tracked(session, _operator_id(), ref, msisdn)
         if row is None:
-            raise _not_found()
+            raise _failed(ref, msisdn)
         ctx = default_context()
         try:
             loop.report_still_down(session, row, note=note, ctx=ctx)
@@ -438,9 +496,9 @@ def _still_down_or_404(ref: str, msisdn: str, note: str | None) -> dict[str, Any
 async def track_complaint(request: Request) -> dict[str, Any]:
     """The customer's Track page: ``{ref, msisdn}`` -> ``Tracked``. POST so the number never sits in
     a URL or an access log. Every mismatch -- a wrong reference, a wrong number, another
-    operator's reference, a malformed body -- is the same 404."""
+    operator's reference, a malformed or oversized body -- is the same 404."""
     data = await _track_body(request)
-    _track_limit(request, _ref_of(data))
+    _address_limit(request)
     pair = _pair(data)
     if pair is None:
         raise _not_found()
@@ -449,11 +507,11 @@ async def track_complaint(request: Request) -> dict[str, Any]:
 
 @_lane.post("/track/still-down")
 async def track_still_down(request: Request) -> dict[str, Any]:
-    """``{ref, msisdn, note?}``: the customer says service is still down after we said it was back.
-    Same matching, same 404, same limits; 409 with a plain sentence when it is not allowed now
-    (not told yet, told more than 72 hours ago, or already reported in the last 24 hours)."""
+    """``{ref, msisdn, note?}``: the customer says service is still down after we said it was back
+    (or after their ticket closed without a word). Same matching, same 404, same limits; 409 with a
+    plain sentence when it is not allowed now."""
     data = await _track_body(request)
-    _track_limit(request, _ref_of(data))
+    _address_limit(request)
     pair = _pair(data)
     note = (data or {}).get("note")
     if pair is None or not (note is None or (isinstance(note, str) and len(note) <= loop.MAX_NOTE_CHARS)):
@@ -494,9 +552,10 @@ def list_surges(limit: int = Query(views.DEFAULT_LIST_LIMIT, ge=1, le=views.MAX_
 
 @_lane.post("/surges/{surge_id}/retry")
 def retry_surge(surge_id: str, principal: auth.Principal = Depends(require_role(*OPERATIONS))) -> dict[str, Any]:
-    """Re-run a confirm whose ingest failed ("Try again"). The SMS that follows is still the
-    confirmer's approval; who pressed retry is in the log. 200 with the surge as it ended (its
-    ``error`` is set again if the ingest failed again)."""
+    """Re-run a confirm whose ingest FAILED ("Try again"): 409 unless the surge is confirmed with no
+    ticket and an error on record, and 409 when another confirm holds it (the compare-and-set).
+    The SMS that follows is still the confirmer's approval; who pressed retry is in the log. 200
+    with the surge as it ended (its ``error`` is set again if the ingest failed again)."""
     operator_id = _operator_id()
     session = get_session()
     try:
@@ -511,11 +570,12 @@ def retry_surge(surge_id: str, principal: auth.Principal = Depends(require_role(
     finally:
         session.close()
     log.info("support: %s retried the confirm of surge %s", _actor(principal, None), surge_id)
-    surge.confirm_surge(surge_id, actor=approver, approved_at=approved_at)
+    _, claimed = surge.confirm_surge_claimed(surge_id, actor=approver, approved_at=approved_at)
+    if not claimed:
+        raise HTTPException(409, "this surge is already being confirmed")
     session = get_session()
     try:
-        row = session.get(SupportSurgeRow, surge_id)
-        return surge.surge_out(session, row)
+        return surge.surge_out(session, session.get(SupportSurgeRow, surge_id))
     finally:
         session.close()
 
@@ -526,6 +586,28 @@ def incident_customers(incident_id: str) -> dict[str, Any]:
     session = get_session()
     try:
         inc = _get_owned(session, IncidentRow, incident_id, what="incident")  # 404 for another operator's
+        return loop.incident_customers(session, inc)
+    finally:
+        session.close()
+
+
+@_lane.post("/incidents/{incident_id}/customer-update")
+def raise_customer_update(incident_id: str, principal: auth.Principal = Depends(require_role(*OPERATIONS))) -> dict[str, Any]:
+    """Raise the "service is back" update again (docs/CLOSE_THE_LOOP.md 7.1): allowed when the incident
+    is RESTORED or CLOSED, someone is still untold and no card is pending; 409 with the reason
+    otherwise. The same ladder: it sends now or raises a fresh card. Answers the incident's
+    ``customers`` payload."""
+    from noc_agents.graph.pipeline import drain_once, sync_drain_enabled
+
+    session = get_session()
+    try:
+        inc = _get_owned(session, IncidentRow, incident_id, what="incident")
+        try:
+            notice = loop.raise_customer_update(session, inc, actor=_actor(principal, None))
+        except loop.UpdateConflict as exc:
+            raise HTTPException(409, str(exc)) from None
+        if notice.state == "sent" and sync_drain_enabled():
+            drain_once(session)  # after the commit: transmit (the SMS adapter is a mock)
         return loop.incident_customers(session, inc)
     finally:
         session.close()

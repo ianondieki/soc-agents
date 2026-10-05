@@ -96,7 +96,7 @@ def test_registering_runs_the_pipeline_and_answers_the_contract_shape(client):
     c = body["complaint"]
     assert set(c) == COMPLAINT_KEYS
     assert c["ref"].startswith("CMP-") and c["channel"] == "app" and c["created_at"].endswith("Z")
-    assert c["customer"] == {"name": "Achieng Atieno", "msisdn_masked": "+254 7•• ••• 001", "account_ref": None}
+    assert c["customer"] == {"name": "Achieng Atieno", "msisdn_masked": "+254 7•• •• 2001", "account_ref": None}
     assert (c["category"], c["route"], c["status"]) == ("roaming", "resolver", "answered")
     assert all(set(s) == STEP_KEYS for s in body["steps"]) and all(set(m) == MESSAGE_KEYS for m in body["messages"])
 

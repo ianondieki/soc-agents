@@ -138,7 +138,8 @@ def test_a_confirmed_restore_tells_each_customer_once_with_the_exact_message(ses
     assert notice.state == "sent" and notice.restore_source == source and notice.recipients == 1
     [out] = sms(session)
     assert out.status == outbox.PENDING and out.requires_hitl == 0 and out.incident_id is None
-    assert out.idempotency_key == f"support-restore:{inc.id}:{loop.msisdn_hash(row.msisdn)}"
+    # One key per number per notice ATTEMPT (7.1), the number as a keyed HMAC, never in clear.
+    assert out.idempotency_key == f"support-restore:{notice.id}:{loop.msisdn_hash(row.msisdn)}"
     payload = json.loads(out.payload_json)
     assert payload["body"] == text and payload["complaint_ref"] == row.ref and payload["segments"] == 1
     assert row.msisdn not in out.payload_json and row.msisdn not in out.idempotency_key  # the number never enters the outbox
@@ -253,7 +254,9 @@ def test_the_card_payload_is_the_contracts(session):
     [card] = cards(session)
     payload = card.proposed_payload
     assert set(payload) == {"kind", "incident_number", "place_summary", "recipients", "languages", "text_en", "text_sw",
-                            "segments_en", "segments_sw", "sample", "restore_source"}
+                            "segments_en", "segments_sw", "sample", "restore_source",
+                            "restored_at", "restored_by", "restore_note", "incident_status"}  # 7.2: the evidence
+    assert (payload["restored_at"], payload["incident_status"]) == ("2026-10-05T13:40:00Z", "RESTORED")
     assert payload["kind"] == "restore_notice" and payload["incident_number"] == inc.incident_number
     assert payload["recipients"] == 12 and payload["languages"] == {"en": 8, "sw": 4}
     assert payload["place_summary"] == "Kayole, Umoja, Donholm and 1 more"
@@ -343,7 +346,9 @@ def test_approve_releases_the_held_rows_and_tells(session):
     assert all(len(steps(session, row, "told_restored")) == 1 for row in rows)
 
 
-def test_reject_suppresses_tells_nobody_records_the_reason_and_is_final(session):
+def test_reject_holds_the_update_back_and_the_close_raises_it_again(session):
+    """7.1: reject is "Not now". Nobody is told, the customers stay waiting, the notice is held_back
+    with the reason; a re-restore does not raise it again, the close does (a fresh attempt, fresh keys)."""
     inc, rows, card = _waiting(session)
     assert loop.reject_customer_update(session, card, rejected_by="Duty Manager", reason="Embakasi still flapping",
                                        at=T0 + timedelta(minutes=5)) == 2
@@ -351,16 +356,23 @@ def test_reject_suppresses_tells_nobody_records_the_reason_and_is_final(session)
     assert {r.status for r in sms(session)} == {outbox.SUPPRESSED}
     assert all("Embakasi still flapping" in r.last_error for r in sms(session))
     notice = session.scalar(select(SupportNoticeRow))
-    assert (notice.state, notice.reason, notice.decided_by) == ("rejected", "Embakasi still flapping", "Duty Manager")
+    assert (notice.state, notice.reason, notice.decided_by) == ("held_back", "Embakasi still flapping", "Duty Manager")
     for row in rows:
         session.refresh(row)
-        assert row.told_restored_at is None and row.status == "action_taken"
-        assert json.loads(steps(session, row, "restore_notice_rejected")[0].detail_json)["reason"] == "Embakasi still flapping"
-    # A later restore or the close cannot resend: the suppressed key holds one message per number per incident.
-    assert restore(session, inc) is None
-    inc.status = "CLOSED"
-    assert loop.on_incident_restored(session, inc, trigger="close", settings=settings_at("L2_GUARDED")) is None
-    assert len(sms(session)) == 2 and len(cards(session)) == 1
+        assert row.told_restored_at is None and row.status == "action_taken"  # still waiting to hear
+        assert json.loads(steps(session, row, "restore_notice_held_back")[0].detail_json)["reason"] == "Embakasi still flapping"
+    outage = next(o for o in loop.outages(session, OP) if o["incident_id"] == inc.id)
+    assert outage["waiting"] == 2 and outage["notice"]["state"] == "held_back"
+    assert (outage["notice"]["reason"], outage["notice"]["held_by"]) == ("Embakasi still flapping", "Duty Manager")
+    assert restore(session, inc) is None  # a re-restore leaves a held-back update alone
+    inc.status, inc.closed_at = "CLOSED", T0 + timedelta(hours=1)
+    again = loop.on_incident_restored(session, inc, trigger="close", settings=settings_at("L2_GUARDED"),
+                                      now=T0 + timedelta(hours=1))
+    session.commit()
+    assert again is not None and again.id != notice.id and again.state == "awaiting_approval"
+    assert len(cards(session)) == 2 and len(sms(session)) == 4  # a fresh attempt: fresh keys beside the suppressed ones
+    new_card = next(c for c in cards(session) if c.id == again.card_id)
+    assert loop.approve_customer_update(session, new_card, approved_by="Duty Manager", approved_at=T0 + timedelta(hours=1)) == 2
 
 
 def test_a_broadcast_decision_on_the_same_incident_cannot_sweep_the_customer_rows(session):
@@ -465,7 +477,8 @@ def test_three_distinct_numbers_inside_the_window_open_one_surge_and_one_card(se
     assert (card.incident_id, card.entity_type, card.entity_id, card.operator_id) == (None, "support_surge", s.id, OP)
     payload = card.proposed_payload
     assert set(payload) == {"kind", "place", "region_code", "complaints", "numbers", "first_at", "last_at", "origin",
-                            "parent_incident_number", "excerpts"}
+                            "parent_incident_number", "excerpts", "covering_incident_number",  # 7.2 and MINOR 11
+                            "text_en", "text_sw", "segments_en", "segments_sw", "languages", "recipients", "sample"}
     assert (payload["kind"], payload["place"], payload["complaints"], payload["numbers"]) == ("surge", "Rongai", 4, 3)
     assert payload["first_at"] == "2026-10-05T13:11:00Z" and payload["last_at"] == "2026-10-05T13:40:00Z"
     assert len(payload["excerpts"]) == 4 and set(payload["excerpts"][0]) == {"ref", "text", "at"}
@@ -641,10 +654,12 @@ def test_the_notice_state_on_outages_and_the_incident_panel(session):
     assert set(s) == {"incident_id", "incident_number", "title", "priority", "status", "places", "restored_at",
                       "restore_source", "customers", "told", "waiting", "still_down", "repeat_contacts", "notice",
                       "from_customer_reports"}
-    assert set(s["notice"]) == {"state", "card_id", "recipients", "sent_at"}
+    assert set(s["notice"]) == {"state", "card_id", "recipients", "sent_at", "reason", "held_by", "held_at"}
     panel = loop.incident_customers(session, sent)
-    assert set(panel) == {"customers", "told", "waiting", "still_down", "notice", "complaints"}
-    assert set(panel["complaints"][0]) == {"id", "ref", "msisdn_masked", "status", "told_restored_at", "still_down_at"}
+    assert set(panel) == {"customers", "told", "waiting", "still_down", "notice", "complaints", "follow_up"}
+    assert set(panel["complaints"][0]) == {"id", "ref", "msisdn_masked", "status", "told_restored_at", "still_down_at",
+                                           "closure_reason"}
+    assert panel["complaints"][0]["msisdn_masked"].startswith("+254 7•• •• ") and panel["follow_up"] is None
     assert (panel["customers"], panel["told"], len(panel["complaints"])) == (1, 1, 2)
     assert "+2547" not in json.dumps(panel)  # masked numbers only
     assert loop.outages(session, "airtel") == []

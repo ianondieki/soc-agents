@@ -64,6 +64,33 @@ class SlidingWindowLimiter:
                 self._shrink(now, window_seconds)
             return None
 
+    def peek(self, limits: Sequence[tuple[str, int]], *, window_seconds: float) -> float | None:
+        """Like :meth:`check` but counts nothing: the seconds until the most constrained key admits
+        one more hit, or None. With :meth:`record`, a budget that only some outcomes spend (the
+        Track page's FAILED attempts): look first, decide, then record only the failure."""
+        now = self._clock()
+        with self._lock:
+            waits = []
+            for key, limit in limits:
+                hits = self._hits.get(key)
+                if hits is None:
+                    continue
+                while hits and now - hits[0] >= window_seconds:
+                    hits.popleft()
+                if len(hits) >= limit:
+                    waits.append(max(0.0, window_seconds - (now - hits[0])))
+            return max(waits) if waits else None
+
+    def record(self, keys: Sequence[str], *, window_seconds: float) -> None:
+        """Count one hit against each key, whatever its limit (the outcome has already happened)."""
+        now = self._clock()
+        with self._lock:
+            for key in keys:
+                self._hits.setdefault(key, deque()).append(now)
+                self._hits.move_to_end(key)
+            if len(self._hits) > self._max_keys:
+                self._shrink(now, window_seconds)
+
     def _shrink(self, now: float, window_seconds: float) -> None:
         for key in [k for k, h in self._hits.items() if not h or now - h[-1] >= window_seconds]:
             del self._hits[key]

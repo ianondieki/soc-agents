@@ -412,6 +412,8 @@ ROUTE_MAP: dict[tuple[str, str], str] = {
     (G, "/api/v1/support/surges"): "support.read",
     (P, "/api/v1/support/surges/{surge_id}/retry"): "support.write",
     (G, "/api/v1/support/incidents/{incident_id}/customers"): "support.read",
+    # 7.1: a person raises a held-back update again
+    (P, "/api/v1/support/incidents/{incident_id}/customer-update"): "support.write",
 }
 
 #: Open on purpose, each with its reason. The ops socket is no longer here: since A-14 it is

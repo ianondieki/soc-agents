@@ -127,6 +127,11 @@ customer_updates:
     L2_GUARDED: [P1, P2]
     L3_CONDITIONAL: [P1]
   auto_max_recipients: 20
+  # At most this many close-the-loop SMS to one number in 24 hours. The public form cannot prove
+  # the caller owns the number, so this bounds what one typed number can be sent; before a real
+  # SMS adapter is switched on, numbers from the web form must be verified (OTP). Four, not two: the
+  # loop's own happy path for one customer is restored, still down, confirmed outage, restored again.
+  max_sms_per_number_per_day: 4
 
 # Complaints as an early outage signal: `threshold` distinct numbers naming one place inside
 # `window_minutes`, with no open incident linked, open a "Possible outage" card. Still-down
@@ -138,12 +143,23 @@ surge:
   still_down_threshold: 2
   still_down_window_minutes: 120
 
-# The public Track page: rate limits per client address and per reference, and the
-# still-down window (offered for 72 hours after the restore SMS, at most once a day).
+# The public Track page. Every request counts against its client address; only FAILED attempts
+# (a well-formed reference and number that do not match) count against the reference and the
+# number, so a customer's own look-ups never lock them out. Still down: offered for 72 hours after
+# the restore SMS, at most once a day, and answered by a person within still_down_reply_hours.
 track:
   per_ip_max_requests: 20
-  per_ref_max_requests: 10
+  per_ref_max_failures: 10
   window_seconds: 600
+  per_msisdn_max_failures: 10
+  per_msisdn_window_seconds: 86400
   still_down_within_hours: 72
   still_down_cooldown_hours: 24
+  still_down_reply_hours: 4
   still_down_reason: you told us service is still down, so a person will check it
+
+# Late linking: when a new top-level incident opens through the ingest, unlinked network
+# complaints from the last `late_link_hours` that name a place it covers strongly are linked to
+# it (no SMS; the restore notice reaches them later).
+linking:
+  late_link_hours: 6

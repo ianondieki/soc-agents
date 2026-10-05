@@ -239,7 +239,10 @@ from noc_agents.db.models import Base, HitlTaskRow, IncidentRow, SchemaVersionRo
 #     still_down_at} and support_messages.channel -- plus two indexes on support_complaints.
 #     All additive (ADD COLUMN with no default, CREATE TABLE/INDEX); the columns are why this
 #     bump is not optional (see below).
-SCHEMA_VERSION = 11  # bump per release that adds tables/columns
+# 12 = close the loop, revision 2 (docs/CLOSE_THE_LOOP.md 7 and the security review): nullable
+#     ADD COLUMNs on three v11 tables -- support_complaints.link_strength,
+#     support_notices.restore_note, support_surges.outcome. No new table, no rebuild.
+SCHEMA_VERSION = 12  # bump per release that adds tables/columns
 
 # Why the bump is not optional when a release adds COLUMNS, even though new TABLES seem to
 # appear without one: init_db() calls Base.metadata.create_all() after migrate_additive(),

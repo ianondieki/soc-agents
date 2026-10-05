@@ -34,11 +34,21 @@ failure escalates with ``tool_failed``, because a person has to finish the job.
 
 ``link_incident`` is the desk's tie-in to the live NOC: it reads OPEN incidents for the
 operator only (the WHERE clause, as every operator-owned read in this codebase), top-level
-tickets only (a cascade child is represented by its parent), and scores each against the
-place the customer named -- site name or title (3), county (2), region (1) -- so "no network
-in Nakuru" finds the Nakuru Rift HUB ticket, and "hakuna network Kayole" finds the Embakasi
-HUB ticket through the Nairobi East region Kayole belongs to. Ties go to the incident
-affecting the most users.
+tickets only (a cascade child is represented by its parent), and grades each against the
+place the customer named (:func:`link_strength`, docs/CLOSE_THE_LOOP.md decisions):
+
+* ``site`` -- the place is in the incident's SITE NAME ("no network in Nakuru" -> Nakuru Rift HUB);
+* ``county`` -- the place is the incident's county;
+* ``wide_area`` -- the place is in the incident's region AND the incident is wide: a HUB or CORE
+  site, or one with child sites down ("hakuna network Kayole" -> the Embakasi East Aggregation HUB);
+* ``region`` -- in the region of a single site's outage only. WEAK: the customer may be nowhere
+  near that site, so the complaint is NOT linked (it would be told "service is back" about an
+  outage that was never theirs); the incident is returned as ``nearby_incident`` instead, and the
+  reply says honestly that there is a known outage nearby.
+
+Only the strong three link; the best grade wins, then the incident affecting the most users.
+A title no longer counts as a site match: titles carry the region's label, so "Nairobi East"
+named every ticket in the region.
 """
 
 from __future__ import annotations
@@ -55,7 +65,7 @@ from noc_agents.db.models import IncidentRow
 from noc_agents.db.models_support import SupportComplaintRow, SupportToolCallRow
 from noc_agents.support.accounts import MPESA_CODE_PATTERN, Account
 from noc_agents.support.policy import SupportPolicy
-from noc_agents.support.text import mask_msisdn, normalise
+from noc_agents.support.text import mask_msisdn, mask_msisdn_staff, normalise
 from noc_agents.support.vocab import STATUSES
 
 #: Incident statuses that mean "engineers are no longer working on it".
@@ -185,7 +195,7 @@ def _kes(amount: int) -> str:
 def lookup_account(env: ToolEnv, args: dict[str, Any], approved: bool = False) -> ToolOutcome:
     """Read-only: the customer's plan, balances, transactions, bundles and charges."""
     if env.account is None:
-        return ToolOutcome("ok", {"found": False, "msisdn": mask_msisdn(env.msisdn)}, "always allowed: read-only")
+        return ToolOutcome("ok", {"found": False, "msisdn": mask_msisdn_staff(env.msisdn)}, "always allowed: read-only")
     return ToolOutcome("ok", env.account.summary(), "always allowed: read-only", subject_ref=env.account.account_ref)
 
 
@@ -278,34 +288,62 @@ def recredit_bundle(env: ToolEnv, args: dict[str, Any], approved: bool = False) 
     return ToolOutcome("ok", result, f"first re-credit in {cooldown} days", subject_ref=bundle_id)
 
 
-def _incident_score(incident: IncidentRow, place: str, regions: tuple[str, ...]) -> tuple[int, str]:
-    name_text = normalise(f"{incident.site_name} {incident.title}")
-    if re.search(r"(?<!\w)" + re.escape(place) + r"(?!\w)", name_text):
-        return 3 + (2 if place == normalise(incident.county or "") else 0), "site name"
+#: How a complaint was linked to its incident (``support_complaints.link_strength``). The first three
+#: are what ``link_incident`` may link on its own; ``person`` is a person's link (a staff member, or
+#: the confirmer of a surge); ``region`` is never linked (the module docstring).
+LINK_STRENGTHS: tuple[str, ...] = ("site", "county", "wide_area", "person", "region")
+STRONG_LINKS: frozenset[str] = frozenset({"site", "county", "wide_area"})
+_RANK = {"site": 3, "county": 2, "wide_area": 1, "region": 0}
+WIDE_SITE_TYPES: frozenset[str] = frozenset({"HUB", "CORE"})
+
+
+def link_strength(incident: IncidentRow, place: str, regions: tuple[str, ...]) -> str | None:
+    """How well ``place`` (normalised) points at ``incident``: site, county, wide_area, region or None."""
+    if place and re.search(r"(?<!\w)" + re.escape(place) + r"(?!\w)", normalise(incident.site_name or "")):
+        return "site"
     if place and place == normalise(incident.county or ""):
-        return 2, "county"
+        return "county"
     if incident.region_code in regions:
-        return 1, "region"
-    return 0, ""
+        wide = (incident.site_type or "").upper() in WIDE_SITE_TYPES or (incident.child_sites_down or 0) >= 1
+        return "wide_area" if wide else "region"
+    return None
+
+
+def best_link(session: Session, operator_id: str, place: str, regions: tuple[str, ...]
+              ) -> tuple[str | None, IncidentRow | None]:
+    """The best open, top-level incident for ``place``: ``(strength, incident)``, or ``(None, None)``.
+    The strength may be ``region`` (weak): the caller decides what a weak match may do."""
+    open_incidents = session.scalars(
+        select(IncidentRow).where(
+            IncidentRow.operator_id == operator_id,
+            IncidentRow.status.not_in(CLOSED_INCIDENT_STATUSES),
+            IncidentRow.parent_incident_id.is_(None),
+        )
+    ).all()
+    graded = [(strength, inc) for inc in open_incidents
+              for strength in [link_strength(inc, place, regions)] if strength is not None]
+    if not graded:
+        return None, None
+    return max(graded, key=lambda g: (_RANK[g[0]], g[1].users_affected or 0, g[1].created_at))
 
 
 def link_incident(env: ToolEnv, args: dict[str, Any], approved: bool = False) -> ToolOutcome:
     place = normalise(str(_require(args, "place")))
     regions = tuple(args.get("regions") or ())
-    open_incidents = env.session.scalars(
-        select(IncidentRow).where(
-            IncidentRow.operator_id == env.operator_id,
-            IncidentRow.status.not_in(CLOSED_INCIDENT_STATUSES),
-            IncidentRow.parent_incident_id.is_(None),
-        )
-    ).all()
-    scored = [(score, match, inc) for inc in open_incidents for score, match in [_incident_score(inc, place, regions)] if score > 0]
-    if not scored:
+    strength, inc = best_link(env.session, env.operator_id, place, regions)
+    if inc is None:
         return ToolOutcome(
             "ok", {"found": False, "place": place, "regions": list(regions)},
             "always allowed: no open incident matches the place named", fallback=True,
         )
-    score, match, inc = max(scored, key=lambda s: (s[0], s[2].users_affected or 0, s[2].created_at))
+    if strength not in STRONG_LINKS:
+        nearby = {"incident_id": inc.id, "incident_number": inc.incident_number, "site_name": inc.site_name,
+                  "status": inc.status, "region_code": inc.region_code}
+        return ToolOutcome(
+            "ok", {"found": False, "place": place, "regions": list(regions), "nearby_incident": nearby},
+            f"always allowed: only a single-site outage in the region ({inc.incident_number}), too weak to link",
+            fallback=True,
+        )
     result = {
         "found": True,
         "incident_id": inc.id,
@@ -315,9 +353,10 @@ def link_incident(env: ToolEnv, args: dict[str, Any], approved: bool = False) ->
         "site_name": inc.site_name,
         "region_code": inc.region_code,
         "place": place,
-        "match": match,
+        "match": strength,
+        "link_strength": strength,
     }
-    return ToolOutcome("ok", result, f"always allowed: matched on {match}", subject_ref=inc.id)
+    return ToolOutcome("ok", result, f"always allowed: matched on {strength.replace('_', ' ')}", subject_ref=inc.id)
 
 
 def update_ticket(env: ToolEnv, args: dict[str, Any], approved: bool = False) -> ToolOutcome:

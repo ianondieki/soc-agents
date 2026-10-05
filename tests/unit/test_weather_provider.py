@@ -567,8 +567,11 @@ def test_external_signals_table_shape_and_schema_version(tmp_db):
     # tables (support_complaints.{place, closure_reason, told_restored_at, told_incident_id,
     # still_down_at}, support_messages.channel), plus two indexes; all additive, reviewed against
     # NEW_TABLES and the v10 -> v11 path in test_migrate.py, literal moved.
+    # It fired again on 11 -> 12: close the loop, revision 2 -- three nullable ADD COLUMNs on v11
+    # tables (support_complaints.link_strength, support_notices.restore_note, support_surges.outcome),
+    # reviewed against the v11 -> v12 path in test_migrate.py, literal moved.
     # Keep the canary; move it deliberately, with the reason recorded, every time.
-    assert session.execute(text("SELECT MAX(version) FROM schema_version")).scalar() == SCHEMA_VERSION == 11
+    assert session.execute(text("SELECT MAX(version) FROM schema_version")).scalar() == SCHEMA_VERSION == 12
 
     now = datetime(2026, 9, 17, 11, 0)
     common = dict(operator_id=OPERATOR, source=OPEN_METEO, source_url="mock://", region_code="NBI_W", fetched_at=now, valid_until=now, payload_json="{}", external_id="NBI_W:2026-09-17T11:00Z")

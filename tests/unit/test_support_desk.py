@@ -66,7 +66,7 @@ def test_an_action_case_runs_the_tool_notes_the_ticket_and_says_what_was_done(se
     assert [(t["tool"], t["status"]) for t in detail["tool_calls"]] == [
         ("lookup_account", "ok"), ("reverse_mpesa", "ok"), ("update_ticket", "ok")]
     assert c["reply"].startswith("Hi Wanjiku,") and "SJK4H7QW2L" in c["reply"] and "KES 1,500" in c["reply"]
-    assert c["customer"] == {"name": "Wanjiku Kamau", "msisdn_masked": "+254 7•• ••• 412", "account_ref": "ACC-100412"}
+    assert c["customer"] == {"name": "Wanjiku Kamau", "msisdn_masked": "+254 7•• •• 0412", "account_ref": "ACC-100412"}
 
 
 def test_a_storm_outage_links_the_live_noc_incident_and_names_the_ticket(session):

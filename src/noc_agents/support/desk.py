@@ -83,7 +83,7 @@ from noc_agents.support.context import SupportContext, default_context
 from noc_agents.support.escalation import Escalation, EscalationFacts, customer_facing, holding_reply, matching
 from noc_agents.support.resolver import ResolverResult, resolve, without_greeting
 from noc_agents.support.triage import Issue
-from noc_agents.support.text import InvalidMsisdn, body_hash, clean, mask_msisdn, normalise_msisdn
+from noc_agents.support.text import InvalidMsisdn, body_hash, clean, mask_msisdn, mask_msisdn_staff, normalise_msisdn
 from noc_agents.support.tools import ToolEnv, ToolOutcome, run_tool
 from noc_agents.support.triage import TriageResult, triage
 from noc_agents.support.vocab import CHANNELS, HUMAN_QUEUE, OUTCOME_FOR_STATUS
@@ -297,6 +297,10 @@ class _Case:
     reply: str | None = None
     citations: list[dict[str, Any]] = field(default_factory=list)
     linked_incident_id: str | None = None
+    #: How the link was made (``tools.LINK_STRENGTHS``); only a strong grade links on its own.
+    link_strength: str | None = None
+    #: A single-site outage in the customer's region that was too weak to link (``tools.link_incident``).
+    nearby_incident: dict[str, Any] | None = None
     escalation: Escalation | None = None
     #: Grounded answers to the complaint's secondary issues, appended to the reply (multi-issue).
     secondary: list[tuple[Issue, ResolverResult]] = field(default_factory=list)
@@ -308,7 +312,7 @@ def _run_action(session: Session, ctx: SupportContext, case: _Case, operator_id:
     env = ToolEnv(session, operator_id, case.msisdn, case.account, ctx.policy, now)
     if tool in actions.NEEDS_ACCOUNT:
         outcome, ms = _timed_tool("lookup_account", env, {})
-        trace.call("lookup_account", {"msisdn": case.masked}, outcome, ms=ms)
+        trace.call("lookup_account", {"msisdn": mask_msisdn_staff(case.msisdn)}, outcome, ms=ms)
     t = perf_counter()
     planned = actions.plan_call(case.triaged, case.text, case.account)
     if planned is None:
@@ -428,6 +432,7 @@ def _complete_action(session: Session, ctx: SupportContext, case: _Case, operato
     result = attempt.outcome.result or {}
     if tool == "link_incident":
         case.linked_incident_id = result.get("incident_id")
+        case.link_strength = result.get("link_strength")
     case.route, case.status = "action", "action_taken"
     case.reply = actions.success_reply(tool, result, text=case.text, name=case.greet, ref=case.ref,
                                        msisdn_masked=case.masked)
@@ -435,6 +440,16 @@ def _complete_action(session: Session, ctx: SupportContext, case: _Case, operato
     note = {"status": "action_taken", "note": actions.ticket_note(tool, result)}
     outcome, ms = _timed_tool("update_ticket", env, note)
     case.trace.call("update_ticket", note, outcome, ms=ms)
+
+
+def _say_nearby(case: _Case) -> None:
+    """A single-site outage in the customer's region that was too weak to link: say so, honestly,
+    without promising it is theirs (docs/CLOSE_THE_LOOP.md, link strength)."""
+    nearby = case.nearby_incident
+    if not nearby or not case.reply:
+        return
+    case.reply = (f"{case.reply} There is a known outage nearby (ticket {nearby['incident_number']}); your report is "
+                  "with our network team, and if it turns out to be the same outage we will link your complaint to it.")
 
 
 def _answer(case: _Case, resolution: ResolverResult) -> None:
@@ -479,9 +494,10 @@ def process_complaint(
     masked = mask_msisdn(e164)
     t = perf_counter()
     triaged = triage(text, gazetteer=ctx.gazetteer, policy=ctx.policy, port=port)
+    staff_masked = mask_msisdn_staff(e164)  # the trace is staff's: four digits (docs/CLOSE_THE_LOOP.md 7.2)
     trace.step("intake", "received",
-               f"Received a {channel.replace('_', ' ')} complaint from {masked} ({triaged.language}).",
-               {"channel": channel, "msisdn_masked": masked, "language": triaged.language, "chars": len(text),
+               f"Received a {channel.replace('_', ' ')} complaint from {staff_masked} ({triaged.language}).",
+               {"channel": channel, "msisdn_masked": staff_masked, "language": triaged.language, "chars": len(text),
                 "account_found": account is not None, "tier": account.tier if account else None,
                 # What the caller TYPED; the stored account_ref is the verified one (None if unknown).
                 "account_ref_claimed": clean(account_ref) or None},
@@ -510,6 +526,7 @@ def process_complaint(
     falls_back = triaged.route == "action" and not unverified and (attempt is None or attempt.outcome.fallback)
     if falls_back and attempt is not None:  # e.g. no open incident for the place: it was looked for
         trace.call(attempt.planned.tool, attempt.planned.args, attempt.outcome, ms=attempt.ms)
+        case.nearby_incident = (attempt.outcome.result or {}).get("nearby_incident")
     if falls_back and triaged.issues and triaged.primary != 0:
         _lead_with_first_issue(case)
     resolution = _run_resolver(ctx, case) if triaged.route == "resolver" or falls_back else None
@@ -546,6 +563,7 @@ def process_complaint(
     elif resolution is not None:
         _answer(case, resolution)
         _append_secondary(case)
+        _say_nearby(case)
     else:  # unreachable: a human-routed case matches a risk rule, an unverified one needs_verification
         raise RuntimeError("the desk reached no decision")
 
@@ -576,6 +594,7 @@ def _persist(session: Session, case: _Case, *, operator_id: str, channel: str, n
         # The first place the customer named (the one link_incident looked for): what the restore
         # SMS names and what a surge counts (docs/CLOSE_THE_LOOP.md).
         place=triaged.places[0].name if triaged.places else None,
+        link_strength=case.link_strength if case.linked_incident_id else None,
     )
     if case.escalation is not None:
         row.escalation_reason_code = case.escalation.reason_code

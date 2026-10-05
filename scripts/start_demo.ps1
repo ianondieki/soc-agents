@@ -9,4 +9,4 @@ Write-Host "Or open built UI at http://127.0.0.1:8000 after npm run build" -Fore
 Write-Host ""
 Write-Host "On Mission Control click: Launch heavy-rain MW storm (LIVE)" -ForegroundColor Green
 
-python -m uvicorn noc_agents.main:app --app-dir src --host 127.0.0.1 --port 8000 --reload
+python -m uvicorn noc_agents.main:app --app-dir src --host 127.0.0.1 --port 8000 --reload --no-proxy-headers

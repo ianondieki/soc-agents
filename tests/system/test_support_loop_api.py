@@ -16,6 +16,7 @@ import itertools
 import json
 import re
 import threading
+from datetime import timedelta
 
 import pytest
 from fastapi.testclient import TestClient
@@ -122,8 +123,11 @@ def read(fn):
 
 
 def restore_rows(incident_id: str) -> list[tuple[str, str, int, str | None]]:
+    """The restore SMS rows for an incident (keys carry the notice attempt, the payload the incident)."""
     return read(lambda s: [(r.idempotency_key, r.status, r.requires_hitl, r.approved_by) for r in s.scalars(
-        select(OutboxRow).where(OutboxRow.idempotency_key.like(f"support-restore:{incident_id}:%")))])
+        select(OutboxRow).where(OutboxRow.idempotency_key.like("support-restore:%"),
+                                OutboxRow.payload_json.like(f'%"incident_id": "{incident_id}"%'))
+        .order_by(OutboxRow.created_at))])
 
 
 def complaint_row(complaint_id: str) -> SupportComplaintRow:
@@ -202,20 +206,25 @@ def test_restoring_a_p2_raises_the_card_and_approving_it_tells(client):
     assert (panel["told"], panel["waiting"], panel["notice"]["state"]) == (2, 0, "sent")
 
 
-def test_rejecting_the_card_suppresses_tells_nobody_and_the_close_cannot_resend(client):
+def test_rejecting_the_card_holds_the_update_back_and_the_close_raises_it_again(client):
+    """7.1: reject = "Not now". The customer stays waiting; the close raises the update again."""
     inc = incident(client, "lamu", region="CST", users=150000)
     c = outage_complaint(client, "lamu", inc)
     restore(client, inc)
     [card] = cards(client, "APPROVE_CUSTOMER_UPDATE", inc["id"])
-    r = client.post(f"/api/v1/hitl/{card['id']}/reject", json={"resolved_by": "Duty Manager", "reason": "site flapping"})
+    r = client.post(f"/api/v1/hitl/{card['id']}/reject", json={"resolved_by": "Duty Manager", "reason": "not restored yet"})
     assert r.status_code == 200, r.text
     assert [status for _k, status, _h, _a in restore_rows(inc["id"])] == [outbox.SUPPRESSED]
     assert complaint_row(c["id"]).told_restored_at is None
-    close(client, inc)
-    assert [status for _k, status, _h, _a in restore_rows(inc["id"])] == [outbox.SUPPRESSED]
-    assert cards(client, "APPROVE_CUSTOMER_UPDATE", inc["id"]) == []
     row = next(o for o in client.get(f"{BASE}/outages").json() if o["incident_id"] == inc["id"])
-    assert row["notice"]["state"] == "rejected" and row["told"] == 0 and row["waiting"] == 1
+    assert row["notice"]["state"] == "held_back" and row["notice"]["reason"] == "not restored yet"
+    assert row["notice"]["held_by"] == "Duty Manager" and row["notice"]["held_at"] and row["waiting"] == 1
+    close(client, inc)  # held back at restore, so the close raises it again: a fresh card, fresh keys
+    assert [status for _k, status, _h, _a in restore_rows(inc["id"])] == [outbox.SUPPRESSED, outbox.HELD]
+    [again] = cards(client, "APPROVE_CUSTOMER_UPDATE", inc["id"])
+    assert again["id"] != card["id"] and again["proposed_payload"]["incident_status"] == "CLOSED"
+    assert client.post(f"/api/v1/hitl/{again['id']}/approve", json={"resolved_by": "Duty Manager"}).status_code == 200
+    assert complaint_row(c["id"]).told_incident_id == inc["id"]
 
 
 def test_a_mark_restored_note_tells_and_a_note_that_merely_says_restored_does_not(client):
@@ -336,7 +345,9 @@ def test_two_simultaneous_approvals_of_one_customer_update_send_once(client, mon
         t.join(JOIN_TIMEOUT_S)
     assert not any(t.is_alive() for t in threads), "deadlock"
     assert sorted(codes) == [200, 409], codes
-    mine = [key for key in sent if key.startswith(f"support-restore:{inc['id']}:")]
+    notices = read(lambda s: [n.id for n in s.scalars(select(SupportNoticeRow).where(
+        SupportNoticeRow.incident_id == inc["id"]))])
+    mine = [key for key in sent if key.startswith("support-restore:") and key.split(":")[1] in notices]
     assert len(mine) == 3 and len(set(mine)) == 3, mine  # each number transmitted exactly once
     for c in complaints:
         told = read(lambda s: s.scalars(select(SupportStepRow).where(
@@ -406,7 +417,9 @@ def test_track_shows_customer_words_only(client):
                    "policy", "auto limit", "Agent Wekesa", "CHG-789", "+254"):
         assert secret not in dumped, secret
     assert page["stage"] == "fixed" and {m["from"] for m in page["messages"]} == {"you", "us"}
-    assert page["messages"][-1]["body"] == reply and set(page["messages"][0]) == {"at", "from", "body"}
+    # A staff reply is never shown verbatim on Track (the echo-only rule): a fixed sentence instead.
+    assert page["messages"][-1]["body"] == loop.STAFF_REPLY_ON_TRACK and reply not in dumped
+    assert set(page["messages"][0]) == {"at", "from", "body"}
 
 
 def test_track_follows_the_complaint_from_outage_to_restored_to_still_down(client):
@@ -420,21 +433,26 @@ def test_track_follows_the_complaint_from_outage_to_restored_to_still_down(clien
     refused = track(client, c["ref"], mine, "/track/still-down")
     assert refused.status_code == 409  # not told yet: the outage is known and the SMS will come
     assert refused.json()["detail"] == (f"We already know about the outage (ticket {inc['incident_number']}); "
-                                        "we will tell you by SMS when service is back.")
+                                        "we will tell you when service is back.")
     restore(client, inc)
     page = track(client, c["ref"], mine).json()
     assert page["stage"] == "restored" and page["headline"] == "Service is back in Nyeri"
     assert page["outage"]["state"] == "restored" and page["outage"]["restored_at"] and page["can_report_still_down"]
     texts = [t["text"] for t in page["timeline"]]
     assert texts[0] == "We received your complaint." and "Service was restored." in texts
-    assert texts[-1] == "We told you by SMS that service is back, and closed your complaint."
+    assert texts[-1] == "We told you service is back and closed your complaint."  # 7.3: customer words
+    assert texts[1] == "We read your complaint and passed it to the network team."
     assert [t["at"] for t in page["timeline"]] == sorted(t["at"] for t in page["timeline"])
     hub._history.clear()
     down = track(client, c["ref"], mine, "/track/still-down", note="Bado hakuna kitu huku")
     assert down.status_code == 200, down.text
     page = down.json()
     assert page["stage"] == "with_a_person" and page["can_report_still_down"] is False
-    assert "you told us service is still down, so a person will check it" in page["detail"]
+    # 7.3: the still-down wording, and a reply due within still_down_reply_hours (4), not the 24-hour default.
+    assert page["detail"].startswith("You told us service is still down. A member of our team will check and reply by ")
+    from datetime import datetime as _dt
+    due = _dt.fromisoformat(page["reply_due_at"].rstrip("Z"))
+    assert timedelta(hours=3, minutes=59) <= due - _dt.utcnow() <= timedelta(hours=4, minutes=1)
     assert any(m == {"at": m["at"], "from": "you", "body": "Bado hakuna kitu huku"} for m in page["messages"])
     [event] = events("support.still_down")
     assert event["payload"] == {"ref": c["ref"], "incident_number": inc["incident_number"], "place": "Nyeri"}
@@ -616,7 +634,8 @@ def test_the_read_routes_answer_the_contracts_shapes(client):
     surges = client.get(f"{BASE}/surges").json()
     assert surges and set(surges[0]) == {"id", "place", "region_code", "status", "origin", "complaints", "numbers",
                                          "first_at", "last_at", "card_id", "incident_id", "incident_number", "error",
-                                         "decided_by", "decided_at", "reason", "complaint_refs"}
+                                         "decided_by", "decided_at", "reason", "complaint_refs",
+                                         "parent_incident_number", "outcome"}
     outages = client.get(f"{BASE}/outages").json()
     assert outages and all("+2547" not in json.dumps(o) for o in outages)
     assert client.get(f"{BASE}/incidents/does-not-exist/customers").status_code == 404

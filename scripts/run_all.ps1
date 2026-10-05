@@ -67,4 +67,7 @@ Write-Host "Press 'Launch heavy-rain storm (live)' on Mission control to start t
 Write-Host "Managers: open http://127.0.0.1:$Port/showcase  -  Presenters: press 'Guided demo' in the top bar." -ForegroundColor Yellow
 Write-Host ""
 
-& $Python -m uvicorn noc_agents.main:app --app-dir src --host 127.0.0.1 --port $Port
+# --no-proxy-headers: X-Forwarded-For is never trusted here (the support desk rate-limits by client
+# address; a forged header must not buy a fresh allowance). Behind a real reverse proxy, set
+# SUPPORT_TRUSTED_PROXIES to its address instead (docs/CLOSE_THE_LOOP.md decisions).
+& $Python -m uvicorn noc_agents.main:app --app-dir src --host 127.0.0.1 --port $Port --no-proxy-headers

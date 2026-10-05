@@ -101,6 +101,11 @@ class SupportComplaintRow(Base):
     told_incident_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     #: The latest "still down" report from the Track page (each report is also a step).
     still_down_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # --- schema_version 12: link strength (docs/CLOSE_THE_LOOP.md) --------------------------------
+    #: How ``linked_incident_id`` was set: ``site`` | ``county`` | ``wide_area`` (the desk's own strong
+    #: links), ``person`` (a staff member or a surge's confirmer). NULL when not linked, and on rows
+    #: linked before v12. A weak region-only match is never linked, so never recorded here.
+    link_strength: Mapped[str | None] = mapped_column(String(16), nullable=True)
 
 
 class SupportStepRow(Base):
@@ -189,13 +194,16 @@ class SupportNoticeRow(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     operator_id: Mapped[str] = mapped_column(String(32))
     incident_id: Mapped[str] = mapped_column(String(36))
-    state: Mapped[str] = mapped_column(String(24))  # sent | awaiting_approval | rejected
+    state: Mapped[str] = mapped_column(String(24))  # sent | awaiting_approval | held_back
     card_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     recipients: Mapped[int] = mapped_column(Integer, default=0)
     languages_json: Mapped[str] = mapped_column(Text, default="{}")
     text_en: Mapped[str | None] = mapped_column(Text, nullable=True)
     text_sw: Mapped[str | None] = mapped_column(Text, nullable=True)
     restore_source: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    #: schema_version 12: the note the restorer wrote (or the close's summary), shown on the card as
+    #: the evidence that service is back (docs/CLOSE_THE_LOOP.md 7.2).
+    restore_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     sent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     decided_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
@@ -223,7 +231,9 @@ class SupportSurgeRow(Base):
     operator_id: Mapped[str] = mapped_column(String(32))
     place: Mapped[str] = mapped_column(String(64))  # normalised, as the gazetteer names it
     region_code: Mapped[str | None] = mapped_column(String(16), nullable=True)
-    status: Mapped[str] = mapped_column(String(16), default="open")  # open | confirmed | dismissed
+    #: open | ingesting (a confirm holds it) | confirmed | dismissed | stale (its card was decided
+    #: without the decision reaching the surge, e.g. while the desk was off)
+    status: Mapped[str] = mapped_column(String(16), default="open")
     origin: Mapped[str] = mapped_column(String(16), default="complaints")  # complaints | still_down
     parent_incident_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     open_place: Mapped[str | None] = mapped_column(String(64), nullable=True)
@@ -239,6 +249,9 @@ class SupportSurgeRow(Base):
     decided_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
     decided_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: schema_version 12: what the confirm did -- ``ticket_opened`` (a synthetic alarm through the
+    #: ingest) or ``linked_existing`` (a real open incident already covered the place).
+    outcome: Mapped[str | None] = mapped_column(String(16), nullable=True)
 
 
 class SupportSurgeMemberRow(Base):

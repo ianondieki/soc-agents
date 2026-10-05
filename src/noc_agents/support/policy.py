@@ -72,6 +72,10 @@ class CustomerUpdates(_Strict):
         "L1_COPILOT": PRIORITIES, "L2_GUARDED": ("P1", "P2"), "L3_CONDITIONAL": ("P1",)})
     #: Any batch with more numbers than this waits, whatever the priority.
     auto_max_recipients: int = Field(20, ge=0)
+    #: At most this many close-the-loop SMS (restore and confirmed-outage) to one number in any 24
+    #: hours; one over it is not sent and the customer stays waiting. A bound on the one accepted
+    #: risk: the public form cannot prove the caller owns the number they typed.
+    max_sms_per_number_per_day: int = Field(4, ge=1)
 
     def waits(self, autonomy: str, priority: str | None, recipients: int) -> bool:
         """True when a person must approve the notice before it is sent."""
@@ -92,17 +96,30 @@ class SurgeRule(_Strict):
 
 
 class TrackRule(_Strict):
-    """The public Track page (section 2)."""
+    """The public Track page (section 2). Every request counts against its client address; only
+    FAILED well-formed attempts (a reference and a number that do not match) count against the
+    reference and against the number, so a customer's own look-ups never lock them out."""
 
     per_ip_max_requests: int = Field(20, ge=1)
-    per_ref_max_requests: int = Field(10, ge=1)
-    window_seconds: int = Field(600, ge=1)
+    per_ref_max_failures: int = Field(10, ge=1)
+    window_seconds: int = Field(600, ge=1)  # the address and reference windows
+    per_msisdn_max_failures: int = Field(10, ge=1)
+    per_msisdn_window_seconds: int = Field(86400, ge=1)
     #: "Still down" is offered for this long after the restore SMS ...
     still_down_within_hours: int = Field(72, ge=1)
     #: ... and at most once in this many hours.
     still_down_cooldown_hours: int = Field(24, ge=1)
+    #: A still-down report is answered by a person within this many hours (7.3).
+    still_down_reply_hours: int = Field(4, ge=1)
     #: The customer-facing reason for ``still_down_after_restore``.
     still_down_reason: str = "you told us service is still down, so a person will check it"
+
+
+class LinkingRule(_Strict):
+    """Late linking (7.3): when a new top-level incident opens, recent unlinked network complaints
+    naming a place it covers (strongly) are linked to it."""
+
+    late_link_hours: int = Field(6, ge=1)
 
 
 class SupportPolicy(_Strict):
@@ -129,6 +146,7 @@ class SupportPolicy(_Strict):
     customer_updates: CustomerUpdates = CustomerUpdates()
     surge: SurgeRule = SurgeRule()
     track: TrackRule = TrackRule()
+    linking: LinkingRule = LinkingRule()
 
     @model_validator(mode="after")
     def _complete(self) -> "SupportPolicy":

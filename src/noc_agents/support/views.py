@@ -47,6 +47,7 @@ from noc_agents.db.models_support import (
 from noc_agents.services.clock import iso_z
 from noc_agents.support.escalation import ACCOUNT_REASONS, ACCOUNT_REVIEW_CODE
 from noc_agents.support.policy import SupportPolicy, load_policy
+from noc_agents.support.text import mask_msisdn_staff
 from noc_agents.support.vocab import CATEGORIES
 
 DEFAULT_LIST_LIMIT = 50
@@ -106,7 +107,8 @@ def complaint_out(session: Session, row: SupportComplaintRow, *, public: bool = 
         "customer": {
             # Staff: the verified holder first; the public: only what the caller typed.
             "name": row.customer_name if public else (row.account_holder or row.customer_name),
-            "msisdn_masked": row.msisdn_masked,
+            # Staff see four digits (docs/CLOSE_THE_LOOP.md 7.2), the public the masked form they typed.
+            "msisdn_masked": row.msisdn_masked if public else mask_msisdn_staff(row.msisdn),
             "account_ref": None if public else row.account_ref,
         },
         "language": row.language,

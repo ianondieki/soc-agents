@@ -58,7 +58,7 @@ def test_lookup_account_reads_the_fixture_and_never_fails(session):
     assert found.status == "ok" and found.result["account_ref"] == "ACC-100412"
     assert found.result["recent_transactions"][0]["code"] == "SJK4H7QW2L"
     missing = run_tool("lookup_account", _env(session, "0711999999"), {})
-    assert missing.status == "ok" and missing.result == {"found": False, "msisdn": "+254 7•• ••• 999"}
+    assert missing.status == "ok" and missing.result == {"found": False, "msisdn": "+254 7•• •• 9999"}  # staff mask (CLOSE_THE_LOOP 7.2)
 
 
 # --------------------------------------------------------------------------- issue_refund
@@ -189,12 +189,13 @@ def test_a_bundle_that_ran_its_course_is_not_eligible_and_the_resolver_may_expla
 def test_link_incident_finds_the_storm_hub_by_site_name(session):
     out = run_tool("link_incident", _env(session, "0700001023", account=False), {"place": "Nakuru", "regions": ["RFT"]})
     assert out.status == "ok" and out.result["found"] and out.result["site_name"] == "Nakuru Rift HUB"
-    assert out.result["match"] == "site name" and out.subject_ref == out.result["incident_id"]
+    assert out.result["match"] == out.result["link_strength"] == "site" and out.subject_ref == out.result["incident_id"]
 
 
 def test_link_incident_falls_back_to_the_region_and_prefers_the_biggest_outage(session):
     out = run_tool("link_incident", _env(session, "0700001023"), {"place": "kayole", "regions": ["NBI_E"]})
-    assert out.result["site_name"] == "Embakasi East Aggregation HUB" and out.result["match"] == "region"
+    # A region match to a HUB is a WIDE-AREA link: strong enough to link (docs/CLOSE_THE_LOOP.md decisions).
+    assert out.result["site_name"] == "Embakasi East Aggregation HUB" and out.result["link_strength"] == "wide_area"
 
 
 def test_link_incident_ignores_closed_incidents_children_and_other_operators(session):

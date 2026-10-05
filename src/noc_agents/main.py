@@ -170,6 +170,9 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     which of several processes actually runs jobs; shutdown stops the task and releases it.
     """
     scheduler: Scheduler | None = None
+    if support_desk_enabled():
+        for warning in support_loop.startup_warnings():  # docs/CLOSE_THE_LOOP.md decisions
+            log.warning("support desk: %s", warning)
     if scheduler_enabled():
         scheduler = Scheduler()
         scheduler.start()
@@ -321,6 +324,22 @@ def rain_storm_events() -> dict[str, Any]:
     return {"scenario": "rain_storm_mw", "events": scenario_payload()}
 
 
+def _support_late_link(session, inc: IncidentRow, *, before: datetime) -> None:
+    """Late linking (docs/CLOSE_THE_LOOP.md 7.3): when THIS ingest opened a new top-level incident,
+    recent unlinked network complaints it covers strongly are linked to it, so the promise "if we
+    find an outage in your area, we will link your complaint to it" is kept. Hooked here, on the
+    ingest routes and the demo storm, not inside the pipeline. A merged duplicate or a cascade child
+    is not new; a support failure is logged and never fails the ingest, which has already committed.
+    """
+    if not support_desk_enabled() or inc.parent_incident_id or inc.created_at is None or inc.created_at < before:
+        return
+    try:
+        support_loop.late_link(session, inc)
+    except Exception:  # noqa: BLE001 -- the incident is committed; the link can wait for the next one
+        session.rollback()
+        log.exception("support: late linking to %s failed", inc.incident_number)
+
+
 @app.post("/api/v1/demo/rain-storm", dependencies=[Depends(require_role(*INGEST))])
 def run_rain_storm(stagger_ms: int = 0) -> dict[str, Any]:
     """Inject heavy-rain MW cascade. stagger_ms>0 spaces events so UI feels live.
@@ -342,7 +361,9 @@ def run_rain_storm(stagger_ms: int = 0) -> dict[str, Any]:
         for i, event in enumerate(RAIN_STORM_EVENTS):
             if stagger_ms > 0 and i > 0:
                 time.sleep(min(stagger_ms, 5000) / 1000.0)
+            before = utcnow()
             inc = process_event(session, s, event)
+            _support_late_link(session, inc, before=before)
             created.append(
                 {
                     "incident_number": inc.incident_number,
@@ -396,7 +417,9 @@ def ingest_event(body: EventIngest) -> dict:
         # reload settings in case env changed in tests
         clear_settings_cache()
         s = get_settings()
+        before = utcnow()
         inc = process_event(session, s, body)
+        _support_late_link(session, inc, before=before)
         return {"incident": incident_out(inc).model_dump()}
     finally:
         session.close()
@@ -412,7 +435,9 @@ def ingest_batch(events: list[EventIngest]) -> dict:
         s = get_settings()
         outs = []
         for e in events:
+            before = utcnow()
             inc = process_event(session, s, e)
+            _support_late_link(session, inc, before=before)
             outs.append(incident_out(inc).model_dump())
         return {"incidents": outs}
     finally:
@@ -492,7 +517,7 @@ def get_incident(
         session.close()
 
 
-def _support_followup(session, inc: IncidentRow, *, trigger: str, actor: str | None) -> None:
+def _support_followup(session, inc: IncidentRow, *, trigger: str, actor: str | None, note: str | None = None) -> None:
     """Close the loop (docs/CLOSE_THE_LOOP.md section 1): tell the customers who complained about
     ``inc`` that service is back, or raise the card that will -- inside THIS route's transaction,
     after the lifecycle call and before its commit, in a SAVEPOINT of its own.
@@ -512,7 +537,7 @@ def _support_followup(session, inc: IncidentRow, *, trigger: str, actor: str | N
     saved = list(session.info.get(EVENTS_KEY, ()))
     try:
         with session.begin_nested():
-            notice = support_loop.on_incident_restored(session, inc, trigger=trigger, actor=actor)
+            notice = support_loop.on_incident_restored(session, inc, trigger=trigger, actor=actor, note=note)
     except Exception:  # noqa: BLE001 -- the NOC action stands whatever the follow-up does
         log.exception("support follow-up for %s (%s) failed; the %s stands", inc.incident_number, trigger, trigger)
         session.info[EVENTS_KEY] = saved
@@ -589,7 +614,7 @@ def add_note(
         # text merely says "restored" (VENDOR_NOTE_INFERRED) is a guess and tells nobody.
         confirmed = (row.status, row.restored_source) == ("RESTORED", RESTORE_SOURCE_MARK)
         if confirmed and before != (row.status, row.restored_source):
-            _support_followup(session, row, trigger="restore", actor=author)
+            _support_followup(session, row, trigger="restore", actor=author, note=body.body)
         session.commit()
         hub.publish_sync(
             RealtimeEvent(
@@ -625,7 +650,8 @@ def close_inc(
             resolution_code=body.resolution_code,
             resolution_summary=body.resolution_summary,
         )
-        _support_followup(session, row, trigger="close", actor=actor)  # tells whoever no notice reached
+        # Tells whoever no notice reached, and raises a held-back update again (docs/CLOSE_THE_LOOP.md 7.1).
+        _support_followup(session, row, trigger="close", actor=actor, note=body.resolution_summary or None)
         session.commit()
         return {"ok": True, "incident": incident_out(row).model_dump()}
     finally:
@@ -683,7 +709,7 @@ def restore_inc(
             note=note,
             restored_at=at,
         )
-        _support_followup(session, row, trigger="restore", actor=principal.display_name)
+        _support_followup(session, row, trigger="restore", actor=principal.display_name, note=note)
         session.commit()
         hub.publish_sync(
             RealtimeEvent(

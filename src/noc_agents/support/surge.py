@@ -3,25 +3,27 @@
 A burst of network complaints about one town with no alarm behind them told the NOC nothing.
 :func:`observe` runs after each complaint the API or the demo seeder processes (never inside the
 eval runner, whose complaints live in a throwaway database): it looks at network complaints that
-named a place the gazetteer knows and did NOT link to an open incident, and when at least
-``surge.threshold`` distinct numbers (default 3) name the same place inside ``surge.window_minutes``
-(default 30) it opens a surge and one ``CONFIRM_POSSIBLE_OUTAGE`` card for the NOC. Later complaints
-about that place join the open surge and refresh the card. A still-down report after a restore
-(:func:`observe_still_down`, called by :func:`loop.report_still_down`) counts too, with
-``origin="still_down"``; ``surge.still_down_threshold`` distinct numbers (default 2) of those raise
-the card on their own.
+named a place the gazetteer knows and did NOT link to an open incident (a weak region-only match
+does not link, so those count too), and when at least ``surge.threshold`` distinct numbers
+(default 3) name the same place inside ``surge.window_minutes`` (default 30) it opens a surge and one
+``CONFIRM_POSSIBLE_OUTAGE`` card for the NOC. Later complaints about that place join the open surge
+and refresh the card. A still-down report (:func:`observe_still_down`, called by
+:func:`loop.report_still_down`) counts too, with ``origin="still_down"``; ``surge.still_down_threshold``
+distinct numbers (default 2) of those raise the card on their own.
 
 Approve ("Open a ticket and tell them"): :func:`mark_confirmed` runs inside the HITL route's
-transaction, and AFTER that commit :func:`confirm_surge` runs one synthetic alarm through the normal
-ingest (``graph.pipeline.process_event`` -- imported from the pipeline, not from ``main``, so there
-is no import cycle), links every complaint in the surge to the new ticket and tells each number once,
-approved by the person who confirmed. If the ingest fails the surge stays ``confirmed`` with
-``error`` set and keeps collecting complaints, and ``POST /surges/{id}/retry`` runs it again
-(reusing a ticket an earlier attempt already opened). Reject ("Dismiss"): :func:`dismiss`.
+transaction, and AFTER that commit :func:`confirm_surge` claims the surge (``ingesting``, a
+compare-and-set), then either links the complaints to a real open incident that now covers the
+place strongly (``outcome="linked_existing"``) or runs one synthetic alarm through the normal ingest
+(``graph.pipeline.process_event``, imported from the pipeline, not ``main``) and links them to the
+new TOP-LEVEL ticket (``outcome="ticket_opened"``), telling each number once, approved by the person
+who confirmed. If the ingest fails the surge goes back to ``confirmed`` with ``error`` set and keeps
+collecting complaints; ``POST /surges/{id}/retry`` runs it again. Reject ("Dismiss"): :func:`dismiss`.
 
-**Counted once.** A complaint is a member of at most one surge (a still-down report is counted by
-its time, so a report a day later can count again); complaints a dismissed surge already held do not
-count towards the next one, so dismissing does not simply re-open the card on the next complaint.
+**Counted once.** A complaint is counted by at most one live or settled surge (a still-down report
+is counted by its time, so a report a day later can count again); complaints a dismissed surge held
+do not count towards the next one. A surge whose card was decided without the decision reaching it
+(the desk was off) is ``stale``: it lets go of the place, and its complaints count again.
 """
 
 from __future__ import annotations
@@ -32,7 +34,7 @@ from datetime import datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -51,19 +53,24 @@ from noc_agents.orchestrator import outbox
 from noc_agents.realtime.commit_hook import buffer_event
 from noc_agents.realtime.hub import RealtimeEvent
 from noc_agents.services.clock import iso_z
+from noc_agents.services.gsm7 import segments_for
 from noc_agents.support import desk
 from noc_agents.support.context import SupportContext, default_context
 from noc_agents.support.loop import (
     AGENT,
+    CARD_SAMPLE_MAX,
     CLOSED_INCIDENT,
     RAISED_BY,
     complaint_place,
     incident_area,
+    late_link,
     msisdn_hash,
     place_label,
+    sms_capped,
     sms_language,
 )
-from noc_agents.support.text import normalise
+from noc_agents.support.text import mask_msisdn_staff, normalise
+from noc_agents.support.tools import STRONG_LINKS, best_link
 
 log = logging.getLogger(__name__)
 
@@ -80,6 +87,13 @@ CONFIRMED_TEXT = {
     "sw": "Tumethibitisha hitilafu ya mtandao {place} (tiketi {ticket}). Wahandisi wanalishughulikia; tutakujulisha "
           "huduma itakaporejea.",
 }
+#: The card shows the confirmation SMS before the ticket exists: the number is this slot until then
+#: (segments are counted with a nine-character number, the length of a real one).
+TICKET_SLOT = "{ticket}"
+_TICKET_FOR_COUNTING = "INC000000"
+#: Statuses whose members are already accounted for: they never count towards another surge.
+COUNTED_STATUSES = ("open", "ingesting", "confirmed", "dismissed")
+OPEN_CARD = ("PENDING", "CLAIMED")
 
 
 class SurgeConflict(Exception):
@@ -102,10 +116,24 @@ def site_id_for(region_code: str | None, place: str) -> str:
 # ------------------------------------------------------------------------------- reading
 
 
+def _card_open(session: Session, surge: SupportSurgeRow) -> bool:
+    card = session.get(HitlTaskRow, surge.card_id) if surge.card_id else None
+    return card is not None and card.status in OPEN_CARD
+
+
 def _open_surge(session: Session, operator_id: str, place: str) -> SupportSurgeRow | None:
-    """The surge still collecting complaints about ``place`` (open, or confirmed with no ticket yet)."""
-    return session.scalar(select(SupportSurgeRow).where(
+    """The surge still collecting complaints about ``place``: open, ingesting, or confirmed with no
+    ticket yet. An ``open`` surge whose card was decided without the decision reaching it (the desk
+    was off, MINOR 4) is marked ``stale`` here and lets go of the place: the next complaints raise a
+    fresh card instead of feeding one nobody will ever see again."""
+    surge = session.scalar(select(SupportSurgeRow).where(
         SupportSurgeRow.operator_id == operator_id, SupportSurgeRow.open_place == place))
+    if surge is not None and surge.status == "open" and not _card_open(session, surge):
+        surge.status, surge.open_place, surge.updated_at = "stale", None, utcnow()
+        session.flush()
+        log.warning("support: surge %s for %s went stale (its card was decided without it)", surge.id, place)
+        return None
+    return surge
 
 
 def _members(session: Session, surge: SupportSurgeRow) -> list[tuple[SupportSurgeMemberRow, SupportComplaintRow]]:
@@ -128,6 +156,17 @@ def _region_for(ctx: SupportContext, place: str, parent: IncidentRow | None) -> 
     return parent.region_code if parent is not None else None
 
 
+def _regions_of(ctx: SupportContext, surge: SupportSurgeRow) -> tuple[str, ...]:
+    regions = tuple(ctx.gazetteer.regions_of(surge.place))
+    return regions or ((surge.region_code,) if surge.region_code else ())
+
+
+def covering_incident(session: Session, surge: SupportSurgeRow, ctx: SupportContext) -> IncidentRow | None:
+    """A real open incident that now covers the surge's place STRONGLY (MINOR 11), or None."""
+    strength, inc = best_link(session, surge.operator_id, surge.place, _regions_of(ctx, surge))
+    return inc if inc is not None and strength in STRONG_LINKS else None
+
+
 def _step_detail(step: SupportStepRow) -> dict[str, Any]:
     try:
         return json.loads(step.detail_json or "{}")
@@ -135,12 +174,18 @@ def _step_detail(step: SupportStepRow) -> dict[str, Any]:
         return {}
 
 
+def _counted(session: Session, kind: str):
+    """Member complaint ids of ``kind`` in surges that already account for them (not stale)."""
+    return (select(SupportSurgeMemberRow.complaint_id)
+            .join(SupportSurgeRow, SupportSurgeRow.id == SupportSurgeMemberRow.surge_id)
+            .where(SupportSurgeMemberRow.kind == kind, SupportSurgeRow.status.in_(COUNTED_STATUSES)))
+
+
 def _candidates(session: Session, operator_id: str, place: str, at: datetime, ctx: SupportContext,
                 ) -> tuple[list[SupportComplaintRow], list[tuple[SupportStepRow, SupportComplaintRow]]]:
     """What would count towards a NEW surge for ``place`` at ``at``: unlinked network complaints
-    in the window that no surge holds, and still-down reports in their window no surge holds."""
+    in the window that no surge accounts for, and still-down reports in their window likewise."""
     rule = ctx.policy.surge
-    held = select(SupportSurgeMemberRow.complaint_id).where(SupportSurgeMemberRow.kind == "complaint")
     complaints = list(session.scalars(select(SupportComplaintRow).where(
         SupportComplaintRow.operator_id == operator_id,
         SupportComplaintRow.category == "network",
@@ -148,7 +193,7 @@ def _candidates(session: Session, operator_id: str, place: str, at: datetime, ct
         SupportComplaintRow.linked_incident_id.is_(None),
         SupportComplaintRow.created_at >= at - timedelta(minutes=rule.window_minutes),
         SupportComplaintRow.created_at <= at,
-        SupportComplaintRow.id.not_in(held),
+        SupportComplaintRow.id.not_in(_counted(session, "complaint")),
     )).all())
     since = at - timedelta(minutes=rule.still_down_window_minutes)
     reports = []
@@ -160,9 +205,10 @@ def _candidates(session: Session, operator_id: str, place: str, at: datetime, ct
     ).all():
         if _step_detail(step).get("place") != place:
             continue
-        counted = session.scalar(select(SupportSurgeMemberRow.id).where(
-            SupportSurgeMemberRow.complaint_id == row.id, SupportSurgeMemberRow.kind == "still_down",
-            SupportSurgeMemberRow.at == step.at))
+        counted = session.scalar(select(SupportSurgeMemberRow.id)
+                                 .join(SupportSurgeRow, SupportSurgeRow.id == SupportSurgeMemberRow.surge_id)
+                                 .where(SupportSurgeMemberRow.complaint_id == row.id, SupportSurgeMemberRow.kind == "still_down",
+                                        SupportSurgeMemberRow.at == step.at, SupportSurgeRow.status.in_(COUNTED_STATUSES)))
         if counted is None:
             reports.append((step, row))
     return complaints, reports
@@ -176,7 +222,33 @@ def _excerpt(text: str) -> str:
     return text if len(text) <= EXCERPT_CHARS else text[: EXCERPT_CHARS - 1].rstrip() + "…"
 
 
-def _refresh(session: Session, surge: SupportSurgeRow) -> None:
+def _sms_block(surge: SupportSurgeRow, members: list[tuple[SupportSurgeMemberRow, SupportComplaintRow]],
+               covering: IncidentRow | None) -> dict[str, Any]:
+    """7.2: the exact confirmation SMS the approval sends, per language, with who gets it."""
+    leads: dict[str, SupportComplaintRow] = {}
+    for _member, row in members:
+        if row.msisdn not in leads or row.created_at > leads[row.msisdn].created_at:
+            leads[row.msisdn] = row
+    place = place_label(surge.place)
+    ticket = covering.incident_number if covering is not None else TICKET_SLOT
+    counted = covering.incident_number if covering is not None else _TICKET_FOR_COUNTING
+    languages = {"en": 0, "sw": 0}
+    for row in leads.values():
+        languages[sms_language(row.language)] += 1
+    ordered = sorted(leads.values(), key=lambda r: r.created_at, reverse=True)
+    return {
+        "recipients": len(leads),
+        "languages": languages,
+        "text_en": confirmed_text("en", place=place, ticket=ticket),
+        "text_sw": confirmed_text("sw", place=place, ticket=ticket),
+        "segments_en": segments_for(confirmed_text("en", place=place, ticket=counted)),
+        "segments_sw": segments_for(confirmed_text("sw", place=place, ticket=counted)),
+        "sample": [{"ref": r.ref, "msisdn_masked": mask_msisdn_staff(r.msisdn), "language": sms_language(r.language)}
+                   for r in ordered[:CARD_SAMPLE_MAX]],
+    }
+
+
+def _refresh(session: Session, surge: SupportSurgeRow, ctx: SupportContext | None = None) -> None:
     """Recount the surge from its members and refresh the card's payload while the card is open."""
     members = _members(session, surge)
     surge.complaints = len({row.id for _, row in members})
@@ -186,9 +258,11 @@ def _refresh(session: Session, surge: SupportSurgeRow) -> None:
         surge.last_at = max(m.at for m, _ in members)
     surge.updated_at = utcnow()
     card = session.get(HitlTaskRow, surge.card_id) if surge.card_id else None
-    if card is None or card.status not in ("PENDING", "CLAIMED"):
+    if card is None or card.status not in OPEN_CARD:
         return
+    ctx = ctx or default_context()
     parent = session.get(IncidentRow, surge.parent_incident_id) if surge.parent_incident_id else None
+    covering = covering_incident(session, surge, ctx)
     excerpts = []
     for member, row in sorted(members, key=lambda mr: mr[0].at, reverse=True)[:EXCERPTS_MAX]:
         text = row.body
@@ -208,7 +282,9 @@ def _refresh(session: Session, surge: SupportSurgeRow) -> None:
         "last_at": iso_z(surge.last_at),
         "origin": surge.origin,
         "parent_incident_number": parent.incident_number if parent is not None else None,
+        "covering_incident_number": covering.incident_number if covering is not None else None,
         "excerpts": excerpts,
+        **_sms_block(surge, members, covering),
     }
 
 
@@ -229,9 +305,10 @@ def _add_member(session: Session, surge: SupportSurgeRow, row: SupportComplaintR
     return True
 
 
-def _join(session: Session, surge: SupportSurgeRow, row: SupportComplaintRow, kind: str, at: datetime) -> SupportSurgeRow:
+def _join(session: Session, surge: SupportSurgeRow, row: SupportComplaintRow, kind: str, at: datetime,
+          ctx: SupportContext) -> SupportSurgeRow:
     if _add_member(session, surge, row, kind, at):
-        _refresh(session, surge)
+        _refresh(session, surge, ctx)
         _surge_event(session, surge)
     return surge
 
@@ -270,7 +347,7 @@ def _maybe_open(session: Session, operator_id: str, place: str, at: datetime, ct
     session.add(card)
     session.flush()
     surge.card_id = card.id
-    _refresh(session, surge)
+    _refresh(session, surge, ctx)
     buffer_event(session, RealtimeEvent(type="hitl.created", operator_id=operator_id, incident_id=None,
                                         payload={"task_id": card.id, "task_type": SURGE_TASK_TYPE, "surge_id": surge.id,
                                                  "place": place_label(place), "incident_number": None}))
@@ -295,7 +372,7 @@ def observe(session: Session, row: SupportComplaintRow, *, ctx: SupportContext |
             desk._write_lock(session)
             surge = _open_surge(session, row.operator_id, place)
             if surge is not None:
-                _join(session, surge, row, "complaint", row.created_at)
+                _join(session, surge, row, "complaint", row.created_at, ctx)
             else:
                 surge = _maybe_open(session, row.operator_id, place, row.created_at, ctx)
             session.commit()
@@ -319,8 +396,31 @@ def observe_still_down(session: Session, row: SupportComplaintRow, *, parent: In
         return None
     surge = _open_surge(session, row.operator_id, place)
     if surge is not None:
-        return _join(session, surge, row, "still_down", now)
+        return _join(session, surge, row, "still_down", now, ctx)
     return _maybe_open(session, row.operator_id, place, now, ctx)
+
+
+def observe_still_down_safely(session: Session, row: SupportComplaintRow, *, parent: IncidentRow | None,
+                              ctx: SupportContext, settings: AppSettings, now: datetime) -> SupportSurgeRow | None:
+    """:func:`observe_still_down` in a SAVEPOINT (MINOR 5), with the same unique-key retry as
+    :func:`observe`: a surge that cannot be opened or joined is logged, and the customer's report --
+    already written in the caller's transaction -- is never lost with it."""
+    from noc_agents.realtime.commit_hook import EVENTS_KEY
+
+    for attempt in (1, 2):
+        saved = list(session.info.get(EVENTS_KEY, ()))  # a savepoint rollback drops every buffered event
+        try:
+            with session.begin_nested():
+                return observe_still_down(session, row, parent=parent, ctx=ctx, settings=settings, now=now)
+        except IntegrityError:
+            session.info[EVENTS_KEY] = saved
+            if attempt == 2:
+                log.exception("support: a still-down report for %s could not join a surge (unique key)", row.ref)
+        except Exception:  # noqa: BLE001 -- the report stands whatever the surge does
+            session.info[EVENTS_KEY] = saved
+            log.exception("support: a still-down report for %s could not be counted towards a surge", row.ref)
+            return None
+    return None
 
 
 # ------------------------------------------------------------------------------ deciding
@@ -335,7 +435,8 @@ def _surge_for(session: Session, task: HitlTaskRow) -> SupportSurgeRow | None:
 
 def mark_confirmed(session: Session, task: HitlTaskRow, *, actor: str, at: datetime) -> str | None:
     """Inside the approval's transaction: the surge is ``confirmed``. Returns its id for
-    :func:`confirm_surge` to run after the commit, or None when the card names no open surge."""
+    :func:`confirm_surge` to run after the commit, or None when the card names no OPEN surge (a
+    dismissed, confirmed, stale or ingesting one is never confirmed again)."""
     surge = _surge_for(session, task)
     if surge is None or surge.status != "open":
         return None
@@ -371,10 +472,6 @@ def _ticket(session: Session, surge: SupportSurgeRow, settings: AppSettings) -> 
     from noc_agents.graph.pipeline import process_event  # the existing ingest service; main is never imported
 
     site_id = site_id_for(surge.region_code, surge.place)
-    if surge.incident_id:
-        existing = session.get(IncidentRow, surge.incident_id)
-        if existing is not None:
-            return existing
     since = (surge.decided_at or surge.created_at) - timedelta(minutes=1)
     earlier = session.scalar(select(IncidentRow).where(
         IncidentRow.operator_id == surge.operator_id, IncidentRow.site_id == site_id,
@@ -401,9 +498,10 @@ def _ticket(session: Session, surge: SupportSurgeRow, settings: AppSettings) -> 
 
 
 def _link_and_tell(session: Session, surge_id: str, inc: IncidentRow, *, actor: str, approved_at: datetime,
-                   operator_id: str) -> int:
-    """Link every complaint in the surge to ``inc``, step and tell each number once (approved by the
-    person who confirmed), settle the surge. One transaction under the desk's write lock."""
+                   operator_id: str, existing: bool, policy: Any) -> int:
+    """Link every complaint in the surge to ``inc`` (strength ``person``: the confirmer's), step and
+    tell each number once (approved by the confirmer, within the daily cap), settle the surge. One
+    transaction under the desk's write lock."""
     desk._write_lock(session)
     surge = session.scalar(select(SupportSurgeRow).where(SupportSurgeRow.id == surge_id,
                                                          SupportSurgeRow.operator_id == operator_id))
@@ -413,15 +511,22 @@ def _link_and_tell(session: Session, surge_id: str, inc: IncidentRow, *, actor: 
     place = place_label(surge.place)
     parent = session.get(IncidentRow, surge.parent_incident_id) if surge.parent_incident_id else None
     who = f"{surge.numbers} customer{' says' if surge.numbers == 1 else 's say'}"
+    if existing:
+        session.add(WorkNoteRow(incident_id=inc.id, author=desk.AGENT_NAME, author_role="AGENT", source="support",
+                                body=f"Customer reports about {place} linked to this ticket: {surge.complaints} complaint(s) "
+                                     f"from {surge.numbers} number(s); it already covered the place, so no new ticket was "
+                                     f"opened (confirmed by {actor})."))
     if parent is not None and parent.id != inc.id:
         # The ticket stays top-level (no parent_incident_id): the relation to the restored incident is
         # the surge's parent_incident_id and this note, written on BOTH incidents.
         after = f"after {parent.incident_number} was restored; {who} service is still down in {place}"
+        lead = "Linked customer reports" if existing else "Opened from customer reports"
         session.add(WorkNoteRow(incident_id=inc.id, author=desk.AGENT_NAME, author_role="AGENT", source="support",
-                                body=f"Opened from customer reports {after} (confirmed by {actor})."))
+                                body=f"{lead} {after} (confirmed by {actor})."))
         session.add(WorkNoteRow(incident_id=parent.id, author=desk.AGENT_NAME, author_role="AGENT", source="support",
-                                body=f"{inc.incident_number} opened from customer reports {after} (confirmed by {actor})."))
-    else:
+                                body=f"{inc.incident_number} {'linked to' if existing else 'opened from'} customer reports "
+                                     f"{after} (confirmed by {actor})."))
+    elif not existing:
         session.add(WorkNoteRow(incident_id=inc.id, author=desk.AGENT_NAME, author_role="AGENT", source="support",
                                 body=f"Opened from customer reports: {surge.complaints} complaint(s) from {surge.numbers} "
                                      f"number(s) about {place}, confirmed by {actor}."))
@@ -438,77 +543,118 @@ def _link_and_tell(session: Session, surge_id: str, inc: IncidentRow, *, actor: 
         language = sms_language(lead.language)
         text = confirmed_text(language, place=place, ticket=inc.incident_number)
         key = confirmed_key(inc.id, msisdn)
-        outbox.enqueue(session, kind=outbox.SMS, idempotency_key=key, operator_id=operator_id,
-                       requires_hitl=True, approved_by=actor, approved_at=approved_at,
-                       payload={"operator_id": operator_id, "audience": "customer", "purpose": "support_confirmed_outage",
-                                "complaint_id": lead.id, "complaint_ref": lead.ref, "complaint_ids": [r.id for r in rows],
-                                "msisdn_masked": lead.msisdn_masked, "incident_id": inc.id,
-                                "incident_number": inc.incident_number, "language": language, "body": text,
-                                "surge_id": surge.id})
+        capped = sms_capped(session, operator_id, msisdn, policy, approved_at)
+        if not capped:
+            outbox.enqueue(session, kind=outbox.SMS, idempotency_key=key, operator_id=operator_id,
+                           requires_hitl=True, approved_by=actor, approved_at=approved_at,
+                           payload={"operator_id": operator_id, "audience": "customer", "purpose": "support_confirmed_outage",
+                                    "complaint_id": lead.id, "complaint_ref": lead.ref, "complaint_ids": [r.id for r in rows],
+                                    "msisdn_masked": mask_msisdn_staff(lead.msisdn), "msisdn_hash": msisdn_hash(msisdn),
+                                    "incident_id": inc.id, "incident_number": inc.incident_number, "language": language,
+                                    "body": text, "surge_id": surge.id})
         for row in rows:
             already = row.linked_incident_id == inc.id
-            row.linked_incident_id = inc.id
-            row.updated_at = approved_at
+            row.linked_incident_id, row.link_strength, row.updated_at = inc.id, "person", approved_at
             if already:
                 continue
-            session.add(SupportMessageRow(complaint_id=row.id, author="agent", name=desk.AGENT_NAME, body=text,
-                                          at=approved_at, channel="sms"))
+            if not capped:
+                session.add(SupportMessageRow(complaint_id=row.id, author="agent", name=desk.AGENT_NAME, body=text,
+                                              at=approved_at, channel="sms"))
+            how = "the open ticket that already covers it" if existing else "a ticket opened from customer reports"
             desk._human_step(session, row, "linked_confirmed_outage",
-                             f"Linked to {inc.incident_number}, opened from customer reports about {place} "
-                             f"(confirmed by {actor}); told the customer.",
+                             f"Linked to {inc.incident_number}, {how} about {place} (confirmed by {actor}); "
+                             + ("not told yet: the daily message cap for this number was reached." if capped
+                                else "told the customer."),
                              {"incident_id": inc.id, "incident_number": inc.incident_number, "surge_id": surge.id,
-                              "outbox_key": key, "approved_by": actor}, approved_at, agent=AGENT)
+                              "outbox_key": None if capped else key, "approved_by": actor, "linked_existing": existing,
+                              "capped": capped}, approved_at, agent=AGENT)
             desk._emit(session, desk.EVENT_UPDATED, row, linked_incident=inc.incident_number)
-        told += 1
-    surge.incident_id, surge.error, surge.open_place, surge.updated_at = inc.id, None, None, utcnow()
+        told += 0 if capped else 1
+    surge.status, surge.incident_id, surge.error, surge.open_place = "confirmed", inc.id, None, None
+    surge.outcome, surge.updated_at = ("linked_existing" if existing else "ticket_opened"), utcnow()
     _surge_event(session, surge)
     session.commit()
     return told
 
 
-def confirm_surge(surge_id: str, *, actor: str, approved_at: datetime, settings: AppSettings | None = None) -> SupportSurgeRow | None:
-    """After the approval committed: open the ticket, link and tell. Never raises; a failure is kept
-    on the surge (``error``) for the Outages tab's "Try again". Returns the surge as it ended."""
+def _claim(session: Session, surge_id: str, operator_id: str) -> bool:
+    """Compare-and-set ``confirmed`` (no ticket yet) -> ``ingesting`` (MINOR 2): one confirm at a time."""
+    claimed = session.execute(
+        update(SupportSurgeRow)
+        .where(SupportSurgeRow.id == surge_id, SupportSurgeRow.operator_id == operator_id,
+               SupportSurgeRow.status == "confirmed", SupportSurgeRow.incident_id.is_(None))
+        .values(status="ingesting", updated_at=utcnow())
+    ).rowcount
+    session.commit()
+    return claimed == 1
+
+
+def confirm_surge_claimed(surge_id: str, *, actor: str, approved_at: datetime,
+                          settings: AppSettings | None = None) -> tuple[SupportSurgeRow | None, bool]:
+    """After the approval committed: claim the surge, then link its complaints to a real open incident
+    that now covers the place (MINOR 11), or open a top-level ticket for them; tell them. Never
+    raises: a failure puts the surge back to ``confirmed`` with ``error`` for the Outages tab's "Try
+    again". Returns the surge as it ended and whether THIS call claimed it."""
     from noc_agents.graph.pipeline import drain_once, sync_drain_enabled
 
     settings = settings or get_settings()
     operator_id = settings.operator.operator_id
     session = get_session()
+
+    def current() -> SupportSurgeRow | None:
+        return session.scalar(select(SupportSurgeRow).where(SupportSurgeRow.id == surge_id,
+                                                            SupportSurgeRow.operator_id == operator_id))
+
+    claimed = False
     try:
         try:
-            surge = session.scalar(select(SupportSurgeRow).where(SupportSurgeRow.id == surge_id,
-                                                                 SupportSurgeRow.operator_id == operator_id))
-            if surge is None or surge.status != "confirmed" or surge.incident_id:
-                return surge  # nothing to confirm, or already done: never a second ticket or note
-            inc = _ticket(session, surge, settings)
-            _link_and_tell(session, surge_id, inc, actor=actor, approved_at=approved_at, operator_id=operator_id)
+            claimed = _claim(session, surge_id, operator_id)
+            if not claimed:
+                return current(), False  # nothing to confirm, already done, or another confirm holds it
+            ctx = default_context(settings)
+            surge = current()
+            covering = covering_incident(session, surge, ctx) if surge is not None else None
+            if covering is not None:
+                inc, existing = covering, True
+            else:
+                inc, existing = _ticket(session, surge, settings), False
+            _link_and_tell(session, surge_id, inc, actor=actor, approved_at=approved_at, operator_id=operator_id,
+                           existing=existing, policy=ctx.policy)
+            if not existing:
+                late_link(session, inc, ctx=ctx)  # other recent complaints the new ticket covers (7.3)
             if sync_drain_enabled():
                 drain_once(session)  # after the commit: transmit the confirmed-outage SMS (a mock)
         except Exception as exc:  # noqa: BLE001 -- the approval is durable; the failure is shown, not raised
             session.rollback()
             log.exception("support: confirming surge %s failed; it stays confirmed with the error", surge_id)
-            surge = session.scalar(select(SupportSurgeRow).where(SupportSurgeRow.id == surge_id,
-                                                                 SupportSurgeRow.operator_id == operator_id))
-            if surge is not None:
-                surge.error = f"{type(exc).__name__}: {exc}"[:500]
-                surge.updated_at = utcnow()
+            surge = current()
+            if surge is not None and surge.incident_id is None:
+                surge.status, surge.error, surge.updated_at = "confirmed", f"{type(exc).__name__}: {exc}"[:500], utcnow()
                 session.commit()
-        return session.scalar(select(SupportSurgeRow).where(SupportSurgeRow.id == surge_id,
-                                                            SupportSurgeRow.operator_id == operator_id))
+        return current(), claimed
     finally:
         session.expunge_all()
         session.close()
 
 
+def confirm_surge(surge_id: str, *, actor: str, approved_at: datetime, settings: AppSettings | None = None) -> SupportSurgeRow | None:
+    """:func:`confirm_surge_claimed`, for callers that only need the surge."""
+    return confirm_surge_claimed(surge_id, actor=actor, approved_at=approved_at, settings=settings)[0]
+
+
 def retry(session: Session, surge_id: str, *, operator_id: str, actor: str) -> str:
-    """Check a failed confirm may be re-run; returns the id. The caller runs :func:`confirm_surge`."""
+    """Check a FAILED confirm may be re-run (MINOR 2: confirmed, no ticket, an error on record);
+    returns the id. The caller runs :func:`confirm_surge_claimed`, whose compare-and-set lets only
+    one retry through."""
     surge = session.scalar(select(SupportSurgeRow).where(SupportSurgeRow.id == surge_id,
                                                          SupportSurgeRow.operator_id == operator_id))
     if surge is None:
         raise LookupError("surge not found")
-    if surge.status != "confirmed" or surge.incident_id:
-        raise SurgeConflict(f"only a confirmed surge whose ticket could not be opened can be retried "
-                            f"(this one is {surge.status}{', ticket opened' if surge.incident_id else ''})")
+    if surge.status != "confirmed" or surge.incident_id or not surge.error:
+        state = "a ticket is open" if surge.incident_id else (
+            "it is being confirmed now" if surge.status == "ingesting" else
+            "nothing has failed" if surge.status == "confirmed" else f"it is {surge.status}")
+        raise SurgeConflict(f"only a confirmed surge whose ticket could not be opened can be retried ({state})")
     return surge.id
 
 
@@ -516,8 +662,12 @@ def retry(session: Session, surge_id: str, *, operator_id: str, actor: str) -> s
 
 
 def surge_out(session: Session, surge: SupportSurgeRow) -> dict[str, Any]:
-    inc = session.scalar(select(IncidentRow).where(IncidentRow.id == surge.incident_id,
-                                                   IncidentRow.operator_id == surge.operator_id)) if surge.incident_id else None
+    def number(incident_id: str | None) -> str | None:
+        if not incident_id:
+            return None
+        return session.scalar(select(IncidentRow.incident_number).where(
+            IncidentRow.id == incident_id, IncidentRow.operator_id == surge.operator_id))
+
     refs: list[str] = []
     for _member, row in _members(session, surge):
         if row.ref not in refs:
@@ -526,9 +676,11 @@ def surge_out(session: Session, surge: SupportSurgeRow) -> dict[str, Any]:
         "id": surge.id, "place": place_label(surge.place), "region_code": surge.region_code, "status": surge.status,
         "origin": surge.origin, "complaints": surge.complaints, "numbers": surge.numbers,
         "first_at": iso_z(surge.first_at), "last_at": iso_z(surge.last_at), "card_id": surge.card_id,
-        "incident_id": surge.incident_id, "incident_number": inc.incident_number if inc is not None else None,
+        "incident_id": surge.incident_id, "incident_number": number(surge.incident_id),
         "error": surge.error, "decided_by": surge.decided_by, "decided_at": iso_z(surge.decided_at),
         "reason": surge.reason, "complaint_refs": refs,
+        "parent_incident_number": number(surge.parent_incident_id),
+        "outcome": surge.outcome,
     }
 
 
