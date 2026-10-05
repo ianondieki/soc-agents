@@ -1,0 +1,123 @@
+/* The Shift desk (pages/ShiftDesk.tsx): this shift at a glance (its hours, how much has gone and
+ * four figures), then the ledger as a timeline beside the handover. Below 1100 px the two stack,
+ * the handover first. */
+
+/* ---- This shift ------------------------------------------------------------------------------ */
+.sd-shift { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr); gap: var(--s4) var(--s6); align-items: center; padding: 20px 24px; }
+.sd-shift-main { display: grid; grid-template-columns: auto auto minmax(0, 1fr); align-items: center; gap: 14px 22px; min-width: 0; }
+.sd-shift-icon { display: inline-grid; place-items: center; width: 48px; height: 48px; border-radius: 14px; background: var(--warn-soft); color: var(--warn); }
+.sd-shift-icon.night { background: var(--accent-soft); color: var(--accent); }
+.sd-shift-name { margin: 0; color: var(--text-strong); font-size: var(--fs-lg); font-weight: 700; letter-spacing: -0.01em; line-height: 1.2; }
+.sd-shift-hours { margin: 3px 0 0; color: var(--muted); font-size: var(--fs-sm); white-space: nowrap; }
+.sd-shift-hours .mono { color: var(--text); }
+.sd-progress { min-width: 0; }
+.sd-bar { position: relative; height: 8px; overflow: hidden; border-radius: 999px; background: var(--surface-raised); box-shadow: inset 0 0 0 1px var(--line); }
+/* Grows with transform, not width: a compositor animation, no layout. */
+.sd-bar-fill { position: absolute; inset: 0; border-radius: inherit; background: var(--accent); transform-origin: left center; transition: transform 400ms var(--ease); }
+.sd-left { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 12px; margin: 8px 0 0; color: var(--muted); font-size: var(--fs-sm); }
+.sd-left strong { color: var(--text-strong); font-weight: 600; }
+.sd-left .mono { color: var(--text); }
+
+.sd-figures { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; margin: 0; overflow: hidden; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--line); }
+.sd-figures > div { min-width: 0; padding: 10px 14px 12px; background: var(--surface); }
+.sd-figures dt { overflow: hidden; color: var(--muted); font-size: var(--fs-xs); font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.sd-figures dd { margin: 4px 0 0; color: var(--text-strong); font-size: var(--fs-xl); font-weight: 700; line-height: 1.15; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.sd-figures > .p2 dd { color: var(--p2); }
+.sd-figures > .hitl dd { color: var(--hitl); }
+
+/* ---- Ledger and handover --------------------------------------------------------------------- */
+.sd-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, 380px); gap: var(--s4); align-items: start; }
+.sd-handover { position: sticky; top: calc(var(--topbar-h) + var(--s4)); }
+
+/* One group per shift: its name and date, then the timeline. */
+.sd-group + .sd-group { margin-top: var(--s5); }
+.sd-group-title { display: flex; align-items: baseline; gap: 10px; margin: 0 0 6px; color: var(--text); font-size: var(--fs-sm); font-weight: 600; }
+.sd-group-title > span { color: var(--muted-dim); font-weight: 500; font-variant-numeric: tabular-nums; }
+
+/* The timeline: the time, a dot on a line in the priority's colour, then the ticket. */
+.sd-timeline { list-style: none; margin: 0; padding: 0; }
+.sd-entry { position: relative; display: grid; grid-template-columns: 3.4rem 20px minmax(0, 1fr); align-items: start; column-gap: 10px; }
+/* The dividers run under the ticket only, so the timeline's line stays whole. */
+.sd-entry > .sd-time { margin-top: 12px; }
+.sd-entry > .sd-dot { margin-top: 15px; }
+.sd-entry > .sd-body { padding: 10px 0; }
+.sd-entry + .sd-entry > .sd-body { border-top: 1px solid var(--line); }
+.sd-entry::before { content: ""; position: absolute; left: calc(3.4rem + 10px + 9px); top: 0; bottom: 0; width: 2px; border-radius: 2px; background: var(--line-strong); }
+.sd-entry:first-child::before { top: 21px; }
+.sd-entry:last-child::before { bottom: auto; height: 21px; }
+.sd-entry:only-child::before { display: none; }
+.sd-time { padding-top: 0; color: var(--text); font-family: var(--mono); font-size: var(--fs-sm); font-variant-numeric: tabular-nums; }
+.sd-dot { position: relative; z-index: 1; justify-self: center; width: 12px; height: 12px; border-radius: 50%; background: var(--muted-dim); box-shadow: 0 0 0 3px var(--surface); }
+.sd-entry.P1 .sd-dot { background: var(--p1); }
+.sd-entry.P2 .sd-dot { background: var(--p2); }
+.sd-entry.P3 .sd-dot { background: var(--p3); }
+.sd-body { min-width: 0; }
+.sd-line { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
+.sd-site { min-width: 0; color: var(--text-strong); font-weight: 600; }
+.sd-site:hover { color: var(--text-strong); text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--line-strong); }
+.sd-status { padding: 2px 9px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface-raised); color: var(--text); font-size: var(--fs-xs); white-space: nowrap; }
+.sd-line .sd-status { margin-left: auto; }
+.sd-meta { display: flex; flex-wrap: wrap; gap: 2px 14px; margin-top: 4px; color: var(--muted); font-size: var(--fs-xs); }
+.sd-num { color: var(--text); }
+.sd-flag { display: inline-flex; align-items: center; padding: 0 8px; border-radius: 999px; background: var(--danger-soft); color: var(--danger-text); font-size: var(--fs-xs); font-weight: 600; white-space: nowrap; }
+
+/* The handover: three steps before it is prepared; what it became, the watchlist and the email after. */
+.sd-steps { display: grid; gap: 10px; margin: 0 0 var(--s4); padding: 0; list-style: none; counter-reset: sd-step; }
+.sd-steps > li { position: relative; padding-left: 36px; color: var(--text); font-size: var(--fs-sm); line-height: 1.5; counter-increment: sd-step; }
+.sd-steps > li::before {
+  content: counter(sd-step);
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--hitl-soft);
+  color: var(--hitl-text);
+  font-size: var(--fs-xs);
+  font-weight: 700;
+}
+.sd-due { margin: 0 0 var(--s4); padding: 10px 12px; border-radius: var(--r-md); background: var(--surface-raised); color: var(--muted); font-size: var(--fs-sm); }
+.sd-due .mono { color: var(--text-strong); }
+.sd-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.sd-actions .btn.primary { flex: 1 1 auto; }
+.sd-error { margin: 0 0 var(--s3); }
+
+.sd-prepared { display: grid; gap: var(--s3); margin-bottom: var(--s4); }
+.sd-prepared > p { margin: 0; }
+.sd-gate { display: grid; gap: 10px; padding: 12px; border-radius: var(--r-md); background: var(--hitl-soft); }
+.sd-gate .btn { justify-self: start; }
+.sd-counts { display: flex; gap: 18px; color: var(--muted); font-size: var(--fs-sm); }
+.sd-counts strong { color: var(--text-strong); font-variant-numeric: tabular-nums; }
+.sd-watch { display: grid; max-height: 22rem; overflow: auto; margin: 0; padding: 0; list-style: none; border: 1px solid var(--line); border-radius: var(--r-md); }
+.sd-watch > li { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 8px 10px; }
+.sd-watch > li + li { border-top: 1px solid var(--line); }
+.sd-watch-main { display: grid; min-width: 0; }
+.sd-watch-num { overflow: hidden; direction: rtl; font-size: var(--fs-sm); text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+.sd-watch-meta { display: block; overflow: hidden; color: var(--muted); font-size: var(--fs-xs); white-space: nowrap; text-overflow: ellipsis; }
+.sd-watch-meta > span + span { margin-left: 10px; }
+.sd-watch-side { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.sd-email summary { color: var(--accent); font-size: var(--fs-sm); font-weight: 500; cursor: pointer; }
+.sd-email .pre { margin-top: var(--s2); max-height: 20rem; overflow: auto; }
+
+@media (max-width: 1279px) {
+  .sd-shift { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 1099px) {
+  .sd-grid { grid-template-columns: minmax(0, 1fr); }
+  .sd-handover { position: static; }
+}
+@media (max-width: 600px) {
+  .sd-shift { padding: 16px; }
+  .sd-shift-main { grid-template-columns: auto minmax(0, 1fr); }
+  .sd-progress { grid-column: 1 / -1; }
+  .sd-figures { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .sd-entry { grid-template-columns: 3rem 16px minmax(0, 1fr); column-gap: 8px; }
+  .sd-entry::before { left: calc(3rem + 8px + 7px); }
+  .sd-line .sd-status { margin-left: 0; }
+}
+:root[data-quiet="on"] .sd-bar-fill { transition: none; }
+@media (prefers-reduced-motion: reduce) { .sd-bar-fill { transition: none; } }
+.sd-watch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }

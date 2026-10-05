@@ -201,6 +201,16 @@ one marked in the accent), kept in view while the page scrolls and scrolling on 
 narrower, the open card sits in the queue between its rows. On the card, what Approve causes is a
 soft violet panel over the facts; the drafts and the sticky decision bar are unchanged.
 
+**The Shift desk.** This shift at a glance: its name with a sun or moon, its hours from the operator
+config (`shift_hours` on the profile), a bar of how much has gone with the time left and the next
+shift, and four figures (logged this shift, open now, P1 and P2 open, approvals waiting). Then the
+ledger as a timeline, one group per shift and date: the time, a dot in the priority's colour on one
+line, the site (a link to the ticket on the Incident board) with its status, and the number, code,
+region, owner and M-PESA flag under it. Beside it (above it below 1100px) the handover to the next
+shift: three numbered steps and when it is due, "Prepare the handover"; once prepared, where it is
+(waiting in Approvals, with a link to that card), the watchlist and the email text. "Download the
+ledger" gives this shift's workbook.
+
 **The Wallboard** (always Night, made for a TV across the room). The head: the mark, "NOC wallboard"
 and the operator; on the right the live state as a pill (green dot while live, red words when the wall
 has stopped updating, the escalation count beside it at the same size) and the time in Nairobi, big, in

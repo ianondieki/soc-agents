@@ -108,8 +108,9 @@ export default function IncidentBoard({ tick, profile }: { tick: number; profile
     setParams(next, { replace: true });
   };
   // What is typed in the search box, and the settled text the API is asked with.
-  const [text, setText] = useState("");
-  const [query, setQuery] = useState("");
+  // A link may bring a search with it (`?q=INC000004`, from the Shift desk's ledger).
+  const [text, setText] = useState(() => settle(params.get("q") || ""));
+  const [query, setQuery] = useState(() => settle(params.get("q") || ""));
   useEffect(() => {
     const t = window.setTimeout(() => setQuery(settle(text)), SEARCH_DEBOUNCE_MS);
     return () => window.clearTimeout(t);

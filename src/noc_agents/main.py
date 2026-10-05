@@ -257,6 +257,9 @@ def profile() -> dict[str, Any]:
         "locale_notes": op.locale_notes,
         "shift": current_shift(op),
         "shift_id": shift_id(op),
+        # When each shift starts and ends ("08:00", "20:00"), for the Shift desk's progress bar.
+        # The times only: a shift's distribution list stays off this unauthenticated route.
+        "shift_hours": {k: {"start": v.start, "end": v.end} for k, v in (op.shifts or {}).items()},
         # No "email" block here (§7.0.5): it carried the configured mailbox and
         # the demo recipient list, and /api/v1/profile is unauthenticated.
         # GET /api/v1/email/status still serves it for the Settings page.
