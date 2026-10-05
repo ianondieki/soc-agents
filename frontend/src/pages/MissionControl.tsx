@@ -452,11 +452,12 @@ function MissionControl({
                   {i.priority}
                 </span>
                 <div className="row-main">
+                  {/* The site first (what the floor says aloud), the ticket number small beside it. */}
                   <div className="row-title">
-                    <Link className="row-id" to={`/incidents/${i.id}`}>
-                      {i.incident_number}
+                    <Link className="row-site" to={`/incidents/${i.id}`}>
+                      {i.site_name || i.site_id || i.incident_number}
                     </Link>
-                    <span>{i.site_name || i.site_id}</span>
+                    <span className="row-num">{i.incident_number}</span>
                   </div>
                   <div className="facts">
                     {i.region_code && <span title={i.region_code}>{regionName(i.region_code, profile)}</span>}
@@ -521,7 +522,8 @@ function MissionControl({
                       <Link className={t.incident_number ? "row-id" : undefined} to={to}>
                         {hitlSubject(t)}
                       </Link>
-                      <span>{labelFor(t.task_type)}</span>
+                      {/* "Possible outage in Rongai" already names its kind: no second "Possible outage". */}
+                      {!hitlSubject(t).toLowerCase().includes(labelFor(t.task_type).toLowerCase()) && <span>{labelFor(t.task_type)}</span>}
                     </div>
                     <div className="facts">
                       <span>{t.claimed_by ? `claimed by ${t.claimed_by}` : "unclaimed"}</span>
@@ -536,7 +538,7 @@ function MissionControl({
         </div>
       </div>
 
-      <div className="grid-3 align-start">
+      <div className="grid-3 mc-lower">
         <div className="panel">
           <div className="panel-head">
             {/* The title says which view is on; the control beside it switches. */}

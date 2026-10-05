@@ -583,6 +583,9 @@ export default function LiveRunPanel({
           {s.site ? <span className="mono">{s.site}</span> : "An alarm"} failed at {nodeLabel(s.node) || "a step"}
         </span>
       );
+  } else if (pinned && !selected) {
+    // Nothing else to say about this run: the line says what the steps are for.
+    foot = <span className="lr-foot-hint">Select a step to see what its agent did and why.</span>;
   }
 
   return (

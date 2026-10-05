@@ -539,6 +539,7 @@ export default function App() {
                 element={
                   <Wallboard
                     metrics={metrics}
+                    profile={profile}
                     metricsStale={metricsFailed}
                     rev={revisions.incidents}
                     signalsRev={revisions.signals}

@@ -176,6 +176,24 @@ hairlines, colour only when a figure means something. Tables: 44px rows, sticky 
 hover row in `--surface-raised`. Empty states say what will fill the space and offer the action that does.
 Skeletons, not spinners, while loading.
 
+**Mission control.** The page head, the seven-figure strip, then the latest alarm's twelve agent steps as
+one even row across the panel's width (six a row on a narrow panel, four on a phone: a container query),
+with a line under it that says what selecting a step does. Then the two lists a shift acts on, side by
+side at two thirds and one third: Live tickets, each row led by its site with the ticket number small
+beside it, and Approvals. Then one row of three panels of one height: the agent activity, the recent
+runs and the open tickets by region.
+
+**The Wallboard** (always Night, made for a TV across the room). The head: the mark, "NOC wallboard"
+and the operator; on the right the live state as a pill (green dot while live, red words when the wall
+has stopped updating, the escalation count beside it at the same size) and the time in Nairobi, big, in
+Mono, with the day under it. Under it one slab of five figures (open, P1, P2, approvals waiting, M-PESA at
+risk), then one quiet row of notes (a flag most tiles carry, the platform alarms, which take the row when
+they fire). The tiles: a priority stripe down the left edge (P1 also tinted), never a loud border all
+round; the priority, the ticket number (a long one cut at its start, so the end that differs stays) and
+how long it has been open; the site, big; the region, the subscribers (900k) and the owner with the state,
+each behind a small icon; the flags as tinted chips. As many whole rows as fit the glass, the last tile
+saying how many more and where.
+
 ## Writing
 
 Plain verbs, sentence case, the floor's own words. A button says what happens ("Approve and send",

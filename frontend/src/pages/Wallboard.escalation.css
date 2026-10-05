@@ -1,86 +1,189 @@
 /* The Wallboard's own rules, owned by pages/Wallboard.tsx. The base glass (.wallboard, .wb-grid,
- * .wb-card) lives in styles.css; this file adds the card's lines, the flags, the skeleton cards
- * and the §6.5 T+30 escalation. It loads AFTER styles.css (main.tsx imports styles.css first);
- * rules that must beat a styles.css rule (.muted, .wb-card.P1) stay scoped under .wallboard.
- * Weights stay within the 400–600 that are loaded. */
+ * .wb-card and its priority stripe) lives in styles.css; this file adds the head, the figures,
+ * the tile's lines, the flags, the skeleton cards and the §6.5 T+30 escalation. It loads AFTER
+ * styles.css (main.tsx imports styles.css first); rules that must beat a styles.css rule (.muted,
+ * .wb-card.P1) stay scoped under .wallboard. */
 
-/* Head: the title left; the state chips and the four counts right. The counts are numbers read
-   from the back of the room (48 px), each with a small label under it, never chips. */
+/* Head: the mark and the title on the left; the live state and the Nairobi clock on the right. */
 .wb-head {
   display: flex;
   flex-wrap: wrap;
   justify-content: space-between;
-  align-items: flex-start;
-  gap: var(--s2) var(--s5);
-  margin-bottom: var(--s3);
+  align-items: center;
+  gap: var(--s4) var(--s6);
+  margin-bottom: 22px;
 }
-.wallboard .wb-head h1 { margin: 0; line-height: 1.2; }
-.wallboard .wb-head-sub { color: var(--muted); font-weight: 500; margin-left: 0.4em; }
-.wb-head-right { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--s3) var(--s6); }
-.wb-stats { display: flex; flex-wrap: wrap; gap: var(--s2) var(--s6); margin: 0; }
-/* The label is first in the DOM ("Open, 68" to a screen reader) and sits under the number. */
-.wb-stat { display: flex; flex-direction: column-reverse; align-items: flex-end; min-width: 2ch; }
+.wb-title { display: flex; align-items: center; gap: 16px; min-width: 0; }
+.wb-title .brand-mark { flex: none; }
+.wb-title-text { min-width: 0; }
+.wallboard .wb-head-sub { margin: 6px 0 0; color: var(--muted); font-size: calc(var(--fs-wall) * 0.9); font-weight: 500; }
+.wb-head-right { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--s4) 28px; }
+.wb-state { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 10px; }
+.wb-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  padding: 0 16px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: calc(var(--fs-wall) * 0.85);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.wb-live-dot { flex: none; width: 10px; height: 10px; border-radius: 50%; background: var(--muted-dim); }
+/* The escalation count beside it is the same size: an alarm on a TV is never the small chip. */
+.wb-state .chip { min-height: 40px; padding: 0 16px; border-radius: 999px; font-size: calc(var(--fs-wall) * 0.85); font-weight: 700; }
+.wb-live.ok .wb-live-dot { background: var(--ok); box-shadow: 0 0 0 4px var(--ok-soft); }
+.wb-live.bad { border-color: var(--danger-line); background: var(--danger-soft); color: var(--danger-text); }
+.wb-live.bad .wb-live-dot { background: var(--danger); }
+.wb-clock { display: flex; flex-direction: column; align-items: flex-end; padding-left: 28px; border-left: 1px solid var(--line); }
+.wb-clock-time {
+  font-family: var(--mono);
+  font-size: clamp(2.5rem, 3.4vw, 3.5rem);
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-strong);
+}
+.wb-clock-day { margin-top: 6px; color: var(--muted); font-size: calc(var(--fs-wall) * 0.8); white-space: nowrap; }
+
+/* The figures: one slab of five, hairlines between, a number read from the back of the room with
+   its label above. Colour only on a figure that is not zero. */
+.wb-stats {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 1px;
+  margin: 0 0 18px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--line);
+}
+.wb-stat { display: flex; flex-direction: column; gap: 10px; min-width: 0; padding: 14px 22px 16px; background: var(--surface); }
+.wb-stat dt { color: var(--muted); font-size: calc(var(--fs-wall) * 0.85); font-weight: 500; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .wb-stat dd {
   margin: 0;
   font-family: var(--mono);
-  font-size: 48px;
-  font-weight: 500;
+  font-size: clamp(2.25rem, 3vw, 3.25rem);
+  font-weight: 600;
   line-height: 1;
+  letter-spacing: -0.03em;
   font-variant-numeric: tabular-nums;
-  color: var(--text-bright);
+  color: var(--text-strong);
 }
-.wb-stat dt { margin-top: 6px; font-size: calc(var(--fs-wall) * 0.8); font-weight: 500; line-height: 1.2; color: var(--muted); }
 .wb-stat.p1 dd { color: var(--p1); }
 .wb-stat.p2 dd { color: var(--p2); }
 .wb-stat.hitl dd { color: var(--hitl); }
 
+/* Notes under the figures: one quiet row; nothing to say, no row. */
+.wb-notices { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 32px; margin: 0 0 16px; }
+.wb-notices:empty { display: none; }
+.wallboard .wb-note { margin: 0; font-size: calc(var(--fs-wall) * 0.9); font-weight: 600; }
+.wallboard .wb-note.hitl { color: var(--hitl); }
+
 /* Separate facts as separate spans, never "A · B · C". */
 .wb-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.15rem 0.75em; }
-.wallboard .wb-foot { margin: var(--s3) 0 0; }
+.wallboard .wb-foot { margin: 14px 0 0; font-size: var(--fs-sm); }
+.wallboard .wb-foot a { color: var(--muted); }
+.wallboard .wb-foot a:hover { color: var(--text-strong); }
 
 /* A tile: every line one line high, cut with an ellipsis rather than wrapped, so every tile is
    the same height and the page can count how many rows fit the glass. Text at --fs-wall. */
 .wallboard .wb-card > * { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .wallboard .wb-card > .wb-line { display: block; }
 .wallboard .wb-card > .wb-line > span + span { margin-left: 0.6em; }
-.wallboard .wb-site { margin-top: 0.25rem; font-size: var(--fs-wall); color: var(--text-bright); }
-.wallboard .wb-meta { margin-top: 0.15rem; font-size: var(--fs-wall); }
-.wallboard .wb-owner { margin-top: 0.15rem; font-size: var(--fs-wall); }
+.wb-card-top { display: flex; align-items: center; gap: 12px; }
+.wb-prio {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  min-width: 2.6em;
+  height: 1.55em;
+  padding: 0 0.45em;
+  border-radius: 8px;
+  background: var(--line-strong);
+  color: var(--text-strong);
+  font-family: var(--mono);
+  font-size: calc(var(--fs-wall) * 0.85);
+  font-weight: 700;
+}
+.wb-prio.P1 { background: var(--p1); color: var(--p1-ink); }
+.wb-prio.P2 { background: var(--p2); color: var(--p2-ink); }
+/* direction: rtl puts the ellipsis at the start; <bdi> keeps the number itself left to right. */
+.wb-ticket { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; color: var(--muted); font-family: var(--mono); font-size: calc(var(--fs-wall) * 0.8); }
+.wb-age { flex: none; display: inline-flex; align-items: center; gap: 6px; color: var(--text); font-size: calc(var(--fs-wall) * 0.85); font-weight: 600; font-variant-numeric: tabular-nums; }
+.wallboard .wb-site { margin-top: 12px; color: var(--text-strong); font-size: calc(var(--fs-wall) * 1.3); font-weight: 700; letter-spacing: -0.01em; line-height: 1.2; }
+.wb-meta, .wb-owner-line { display: flex; align-items: center; gap: 14px; }
+.wallboard .wb-meta { margin-top: 8px; color: var(--muted); font-size: calc(var(--fs-wall) * 0.9); }
+.wallboard .wb-owner-line { margin-top: 4px; font-size: calc(var(--fs-wall) * 0.9); }
+.wb-meta > span, .wb-owner { display: inline-flex; flex: 0 1 auto; align-items: center; gap: 6px; min-width: 0; }
+.wb-meta > span:first-child, .wb-owner { flex-shrink: 0; max-width: 60%; }
+.wb-tx { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wb-meta svg, .wb-owner svg, .wb-age svg { flex: none; color: var(--muted-dim); }
+.wb-owner { color: var(--text); font-weight: 600; }
+.wb-status { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
 
-/* What needs a person on this ticket, big enough to read from the back of the room. The line is
-   held (one line high) on every tile while any tile carries a flag. */
-.wallboard .wb-flags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.25rem 1rem;
-  margin-top: 0.3rem;
-  min-height: 1.3em;
-  font-size: var(--fs-wall);
+/* What needs a person on this ticket, as small tinted chips. The line is held (one line high) on
+   every tile while any tile carries a flag. */
+.wallboard .wb-flags { display: flex; gap: 8px; min-height: 1.6em; margin-top: 12px; }
+.wb-flag {
+  display: inline-flex;
+  align-items: center;
+  height: 1.6em;
+  padding: 0 0.65em;
+  border-radius: 999px;
+  font-size: calc(var(--fs-wall) * 0.75);
   font-weight: 600;
 }
-.wallboard .wb-card > .wb-flags { flex-wrap: nowrap; }
-.wallboard .wb-flags .danger { color: var(--danger); }
-.wallboard .wb-flags .hitl { color: var(--hitl); }
-/* A flag more than half the tiles carry, said once under the head instead of on each tile. */
-.wallboard .wb-flags-head { margin: 0 0 var(--s3); min-height: 0; }
+.wb-flag.danger { background: var(--danger-soft); color: var(--danger-text); }
+.wb-flag.hitl { background: var(--hitl-soft); color: var(--hitl-text); }
 
 /* The last tile when the tickets need more rows than the glass has: how many more, and where. */
 .wallboard .wb-more {
   display: flex;
   flex-direction: column;
   justify-content: center;
-  gap: 0.25rem;
-  border-style: dashed;
-  color: var(--text-bright);
+  gap: 6px;
+  background: var(--surface-raised);
+  color: var(--text-strong);
   text-decoration: none;
 }
+.wallboard .wb-more::before { background: var(--accent); }
 .wallboard .wb-more:hover { border-color: var(--accent); text-decoration: none; }
-.wallboard .wb-more-n { font-size: calc(var(--fs-wall) * 1.6); font-weight: 600; line-height: 1.15; }
+.wallboard .wb-more-n { font-size: calc(var(--fs-wall) * 1.8); font-weight: 700; line-height: 1.1; }
 .wallboard .wb-more-what, .wallboard .wb-more-where { color: var(--muted); }
+.wallboard .wb-more-where { color: var(--accent); font-weight: 600; }
+
+/* No P1 or P2 open. */
+.wallboard .wb-quiet { grid-column: 1 / -1; font-size: var(--fs-wall); }
 
 /* Before the first answer: card-shaped skeletons, never an empty "quiet glass". */
 .wb-card-skeleton { display: grid; gap: var(--s3); min-height: 168px; align-content: start; }
 .wb-card-skeleton .skeleton:first-child { height: 22px; }
+
+/* A phone looking at the glass: it scrolls like any page. */
+@media (max-width: 700px) {
+  .wallboard { padding: 16px 16px 20px; }
+  .wb-head { align-items: flex-start; gap: 14px; margin-bottom: 16px; }
+  .wb-title { gap: 12px; }
+  .wb-title .brand-mark { width: 36px; height: 36px; }
+  .wb-head-right { width: 100%; justify-content: space-between; gap: 12px; }
+  .wb-clock { order: -1; align-items: flex-start; padding-left: 0; border-left: 0; }
+  .wb-clock-time { font-size: 2.25rem; }
+  .wb-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .wb-stat:last-child { grid-column: 1 / -1; }
+  .wb-stat { padding: 12px 14px; gap: 6px; }
+  .wb-stat dd { font-size: 2rem; }
+  .wb-card { padding: 14px 14px 14px 20px; }
+}
+@media (min-width: 701px) and (max-width: 1099px) {
+  .wallboard { padding: 22px 24px 18px; }
+  .wb-stat { padding: 12px 16px 14px; }
+}
 
 /* §6.5 escalation ladder, the T+30 rung: a P1/P2 approval that has sat unclaimed past the
  * Wallboard rung is shown in red. It reuses the `pulse` keyframes styles.css defines, which

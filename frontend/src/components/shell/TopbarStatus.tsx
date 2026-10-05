@@ -1,28 +1,10 @@
-import { useEffect, useState } from "react";
 import { Gauge, Moon, Sun } from "lucide-react";
 import { fmtHM } from "../../lib/time";
+import { useMinute } from "../../lib/useMinute";
 
 export type LiveTone = "ok" | "wait" | "bad";
 
 const ICON = { size: 15, strokeWidth: 1.75, "aria-hidden": true } as const;
-
-/** The minute in Nairobi, re-rendered on the minute (not every second: nothing here ticks). */
-function useMinute(): Date {
-  const [now, setNow] = useState(() => new Date());
-  useEffect(() => {
-    let timer = 0;
-    const arm = () => {
-      const d = new Date();
-      timer = window.setTimeout(() => {
-        setNow(new Date());
-        arm();
-      }, 60_000 - (d.getSeconds() * 1000 + d.getMilliseconds()) + 50);
-    };
-    arm();
-    return () => window.clearTimeout(timer);
-  }, []);
-  return now;
-}
 
 function Clock() {
   const now = useMinute();

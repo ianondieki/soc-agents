@@ -1,12 +1,16 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { MapPin, Timer, UsersRound, Wrench } from "lucide-react";
 import { api } from "../api";
 import CardBoundary from "../components/CardBoundary";
 import RiskStrip from "../components/RiskStrip";
 import AgentsStatusTile from "../components/AgentsStatusTile";
 import RedactionMissChip from "../components/RedactionMissChip";
-import { humanEnum } from "../lib/agents";
+import { BrandMark } from "../components/shell/BrandMark";
+import { humanEnum, regionName } from "../lib/agents";
 import { labelFor } from "../lib/hitl";
-import { fmtEAT, parseInstant } from "../lib/time";
+import { fmtEAT, fmtHM, parseInstant } from "../lib/time";
+import { useMinute } from "../lib/useMinute";
+import { useRealtimeState } from "../realtime/RealtimeContext";
 import "./Wallboard.escalation.css";
 
 /**
@@ -77,30 +81,80 @@ function wallOrder(a: any, b: any): number {
 /** Below this width the Wallboard is a phone looking at the glass: it scrolls like any page. */
 const FIT_MIN_WIDTH = 701;
 
-/** One header figure: a number read from the back of the room, its label small beneath. */
+/** One figure in the strip under the head: a number read from the back of the room, its label
+ *  above it. Its colour only when it is not zero. */
 function Stat({ label, value, tone }: { label: string; value: number | null | undefined; tone?: "p1" | "p2" | "hitl" }) {
   const n = typeof value === "number" ? value : null;
   return (
     <div className={"wb-stat" + (tone && n ? ` ${tone}` : "")}>
       <dt>{label}</dt>
-      <dd>{n == null ? "—" : n}</dd>
+      <dd>{n == null ? "—" : n.toLocaleString()}</dd>
     </div>
   );
 }
 
+const DAY_FMT = (() => {
+  try {
+    return new Intl.DateTimeFormat("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "Africa/Nairobi" });
+  } catch {
+    return null;
+  }
+})();
+
+/** The wall clock: the time in Nairobi, big, with the day under it. */
+function WallClock() {
+  const now = useMinute();
+  return (
+    <div className="wb-clock" title="Time in Nairobi (EAT)">
+      <time className="wb-clock-time" dateTime={now.toISOString()}>
+        {fmtHM(now)}
+      </time>
+      <span className="wb-clock-day">{DAY_FMT ? `${DAY_FMT.format(now)}, EAT` : "EAT"}</span>
+    </div>
+  );
+}
+
+/** How long a ticket has been open: "8 min", "2 h 5 min", "3 d 4 h". */
+function openFor(createdAt: unknown, now: Date): string | null {
+  const t = parseInstant(createdAt);
+  if (!t) return null;
+  const m = Math.max(0, Math.floor((now.getTime() - t.getTime()) / 60000));
+  if (m < 60) return `${m} min`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return m % 60 ? `${h} h ${m % 60} min` : `${h} h`;
+  const d = Math.floor(h / 24);
+  return h % 24 ? `${d} d ${h % 24} h` : `${d} d`;
+}
+
+const CARD_ICON = { size: "0.9em", strokeWidth: 2, "aria-hidden": true } as const;
+
+/** A subscriber count read from across the room: 900k, 1.2M (the exact figure is in its title). */
+function compact(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 1).replace(/\.0$/, "")}M`;
+  if (n >= 10_000) return `${Math.round(n / 1000)}k`;
+  return n.toLocaleString();
+}
+
 export default function Wallboard({
   metrics,
+  profile = null,
   metricsStale = false,
   rev = 0,
   signalsRev = 0,
 }: {
   metrics: any;
+  /** The operator profile: its name in the head and its region names on the tiles. */
+  profile?: any;
   /** The metrics call failed while the API still answers: the header counts are the last ones. */
   metricsStale?: boolean;
   rev?: number;
   /** Debounced `signals` slice revision — see realtime/renderers.ts. */
   signalsRev?: number;
 }) {
+  const now = useMinute();
+  const rt = useRealtimeState();
+  const link = rt?.link ?? "connecting";
+  const operator = profile?.display_name ? String(profile.display_name).replace(" (demo profile)", "") : null;
   // null until the first answer: the glass never says "quiet" before it has asked.
   const [rows, setRows] = useState<any[] | null>(null);
   const [red, setRed] = useState<RedCard[]>([]);
@@ -224,58 +278,64 @@ export default function Wallboard({
     .filter(Boolean)
     .join(" and ");
 
+  // The link to the agents: green only while live and the polls answer; red when the wall has
+  // stopped updating.
+  const liveTone = stale || link === "down" ? "bad" : link === "live" ? "ok" : "wait";
+  const liveWord = stale && lastOk ? `Not updating since ${fmtEAT(lastOk)}` : link === "live" ? "Live" : link === "down" ? "Reconnecting" : "Connecting";
+
   return (
     <div className="wallboard">
-      <div className="wb-head">
-        <h1>
-          NOC wallboard <span className="wb-head-sub">Safaricom demo</span>
-        </h1>
+      <header className="wb-head">
+        <div className="wb-title">
+          <BrandMark size={48} />
+          <div className="wb-title-text">
+            <h1>NOC wallboard</h1>
+            <p className="wb-head-sub">{operator ? `${operator}, P1 and P2 tickets` : "P1 and P2 tickets"}</p>
+          </div>
+        </div>
         <div className="wb-head-right">
-          <div className="chips">
-            {/* Old tiles on the glass after a failed poll. Before the first answer the grid says so instead. */}
-            {stale && lastOk && (
-              <span className="chip" role="status">
-                Not updating since {fmtEAT(lastOk)}
-              </span>
-            )}
+          <div className="wb-state">
+            {/* Old tiles on the glass after a failed poll say so here, in red. Before the first
+                answer the grid says so instead. */}
+            <span className={`wb-live ${liveTone}`} role="status">
+              <span className="wb-live-dot" aria-hidden="true" />
+              {liveWord}
+            </span>
             {metricsStale && (
-              <span className="chip" role="status">
+              <span className="wb-live wait" role="status">
                 Counts aren't updating
               </span>
             )}
-            {red.length > 0 && <span className="chip bad">ESCALATED {red.length}</span>}
+            {red.length > 0 && <span className="chip bad">Escalated {red.length}</span>}
           </div>
-          <dl className="wb-stats">
-            <Stat label="Open" value={metrics?.open_total} />
-            <Stat label="Decisions" value={metrics ? metrics.hitl_pending ?? 0 : null} tone="hitl" />
-            <Stat label="P1" value={metrics ? metrics.by_priority?.P1 ?? 0 : null} tone="p1" />
-            <Stat label="P2" value={metrics ? metrics.by_priority?.P2 ?? 0 : null} tone="p2" />
-          </dl>
+          <WallClock />
         </div>
+      </header>
+      <dl className="wb-stats">
+        <Stat label="Open tickets" value={metrics?.open_total} />
+        <Stat label="P1 critical" value={metrics ? metrics.by_priority?.P1 ?? 0 : null} tone="p1" />
+        <Stat label="P2 major" value={metrics ? metrics.by_priority?.P2 ?? 0 : null} tone="p2" />
+        <Stat label="Approvals waiting" value={metrics ? metrics.hitl_pending ?? 0 : null} tone="hitl" />
+        <Stat label="M‑PESA at risk" value={rows === null ? null : mpesaCount} tone="p1" />
+      </dl>
+      {/* Notes under the figures, on one row: a flag most tiles carry (said once here instead of
+          on every tile; M-PESA has its own figure above), then the platform alarms (§4.6, §9.6,
+          §10.4): "AGENTS OFFLINE" / circuit-open and the red redaction-miss chip, which take the
+          whole row when they fire. Each boundary's fallback is null, so a broken alarm component
+          can never blank the P1/P2 grid; with nothing to say the row is empty and takes no room. */}
+      <div className="wb-notices">
+        {dropDecision && list.length > 0 && (
+          <p className="wb-note hitl">
+            Decision waiting on {decisionCount} of {list.length} tickets
+          </p>
+        )}
+        <CardBoundary fallback={null}>
+          <AgentsStatusTile />
+        </CardBoundary>
+        <CardBoundary fallback={null}>
+          <RedactionMissChip />
+        </CardBoundary>
       </div>
-      {(dropMpesa || dropDecision) && list.length > 0 && (
-        <div className="wb-flags wb-flags-head">
-          {dropMpesa && (
-            <span className="danger">
-              M‑PESA at risk on {mpesaCount} of {list.length} tickets
-            </span>
-          )}
-          {dropDecision && (
-            <span className="hitl">
-              Decision waiting on {decisionCount} of {list.length} tickets
-            </span>
-          )}
-        </div>
-      )}
-      {/* Platform alarms (§4.6, §9.6, §10.4): "AGENTS OFFLINE" / circuit-open and the red
-          redaction-miss chip. Above everything else on the glass; each boundary's fallback is
-          null, so a broken alarm component can never blank the P1/P2 grid. */}
-      <CardBoundary fallback={null}>
-        <AgentsStatusTile />
-      </CardBoundary>
-      <CardBoundary fallback={null}>
-        <RedactionMissChip />
-      </CardBoundary>
       {/*
         Weather context sits above the incident grid so it stays on screen during
         a storm — the one time it is worth anything — but it is deliberately the
@@ -332,34 +392,56 @@ export default function Wallboard({
               ))}
             </div>
           ))}
-        {rows !== null && rows.length === 0 && <div className="empty">No P1/P2 open — quiet glass.</div>}
+        {rows !== null && rows.length === 0 && <div className="empty wb-quiet">No P1 or P2 ticket is open. A quiet glass.</div>}
         {shown.map((i) => {
           const esc = redByIncident.get(String(i.id));
           const flags = tileFlags(i);
+          const age = openFor(i.created_at, now);
+          const subs = typeof i.users_affected === "number" ? i.users_affected : Number(i.users_affected);
+          const status = [humanEnum(i.status), i.tt_category ? humanEnum(i.tt_category) : i.failure_domain ? humanEnum(i.failure_domain) : ""]
+            .filter(Boolean)
+            .join(", ");
           return (
-            <div key={i.id} className={`wb-card ${i.priority}${esc ? " escalated" : ""}`}>
-              <div className="big wb-line">
-                <span>{i.priority}</span>
-                <span>{i.incident_number}</span>
+            <article key={i.id} className={`wb-card ${i.priority}${esc ? " escalated" : ""}`} aria-label={`${i.priority} ${i.site_name || i.incident_number}`}>
+              <div className="wb-card-top">
+                <span className={`wb-prio ${i.priority}`}>{i.priority}</span>
+                {/* A long number is cut at its start, so its end (the part that differs) stays. */}
+                <span className="wb-ticket" title={String(i.incident_number ?? "")}>
+                  <bdi>{i.incident_number}</bdi>
+                </span>
+                {age && (
+                  <span className="wb-age" title="Open for">
+                    <Timer {...CARD_ICON} />
+                    {age}
+                  </span>
+                )}
               </div>
-              <div className="wb-site">{i.site_name}</div>
-              <div className="wb-line wb-meta muted">
-                <span className="mono">{i.region_code}</span>
-                {/* The domain only when no category says it more exactly on the status line. */}
-                {i.failure_domain && !i.tt_category && <span>{humanEnum(i.failure_domain)}</span>}
-                <span>{i.users_affected?.toLocaleString()} subscribers</span>
+              <div className="wb-site">{i.site_name || i.site_id || "Unknown site"}</div>
+              <div className="wb-meta">
+                <span>
+                  <MapPin {...CARD_ICON} />
+                  <span className="wb-tx">{regionName(i.region_code, profile)}</span>
+                </span>
+                {Number.isFinite(subs) && subs > 0 && (
+                  <span title={`${subs.toLocaleString()} subscribers affected`}>
+                    <UsersRound {...CARD_ICON} />
+                    <span className="wb-tx">{compact(subs)} subscribers</span>
+                  </span>
+                )}
               </div>
-              <div className="wb-owner">Owner {nameOf(i.assignee_name)}</div>
-              <div className="wb-line wb-meta muted">
-                <span>{humanEnum(i.status)}</span>
-                {i.tt_category && <span>{humanEnum(i.tt_category)}</span>}
+              <div className="wb-owner-line">
+                <span className="wb-owner">
+                  <Wrench {...CARD_ICON} />
+                  <span className="wb-tx">{nameOf(i.assignee_name) || "Unassigned"}</span>
+                </span>
+                {status && <span className="wb-status">{status}</span>}
               </div>
               {/* The flag line is held on every tile while any tile carries a flag, so the tiles
                   stay one height. */}
               {anyTileFlag && (
                 <div className="wb-flags">
-                  {flags.mpesa && <span className="danger">M‑PESA at risk</span>}
-                  {flags.decision && <span className="hitl">Decision waiting</span>}
+                  {flags.mpesa && <span className="wb-flag danger">M‑PESA at risk</span>}
+                  {flags.decision && <span className="wb-flag hitl">Decision waiting</span>}
                 </div>
               )}
               {esc && (
@@ -372,7 +454,7 @@ export default function Wallboard({
                   {esc.since_eat && <span>red since {esc.since_eat}</span>}
                 </div>
               )}
-            </div>
+            </article>
           );
         })}
         {overflow && (
@@ -385,7 +467,7 @@ export default function Wallboard({
           </a>
         )}
       </div>
-      <p className="wb-foot muted" ref={footRef}>
+      <p className="wb-foot" ref={footRef}>
         <a href="/mission">Back to Mission control</a>
       </p>
     </div>
