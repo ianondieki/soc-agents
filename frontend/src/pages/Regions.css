@@ -4,52 +4,74 @@
 /* The blind-feed sentence, once, directly under the page head. */
 .region-note { margin: calc(-1 * var(--s2)) 0 var(--s4); font-size: var(--fs-sm); }
 
+/* Five figures across the top: where to look first. */
+.region-figures { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 1px; margin: 0 0 var(--s4); overflow: hidden; border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--line); }
+.region-figures > div { min-width: 0; padding: 12px 18px 14px; background: var(--surface); }
+.region-figures dt { overflow: hidden; color: var(--muted); font-size: var(--fs-sm); font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.region-figures dd { margin: 4px 0 0; color: var(--text-strong); font-size: var(--fs-xl); font-weight: 700; line-height: 1.15; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.region-figures dd a { display: inline-block; min-width: 24px; color: inherit; text-decoration: underline; text-decoration-color: var(--line-strong); text-underline-offset: 4px; }
+.region-figures dd a:hover { text-decoration-color: var(--accent); }
+.region-figures > .bad dd { color: var(--danger); }
+.region-figures > .warn dd { color: var(--warn); }
+@media (max-width: 900px) {
+  .region-figures { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 600px) {
+  .region-figures { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .region-figures > div:last-child:nth-child(odd) { grid-column: 1 / -1; }
+  .region-figures dt { white-space: normal; }
+}
+
 .region-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(min(340px, 100%), 1fr));
   gap: var(--s4);
 }
 
+/* A region on alert or watch carries a thin status rail down its left edge (status colour, not
+   identity), so the eye finds it before reading a word; calm and stale cards carry none. */
+.region-card { position: relative; overflow: hidden; }
+.region-card.region-alert::before, .region-card.region-watch::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; }
+.region-card.region-alert { border-color: var(--danger-line); }
+.region-card.region-alert::before { background: var(--danger); }
+.region-card.region-watch::before { background: var(--warn); }
+
 /* One head height with or without a status chip, so the counties line sits at one y per row. */
 .region-card .panel-head { min-height: 1.5rem; margin-bottom: var(--s1); }
 .region-counties { margin: 0 0 var(--s3); color: var(--muted); font-size: var(--fs-sm); }
 
-/* Counts in one aligned row: fixed columns, label over number, both right-aligned, so the same
-   count sits at the same x on every card. Zero is dim; colour only on a count that is not. */
-.region-counts {
-  display: grid;
-  grid-template-columns: repeat(4, 2rem) 2.75rem 4rem;
-  justify-content: start;
-  gap: 0 var(--s2);
-  margin: 0 0 var(--s3);
-}
-.region-counts > div { display: grid; justify-items: end; align-content: start; gap: 2px; }
-/* One label height whether it is a pill or plain text, so every number sits on one line. */
-.region-counts dt {
-  display: flex;
-  align-items: center;
-  height: 1.25rem;
-  color: var(--muted-dim);
-  font-size: var(--fs-xs);
-  line-height: 1.3;
-  white-space: nowrap;
-}
-.region-counts dd {
-  margin: 0;
-  color: var(--text-bright);
-  font-family: var(--mono);
-  font-size: var(--fs-md);
-  font-variant-numeric: tabular-nums;
-  line-height: 1.4;
-}
-.region-counts .zero dd { color: var(--muted-dim); }
+/* What is open: two figures (open, past restore SLA), then one bar split by priority and a legend
+   that names only the priorities with tickets. Past SLA is amber only when it is not zero. */
+.region-load { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: end; gap: var(--s2) var(--s5, 24px); margin: 0 0 var(--s3); }
+.region-figs { display: flex; gap: var(--s5, 24px); margin: 0; }
+.region-figs > div { display: grid; gap: 2px; }
+.region-figs dt { color: var(--muted); font-size: var(--fs-xs); font-weight: 500; white-space: nowrap; }
+.region-figs dd { margin: 0; color: var(--text-strong); font-size: var(--fs-xl); font-weight: 700; line-height: 1.1; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.region-figs .late dd { color: var(--warn); }
+.region-figs .zero dd { color: var(--muted-dim); }
+.region-mix { display: grid; gap: 8px; min-width: 0; padding-bottom: 3px; }
+.region-bar { display: flex; gap: 2px; height: 8px; overflow: hidden; border-radius: 999px; background: var(--surface-raised); }
+.region-bar > span { min-width: 6px; }
+.region-bar-P1 { background: var(--p1); }
+.region-bar-P2 { background: var(--p2); }
+.region-bar-P3 { background: var(--p3); }
+.region-bar-P4 { background: var(--p4); }
+.region-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; margin: 0; padding: 0; list-style: none; }
+.region-legend li { display: inline-flex; align-items: center; gap: 6px; }
+.region-legend-n { color: var(--text-strong); font-size: var(--fs-sm); font-weight: 600; font-variant-numeric: tabular-nums; }
 .region-nothing { margin: 0 0 var(--s3); color: var(--muted); font-size: var(--fs-md); }
 
 .region-signals { margin-bottom: var(--s3); }
 .region-below { margin-left: var(--s3); }
 
-.region-problems { list-style: none; margin: var(--s2) 0 0; padding: 0; max-height: 11rem; overflow: auto; }
-.region-problems .row { padding-left: 0; padding-right: 0; align-items: baseline; }
+.region-problems { list-style: none; margin: var(--s3) 0 0; padding: 0; border-top: 1px solid var(--line); }
+.region-problem { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: baseline; gap: 2px 12px; padding: 10px 0; border-bottom: 1px solid var(--line); font-size: var(--fs-sm); }
+.region-problem:last-child { border-bottom: 0; padding-bottom: 0; }
+.region-problem-num { color: var(--text-strong); font-weight: 600; }
+.region-problem-site { overflow: hidden; color: var(--muted); text-overflow: ellipsis; white-space: nowrap; }
+.region-problem-n { color: var(--warn); font-weight: 600; white-space: nowrap; }
+.region-problem-when { grid-column: 1 / -1; color: var(--muted); font-size: var(--fs-xs); }
+.region-dl dd a { display: inline-flex; align-items: center; min-width: 24px; min-height: 24px; color: var(--accent); }
 .region-more { margin: var(--s2) 0 0; }
 
 .region-qos-score { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 var(--s3); }

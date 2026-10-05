@@ -124,8 +124,9 @@ function SignalReading({ name, block }: { name: string; block: unknown }) {
   );
 }
 
-/** Open counts in one aligned row: fixed columns, numbers right-aligned, so the cards read
- *  down as well as across. Nothing open is one phrase, not eight zeros. */
+/** What is open, in two figures (open, past restore SLA) and one bar split by priority, with a
+ *  legend that names only the priorities that have tickets. Nothing open is one phrase, not
+ *  eight zeros. */
 function Counts({ region }: { region: any }) {
   const byPriority = obj(region.open_by_priority);
   const total = num(region.open_total);
@@ -133,37 +134,42 @@ function Counts({ region }: { region: any }) {
   // Beside a possible outage "Nothing open" would read as "all is well"; it means no ticket.
   const surge = typeof obj(region.complaint_surge).place === "string";
   if (total === 0 && sla === 0) return <p className="region-nothing">{surge ? "No ticket open" : "Nothing open"}</p>;
+  // Colour is spent only on a priority that has tickets: a red "P1 0" on six quiet regions
+  // would make the one real P1 invisible.
+  const mix = PRIORITIES.map((p) => ({ p, n: num(byPriority[p]) })).filter((x) => x.n > 0);
+  const said = mix.map((x) => `${x.n} ${x.p}`).join(", ");
   return (
-    <dl className="region-counts">
-      {PRIORITIES.map((p) => {
-        const n = num(byPriority[p]);
-        // Colour is spent only on a count that is not zero: a red "P1 0" on six quiet
-        // regions would make the one real P1 invisible.
-        return (
-          <div key={p} className={n > 0 ? undefined : "zero"} title={`${p} tickets open now`}>
-            <dt>{n > 0 ? <span className={`pill ${p}`} title={priorityTitle(p)}>{p}</span> : p}</dt>
-            <dd>{n}</dd>
+    <div className="region-load">
+      <dl className="region-figs">
+        <div title="Open tickets, any priority">
+          <dt>Open</dt>
+          <dd>{total}</dd>
+        </div>
+        <div className={sla > 0 ? "late" : "zero"} title="Open tickets already past their restore SLA">
+          <dt>Past SLA</dt>
+          <dd>{sla}</dd>
+        </div>
+      </dl>
+      {mix.length > 0 && (
+        <div className="region-mix">
+          <div className="region-bar" role="img" aria-label={`Open by priority: ${said}`}>
+            {mix.map((x) => (
+              <span key={x.p} className={`region-bar-${x.p}`} style={{ flexGrow: x.n }} />
+            ))}
           </div>
-        );
-      })}
-      <div title="Open tickets, any priority">
-        <dt>Open</dt>
-        <dd>{total}</dd>
-      </div>
-      <div className={sla > 0 ? undefined : "zero"} title="Open tickets already past their restore SLA">
-        <dt>Past SLA</dt>
-        <dd>
-          {sla > 0 ? (
-            <span className="attn warn">
-              <IconDot />
-              {sla}
-            </span>
-          ) : (
-            0
-          )}
-        </dd>
-      </div>
-    </dl>
+          <ul className="region-legend" aria-hidden="true">
+            {mix.map((x) => (
+              <li key={x.p}>
+                <span className={`pill ${x.p}`} title={priorityTitle(x.p)}>
+                  {x.p}
+                </span>
+                <span className="region-legend-n">{x.n}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -207,7 +213,7 @@ function RegionCard({ region, allBlind }: { region: any; allBlind: boolean }) {
   const rate = region.repeat_fault_rate_30d;
 
   return (
-    <section className="panel region-card" aria-labelledby={headId}>
+    <section className={`panel region-card region-${word}`} aria-labelledby={headId}>
       <div className="panel-head">
         <h2 id={headId} className="panel-title head-row">
           {region.label || region.region_code}
@@ -252,7 +258,7 @@ function RegionCard({ region, allBlind }: { region: any; allBlind: boolean }) {
           )}
         </dd>
         <dt>Open problems</dt>
-        <dd>{problemsTotal > 0 ? problemsTotal : "None"}</dd>
+        <dd>{problemsTotal > 0 ? <Link to="/problems">{problemsTotal}</Link> : "None"}</dd>
         {ownBaseline && (
           <Fragment>
             <dt>CA QoS</dt>
@@ -274,22 +280,19 @@ function RegionCard({ region, allBlind }: { region: any; allBlind: boolean }) {
       {problems.length > 0 && (
         <ul className="region-problems">
           {problems.map((p: any, i: number) => (
-            // `.row.static`: a problem line here does not navigate anywhere yet, and a pointer
-            // that leads nowhere is a small lie the floor notices.
-            <li key={p.problem_number || i} className="row static">
-              <span className="mono">{p.problem_number}</span>
-              <span className="facts">
-                <span className="mono">{p.site_id}</span>
-                <span>{num(p.occurrence_count)} times</span>
-                <span>last {fmtDateTime(p.last_seen)}</span>
+            // A problem line here is not a link: the Problems page holds the record and its tickets.
+            <li key={p.problem_number || i} className="region-problem">
+              <span className="mono region-problem-num">{p.problem_number}</span>
+              <span className="mono region-problem-site" title={p.site_id}>
+                {p.site_id}
               </span>
-              {p.known_error === true ? (
-                <span className="muted" title="Cause understood and a workaround is recorded">
-                  known error
-                </span>
-              ) : (
-                <span />
-              )}
+              <span className="region-problem-n">{num(p.occurrence_count)} times</span>
+              <span className="region-problem-when">
+                last {fmtDateTime(p.last_seen)}
+                {p.known_error === true && (
+                  <span title="Cause understood and a workaround is recorded">, known error</span>
+                )}
+              </span>
             </li>
           ))}
         </ul>
@@ -375,6 +378,13 @@ export default function Regions({ tick }: { tick: number }) {
   const operatorBaseline = regions
     .map((r) => obj(r.regulatory_baseline))
     .find((b) => Object.keys(b).length > 0 && b.granularity !== "cluster");
+  const statusCount = (s: string) => regions.filter((r) => r.status === s).length;
+  const openTotal = regions.reduce((sum, r) => sum + num(r.open_total), 0);
+  const lateTotal = regions.reduce((sum, r) => sum + num(r.sla_breached), 0);
+  const problemsTotal = regions.reduce(
+    (sum, r) => sum + Math.max(num(r.problems_open_total), Array.isArray(r.problems_open) ? r.problems_open.length : 0),
+    0,
+  );
   const blindWhy =
     STATUS_HINT.STALE + (data?.weather_enabled === false ? " Weather polling is off on this deployment." : "");
 
@@ -408,6 +418,31 @@ export default function Regions({ tick }: { tick: number }) {
               : `${blind} of ${regions.length} regions have no live feed; their counts come from the ticket store.`}
           </span>
         </p>
+      )}
+
+      {regions.length > 0 && (
+        <dl className="region-figures">
+          <div className={statusCount("ALERT") > 0 ? "bad" : undefined} title={STATUS_HINT.ALERT}>
+            <dt>On alert</dt>
+            <dd>{statusCount("ALERT")}</dd>
+          </div>
+          <div className={statusCount("WATCH") > 0 ? "warn" : undefined} title={STATUS_HINT.WATCH}>
+            <dt>On watch</dt>
+            <dd>{statusCount("WATCH")}</dd>
+          </div>
+          <div>
+            <dt>Open tickets</dt>
+            <dd>{openTotal}</dd>
+          </div>
+          <div className={lateTotal > 0 ? "warn" : undefined}>
+            <dt>Past restore SLA</dt>
+            <dd>{lateTotal}</dd>
+          </div>
+          <div>
+            <dt>Open problems</dt>
+            <dd>{problemsTotal > 0 ? <Link to="/problems">{problemsTotal}</Link> : 0}</dd>
+          </div>
+        </dl>
       )}
 
       <div className="stack">

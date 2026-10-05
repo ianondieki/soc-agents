@@ -228,6 +228,28 @@ never ran. Each step names its agent behind its fibre colour, says what it does,
 by hand, the runs and the average. The approval step is the one tinted violet, with what the autonomy
 level lets through on its own.
 
+**Problems.** Four figures (open problems, sites, faults behind them, the commonest cause), then one
+card per problem: its number and state (open amber, monitoring blue), the site by name with its code
+and region, how often it failed (a big number and a dot per fault, up to eight), the cause said as a
+sentence behind its icon ("Power failed 3 times here in 30 days.") and "See its tickets", the Incident
+board filtered to that site. With none, the rule as a picture (three dots, an arrow, "problem") and how
+to make one in the demo.
+
+**Post-incident reviews.** Four figures (reviews, waiting for a reviewer, published, time to restore
+median), the status switch with a count on each, then the list: the site leads, the ticket number and
+priority under it, the status as a pill (draft amber, in review violet, published green), subscribers,
+time to restore (and the adjusted figure when time was stopped) and who signed, a review nobody signed
+saying "Not signed yet" in amber. On a phone each review is a small card: the site and status, then
+three figures. A lane that is switched off (reviews, maintenance, scorecards, contracts) shows one
+panel: a power-off icon, "Switched off", the lane's name and the flag that turns it on.
+
+**Regions.** Five figures (on alert, on watch, open tickets, past restore SLA, open problems), then one
+card per region in the profile's order. A card on alert carries a red rail down its left edge and one on
+watch an amber rail; calm and stale cards none. What is open is two figures (open, past SLA, amber only
+when not zero) and one bar split by priority, with a legend naming only the priorities that have tickets;
+nothing open is one phrase. Then repeat faults, open problems (a link to Problems) and each problem on a
+line: its number, the site, how many times and when last.
+
 **The Wallboard** (always Night, made for a TV across the room). The head: the mark, "NOC wallboard"
 and the operator; on the right the live state as a pill (green dot while live, red words when the wall
 has stopped updating, the escalation count beside it at the same size) and the time in Nairobi, big, in
