@@ -1,0 +1,78 @@
+/* The Workflow map (pages/WorkflowMap.tsx): four figures, then the twelve steps on one line in
+ * five phases. Step numbers are neutral rings (nothing is lit: a lit step would show work that
+ * never ran); the agent's fibre colour is a small identity mark beside its name. The approval
+ * step, where a person decides, is the one tinted violet. */
+
+.wm-figures { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; margin: 0 0 var(--s4); overflow: hidden; border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--line); }
+.wm-figures > div { min-width: 0; padding: 12px 18px 14px; background: var(--surface); }
+.wm-figures dt { overflow: hidden; color: var(--muted); font-size: var(--fs-sm); font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.wm-figures dd { margin: 4px 0 0; color: var(--text-strong); font-size: var(--fs-xl); font-weight: 700; line-height: 1.15; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+.wm-panel { padding: 24px 28px; }
+.wm-phases, .wm-steps { margin: 0; padding: 0; list-style: none; }
+.wm-phase + .wm-phase { margin-top: 18px; }
+/* A phase's name sits on the line, level with the step numbers. */
+/* Scoped under .wm: the panel's own h2 rule (a section title) must not size these. */
+.wm .wm-phase-title { position: relative; margin: 0 0 6px 52px; color: var(--muted); font-size: var(--fs-sm); font-weight: 600; letter-spacing: 0; line-height: 1.4; }
+/* The line carries on past each phase's name (and the gap above it), so it is one line. */
+.wm-phase-title::before { content: ""; position: absolute; left: -35px; top: -18px; bottom: -6px; width: 2px; background: var(--line-strong); }
+.wm-phase:first-child .wm-phase-title::before { display: none; }
+
+/* One step: its number on the line, what it is and does, then three figures. */
+.wm-step { position: relative; display: grid; grid-template-columns: 36px minmax(0, 1fr) auto; align-items: start; column-gap: 16px; padding: 12px 16px 12px 0; }
+/* The line through every number, from the first step to the last. */
+.wm-step::before { content: ""; position: absolute; left: 17px; top: 0; bottom: 0; width: 2px; background: var(--line-strong); }
+.wm-phase:first-child .wm-step:first-child::before { top: 30px; }
+.wm-phase:last-child .wm-step:last-child::before { bottom: auto; height: 30px; }
+.wm-n {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border: 2px solid var(--line-strong);
+  border-radius: 50%;
+  background: var(--surface);
+  color: var(--text-strong);
+  font-family: var(--mono);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+}
+.wm-main { min-width: 0; padding-top: 3px; }
+.wm-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 14px; }
+.wm-head h3 { margin: 0; color: var(--text-strong); font-size: var(--fs-base); font-weight: 700; letter-spacing: -0.01em; }
+.wm-agent { display: inline-flex; align-items: center; gap: 7px; color: var(--muted); font-size: var(--fs-sm); }
+.wm-fibre { flex: none; width: 10px; height: 10px; border-radius: 50%; }
+.wm-fibre.outlined { box-shadow: inset 0 0 0 1px var(--fibre-outline, var(--line-strong)); }
+.wm-does { max-width: 70ch; margin: 4px 0 0; color: var(--text); font-size: var(--fs-sm); line-height: 1.5; }
+
+.wm-nums { display: grid; grid-template-columns: repeat(3, 6.5rem); gap: 0; margin: 2px 0 0; }
+.wm-nums > div { padding: 0 12px; border-left: 1px solid var(--line); }
+.wm-nums dt { color: var(--muted); font-size: 11px; font-weight: 500; white-space: nowrap; }
+.wm-nums dd { margin: 2px 0 0; color: var(--text-strong); font-size: var(--fs-sm); font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* The approval step: a person decides. */
+.wm .wm-phase.human .wm-phase-title { color: var(--hitl-text); }
+.wm-step.human { margin: 4px 0; padding: 14px 16px 14px 0; border-radius: var(--r-md); background: var(--hitl-soft); }
+.wm-step.human .wm-n { border-color: var(--hitl); background: var(--hitl); color: var(--hitl-ink); }
+.wm-step.human .wm-nums dd:first-child, .wm-step.human .wm-nums > div:first-child dd { color: var(--hitl-text); }
+.wm-human-note { margin: 6px 0 0; color: var(--hitl-text); font-size: var(--fs-xs); font-weight: 600; line-height: 1.45; }
+
+.wm-note { margin: 18px 0 0; padding-top: 14px; border-top: 1px solid var(--line); color: var(--muted); font-size: var(--fs-sm); }
+
+@media (max-width: 1099px) {
+  .wm-step { grid-template-columns: 36px minmax(0, 1fr); row-gap: 10px; }
+  .wm-nums { grid-column: 2; grid-template-columns: repeat(3, minmax(0, 7rem)); }
+  .wm-nums > div:first-child { padding-left: 0; border-left: 0; }
+}
+@media (max-width: 600px) {
+  .wm-figures { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .wm-panel { padding: 16px; }
+  .wm-step { grid-template-columns: 30px minmax(0, 1fr); column-gap: 12px; }
+  .wm-step::before { left: 14px; }
+  .wm-n { width: 30px; height: 30px; font-size: var(--fs-xs); }
+  .wm .wm-phase-title { margin-left: 42px; }
+  .wm-phase-title::before { left: -28px; }
+  .wm-nums { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}

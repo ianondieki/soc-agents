@@ -211,6 +211,23 @@ shift: three numbered steps and when it is due, "Prepare the handover"; once pre
 (waiting in Approvals, with a link to that card), the watchlist and the email text. "Download the
 ledger" gives this shift's workbook.
 
+**The Agent observatory.** Five figures (agents, steps run, steps failed, waiting for a person, alarm to
+ticket median), then the twelve agents as cards in pipeline order (two columns on a wide screen) beside
+the live runs, which stay in view as the page scrolls. A card: the agent's fibre marks (one per step it
+runs, identity only), its name and steps, its mission, four small figures (steps, average, failed, last
+step), what an error does (stops the run, or fails only its step), its connections (read only, or how
+many can write with approval) and how many are hosted abroad. "Tools and data" opens its own tools, each
+declared connection (access, maturity, where it runs, why) and what it may and may never see; an open
+card takes the whole row.
+
+**The Workflow map.** Four figures (steps per alarm, minutes by hand per alarm, the agents' median alarm
+to ticket, alarms through so far), then the twelve steps on one line in six phases (take the alarm in,
+work out what it is, open and assign the ticket, a person decides, tell people and keep the record,
+follow up). Step numbers are neutral rings: nothing is lit, because a lit step would show work that
+never ran. Each step names its agent behind its fibre colour, says what it does, and gives the minutes
+by hand, the runs and the average. The approval step is the one tinted violet, with what the autonomy
+level lets through on its own.
+
 **The Wallboard** (always Night, made for a TV across the room). The head: the mark, "NOC wallboard"
 and the operator; on the right the live state as a pill (green dot while live, red words when the wall
 has stopped updating, the escalation count beside it at the same size) and the time in Nairobi, big, in
