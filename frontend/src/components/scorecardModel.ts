@@ -240,7 +240,7 @@ export function statusView(
         watermark: null,
         released: false,
         summary:
-          "Computed, and the data-quality gate passed. This is an internal working paper, visible only to duty_manager, management and admin, until a duty manager publishes it.",
+          "Computed, and the data-quality gate passed. This is an internal working paper, visible only to duty managers, management and admins, until a duty manager publishes it.",
       };
     case "SHADOW":
       return {
@@ -250,7 +250,7 @@ export function statusView(
         watermark: "SHADOW",
         released: false,
         summary:
-          "This is the first period for this vendor under these terms (§7.6.2). Only duty_manager, management and admin can see it. It cannot be published until a named human records a shadow review.",
+          "This is the first period for this vendor under these terms (§7.6.2). Only duty managers, management and admins can see it. It cannot be published until a named human records a shadow review.",
       };
     case "WITHHELD":
       return {
@@ -313,8 +313,8 @@ export function hiddenStatusesNote(role: string | null | undefined): string | nu
   if (roleIn(role, INTERNAL_READERS)) return null;
   const who = (role || "").trim() || "unknown";
   let note =
-    "DRAFT, SHADOW and WITHHELD cards are the operator's working papers, visible only to duty_manager, " +
-    `management and admin. Your role (${who}) is shown PUBLISHED and FINAL cards only.`;
+    "Draft, shadow and withheld cards are the operator's working papers, visible only to duty managers, " +
+    `management and admins. Your role (${who.replace(/_/g, " ")}) is shown published and final cards only.`;
   if (who === "msp_coordinator") {
     note +=
       " Once sign-in is on, an msp_coordinator sees only their own vendor's cards. They see none until the identity provider links them to a vendor (§9.3).";
@@ -411,7 +411,7 @@ export function bandView(band: string | null | undefined): { label: string; chip
   if (b === "RED") return { label: "RED", chip: "chip danger", title: "Below the amber threshold." };
   if (b === "NA")
     return {
-      label: "NA · no band",
+      label: "No band",
       chip: "chip",
       title: "No band: none is configured for this KPI, or nothing was measurable. None is invented (reading 12).",
     };
@@ -716,9 +716,9 @@ export function windowWords(nowMs: number, endMs: number | null): string {
   const hours = Math.floor(left / 3_600_000);
   const days = Math.floor(hours / 24);
   const rest = hours % 24;
-  if (days > 0) return `open · ${days} d ${rest} h left`;
-  if (hours > 0) return `open · ${hours} h left`;
-  return "open · under 1 h left";
+  if (days > 0) return `open, ${days} d ${rest} h left`;
+  if (hours > 0) return `open, ${hours} h left`;
+  return "open, under 1 h left";
 }
 
 export function mayCompute(role: string | null | undefined): boolean {

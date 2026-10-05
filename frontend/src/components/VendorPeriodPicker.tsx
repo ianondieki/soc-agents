@@ -27,9 +27,9 @@ export default function VendorPeriodPicker({
 }) {
   const periodBad = value.period !== "" && !isPeriod(value.period);
   return (
-    <div className="form-row" style={{ marginBottom: 0 }}>
-      <label className="muted">
-        Vendor{" "}
+    <div className="vpp">
+      <label>
+        <span>Vendor</span>
         <select
           value={value.vendor}
           disabled={disabled}
@@ -38,14 +38,13 @@ export default function VendorPeriodPicker({
           <option value="">All vendors</option>
           {vendors.map((v) => (
             <option key={v.code} value={v.code}>
-              {v.code}
-              {v.name && v.name !== v.code ? " (" + v.name + ")" : ""}
+              {v.name && v.name !== v.code ? v.name : v.code}
             </option>
           ))}
         </select>
       </label>
-      <label className="muted">
-        Period (EAT month){" "}
+      <label>
+        <span>Month (EAT)</span>
         <input
           type="month"
           value={value.period}
@@ -56,12 +55,12 @@ export default function VendorPeriodPicker({
         />
       </label>
       {value.period && (
-        <button className="btn" disabled={disabled} onClick={() => onChange({ ...value, period: "" })}>
-          All periods
+        <button className="btn vpp-clear" disabled={disabled} onClick={() => onChange({ ...value, period: "" })}>
+          Every month
         </button>
       )}
-      <label className="muted">
-        Status{" "}
+      <label>
+        <span>Status</span>
         <select
           value={value.status}
           disabled={disabled}
@@ -70,12 +69,12 @@ export default function VendorPeriodPicker({
           <option value="ALL">All I may see</option>
           {SCORECARD_STATUSES.map((s) => (
             <option key={s} value={s}>
-              {humanEnum(s)}
+              {humanEnum(s).replace(/^./, (c) => c.toUpperCase())}
             </option>
           ))}
         </select>
       </label>
-      {periodBad && <span className="chip warn">period must be YYYY-MM; filter ignored</span>}
+      {periodBad && <span className="chip warn">A month is written YYYY-MM; this one is ignored</span>}
     </div>
   );
 }

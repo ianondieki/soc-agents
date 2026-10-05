@@ -20,7 +20,7 @@ import {
 import { humanEnum } from "../lib/agents";
 import { detailOf, statusOf } from "../lib/apiError";
 import { IconCheck, IconDot } from "../lib/icons";
-import { fmtDateTime, parseInstant } from "../lib/time";
+import { fmtDate, fmtDateTime, fmtHM, parseInstant } from "../lib/time";
 
 /**
  * One vendor scorecard (spec §7.6, §7.10): the card, its gates, its 22 lines and the three
@@ -208,249 +208,255 @@ export default function ScorecardDetail({
   };
 
   const anyAction = actions.review.show || actions.publish.show || actions.finalise.show;
+  const st = String(card.status || "").toLowerCase();
+  const who = session?.display_name || "your session name";
 
   return (
-    <div style={{ position: "relative" }}>
+    <div className="scd">
       {/* SHADOW watermark: tiled over the whole card, above the text, faint, never clickable. */}
       {sv.watermark && (
         <div
           aria-hidden="true"
+          className="scd-watermark"
           data-watermark={sv.watermark}
-          style={{
-            position: "absolute",
-            inset: 0,
-            pointerEvents: "none",
-            backgroundImage: watermarkImage(sv.watermark),
-            backgroundRepeat: "repeat",
-            borderRadius: "var(--radius)",
-            zIndex: 2,
-          }}
+          style={{ backgroundImage: watermarkImage(sv.watermark) }}
         />
       )}
-      <div className="panel">
+      <section className="panel scd-panel" aria-labelledby="scd-title">
         {/* ---- header ------------------------------------------------------------ */}
-        <div className="panel-head" style={{ flexWrap: "wrap" }}>
-          <div>
-            <h2 className="panel-title head-row" style={{ margin: 0 }}>
-              {card.vendor_code || "vendor " + card.vendor_id}
-              {card.vendor_name ? <span className="muted">{card.vendor_name}</span> : null}
+        <header className="scd-head">
+          <div className="scd-head-main">
+            <h2 id="scd-title" className="scd-title">
+              {card.vendor_name || card.vendor_code || "vendor " + card.vendor_id}
             </h2>
-            <div className="facts">
-              <span>
-                Period {card.period} ({periodWords(card.period)}, EAT calendar month)
-              </span>
+            <p className="scd-sub">
+              {card.vendor_name && card.vendor_code && card.vendor_name !== card.vendor_code && (
+                <span className="mono">{card.vendor_code}</span>
+              )}
+              <span>{periodWords(card.period)}, an EAT calendar month</span>
               <span>SLA terms {card.sla_terms_version}</span>
-            </div>
+            </p>
           </div>
-          <div className="facts">
-            <span className={sv.chip}>{humanEnum(sv.label)}</span>
-            <span>{humanEnum(sv.tag)}</span>
-            {terms.kind === "CONTRACT" ? (
-              <span>{humanEnum(terms.label)}</span>
-            ) : (
-              <span className="attn warn">
-                <IconDot /> {humanEnum(terms.label)}
-              </span>
-            )}
-            {card.shadow_reviewed_by ? <span>Shadow-reviewed by {card.shadow_reviewed_by}</span> : null}
+          <div className="scd-state">
+            <span className={`sc-pill ${st}`}>{sentence(humanEnum(sv.label))}</span>
+            <span className="scd-tag">{sentence(humanEnum(sv.tag))}</span>
             {refreshing ? <span role="status">Refreshing…</span> : null}
           </div>
-        </div>
-        <p className="muted" style={{ marginTop: 0 }}>
-          {sv.summary}
-        </p>
+        </header>
+        <p className="scd-summary">{sv.summary}</p>
 
         {/* ---- "defaults, not contract": never dismissible (§7.6.6) --------------- */}
         {terms.kind !== "CONTRACT" ? (
-          <div style={NOTICE}>
-            <span className="chip warn">{humanEnum(terms.label)}</span>
+          <div className="scd-notice">
+            <IconDot />
             <div>
-              <div>{terms.text}</div>
-              <div className="muted" style={{ marginTop: "0.25rem" }}>
-                Every band, target and credit figure on this card rests on these terms. Read them as placeholders, not as
-                anything a vendor agreed to.
+              <strong>{sentence(humanEnum(terms.label))}.</strong> {terms.text.replace(/^defaults, not contract:\s*/i, "").replace(/^./, (c) => c.toUpperCase())}
+              <div className="scd-notice-sub">
+                Every band, target and credit on this card rests on these terms. Read them as placeholders, not as anything a
+                vendor agreed to.
               </div>
             </div>
           </div>
         ) : (
-          <div className="muted" style={{ marginBottom: "0.6rem" }}>
-            Terms: {terms.text}
-          </div>
+          <p className="scd-terms">Terms: {terms.text}</p>
         )}
 
         {/* ---- WITHHELD: the gate, with its numbers -------------------------------- */}
         {sv.label === "WITHHELD" && (
-          <div style={WITHHELD_BOX}>
-            <div style={{ display: "flex", gap: "0.55rem", alignItems: "center", flexWrap: "wrap" }}>
-              <span className="chip danger">withheld</span>
-              <strong style={{ fontSize: "var(--fs-lg)", color: "var(--text-bright)" }}>The data-quality gate failed</strong>
-            </div>
-            <div style={{ marginTop: "0.45rem", color: "var(--text-bright)" }}>{gate.sentence}</div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: "0.5rem", marginTop: "0.6rem" }}>
-              <Fact label="Inferred restores" value={`${gate.inferred} of ${gate.restored}`} />
-              <Fact label="Inferred share" value={gate.pct} />
-              <Fact label="Limit" value={gate.threshold} note={gate.yamlPath} />
-              <Fact label="Eligible tickets" value={gate.incidents} />
-            </div>
-            {gate.bySource.length > 0 && (
-              <div className="muted" style={{ marginTop: "0.5rem" }}>
-                Inferred by source: {gate.bySource.map(([src, n]) => `${src} ${n}`).join(", ")}
+          <div className="scd-withheld">
+            <h3>The data-quality gate failed</h3>
+            <p>{gate.sentence}</p>
+            <dl className="scd-facts scd-facts-gate">
+              <div>
+                <dt>Inferred restores</dt>
+                <dd>
+                  {gate.inferred} of {gate.restored}
+                </dd>
               </div>
+              <div>
+                <dt>Inferred share</dt>
+                <dd>{gate.pct}</dd>
+              </div>
+              <div>
+                <dt>Limit</dt>
+                <dd>{gate.threshold}</dd>
+                <dd className="scd-fact-note mono">{gate.yamlPath}</dd>
+              </div>
+              <div>
+                <dt>Eligible tickets</dt>
+                <dd>{gate.incidents}</dd>
+              </div>
+            </dl>
+            {gate.bySource.length > 0 && (
+              <p className="scd-withheld-more">Inferred by source: {gate.bySource.map(([src, n]) => `${humanEnum(src)} ${n}`).join(", ")}</p>
             )}
             {gate.inferredIncidents.length > 0 && (
-              <div className="muted" style={{ marginTop: "0.25rem" }}>
-                Tickets whose restore time was inferred:{" "}
-                <span style={{ fontFamily: "var(--mono)", color: "var(--text)" }}>{gate.inferredIncidents.join(", ")}</span>
-              </div>
+              <p className="scd-withheld-more">
+                Tickets whose restore time was inferred: <span className="mono">{gate.inferredIncidents.join(", ")}</span>
+              </p>
             )}
-            {gate.reason && (
-              <div className="pre" style={{ marginTop: "0.55rem" }}>
-                {gate.reason}
-              </div>
-            )}
+            {gate.reason && <div className="pre">{gate.reason}</div>}
           </div>
         )}
 
         {/* ---- facts ------------------------------------------------------------- */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: "0.55rem", margin: "0.4rem 0 0.9rem" }}>
-          <Fact label="Computed (EAT)" value={fmtDateTime(card.computed_at)} small />
-          <Fact
-            label="Data-quality gate"
-            value={gate.passed === true ? "Passed" : gate.passed === false ? "Failed" : "Not recorded"}
-            note={sv.label === "WITHHELD" ? null : `${gate.inferred} of ${gate.restored} restores inferred (${gate.pct}); limit ${gate.threshold}`}
-            small
-          />
-          <Fact
-            label="Shadow review"
-            value={card.shadow_reviewed_by ? card.shadow_reviewed_by : card.shadow_required ? "Required, not yet recorded" : "Not required"}
-            note={card.shadow_reviewed_at ? fmtDateTime(card.shadow_reviewed_at) + " EAT" : null}
-            small
-          />
-          {card.published_at && <Fact label="Published (EAT)" value={fmtDateTime(card.published_at)} small />}
-          {card.dispute_window_ends_at && (
-            <Fact
-              label="Dispute window closes (EAT)"
-              value={fmtDateTime(card.dispute_window_ends_at)}
-              note={windowWords(now, windowEnds)}
-              small
-            />
+        <dl className="scd-facts">
+          <div className={gate.passed === false ? "bad" : undefined}>
+            <dt>Data-quality gate</dt>
+            <dd>{gate.passed === true ? "Passed" : gate.passed === false ? "Failed" : "Not recorded"}</dd>
+            {sv.label !== "WITHHELD" && (
+              <dd className="scd-fact-note">
+                {gate.inferred} of {gate.restored} restores inferred ({gate.pct}), limit {gate.threshold}
+              </dd>
+            )}
+          </div>
+          <div className={card.shadow_required && !card.shadow_reviewed_by ? "hitl" : undefined}>
+            <dt>Shadow review</dt>
+            <dd>{card.shadow_reviewed_by ? card.shadow_reviewed_by : card.shadow_required ? "Not yet recorded" : "Not required"}</dd>
+            <dd className="scd-fact-note">
+              {card.shadow_reviewed_at ? when(card.shadow_reviewed_at) : card.shadow_required ? "Needed before it can be published" : " "}
+            </dd>
+          </div>
+          {card.dispute_window_ends_at ? (
+            <div>
+              <dt>Disputes close</dt>
+              <dd>{when(card.dispute_window_ends_at)}</dd>
+              <dd className="scd-fact-note">{sentence(windowWords(now, windowEnds))}</dd>
+            </div>
+          ) : (
+            <div>
+              <dt>Published</dt>
+              <dd>{card.published_at ? when(card.published_at) : "Not yet"}</dd>
+              <dd className="scd-fact-note">{card.finalised_at ? `Finalised ${when(card.finalised_at)}` : " "}</dd>
+            </div>
           )}
-          {card.finalised_at && <Fact label="Finalised (EAT)" value={fmtDateTime(card.finalised_at)} small />}
-          <Fact label="Computed by run" value={card.computed_by_run_id} small mono />
-        </div>
+          <div>
+            <dt>Computed</dt>
+            <dd>{when(card.computed_at)}</dd>
+            <dd className="scd-fact-note mono" title="The run that computed this card">
+              {card.computed_by_run_id}
+            </dd>
+          </div>
+        </dl>
 
         {/* ---- human acts ---------------------------------------------------------- */}
         {(anyAction || actions.none) && (
-          <div style={{ borderTop: "1px solid var(--border)", paddingTop: "0.7rem", marginTop: "0.2rem" }}>
-            <h3 style={SUBHEAD}>Actions</h3>
-            {actions.none && <div className="muted">{actions.none}</div>}
+          <section className="scd-actions" aria-labelledby="scd-actions-title">
+            <h3 id="scd-actions-title" className="scd-h3">
+              What a person does next
+            </h3>
+            {actions.none && <p className="scd-muted">{actions.none}</p>}
             {anyAction && !actions.roleMayAct && (
-              <div className="muted">
-                Shadow review, publish and finalise are duty_manager / admin acts (§7.6.3). Your role ({role || "unknown"}) can read this card only.
-              </div>
+              <p className="scd-muted">
+                Shadow review, publish and finalise are a duty manager's or an admin's acts (§7.6.3). Your role (
+                {role ? role.replace(/_/g, " ") : "unknown"}) can read this card only.
+              </p>
             )}
             {anyAction && actions.roleMayAct && (
-              <>
-                <div className="form-row">
+              <div className="scd-forms">
+                <label
+                  className="scd-field"
+                  title={`A person's name. The server requires letters, strips invisible characters and refuses automation names such as "system" (400). With sign-in on, the server records the signed-in user and ignores this field.`}
+                >
+                  <span>Recorded as</span>
                   <input
                     aria-label="Your name, recorded as the actor"
-                    placeholder={"Your name (default: " + (session?.display_name || "the session name") + ")"}
+                    placeholder={who}
                     value={actor}
                     disabled={busy}
                     onChange={(e) => setActor(e.target.value)}
-                    style={{ minWidth: "18rem" }}
                   />
-                  <span className="muted">
-                    A person's name. The server requires letters, strips invisible characters and refuses automation names such as
-                    "system" (400). Left empty, the session's display name is recorded. With sign-in on, the server records the
-                    signed-in user and ignores this field.
-                  </span>
-                </div>
+                  <small>Left empty, {who} is recorded.</small>
+                </label>
 
                 {actions.review.show && (
-                  <div className="form-row">
-                    <input
-                      aria-label="What did you check? (required)"
-                      placeholder="What did you check? (required)"
-                      value={rationale}
-                      disabled={busy}
-                      onChange={(e) => setRationale(e.target.value)}
-                      style={{ minWidth: "24rem", flex: 1 }}
-                    />
+                  <div className="scd-act">
+                    <label className="scd-field">
+                      <span>Shadow review: what did you check?</span>
+                      <input
+                        aria-label="What did you check? (required)"
+                        placeholder="Required"
+                        value={rationale}
+                        disabled={busy}
+                        onChange={(e) => setRationale(e.target.value)}
+                      />
+                      <small>Records that you inspected this first card. It does not publish it.</small>
+                    </label>
                     <button className="btn primary" disabled={busy || !actions.review.enabled || !rationale.trim()} onClick={() => act("review")}>
                       Record shadow review
                     </button>
-                    <span className="muted">Records that you inspected this first card. It does not publish it.</span>
                   </div>
                 )}
 
                 {actions.publish.show && (
-                  <div className="form-row">
-                    <input
-                      aria-label="Reason for releasing it (required)"
-                      placeholder="Reason for releasing it (required)"
-                      value={reason}
-                      disabled={busy || !actions.publish.enabled}
-                      onChange={(e) => setReason(e.target.value)}
-                      style={{ minWidth: "24rem", flex: 1 }}
-                    />
+                  <div className="scd-act">
+                    <label className="scd-field">
+                      <span>Publish: why release it?</span>
+                      <input
+                        aria-label="Reason for releasing it (required)"
+                        placeholder="Required"
+                        value={reason}
+                        disabled={busy || !actions.publish.enabled}
+                        onChange={(e) => setReason(e.target.value)}
+                      />
+                      <small>
+                        {actions.publish.why ||
+                          "The vendor may then see it and the dispute window starts. It cannot be recomputed afterwards. Nothing is sent to anyone."}
+                      </small>
+                    </label>
                     <button className="btn good" disabled={busy || !actions.publish.enabled || !reason.trim()} onClick={() => act("publish")}>
                       Publish to vendor
                     </button>
-                    <span className="muted">
-                      {actions.publish.why ||
-                        "Releases the card: the vendor may see it and the dispute window starts. It cannot be recomputed afterwards. Nothing is sent to anyone."}
-                    </span>
                   </div>
                 )}
 
                 {actions.finalise.show && (
-                  <div className="form-row">
-                    <input
-                      aria-label="Reason for finalising (optional)"
-                      placeholder="Reason (optional)"
-                      value={finaliseReason}
-                      disabled={busy || !actions.finalise.enabled}
-                      onChange={(e) => setFinaliseReason(e.target.value)}
-                      style={{ minWidth: "20rem", flex: 1 }}
-                    />
+                  <div className="scd-act">
+                    <label className="scd-field">
+                      <span>Finalise: reason (optional)</span>
+                      <input
+                        aria-label="Reason for finalising (optional)"
+                        placeholder="Optional"
+                        value={finaliseReason}
+                        disabled={busy || !actions.finalise.enabled}
+                        onChange={(e) => setFinaliseReason(e.target.value)}
+                      />
+                      <small>
+                        {actions.finalise.why
+                          ? actions.finalise.why +
+                            (card.dispute_window_ends_at ? ` It closes ${fmtDateTime(card.dispute_window_ends_at)} EAT (${windowWords(now, windowEnds)}).` : "")
+                          : "The window has closed. The server also refuses while any line has an open dispute."}
+                      </small>
+                    </label>
                     <button className="btn" disabled={busy || !actions.finalise.enabled} onClick={() => act("finalise")}>
                       Finalise
                     </button>
-                    <span className="muted">
-                      {actions.finalise.why
-                        ? actions.finalise.why +
-                          (card.dispute_window_ends_at ? ` It closes ${fmtDateTime(card.dispute_window_ends_at)} EAT (${windowWords(now, windowEnds)}).` : "")
-                        : "The window has closed. The server also refuses while any line has an open dispute."}
-                    </span>
                   </div>
                 )}
-              </>
+              </div>
             )}
             {actionNote && (
-              <span className="muted" role="status">
+              <p className="scd-done" role="status">
                 <IconCheck /> {actionNote}
-              </span>
+              </p>
             )}
             {actionFailure && (
-              <div style={{ ...NOTICE, margin: "0.5rem 0" }} role="status">
+              <div className="sc-alert" role="status">
                 <span className="chip warn">{actionFailure.view.title}</span>
                 <div>
                   <div>{actionFailure.view.body}</div>
-                  {actionFailure.detail && <div className="pre" style={{ marginTop: "0.35rem" }}>{actionFailure.detail}</div>}
+                  {actionFailure.detail && <div className="pre">{actionFailure.detail}</div>}
                 </div>
               </div>
             )}
-          </div>
+          </section>
         )}
 
         {/* ---- lines ------------------------------------------------------------- */}
-        <h3 style={SUBHEAD} className="head-row">
-          Lines
-          <span className="muted">{lines.length} lines</span>
-          <span className="muted">raw beside normalised, never instead of it</span>
-          <span className="muted">select a line for its formula and evidence</span>
-        </h3>
+        <div className="scd-lines-head">
+          <h3 className="scd-h3">The {lines.length} lines</h3>
+          <span className="scd-muted">Raw beside normalised, never instead of it. Open a line for its formula and evidence.</span>
+        </div>
         <ScorecardLinesTable
           lines={lines}
           canDispute={dispute.canDispute}
@@ -460,52 +466,45 @@ export default function ScorecardDetail({
         />
 
         {/* ---- operator discipline: OUR record-keeping, shown to the vendor -------- */}
-        <h3 style={SUBHEAD} className="head-row">
-          Operator discipline
-          <span className="muted">the operator's own record-keeping; it moves no vendor KPI</span>
-        </h3>
-        <div className="facts">
-          <span>
-            Stop clocks recorded: <strong style={{ color: "var(--text)" }}>{d.scc_events ?? "not recorded"}</strong>
-          </span>
-          <span>
-            Recorded more than {d.late_scc_opening_threshold_min ?? "?"} min after they started:{" "}
-            <strong style={{ color: "var(--text)" }}>{d.late_scc_openings ?? "not recorded"}</strong>
-          </span>
-        </div>
-        {(d.late_scc_opening_events || []).length > 0 && (
-          <div className="muted" style={{ marginTop: "0.25rem" }}>
-            Late openings:{" "}
-            {(d.late_scc_opening_events || [])
-              .map(
-                (ev) =>
-                  `${ev.incident} ${humanEnum(ev.scc_code)} +${ev.opening_delay_min} min${ev.reversed ? " (reversed)" : ""}`
-              )
-              .join("; ")}
-          </div>
-        )}
-        <div className="facts" style={{ marginTop: "0.25rem" }}>
-          <span>
-            Missing utility-power stop clock with confirmed planned power:{" "}
-            <strong style={{ color: "var(--text)" }}>
-              {d.missing_scc_with_confirmed_power == null ? "not computed" : String(d.missing_scc_with_confirmed_power)}
-            </strong>
-          </span>
+        <div className="scd-discipline">
+          <h3 className="scd-h3">Operator discipline</h3>
+          <p className="scd-muted">The operator's own record-keeping. It moves no vendor figure.</p>
+          <dl className="scd-facts scd-facts-small">
+            <div>
+              <dt>Stop clocks recorded</dt>
+              <dd>{d.scc_events ?? "Not recorded"}</dd>
+            </div>
+            <div>
+              <dt>Recorded over {d.late_scc_opening_threshold_min ?? "?"} min late</dt>
+              <dd>{d.late_scc_openings ?? "Not recorded"}</dd>
+            </div>
+            <div>
+              <dt>Planned power cut with no stop clock</dt>
+              <dd>{d.missing_scc_with_confirmed_power == null ? "Not computed" : String(d.missing_scc_with_confirmed_power)}</dd>
+            </div>
+          </dl>
+          {(d.late_scc_opening_events || []).length > 0 && (
+            <p className="scd-muted">
+              Late openings:{" "}
+              {(d.late_scc_opening_events || [])
+                .map((ev) => `${ev.incident} ${humanEnum(ev.scc_code)} +${ev.opening_delay_min} min${ev.reversed ? " (reversed)" : ""}`)
+                .join("; ")}
+            </p>
+          )}
           {d.missing_scc_with_confirmed_power == null && d.missing_scc_with_confirmed_power_note ? (
-            <span>{d.missing_scc_with_confirmed_power_note}</span>
+            <p className="scd-muted">{sentence(d.missing_scc_with_confirmed_power_note)}</p>
           ) : null}
         </div>
 
         {card.narrative && (
           <>
-            <h3 style={SUBHEAD} className="head-row">
-              Narrative
-              {card.narrative_ai_assisted ? <span className="muted">AI-assisted</span> : null}
+            <h3 className="scd-h3">
+              Narrative{card.narrative_ai_assisted ? <span className="scd-muted"> AI-assisted</span> : null}
             </h3>
             <div className="pre">{card.narrative}</div>
           </>
         )}
-      </div>
+      </section>
 
       {selected && (
         <LineDrawer
@@ -518,54 +517,14 @@ export default function ScorecardDetail({
           cardTitle={[...titleParts, humanEnum(sv.label)]}
           watermark={sv.watermark}
           onClose={closeDrawer}
+          canDispute={dispute.canDispute}
+          disputeReason={dispute.reason}
         />
       )}
     </div>
   );
 }
 
-const SUBHEAD = { margin: "1.05rem 0 0.5rem", fontSize: "var(--fs-md)", color: "var(--text-bright)" } as const;
-
-const NOTICE = {
-  display: "flex",
-  gap: "0.6rem",
-  alignItems: "flex-start",
-  margin: "0 0 0.75rem",
-  padding: "0.6rem 0.75rem",
-  border: "1px solid var(--warn-line)",
-  background: "var(--warn-faint)",
-  borderRadius: 10,
-} as const;
-
-const WITHHELD_BOX = {
-  border: "3px solid var(--p1)",
-  background: "var(--danger-soft)",
-  borderRadius: 12,
-  padding: "0.8rem 1rem",
-  margin: "0 0 0.9rem",
-} as const;
-
-function Fact({ label, value, note, small, mono }: { label: string; value: string; note?: string | null; small?: boolean; mono?: boolean }) {
-  return (
-    <div style={{ border: "1px solid var(--border)", borderRadius: 10, padding: "0.5rem 0.65rem", background: "var(--surface-raised)" }}>
-      <div style={{ fontSize: "var(--fs-xs)", color: "var(--muted)" }}>{label}</div>
-      <div
-        style={{
-          fontFamily: mono ? "var(--mono)" : undefined,
-          fontSize: small ? (mono ? "var(--fs-xs)" : "var(--fs-md)") : "var(--fs-lg)",
-          // Never bold and mono together: an identifier or a measurement is set at 500.
-          fontWeight: mono ? 500 : 600,
-          color: "var(--text-bright)",
-          wordBreak: "break-word",
-        }}
-      >
-        {value}
-      </div>
-      {note ? (
-        <div className="muted" style={{ fontSize: "var(--fs-xs)", marginTop: "0.15rem", wordBreak: "break-word" }}>
-          {note}
-        </div>
-      ) : null}
-    </div>
-  );
-}
+const sentence = (s: string) => (s ? s[0].toUpperCase() + s.slice(1) : s);
+/** "20 Oct 2026, 00:00" in EAT: the day and the minute, without seconds. */
+const when = (v: unknown) => `${fmtDate(v)}, ${fmtHM(v)}`;

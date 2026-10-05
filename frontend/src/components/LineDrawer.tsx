@@ -45,6 +45,8 @@ export default function LineDrawer({
   cardTitle,
   watermark,
   onClose,
+  canDispute = false,
+  disputeReason = "",
 }: {
   formula: string;
   yaml_path: string;
@@ -57,6 +59,10 @@ export default function LineDrawer({
   /** The card's watermark text, or null. */
   watermark: string | null;
   onClose: () => void;
+  /** From `scorecardModel.disputeAffordance()`: false while the backend has no dispute route. */
+  canDispute?: boolean;
+  /** Why disputing is unavailable, shown beside the disabled control. */
+  disputeReason?: string;
 }) {
   const panelRef = useRef<HTMLDivElement | null>(null);
   // The parent passes a fresh closure each render. Reading it through a ref keeps the effect
@@ -275,15 +281,27 @@ export default function LineDrawer({
           )}
           {credit && <div className="muted" style={{ marginTop: "0.3rem" }}>{credit.title}</div>}
 
+          {/* The dispute control lives here, once per line, rather than as a disabled button on
+              every row of the table. Disabled with its reason until the route exists (C-02). */}
+          <h3 style={SUBHEAD}>Dispute</h3>
           {dispute && (
             <>
-              <h3 style={SUBHEAD}>Dispute</h3>
               <span className="chip accent">{humanEnum(dispute.label)}</span>
               {dispute.detail ? <span className="muted"> {dispute.detail}</span> : null}
               {line.adjudicated_by ? <div className="muted">Adjudicated by {line.adjudicated_by}</div> : null}
               {line.adjudication_reason ? <div className="pre">{line.adjudication_reason}</div> : null}
             </>
           )}
+          <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "0.5rem", marginTop: dispute ? "0.5rem" : 0 }}>
+            <button className="btn sm" disabled={!canDispute} aria-describedby={canDispute ? undefined : "line-dispute-why"}>
+              Dispute this line
+            </button>
+            {!canDispute && (
+              <span id="line-dispute-why" className="muted">
+                {disputeReason || "Disputes are not available yet."}
+              </span>
+            )}
+          </div>
         </div>
       </div>
     </>

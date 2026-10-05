@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Calculator, ChevronDown, RefreshCw } from "lucide-react";
 import LaneOff from "../components/LaneOff";
 import VendorPeriodPicker, { type PickerValue } from "../components/VendorPeriodPicker";
 import ScorecardDetail from "../components/ScorecardDetail";
@@ -19,8 +20,9 @@ import {
 } from "../components/scorecardModel";
 import { humanEnum } from "../lib/agents";
 import { detailOf, statusOf } from "../lib/apiError";
-import { IconCheck, IconDot } from "../lib/icons";
-import { fmtDateTime } from "../lib/time";
+import { IconCheck } from "../lib/icons";
+import { fmtDate, fmtHM } from "../lib/time";
+import "./Scorecards.css";
 
 /**
  * `ScorecardsPage` (spec §7.10, §7.6): vendor scorecards as evidence, not verdicts.
@@ -162,11 +164,11 @@ export default function Scorecards({ session }: { session: Session }) {
           className="lead"
           title="Every line carries its formula and the contract term it was measured against, and raw and normalised values sit side by side. Nothing on this page sends anything to a vendor."
         >
-          Evidence, not verdicts: each line shows its formula and term. Times in EAT.
+          Each vendor's month against its terms. Evidence, not verdicts: every figure shows its formula. Times in EAT.
         </p>
       </div>
       <div className="page-actions">
-        <span className="muted">Viewing as {role ? roleWords(role) : "unknown role"}</span>
+        <span className="sc-role">Viewing as {role ? roleWords(role) : "unknown role"}</span>
       </div>
     </div>
   );
@@ -199,22 +201,58 @@ export default function Scorecards({ session }: { session: Session }) {
   }
 
   const hiddenNote = hiddenStatusesNote(role);
+  const statusCount = (...wanted: string[]) => rows.filter((r) => wanted.includes(String(r.status || "").toUpperCase())).length;
+  const released = statusCount("PUBLISHED", "FINAL");
+  const toReview = statusCount("DRAFT", "SHADOW");
+  const withheld = statusCount("WITHHELD");
+  const latest = rows.reduce((max, r) => (isPeriod(r.period) && r.period > max ? r.period : max), "");
+  const filtered = Boolean(filters.vendor || filters.period || filters.status !== "ALL");
 
   return (
-    <div>
+    <div className="sc">
       {heading}
 
-      <div className="panel" style={{ marginBottom: "1rem" }}>
-        <VendorPeriodPicker vendors={vendorOptions} value={filters} onChange={setFilters} />
-        <div className="form-row" style={{ marginTop: "0.6rem", marginBottom: 0 }}>
-          <button className="btn" onClick={reload}>
+      {loaded && !listFailure && (
+        <dl className="sc-figures">
+          <div>
+            <dt>{filtered ? "Cards shown" : "Cards"}</dt>
+            <dd>{rows.length}</dd>
+          </div>
+          <div className={released ? "ok" : undefined}>
+            <dt>Released to vendors</dt>
+            <dd>{released}</dd>
+          </div>
+          <div className={toReview ? "hitl" : undefined}>
+            <dt>Waiting for a person</dt>
+            <dd>{toReview}</dd>
+          </div>
+          <div className={withheld ? "bad" : undefined}>
+            <dt>Withheld by the gate</dt>
+            <dd>{withheld}</dd>
+          </div>
+          <div>
+            <dt>Latest month</dt>
+            <dd className="sc-figure-word">{latest ? periodWords(latest) : "—"}</dd>
+          </div>
+        </dl>
+      )}
+
+      <div className="panel sc-toolbar">
+        <div className="sc-toolbar-row">
+          <VendorPeriodPicker vendors={vendorOptions} value={filters} onChange={setFilters} />
+          <button className="btn sc-refresh" onClick={reload} title="Fetch the cards again">
+            <RefreshCw size={15} strokeWidth={1.75} aria-hidden="true" />
             Refresh
           </button>
-          {mayCompute(role) && (
-            <>
-              <span style={{ flex: 1 }} />
-              <label className="muted">
-                Compute{" "}
+        </div>
+        {mayCompute(role) && (
+          <div className="sc-compute">
+            <span className="sc-compute-title" id="sc-compute-title">
+              Compute an ended month
+            </span>
+            <div className="sc-compute-row" role="group" aria-labelledby="sc-compute-title">
+              <label>
+                <span>Month</span>
                 <input
                   type="month"
                   value={computePeriod}
@@ -223,180 +261,152 @@ export default function Scorecards({ session }: { session: Session }) {
                   title="Blank: the last month that has ended"
                 />
               </label>
-              <select
-                aria-label="Vendor to compute"
-                value={computeVendor}
-                disabled={computing}
-                onChange={(e) => setComputeVendor(e.target.value)}
-              >
-                <option value="">every vendor with tickets</option>
-                {vendorOptions.map((v) => (
-                  <option key={v.code} value={v.code}>
-                    {v.code}
-                  </option>
-                ))}
-              </select>
+              <label>
+                <span>Vendor</span>
+                <select value={computeVendor} disabled={computing} onChange={(e) => setComputeVendor(e.target.value)}>
+                  <option value="">Every vendor with tickets</option>
+                  {vendorOptions.map((v) => (
+                    <option key={v.code} value={v.code}>
+                      {v.name && v.name !== v.code ? v.name : v.code}
+                    </option>
+                  ))}
+                </select>
+              </label>
               <button
                 className="btn"
                 disabled={computing || (computePeriod !== "" && !isPeriod(computePeriod))}
                 onClick={compute}
                 title="Computes draft, shadow or withheld cards for an ended month. It cannot publish, and it refuses (409) a card that is already published or final."
               >
-                {computing ? "Computing…" : "Compute period"}
+                <Calculator size={15} strokeWidth={1.75} aria-hidden="true" />
+                {computing ? "Computing…" : "Compute"}
               </button>
-            </>
-          )}
-        </div>
+              <span className="sc-compute-note">Makes working papers only; it never publishes or sends anything.</span>
+            </div>
+          </div>
+        )}
         {computeResult && (
-          <div className="muted" style={{ marginTop: "0.5rem" }} role="status">
-            <IconCheck /> Period {computeResult.period}: {computeResult.computed} computed,{" "}
-            {computeResult.skipped} skipped. Run <span className="mono wrap">{computeResult.run_id}</span>.
+          <div className="sc-result" role="status">
+            <IconCheck /> {periodWords(computeResult.period)}: {computeResult.computed} computed, {computeResult.skipped} skipped.
             {computeResult.computed_detail && computeResult.computed_detail.length > 0 && (
-              <div>Computed: {computeResult.computed_detail.join("; ")}</div>
-            )}
-            {computeResult.skipped_detail && computeResult.skipped_detail.length > 0 && (
-              <div>Skipped: {computeResult.skipped_detail.join("; ")}</div>
+              <div>Computed: {computeResult.computed_detail.map((x) => x.replace(":", " ")).join(", ")}.</div>
             )}
             {!computeResult.computed_detail && (
               <div>Your role is told the counts only. Which vendor came out shadow or withheld is visible to duty managers, management and admins.</div>
             )}
+            <div className="sc-result-run">
+              Run <span className="mono">{computeResult.run_id}</span>
+            </div>
           </div>
         )}
         {computeFailure && (
-          <div style={FAILURE_BOX} role="status">
+          <div className="sc-alert" role="status">
             <span className="chip warn">{computeFailure.view.title}</span>
             <div>
               <div>{computeFailure.view.body}</div>
-              {computeFailure.detail && <div className="pre" style={{ marginTop: "0.35rem" }}>{computeFailure.detail}</div>}
+              {computeFailure.detail && <div className="pre">{computeFailure.detail}</div>}
             </div>
           </div>
         )}
       </div>
 
       {listFailure && (
-        <div style={FAILURE_BOX} role="status">
+        <div className="sc-alert" role="status">
           <span className="chip warn">{listFailure.view.title}</span>
           <div>
             <div>{listFailure.view.body}</div>
-            {listFailure.detail && <div className="pre" style={{ marginTop: "0.35rem" }}>{listFailure.detail}</div>}
+            {listFailure.detail && <div className="pre">{listFailure.detail}</div>}
           </div>
         </div>
       )}
 
-      <div className="panel">
+      <section className="panel sc-panel" aria-labelledby="sc-cards">
         <div className="panel-head">
-          <h2 className="panel-title">Cards</h2>
-          <span className="muted">{rows.length} shown</span>
+          <h2 id="sc-cards" className="panel-title">
+            Cards
+          </h2>
+          <span className="muted">Open one for its lines, formulas and evidence</span>
         </div>
-        <div style={{ overflowX: "auto" }}>
-          <table>
-            <thead>
-              <tr>
-                <th>Vendor</th>
-                <th>Period</th>
-                <th>Status</th>
-                <th>Data-quality gate</th>
-                <th>Terms</th>
-                <th>Computed (EAT)</th>
-                <th>Dispute window closes (EAT)</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => {
-                const sv = statusView(r.status);
-                const gate = gateView(r.data_quality);
-                const terms = termsView(r);
-                return (
-                  <tr
-                    key={r.id}
-                    tabIndex={0}
-                    aria-selected={selected === r.id}
-                    onClick={() => openCard(r.id)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" || e.key === " ") {
-                        e.preventDefault();
-                        openCard(r.id);
-                      }
-                    }}
-                    style={{ cursor: "pointer", background: selected === r.id ? "var(--accent-soft)" : undefined }}
-                  >
-                    <td>
-                      <strong>{r.vendor_code || r.vendor_id}</strong>
-                      {r.vendor_name ? <div className="muted">{r.vendor_name}</div> : null}
-                    </td>
-                    <td>
-                      {r.period}
-                      <div className="muted">{periodWords(r.period)}</div>
-                    </td>
-                    <td>
-                      <span className={sv.chip}>{humanEnum(sv.label)}</span>
-                      <div className="muted">{humanEnum(sv.tag)}</div>
-                    </td>
-                    <td>
-                      {/* One chip per row (the status). The gate and the terms are facts: plain when
-                          normal, the attention dot when they are not. */}
-                      {gate.passed === true ? (
-                        <span>passed</span>
-                      ) : (
-                        <span className={"attn " + (gate.passed === false ? "danger" : "warn")}>
-                          <IconDot /> {gate.passed === false ? "failed" : "not recorded"}
-                        </span>
-                      )}
-                      <div className="facts">
-                        <span>
-                          {gate.inferred} of {gate.restored} inferred ({gate.pct})
-                        </span>
-                        <span>limit {gate.threshold}</span>
-                      </div>
-                    </td>
-                    <td>
-                      {terms.kind === "CONTRACT" ? (
-                        <span>{humanEnum(terms.label)}</span>
-                      ) : (
-                        <span className="attn warn">
-                          <IconDot /> {humanEnum(terms.label)}
-                        </span>
-                      )}
-                    </td>
-                    <td className="muted">{fmtDateTime(r.computed_at)}</td>
-                    <td className="muted">{r.dispute_window_ends_at ? fmtDateTime(r.dispute_window_ends_at) : "—"}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-        {loaded && rows.length === 0 && !listFailure && (
-          <div className="empty">
-            No scorecards match these filters.
-            {(filters.vendor || filters.period || filters.status !== "ALL") && (
-              <>
-                {" "}
-                <button className="btn sm" onClick={() => setFilters({ vendor: "", period: "", status: "ALL" })}>
-                  Clear filters
-                </button>
-              </>
-            )}
-            {hiddenNote ? <div style={{ marginTop: "0.4rem" }}>{hiddenNote}</div> : null}
-            <div style={{ marginTop: "0.4rem" }}>
-              Cards are computed per ended EAT month. The hourly <code>scorecard_close</code> job does this when the
-              scheduler is on, or a shift supervisor and above can use Compute above.
-            </div>
-          </div>
-        )}
+
         {!loaded && (
           <div className="skeleton-rows" aria-hidden="true">
             <span className="skeleton" />
             <span className="skeleton" />
             <span className="skeleton" />
-            <span className="skeleton" />
           </div>
         )}
-        {loaded && rows.length > 0 && hiddenNote && <div className="muted" style={{ marginTop: "0.5rem" }}>{hiddenNote}</div>}
-      </div>
+
+        {rows.length > 0 && (
+          <ul className="sc-list">
+            {rows.map((r) => {
+              const sv = statusView(r.status);
+              const gate = gateView(r.data_quality);
+              const terms = termsView(r);
+              const open = selected === r.id;
+              const st = String(r.status || "").toLowerCase();
+              return (
+                <li key={r.id} className={"sc-row" + (open ? " open" : "")}>
+                  <button
+                    type="button"
+                    className="sc-row-btn"
+                    aria-expanded={open}
+                    aria-controls={open ? "sc-detail" : undefined}
+                    onClick={() => openCard(r.id)}
+                  >
+                    <span className="sc-vendor">
+                      <span className="sc-vendor-name">{r.vendor_name || r.vendor_code || r.vendor_id}</span>
+                      <span className="sc-vendor-sub">
+                        {r.vendor_name && r.vendor_code && r.vendor_name !== r.vendor_code && <span className="mono">{r.vendor_code}</span>}
+                        <span>{periodWords(r.period)}</span>
+                      </span>
+                    </span>
+                    <span className="sc-status">
+                      <span className={`sc-pill ${st}`}>{sentence(humanEnum(sv.label))}</span>
+                      <span className="sc-status-tag">{sentence(humanEnum(sv.tag))}</span>
+                    </span>
+                    <span className={"sc-gate" + (gate.passed === false ? " bad" : gate.passed == null ? " warn" : "")}>
+                      <span className="sc-gate-word">
+                        {gate.passed === true ? "Gate passed" : gate.passed === false ? "Gate failed" : "Gate not recorded"}
+                      </span>
+                      <span className="sc-gate-sub">
+                        {gate.inferred} of {gate.restored} restores inferred, limit {gate.threshold}
+                      </span>
+                    </span>
+                    <span className={"sc-terms" + (terms.kind === "CONTRACT" ? "" : " warn")}>
+                      {terms.kind === "CONTRACT" ? "Contract terms" : terms.kind === "DEFAULTS" ? "Default terms, no contract" : "Terms not recorded"}
+                    </span>
+                    <span className="sc-when">
+                      <span>{r.dispute_window_ends_at ? `Disputes close ${when(r.dispute_window_ends_at)}` : "No dispute window yet"}</span>
+                      <span className="sc-when-sub">Computed {when(r.computed_at)}</span>
+                    </span>
+                    <ChevronDown className="sc-chev" size={18} strokeWidth={1.75} aria-hidden="true" />
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+
+        {loaded && rows.length === 0 && !listFailure && (
+          <div className="empty sc-empty">
+            <p>{filtered ? "No scorecards match these filters." : "No scorecards yet."}</p>
+            {filtered && (
+              <button className="btn sm" onClick={() => setFilters({ vendor: "", period: "", status: "ALL" })}>
+                Clear filters
+              </button>
+            )}
+            {hiddenNote ? <p>{hiddenNote}</p> : null}
+            <p>
+              Cards are computed for each ended month (EAT). The hourly <code>scorecard_close</code> job does this when the
+              scheduler is on, or a shift supervisor and above can compute a month above.
+            </p>
+          </div>
+        )}
+        {loaded && rows.length > 0 && hiddenNote && <p className="muted sc-hidden-note">{hiddenNote}</p>}
+      </section>
 
       {selected && (
-        <div style={{ marginTop: "1rem" }}>
+        <div id="sc-detail" className="sc-detail">
           <ScorecardDetail key={selected} cardId={selected} tick={reloadTick} session={session} onChanged={reload} />
         </div>
       )}
@@ -404,13 +414,6 @@ export default function Scorecards({ session }: { session: Session }) {
   );
 }
 
-const FAILURE_BOX = {
-  display: "flex",
-  gap: "0.6rem",
-  alignItems: "flex-start",
-  margin: "0.5rem 0 0.75rem",
-  padding: "0.6rem 0.75rem",
-  border: "1px solid var(--warn-line)",
-  background: "var(--warn-faint)",
-  borderRadius: 10,
-} as const;
+const sentence = (s: string) => (s ? s[0].toUpperCase() + s.slice(1) : s);
+/** "20 Oct 2026, 00:00" in EAT: the day and the minute, without seconds. */
+const when = (v: unknown) => `${fmtDate(v)}, ${fmtHM(v)}`;
