@@ -20,6 +20,7 @@ import {
   ticketNumberOf,
 } from "../lib/agents";
 import { FIBRES, fibreColour, fibreOf } from "../lib/fibre";
+import { useRealtimeState } from "../realtime/RealtimeContext";
 import { THEME_KEY, applyTheme, type Theme } from "../lib/theme";
 import { fmtDateTime, fmtEAT } from "../lib/time";
 import "./Landing.css";
@@ -141,6 +142,32 @@ function latestTicketRun(rows: any[] | null): any | null {
 }
 
 /** The press of the sun or moon: pin the other theme (the console's Display menu reads the same key). */
+/** The three sections the header links to, in page order. */
+const SECTIONS: { id: string; label: string }[] = [
+  { id: "how", label: "How it works" },
+  { id: "desks", label: "The desks" },
+  { id: "evals", label: "Evals" },
+];
+
+/** Whether the page is hearing from the agents right now, and how many tickets are open. Read
+ *  from the live stream's own state, so "Live" is only said while it is true. */
+function LiveChip({ open }: { open: number | null }) {
+  const rt = useRealtimeState();
+  const link = rt?.link ?? "connecting";
+  const word = link === "live" ? "Live" : link === "down" ? "Reconnecting" : "Connecting";
+  return (
+    <span className={`ld-live ${link}`} role="status" title={link === "live" ? "Live updates from the agents" : "Waiting for the live stream"}>
+      <span className="ld-live-dot" aria-hidden="true" />
+      <span className="ld-live-word">{word}</span>
+      {open != null && (
+        <span className="ld-live-count">
+          {open} {open === 1 ? "ticket" : "tickets"} open
+        </span>
+      )}
+    </span>
+  );
+}
+
 function ThemeButton() {
   const [theme, setTheme] = useState<Theme>(() => {
     try {
@@ -176,10 +203,10 @@ function ThemeButton() {
   );
 }
 
-/** The brand mark: five fibres fanning out of one tube. */
-function BrandMark() {
+/** The brand mark: five fibres fanning out of one tube. Drawn on a 26 x 20 grid. */
+function BrandMark({ scale = 1 }: { scale?: number }) {
   return (
-    <svg width="26" height="20" viewBox="0 0 26 20" aria-hidden="true" focusable="false">
+    <svg width={26 * scale} height={20 * scale} viewBox="0 0 26 20" aria-hidden="true" focusable="false">
       {[1, 2, 3, 4, 5].map((n, i) => (
         <path
           key={n}
@@ -222,16 +249,31 @@ export default function Landing({ profile, metrics, runsRev }: { profile: any; m
   }, [productivity.data]);
   const autonomy = String(profile?.autonomy_level || productivity.data?.autonomy_level || "L2_GUARDED");
 
-  // The header repeats the hero's button only once the hero's own has scrolled away: one
-  // primary action on screen at a time. Dormant, it stays in the tab order and shows itself
-  // the moment focus reaches it; with no IntersectionObserver it simply stays visible.
-  const heroCtaRef = useRef<HTMLAnchorElement>(null);
-  const [heroCtaVisible, setHeroCtaVisible] = useState(false);
+  // The header lifts off the page (a frosted surface and a hairline) only once content scrolls
+  // under it; at the top it sits flush with the hero.
+  const [scrolled, setScrolled] = useState(false);
   useEffect(() => {
-    const el = heroCtaRef.current;
-    if (!el || typeof IntersectionObserver === "undefined") return;
-    const io = new IntersectionObserver(([entry]) => setHeroCtaVisible(!!entry?.isIntersecting), { rootMargin: "-56px 0px 0px 0px" });
-    io.observe(el);
+    const onScroll = () => setScrolled(window.scrollY > 4);
+    onScroll();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
+
+  // Which section the reader is in, for the header's links: the one crossing the upper middle of
+  // the screen. None while the hero fills the view.
+  const [section, setSection] = useState<string | null>(null);
+  useEffect(() => {
+    if (typeof IntersectionObserver === "undefined") return;
+    const els = SECTIONS.map((s) => document.getElementById(s.id)).filter((el): el is HTMLElement => !!el);
+    const seen = new Map<string, boolean>();
+    const io = new IntersectionObserver(
+      (entries) => {
+        for (const e of entries) seen.set(e.target.id, e.isIntersecting);
+        setSection(SECTIONS.find((s) => seen.get(s.id))?.id ?? null);
+      },
+      { rootMargin: "-35% 0px -60% 0px" }
+    );
+    els.forEach((el) => io.observe(el));
     return () => io.disconnect();
   }, []);
 
@@ -240,20 +282,24 @@ export default function Landing({ profile, metrics, runsRev }: { profile: any; m
       <a className="ld-skip" href="#main">
         Skip to content
       </a>
-      <header className="ld-top">
-        <div className="ld-wrap">
-          <a className="ld-brand" href="/" aria-label="Kenya NOC, front page">
-            <BrandMark />
-            Kenya NOC
+      <header className={"ld-top" + (scrolled ? " is-scrolled" : "")}>
+        <div className="ld-wrap ld-top-row">
+          <a className="ld-brand" href="/" aria-label="Kenya NOC Mission Control, front page">
+            <BrandMark scale={1.2} />
+            <span className="ld-brand-name">Kenya NOC</span>
+            <span className="ld-brand-sub">Mission Control</span>
           </a>
           <nav className="ld-topnav" aria-label="Sections">
-            <a href="#how">How it works</a>
-            <a href="#desks">The desks</a>
-            <a href="#evals">Evals</a>
+            {SECTIONS.map((s) => (
+              <a key={s.id} href={`#${s.id}`} className={section === s.id ? "is-active" : undefined} aria-current={section === s.id ? "location" : undefined}>
+                {s.label}
+              </a>
+            ))}
           </nav>
           <div className="ld-top-actions">
+            <LiveChip open={typeof metrics?.open_total === "number" ? metrics.open_total : null} />
             <ThemeButton />
-            <Link className={"ld-btn primary sm ld-top-cta" + (heroCtaVisible ? " is-dormant" : "")} to="/mission">
+            <Link className="ld-btn primary sm ld-top-cta" to="/mission">
               Open mission control
             </Link>
           </div>
@@ -272,7 +318,7 @@ export default function Landing({ profile, metrics, runsRev }: { profile: any; m
                 second. P1 and P2 messages wait for a person, and every step is on record.
               </p>
               <div className="ld-actions">
-                <Link className="ld-btn primary" to="/mission" ref={heroCtaRef}>
+                <Link className="ld-btn primary" to="/mission">
                   Open mission control
                 </Link>
                 <Link className="ld-btn secondary" to="/complain">

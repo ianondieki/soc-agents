@@ -109,36 +109,151 @@
 .ld-note .ld-btn.text { margin-left: 8px; }
 
 /* ------------------------------------------------------------------- header */
+/* Three zones on one 68 px row: the brand, the section links centred in their own track, and the
+   live state with the two actions. Flush with the hero at the top of the page; once content
+   scrolls under it, it gains a hairline and a soft shadow, so the page reads as passing under it. */
 .ld-top {
   position: sticky;
   top: 0;
   z-index: 20;
   background: var(--bg);
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid transparent;
+  transition: background-color 200ms var(--ease), border-color 200ms var(--ease), box-shadow 200ms var(--ease);
 }
-.ld-top > .ld-wrap { display: flex; align-items: center; gap: 24px; height: 56px; }
+.ld-top.is-scrolled {
+  border-bottom-color: var(--line);
+  box-shadow: 0 14px 30px -26px rgba(0, 0, 0, 0.6);
+}
+.ld-top-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 24px;
+  height: 68px;
+}
+
 .ld-brand {
+  justify-self: start;
   display: inline-flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
+  min-width: 0;
   color: var(--text-strong);
-  font-size: var(--fs-base);
-  font-weight: 600;
-  letter-spacing: -0.01em;
   text-decoration: none;
   white-space: nowrap;
 }
 .ld-brand:hover { text-decoration: none; }
-.ld-brand svg { display: block; }
-.ld-topnav { display: flex; gap: 22px; }
-.ld-topnav a { padding: 6px 0; color: var(--muted); font-size: var(--fs-md); font-weight: 500; text-decoration: none; }
-.ld-topnav a:hover { color: var(--text-strong); }
-.ld-top-actions { display: flex; align-items: center; gap: 6px; margin-left: auto; }
-/* Dormant while the hero's own button is on screen; it comes back if focus reaches it. */
-.ld-top-cta { transition: opacity 200ms var(--ease), transform 200ms var(--ease); }
-.ld-top-cta.is-dormant { opacity: 0; transform: translateY(-4px); pointer-events: none; }
-.ld-top-cta.is-dormant:focus-visible { opacity: 1; transform: none; pointer-events: auto; }
-@media (prefers-reduced-motion: reduce) { .ld-top-cta { transition: none; } }
+.ld-brand svg { display: block; flex: none; }
+.ld-brand-name { font-size: 17px; font-weight: 700; letter-spacing: -0.015em; }
+.ld-brand-sub {
+  padding-left: 12px;
+  border-left: 1px solid var(--line-strong);
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  font-weight: 500;
+}
+
+/* The section links sit in one rounded track; the section being read is the filled one. */
+.ld-topnav {
+  display: flex;
+  gap: 2px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+}
+.ld-topnav a {
+  padding: 7px 16px;
+  border-radius: 999px;
+  color: var(--text);
+  font-size: var(--fs-md);
+  font-weight: 500;
+  line-height: 1.2;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: background-color 160ms var(--ease), color 160ms var(--ease);
+}
+.ld-topnav a:hover { background: var(--surface-raised); color: var(--text-strong); text-decoration: none; }
+.ld-topnav a.is-active, .ld-topnav a.is-active:hover { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+
+.ld-top-actions { justify-self: end; display: flex; align-items: center; gap: 10px; }
+.ld-top-actions .ld-icon-btn { border-color: var(--line); background: var(--surface); }
+.ld-top-actions .ld-icon-btn:hover { background: var(--surface-raised); }
+.ld-top-cta { height: 38px; padding: 0 16px; }
+
+/* Live state: a dot, the word, and the open-ticket count. Green only while the stream is up. */
+.ld-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  padding: 0 14px 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.ld-live-dot {
+  position: relative;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--muted-dim);
+}
+.ld-live.live .ld-live-dot { background: var(--ok); }
+.ld-live.live .ld-live-dot::after {
+  content: "";
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  border: 2px solid var(--ok);
+  opacity: 0;
+  animation: ld-live-ring 2.4s var(--ease) infinite;
+}
+.ld-live.down { color: var(--danger-text); border-color: var(--danger-line); }
+.ld-live.down .ld-live-dot { background: var(--danger); }
+.ld-live-count {
+  padding-left: 9px;
+  border-left: 1px solid var(--line-strong);
+  color: var(--muted);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+@keyframes ld-live-ring {
+  0% { transform: scale(0.6); opacity: 0.55; }
+  70%, 100% { transform: scale(1.5); opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ld-top { transition: none; }
+  .ld-live.live .ld-live-dot::after { animation: none; }
+}
+html[data-quiet="on"] .ld-live.live .ld-live-dot::after { animation: none; }
+
+/* Below 1280 px the side zones are too narrow to balance a truly centred track: the links centre
+   in the space between the brand and the actions instead, so the three never touch. */
+@media (max-width: 1279px) {
+  .ld-top-row { grid-template-columns: auto minmax(0, 1fr) auto; }
+  .ld-topnav { justify-self: center; }
+}
+@media (max-width: 1180px) {
+  .ld-brand-sub { display: none; }
+}
+@media (max-width: 1000px) {
+  .ld-live-count { display: none; }
+}
+@media (max-width: 860px) {
+  .ld-top-row { grid-template-columns: minmax(0, 1fr) auto; }
+  .ld-topnav { display: none; }
+}
+@media (max-width: 560px) {
+  .ld-top-row { height: 60px; gap: 12px; }
+  .ld-live { display: none; }
+  .ld-brand { gap: 10px; }
+  .ld-brand-name { font-size: 16px; }
+}
 
 /* --------------------------------------------------------------------- hero */
 /* Rhythm: 32 px headline to lead, 40 px lead to actions, 48 px to the dial when stacked. */
@@ -465,8 +580,6 @@ html[data-quiet="on"] .ld-dial * { animation: none !important; }
   .ld-section { margin-top: 80px; }
 }
 @media (max-width: 720px) {
-  .ld-topnav { display: none; }
-  .ld-top > .ld-wrap { gap: 12px; }
   .ld-hero { padding-top: 44px; }
   .ld-hero > .ld-wrap { gap: 40px; }
   /* Capped near 2.5 to 2.75 rem, so the dial arrives within the first screen. */
