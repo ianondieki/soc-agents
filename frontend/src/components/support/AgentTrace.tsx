@@ -1,4 +1,5 @@
 import { Fragment, type ReactNode } from "react";
+import { Link } from "react-router-dom";
 import {
   CATEGORY_WORD,
   MONO_KEYS,
@@ -339,6 +340,31 @@ function StepBody({ step, detail, titles }: { step: Step; detail: CaseDetail; ti
   return <KvList obj={d} skip={["msisdn_masked", "channel", "language", "category", "urgency", "sentiment"]} />;
 }
 
+/**
+ * An outage near the place the customer named that was not linked (a region-only match is too
+ * weak to link): said on the step, outside its disclosure, so a person sees the candidate.
+ */
+function Nearby({ step }: { step: Step }) {
+  const n = isPlain(step.detail) && isPlain(step.detail.nearby_incident) ? step.detail.nearby_incident : null;
+  if (!n) return null;
+  const id = typeof n.id === "string" ? n.id : "";
+  const num = typeof n.incident_number === "string" ? n.incident_number : "an open ticket";
+  const title = typeof n.title === "string" && n.title ? n.title : "";
+  return (
+    <p className="sd-step-nearby">
+      An outage nearby (
+      {id ? (
+        <Link to={`/incidents/${encodeURIComponent(id)}`} className="mono link" title={title || undefined}>
+          {num}
+        </Link>
+      ) : (
+        <span className="mono">{num}</span>
+      )}
+      ) may be the cause; not linked.
+    </p>
+  );
+}
+
 /** The step the verdict turns on: the one that starts open. */
 function pivotSeq(detail: CaseDetail): number | null {
   const c = detail.complaint;
@@ -396,6 +422,7 @@ export default function AgentTrace({ detail, titles }: { detail: CaseDetail; tit
                   <span className="sd-step-sum">{sentence}</span>
                 </div>
               )}
+              <Nearby step={s} />
             </li>
           );
         })}

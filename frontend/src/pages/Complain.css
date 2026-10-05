@@ -136,6 +136,7 @@
 .cp-ref { display: grid; gap: var(--s1); margin-top: var(--s6); padding: var(--s4) 0 var(--s5); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
 .cp-ref-label { color: var(--muted); font-size: var(--fs-sm); }
 .cp-ref-num { color: var(--text-strong); font-size: clamp(2rem, 7vw, 2.75rem); font-weight: 600; letter-spacing: 0.01em; line-height: 1.1; }
+.cp-ref-save { max-width: 52ch; margin-top: var(--s1); color: var(--text); font-size: var(--fs-md); line-height: 1.45; }
 /* A quiet way back to this complaint later; the reference above stays the hero. */
 .cp-ref-track {
   justify-self: start;

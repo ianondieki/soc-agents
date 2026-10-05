@@ -13,6 +13,7 @@ import {
   fmtDue,
   isNetworkError,
   kes,
+  linkStrengthWord,
   minutesUntil,
   statusOfError,
   supportApi,
@@ -289,6 +290,12 @@ export default function CasePane({ id, who, tick, stacked, onBack, onChanged, ti
           <p className="sd-verdict-text">{v.text}</p>
           {v.sub && <p className="sd-verdict-sub">{v.sub}</p>}
           <div className="facts sd-verdict-facts">
+            {/* How a linked complaint was matched to its incident: a weak match reads as one. */}
+            {c.linked_incident && linkStrengthWord(c.link_strength) && (
+              <span className={c.link_strength === "region" ? "attn warn" : undefined}>
+                <span className="mono">{c.linked_incident.incident_number}</span>, {linkStrengthWord(c.link_strength)}
+              </span>
+            )}
             <span>{CATEGORY_WORD[c.category] ?? c.category}</span>
             <span className={urgencyTone(c.urgency) ? `attn${urgencyTone(c.urgency)}` : undefined}>urgency {c.urgency}</span>
             <span>{c.sentiment === "calm" ? "calm" : `sounds ${c.sentiment}`}</span>

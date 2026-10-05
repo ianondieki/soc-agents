@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { api } from "../api";
 import ApprovalCard, { ReceiptBody, type CardAction, type CardReceipt } from "../components/ApprovalCard";
 import CardBoundary from "../components/CardBoundary";
@@ -124,6 +124,14 @@ export default function HitlInbox({ session, tick, profile }: { session: any; ti
   const [decided, setDecided] = useState<Record<string, Decided>>({});
   // The open card. Pinned on first sight, so a card that arrives later never takes its place.
   const [openPick, setOpenPick] = useState<string | null>(null);
+  // `?task=<id>` (a link from Regions, the Support desk or an incident): that card opens, scrolls
+  // into view and takes focus once the queue has loaded; then the parameter is dropped, so a
+  // refresh does not jump again. A card no longer waiting is said once, above the queue.
+  const [params, setParams] = useSearchParams();
+  const wantTask = useRef<string | null>(params.get("task"));
+  const setParamsRef = useRef(setParams);
+  setParamsRef.current = setParams;
+  const [taskGone, setTaskGone] = useState(false);
 
   // Request numbering: `asked` is the newest request sent, `shown` the newest whose answer may be
   // applied. An answer numbered below `shown` is stale and dropped.
@@ -397,6 +405,22 @@ export default function HitlInbox({ session, tick, profile }: { session: any; ti
         setTasks(list);
         setLoadError(null);
         for (const t of gone) decidedElsewhere(t, null);
+        const want = wantTask.current;
+        if (want) {
+          wantTask.current = null;
+          if (list.some((t, i) => taskId(t, i) === want)) {
+            focusOnOpen.current = want;
+            setOpenPick(want);
+          } else setTaskGone(true);
+          setParamsRef.current(
+            (prev) => {
+              const next = new URLSearchParams(prev);
+              next.delete("task");
+              return next;
+            },
+            { replace: true }
+          );
+        }
         // Pin the open card the first time there is one.
         setOpenPick((pick) => pick ?? (list.length ? taskId(sortQueue(list)[0], 0) : null));
       } else {
@@ -542,6 +566,12 @@ export default function HitlInbox({ session, tick, profile }: { session: any; ti
       <span className="hitl-sr" role="status">
         {announce}
       </span>
+
+      {taskGone && (
+        <p className="hitl-gone" role="status">
+          The card you followed is no longer waiting: it was decided or closed. The queue below is what is still waiting.
+        </p>
+      )}
 
       {loadError && display.length > 0 && (
         <div className="hitl-error hitl-stale" role="alert" title={loadError.detail}>

@@ -130,7 +130,9 @@ function Counts({ region }: { region: any }) {
   const byPriority = obj(region.open_by_priority);
   const total = num(region.open_total);
   const sla = num(region.sla_breached);
-  if (total === 0 && sla === 0) return <p className="region-nothing">Nothing open</p>;
+  // Beside a possible outage "Nothing open" would read as "all is well"; it means no ticket.
+  const surge = typeof obj(region.complaint_surge).place === "string";
+  if (total === 0 && sla === 0) return <p className="region-nothing">{surge ? "No ticket open" : "Nothing open"}</p>;
   return (
     <dl className="region-counts">
       {PRIORITIES.map((p) => {
@@ -175,9 +177,11 @@ function SurgeLine({ surge }: { surge: unknown }) {
   if (!place) return null;
   const n = num(s.complaints, NaN);
   const count = Number.isFinite(n) ? `${n} ${n === 1 ? "complaint" : "complaints"}, ` : "";
+  // Straight to its card: /hitl opens, scrolls to and focuses the one named in `?task=`.
+  const to = typeof s.card_id === "string" && s.card_id ? `/hitl?task=${encodeURIComponent(s.card_id)}` : "/hitl";
   return (
     <p className="region-surge">
-      <Link to="/hitl" className="attn hitl region-surge-link">
+      <Link to={to} className="attn hitl region-surge-link">
         <IconDot />
         <span>
           Possible outage in {place}: {count}no ticket

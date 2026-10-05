@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { Link } from "react-router-dom";
+import { humanStatus } from "../../lib/agents";
 import { IconDot } from "../../lib/icons";
 import {
   errorDetail,
@@ -7,13 +8,14 @@ import {
   isLaneOff,
   isNetworkError,
   noticeWords,
-  statusWordOf,
+  outageStatusWord,
   supportApi,
   withPerson,
   type IncidentCustomers,
 } from "../../lib/support";
 import { useRealtimeState } from "../../realtime/RealtimeContext";
 import "./IncidentCustomers.css";
+import SendUpdateNow from "./SendUpdateNow";
 
 /**
  * "Customers on this outage", the incident page's view of the complaints linked to it
@@ -31,6 +33,8 @@ export interface CustomersState {
   data: IncidentCustomers | null;
   error: string;
   reload: () => void;
+  /** An answer the page already has (the customer-update POST returns this payload). */
+  apply: (d: IncidentCustomers) => void;
 }
 
 /** The incident's customers, refetched with the incident's own revision and the desk's. */
@@ -66,7 +70,13 @@ export function useIncidentCustomers(incidentId: string | undefined, incidentRev
   }, [incidentId]);
 
   useEffect(reload, [reload, incidentRev, supportRev]);
-  return { state, data, error, reload };
+  const apply = useCallback((d: IncidentCustomers) => {
+    asked.current += 1; // an older answer still in flight must not overwrite this one
+    setData(d && typeof d === "object" ? d : null);
+    setState("ok");
+    setError("");
+  }, []);
+  return { state, data, error, reload, apply };
 }
 
 /** True when the panel has something to show. */
@@ -77,7 +87,7 @@ export function hasCustomers(s: CustomersState): boolean {
 
 const FIRST = 5;
 
-export default function IncidentCustomersPanel({ incidentId, s }: { incidentId: string; s: CustomersState }) {
+export default function IncidentCustomersPanel({ incidentId, s, restored }: { incidentId: string; s: CustomersState; restored: boolean }) {
   const headId = useId();
   const [all, setAll] = useState(false);
   const firstHiddenRef = useRef<HTMLAnchorElement>(null);
@@ -111,7 +121,13 @@ export default function IncidentCustomersPanel({ incidentId, s }: { incidentId: 
   const shown = all ? complaints : complaints.slice(0, FIRST);
   const hidden = complaints.length - FIRST;
   const notice = noticeWords(d.notice);
+  // A customer who says it is still down outranks "sent": the notice reads in the watch colour.
+  const noticeTone = d.still_down > 0 ? "warn" : notice.tone;
   const deskLink = `/support?incident=${encodeURIComponent(incidentId)}`;
+  const noticeId = `ic-notice-${incidentId}`;
+  // §7.1: a held-back update can go again; so can one never written once nobody is left waiting on a fix.
+  const sendable = d.waiting > 0 && (d.notice?.state === "held_back" || (d.notice?.state === "none" && restored));
+  const follow = d.follow_up && d.follow_up.incident_id ? d.follow_up : null;
 
   return (
     <section className="panel ic-panel" aria-labelledby={headId}>
@@ -152,17 +168,30 @@ export default function IncidentCustomersPanel({ incidentId, s }: { incidentId: 
         </div>
       </dl>
 
-      <p className="ic-notice">
+      <div className="ic-notice">
         <span className="ic-notice-label">Customer notice</span>
         {notice.to ? (
-          <Link to={notice.to} className={"ic-notice-state" + (notice.tone ? ` ${notice.tone}` : "")}>
+          <Link to={notice.to} id={noticeId} tabIndex={-1} className={"ic-notice-state" + (noticeTone ? ` ${noticeTone}` : "")}>
             {notice.text}
           </Link>
         ) : (
-          <span className={"ic-notice-state" + (notice.tone ? ` ${notice.tone}` : "")}>{notice.text}</span>
+          <span id={noticeId} tabIndex={-1} className={"ic-notice-state" + (noticeTone ? ` ${noticeTone}` : "")}>
+            {notice.text}
+          </span>
         )}
         {notice.sub && <span className="muted">{notice.sub}</span>}
-      </p>
+        {sendable && <SendUpdateNow incidentId={incidentId} focusId={noticeId} onDone={s.apply} />}
+      </div>
+
+      {follow && (
+        <p className="ic-follow">
+          <span className="ic-notice-label">Follow-up ticket</span>
+          <Link to={`/incidents/${encodeURIComponent(follow.incident_id)}`} className="mono ic-ref">
+            {follow.incident_number}
+          </Link>
+          <span className="muted">opened from still-down reports{follow.status ? `, ${humanStatus(follow.status)}` : ""}</span>
+        </p>
+      )}
 
       {complaints.length > 0 && (
         <>
@@ -180,10 +209,8 @@ export default function IncidentCustomersPanel({ incidentId, s }: { incidentId: 
                     {c.ref}
                   </Link>
                   <span className="mono ic-num">{c.msisdn_masked}</span>
-                  {/* A closed complaint told about this restore was closed by it (docs/CLOSE_THE_LOOP.md §1). */}
-                  <span className={"ic-status" + (person ? " hitl" : "")}>
-                    {statusWordOf({ ...c, closure_reason: c.closure_reason ?? (c.status === "closed" && c.told_restored_at ? "service_restored" : null) })}
-                  </span>
+                  {/* Where this customer stands on the outage, in plain words (not the desk's "Action taken"). */}
+                  <span className={"ic-status" + (person ? " hitl" : "")}>{outageStatusWord(c)}</span>
                   <span className={"ic-when" + (c.still_down_at ? " warn" : "")}>{when}</span>
                 </li>
               );

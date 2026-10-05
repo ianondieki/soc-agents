@@ -1,0 +1,6 @@
+/* "Send the update now" beside a held-back customer notice (components/support/SendUpdateNow). */
+.send-now { display: flex; flex-direction: column; align-items: flex-start; gap: var(--s1); margin-top: var(--s2); }
+.send-now-error { max-width: 36ch; color: var(--danger-text); font-size: var(--fs-sm); line-height: 1.4; }
+@media (max-width: 700px), (pointer: coarse) {
+  .send-now .btn { min-height: 44px; }
+}

@@ -4,6 +4,7 @@ import { humanStatus, priorityTitle, regionName } from "../../lib/agents";
 import { IconDot } from "../../lib/icons";
 import {
   SURGE_STATUS_WORD,
+  cardLink,
   errorDetail,
   fmtAgeMin,
   fmtClock,
@@ -13,11 +14,13 @@ import {
   restoreSourceWord,
   supportApi,
   surgeOriginWords,
+  type IncidentCustomers,
   type Loop,
   type OutageRow,
   type Surge,
 } from "../../lib/support";
 import { useRealtimeState } from "../../realtime/RealtimeContext";
+import SendUpdateNow from "./SendUpdateNow";
 
 /**
  * The Support desk's Outages tab (docs/CLOSE_THE_LOOP.md §3, §4): is the desk keeping its
@@ -99,6 +102,21 @@ export default function Outages({ tick, profile }: { tick: number; profile?: any
     return () => window.clearTimeout(t);
   }, [load, tick, hitlRev, incidentsRev]);
 
+  // "Send the update now" answered with the incident's customers: draw it at once, then refetch.
+  const onSent = useCallback(
+    (incidentId: string, d: IncidentCustomers) => {
+      setRows((rs) =>
+        rs.map((r) =>
+          r.incident_id === incidentId ? { ...r, notice: d.notice ?? r.notice, told: d.told ?? r.told, waiting: d.waiting ?? r.waiting, still_down: d.still_down ?? r.still_down } : r
+        )
+      );
+      const w = noticeWords(d.notice);
+      setAnnounce(`Customer update for this outage: ${w.text}.`);
+      load();
+    },
+    [load]
+  );
+
   // Open first, then newest first as the API sends them.
   const orderedSurges = useMemo(() => {
     const open = surges.filter((s) => s.status === "open");
@@ -122,7 +140,7 @@ export default function Outages({ tick, profile }: { tick: number; profile?: any
         {announce}
       </span>
       <Figures loop={loop} state={loopState} />
-      <OutageList rows={rows} state={rowsState} error={rowsError} onRetry={load} />
+      <OutageList rows={rows} state={rowsState} error={rowsError} onRetry={load} onSent={onSent} />
       <SurgeList surges={orderedSurges} state={surgesState} error={surgesError} onRetry={load} onRetried={load} onAnnounce={setAnnounce} profile={profile} />
     </div>
   );
@@ -217,7 +235,19 @@ function ListSkeleton() {
   );
 }
 
-function OutageList({ rows, state, error, onRetry }: { rows: OutageRow[]; state: Load; error: string; onRetry: () => void }) {
+function OutageList({
+  rows,
+  state,
+  error,
+  onRetry,
+  onSent,
+}: {
+  rows: OutageRow[];
+  state: Load;
+  error: string;
+  onRetry: () => void;
+  onSent: (incidentId: string, d: IncidentCustomers) => void;
+}) {
   const headId = useId();
   return (
     <section className="panel ol-panel" aria-labelledby={headId} aria-busy={(state === "loading" && !rows.length) || undefined}>
@@ -262,7 +292,7 @@ function OutageList({ rows, state, error, onRetry }: { rows: OutageRow[]; state:
           </div>
           <ul className="ol-rows">
             {rows.map((r) => (
-              <OutageItem key={r.incident_id} r={r} />
+              <OutageItem key={r.incident_id} r={r} onSent={onSent} />
             ))}
           </ul>
         </>
@@ -271,8 +301,17 @@ function OutageList({ rows, state, error, onRetry }: { rows: OutageRow[]; state:
   );
 }
 
-function OutageItem({ r }: { r: OutageRow }) {
+/** A held-back update can go again (§7.1); so can one never written once the ticket is restored or closed. */
+function canSendNow(r: OutageRow): boolean {
+  const st = r.notice?.state;
+  return r.waiting > 0 && (st === "held_back" || (st === "none" && !!r.restored_at));
+}
+
+function OutageItem({ r, onSent }: { r: OutageRow; onSent: (incidentId: string, d: IncidentCustomers) => void }) {
   const notice = noticeWords(r.notice);
+  // A customer who says it is still down outranks "sent": the notice reads in the watch colour.
+  const noticeTone = r.still_down > 0 ? "warn" : notice.tone;
+  const noticeId = `ol-notice-${r.incident_id}`;
   const places = Array.isArray(r.places) ? r.places.filter(Boolean) : [];
   const priority = /^P[1-4]$/.test(String(r.priority)) ? r.priority : "";
   const restoredAt = r.restored_at ? fmtClock(r.restored_at) : "";
@@ -330,13 +369,16 @@ function OutageItem({ r }: { r: OutageRow }) {
       <div className="ol-cell">
         <span className="ol-k">Customer notice</span>
         {notice.to ? (
-          <Link to={notice.to} className={"ol-v ol-notice" + (notice.tone ? ` ${notice.tone}` : "")}>
+          <Link to={notice.to} id={noticeId} tabIndex={-1} className={"ol-v ol-notice" + (noticeTone ? ` ${noticeTone}` : "")}>
             {notice.text}
           </Link>
         ) : (
-          <span className={"ol-v ol-notice" + (notice.tone ? ` ${notice.tone}` : "")}>{notice.text}</span>
+          <span id={noticeId} tabIndex={-1} className={"ol-v ol-notice" + (noticeTone ? ` ${noticeTone}` : "")}>
+            {notice.text}
+          </span>
         )}
         {notice.sub && <span className="ol-sub">{notice.sub}</span>}
+        {canSendNow(r) && <SendUpdateNow incidentId={r.incident_id} focusId={noticeId} onDone={(d) => onSent(r.incident_id, d)} />}
       </div>
 
       <div className="ol-go">
@@ -473,7 +515,7 @@ function SurgeItem({ s, onRetried, onAnnounce, region }: { s: Surge; onRetried: 
       <div className="ol-cell ol-surge-state" ref={statusRef} tabIndex={-1}>
         <span className="ol-k">Status</span>
         {s.status === "open" ? (
-          <Link to="/hitl" className="ol-v ol-notice hitl">
+          <Link to={cardLink(s.card_id)} className="ol-v ol-notice hitl">
             {SURGE_STATUS_WORD.open}
           </Link>
         ) : s.status === "confirmed" ? (

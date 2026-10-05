@@ -17,7 +17,6 @@ import {
   specFor,
 } from "../lib/hitl";
 import { hitlSubject, hitlSubjectIsIncident } from "../lib/hitlSubject";
-import { fmtClock } from "../lib/support";
 import { CustomerUpdateBody, PossibleOutageBody } from "./LoopCardBodies";
 
 /**
@@ -194,9 +193,11 @@ export default function ApprovalCard({
   onReject,
 }: ApprovalCardProps) {
   const [reason, setReasonState] = useState(initialReason);
-  // The quick reasons appear once Reject has been pressed without a reason (or a reason is
-  // missing), so the decision footer stays short until a rejection is on the table.
-  const [rejectArmed, setRejectArmed] = useState(false);
+  // Which quick reasons are on the table: the reject ones once Reject has been pressed without a
+  // reason, the approve ones (a card type that has them) once Approve has. Never the reject reasons
+  // after an Approve: they would put "not restored yet" one tap from an approval.
+  const [armed, setArmed] = useState<"" | "approve" | "reject">("");
+  const rejectArmed = armed === "reject";
   const setReason = (value: string) => {
     setReasonState(value);
     onReasonChange?.(value);
@@ -218,7 +219,9 @@ export default function ApprovalCard({
   const entries = useMemo(() => (loopKind ? [] : extraEntries(t, facts)), [t, facts, loopKind]);
   const source = renderingSource(payload);
   const heading =
-    loopKind === "update" ? customerUpdateTitle(payload) : loopKind === "surge" ? possibleOutageTitle(payload, (iso) => fmtClock(iso)) : hitlSubject(t);
+    loopKind === "update" ? customerUpdateTitle(payload) : loopKind === "surge" ? possibleOutageTitle(payload) : hitlSubject(t);
+  const effect = spec.effectFor ? spec.effectFor(payload) : spec.effect;
+  const approveReasons = spec.approveReasons ?? [];
   const approveLabel = spec.approveLabel ? spec.approveLabel(payload) : "Approve";
   const rejectLabel = spec.rejectLabel ?? "Reject";
   const rejectReasons = spec.rejectReasons ?? REJECT_REASONS;
@@ -257,6 +260,35 @@ export default function ApprovalCard({
   // back from the Copy button.
   const receiptRef = useRef<HTMLDivElement>(null);
   const hadReceipt = useRef(false);
+
+  // The sticky decision footer covers the bottom of the viewport: everything focusable above it
+  // keeps that much clear when focus scrolls it into view (`--hitl-foot`, HitlInbox.css).
+  const cardRef = useRef<HTMLElement>(null);
+  const footRef = useRef<HTMLElement>(null);
+  useLayoutEffect(() => {
+    const card = cardRef.current;
+    const foot = footRef.current;
+    if (!card || !foot || typeof ResizeObserver !== "function") return;
+    const set = () => card.style.setProperty("--hitl-foot", `${Math.ceil(foot.getBoundingClientRect().height) + 12}px`);
+    set();
+    const ro = new ResizeObserver(set);
+    ro.observe(foot);
+    // Chromium does not apply scroll-margin when Tab moves focus to an element that is already
+    // "in view" under a sticky bar, so a focused SMS box could sit behind the footer. Lift it clear.
+    const lift = (e: FocusEvent) => {
+      const el = e.target as HTMLElement | null;
+      if (!el || foot.contains(el)) return;
+      const r = el.getBoundingClientRect();
+      const f = foot.getBoundingClientRect();
+      const over = r.bottom - (f.top - 12);
+      if (over > 0 && r.top - over >= 0) window.scrollBy({ top: over, left: 0, behavior: "instant" as ScrollBehavior });
+    };
+    card.addEventListener("focusin", lift);
+    return () => {
+      ro.disconnect();
+      card.removeEventListener("focusin", lift);
+    };
+  }, []);
   useLayoutEffect(() => {
     if (receipt && !hadReceipt.current) receiptRef.current?.focus({ preventScroll: true });
     hadReceipt.current = Boolean(receipt);
@@ -270,24 +302,28 @@ export default function ApprovalCard({
   };
   const approve = () => {
     if (busy || receipt) return;
-    if (approveNeedsReason && !trimmed) return void needReason();
+    if (approveNeedsReason && !trimmed) {
+      setArmed("approve");
+      return void needReason();
+    }
     onApprove(trimmed);
   };
   const reject = () => {
     if (busy || receipt) return;
     if (!trimmed) {
-      setRejectArmed(true);
+      setArmed("reject");
       return void needReason(); // the API 400s on an empty reason
     }
     onReject(trimmed);
   };
+  const quick = rejectArmed ? rejectReasons : armed === "approve" ? approveReasons : [];
   const claim = () => {
     if (busy || receipt) return;
     onClaim();
   };
 
   return (
-    <article className="hitl-card" aria-labelledby={headingId}>
+    <article className="hitl-card" aria-labelledby={headingId} ref={cardRef}>
       <header className="hitl-card-head">
         <span className="hitl-title">
           {priority && (
@@ -332,7 +368,7 @@ export default function ApprovalCard({
       {/* The check sentence sits with what it is about: the channel heading when there are
           channels to read, else under the effect. */}
       <p className="hitl-effect">
-        {spec.effect}
+        {effect}
         {spec.check && channels.length === 0 && !loopKind && <span className="hitl-check">{spec.check}</span>}
       </p>
 
@@ -445,7 +481,7 @@ export default function ApprovalCard({
       {/* Sticky to the bottom of the viewport inside the card, so the decision stays in reach
           while the channels are read. The error block sits here, beside the buttons; once the
           card is decided the receipt takes the controls' place, at the controls' height. */}
-      <footer className={"hitl-actions" + (receipt ? " decided" : "")}>
+      <footer className={"hitl-actions" + (receipt ? " decided" : "")} ref={footRef}>
         <div className="hitl-controls" aria-hidden={receipt ? true : undefined}>
           {error && (
             <div className="hitl-error" role="alert" title={errorDetail || error}>
@@ -499,7 +535,7 @@ export default function ApprovalCard({
                 className="btn primary hitl-approve"
                 onClick={approve}
                 aria-disabled={busy ? true : undefined}
-                title={spec.effect}
+                title={effect}
                 tabIndex={receipt ? -1 : undefined}
               >
                 {busy === "approve" ? busyLabel("approve") : approveLabel}
@@ -509,24 +545,25 @@ export default function ApprovalCard({
                 className="btn danger hitl-reject"
                 onClick={reject}
                 aria-disabled={busy ? true : undefined}
-                title={loopKind === "surge" ? "Dismiss: the complaints stay as they were" : loopKind === "update" ? "Tell nobody; the reason is kept" : "Suppress the drafts and cancel"}
+                title={spec.rejectTitle ?? (loopKind === "surge" ? "Dismiss: the complaints stay as they were" : "Suppress the drafts and cancel")}
                 tabIndex={receipt ? -1 : undefined}
               >
                 {busy === "reject" ? busyLabel("reject") : rejectLabel}
               </button>
             </div>
           </div>
-          {(rejectArmed || reasonMissing || !claimed) && (
+          {(quick.length > 0 || (rejectArmed && spec.rejectTitle) || !claimed) && (
             <div className="hitl-reason-quick">
-              {/* These are reasons to reject; picking one fills the box, it does not decide. They
-                  show once Reject has been pressed without a reason. */}
-              {(rejectArmed || reasonMissing) && (
+              {/* Picking a reason fills the box, it does not decide. Reject reasons show once Reject
+                  was pressed without a reason; approve reasons once Approve was (a type that has them). */}
+              {rejectArmed && spec.rejectTitle && <span className="hitl-reject-means">{spec.rejectTitle}</span>}
+              {quick.length > 0 && (
                 <>
                   <span className="hitl-quick-label" id={`${headingId}-quick`}>
-                    {rejectLabel} because
+                    {rejectArmed ? rejectLabel : "Approve"} because
                   </span>
                   <span className="hitl-quick-list" role="group" aria-labelledby={`${headingId}-quick`}>
-                    {rejectReasons.map((r) => (
+                    {quick.map((r) => (
                       <button
                         key={r}
                         type="button"

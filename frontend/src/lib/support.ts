@@ -76,6 +76,32 @@ export interface Complaint {
   closure_reason?: string | null;
   told_restored_at?: string | null;
   still_down_at?: string | null;
+  /** How the complaint was matched to its incident (null when not linked). */
+  link_strength?: LinkStrength | null;
+}
+
+export type LinkStrength = "site" | "county" | "wide_area" | "person" | "region";
+
+/** How a complaint was matched to its incident, in words, for the case's verdict line. */
+export const LINK_STRENGTH_WORD: Record<LinkStrength, string> = {
+  site: "matched by site name",
+  county: "matched by county",
+  wide_area: "a wide outage covering the area",
+  person: "linked by a person",
+  region: "matched by region only",
+};
+export const linkStrengthWord = (v: unknown): string => (typeof v === "string" && v in LINK_STRENGTH_WORD ? LINK_STRENGTH_WORD[v as LinkStrength] : "");
+
+/**
+ * How long a 429 asks the caller to wait, in words: "about 3 minutes", "about 2 hours", or null
+ * when it is more than two hours (a daily limit), which the caller says as "tomorrow".
+ */
+export function waitPhrase(retryAfterSecs: number | null | undefined): string | null {
+  if (retryAfterSecs == null || !Number.isFinite(retryAfterSecs)) return "a few minutes";
+  const mins = Math.max(1, Math.ceil(retryAfterSecs / 60));
+  if (mins > 120) return null;
+  if (mins >= 60) return mins >= 90 ? "about 2 hours" : "about an hour";
+  return `about ${mins} ${mins === 1 ? "minute" : "minutes"}`;
 }
 
 export interface Step {
@@ -228,7 +254,8 @@ export interface Tracked {
   detail: string | null;
   received_at: string;
   reply_due_at: string | null;
-  outage: { place: string; ticket: string; state: "working" | "restored"; restored_at: string | null } | null;
+  /** §7.3: `still_down` once this customer reported it, so the page never shows a green "Restored" to them. */
+  outage: { place: string; ticket: string; state: "working" | "restored" | "still_down"; restored_at: string | null } | null;
   timeline: { at: string; text: string }[];
   messages: { at: string; from: "you" | "us"; body: string }[];
   can_report_still_down: boolean;
@@ -249,13 +276,18 @@ export interface Loop {
   surges: { open: number; confirmed: number; dismissed: number };
 }
 
-export type NoticeState = "none" | "waiting_for_restore" | "sent" | "awaiting_approval" | "rejected";
+/** §7.1: a refused update is `held_back` (the customers stay waiting), never final. */
+export type NoticeState = "none" | "waiting_for_restore" | "sent" | "awaiting_approval" | "held_back";
 
 export interface OutageNotice {
   state: NoticeState;
   card_id: string | null;
   recipients: number;
   sent_at: string | null;
+  /** `held_back` only: why, who and when. */
+  reason?: string | null;
+  held_by?: string | null;
+  held_at?: string | null;
 }
 
 export interface OutageRow {
@@ -307,6 +339,8 @@ export interface IncidentCustomers {
   still_down: number;
   notice: OutageNotice;
   complaints: { id: string; ref: string; msisdn_masked: string; status: Status; told_restored_at: string | null; still_down_at: string | null; closure_reason?: string | null }[];
+  /** §7.4: the ticket opened from this incident's still-down reports. */
+  follow_up?: { incident_id: string; incident_number: string; status: string } | null;
 }
 
 // ---------------------------------------------------------------------------------- API
@@ -453,6 +487,9 @@ export const supportApi = {
   surges: () => json<Surge[]>("/surges"),
   retrySurge: (id: string) => json<unknown>(`/surges/${encodeURIComponent(id)}/retry`, { method: "POST", body: "{}" }),
   incidentCustomers: (incidentId: string) => json<IncidentCustomers>(`/incidents/${encodeURIComponent(incidentId)}/customers`),
+  /** §7.1: raise a held-back (or never-written) update again; it sends now or raises a fresh card. */
+  sendCustomerUpdate: (incidentId: string) =>
+    json<IncidentCustomers>(`/incidents/${encodeURIComponent(incidentId)}/customer-update`, { method: "POST", body: "{}" }),
 };
 
 // ---------------------------------------------------------------------------------- words
@@ -1053,14 +1090,14 @@ export function customerSteps(d: CaseDetail): CustomerStep[] {
 // ----------------------------------------------------------------------------- the form
 
 /** Kenyan mobile numbers: 07XXXXXXXX, 01XXXXXXXX, +2547…, +2541…, 2547…, 2541…; spaces and dashes allowed. */
+const KENYAN_NUMBER = "Enter a Kenyan mobile number, like 0712 345 678.";
+
 export function msisdnProblem(raw: string): string | null {
   const s = raw.replace(/[\s-]/g, "");
-  if (!s) return "Enter the phone number the problem is on.";
-  if (!/^\+?\d+$/.test(s)) return "Use digits only, with an optional + at the start.";
+  if (!s) return KENYAN_NUMBER;
   if (/^0[17]\d{8}$/.test(s)) return null;
   if (/^\+?254[17]\d{8}$/.test(s)) return null;
-  if (/^0[17]/.test(s) || /^\+?254[17]/.test(s)) return "That number is the wrong length. A Kenyan number is 10 digits, like 0712 345 678.";
-  return "Enter a Kenyan mobile number: 07…, 01…, or +2547… / +2541….";
+  return KENYAN_NUMBER;
 }
 
 export const BODY_MIN = 5;
@@ -1095,7 +1132,10 @@ export interface NoticeWords {
   to?: string;
 }
 
-/** The customer notice for one outage, in words (docs/CLOSE_THE_LOOP.md §1). */
+/** The link to one approval card: /hitl opens, scrolls to and focuses it. */
+export const cardLink = (cardId: string | null | undefined): string => (cardId ? `/hitl?task=${encodeURIComponent(cardId)}` : "/hitl");
+
+/** The customer notice for one outage, in words (docs/CLOSE_THE_LOOP.md §1, §7.1). */
 export function noticeWords(n: OutageNotice | null | undefined): NoticeWords {
   const count = n && n.recipients > 0 ? `${n.recipients} ${n.recipients === 1 ? "customer" : "customers"}` : "";
   switch (n?.state) {
@@ -1106,9 +1146,11 @@ export function noticeWords(n: OutageNotice | null | undefined): NoticeWords {
       return { text: at ? `Sent ${at}` : "Sent", sub: count, tone: "ok" };
     }
     case "awaiting_approval":
-      return { text: "Waiting for approval", sub: count, tone: "hitl", to: "/hitl" };
-    case "rejected":
-      return { text: "Rejected", sub: "nobody was told", tone: "" };
+      return { text: "Waiting for approval", sub: count, tone: "hitl", to: cardLink(n.card_id) };
+    case "held_back": {
+      const by = [n.held_by ? `by ${n.held_by}` : "", fmtClock(n.held_at)].filter(Boolean).join(", ");
+      return { text: n.reason ? `Held back: ${n.reason}` : "Held back", sub: by ? `${by}; the customers are still waiting` : "the customers are still waiting", tone: "warn" };
+    }
     case "none":
       // Restored or closed and no notice was ever written (the desk was off, or telling failed).
       return { text: "No notice was sent", sub: "", tone: "" };
@@ -1131,6 +1173,20 @@ export function noticeWaitsForPerson(priority: unknown, autonomy: unknown, recip
   if (level.startsWith("L1")) return true;
   if (level.startsWith("L3")) return p === "P1";
   return p === "P1" || p === "P2";
+}
+
+/**
+ * A complaint's status as the incident page says it (§7 review): where the customer stands on this
+ * outage, not the desk's internal word ("Action taken" meant "linked, waiting for the fix").
+ */
+export function outageStatusWord(c: { status: Status; told_restored_at?: string | null; still_down_at?: string | null }): string {
+  if (c.still_down_at && withPerson(c.status)) return "Still down, with a person";
+  if (c.status === "in_progress") return "With a person";
+  if (withPerson(c.status)) return "Needs a person";
+  if (c.told_restored_at) return "Told service is back";
+  if (c.status === "resolved") return "Resolved by a person";
+  if (c.status === "closed") return "Closed";
+  return "Waiting for the fix";
 }
 
 /** Where a possible outage came from, as the end of a sentence. */

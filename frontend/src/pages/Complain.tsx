@@ -12,6 +12,7 @@ import {
   msisdnProblem,
   statusOfError,
   supportApi,
+  waitPhrase,
   type CaseDetail,
 } from "../lib/support";
 import "./Complain.css";
@@ -53,9 +54,10 @@ interface Sent {
 function formError(e: unknown): string {
   const s = statusOfError(e);
   if (s === 429) {
-    const secs = isSupportApiError(e) ? e.retryAfter : null;
-    const mins = secs ? Math.max(1, Math.ceil(secs / 60)) : null;
-    return `You have sent several complaints from this number in a short time. Please wait ${mins ? `about ${mins} ${mins === 1 ? "minute" : "minutes"}` : "a few minutes"} and try again.`;
+    const wait = waitPhrase(isSupportApiError(e) ? e.retryAfter : null);
+    return wait
+      ? `You have sent several complaints from this number in a short time. Please wait ${wait} and try again.`
+      : "You have sent many complaints from this number today. Please try again tomorrow.";
   }
   if (s === 404) return "The complaint desk is switched off right now. Please try again later or call the contact centre.";
   if (s === 422 || s === 400) return errorDetail(e, "Please check what you typed and try again.");
@@ -80,7 +82,6 @@ export default function Complain() {
   const [errors, setErrors] = useState<Errors>({});
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState<Sent | null>(null);
-  const [touchedPhone, setTouchedPhone] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const uid = useId();
   const phoneRef = useRef<HTMLInputElement>(null);
@@ -228,20 +229,21 @@ export default function Complain() {
                 setMsisdn(e.target.value);
                 if (errors.msisdn) setErrors((x) => ({ ...x, msisdn: undefined }));
               }}
-              onBlur={() => setTouchedPhone(true)}
               inputMode="tel"
               autoComplete="tel"
               placeholder="0712 345 678"
-              aria-describedby={`${uid}-phone-hint${errors.msisdn || (touchedPhone && phoneProblem && msisdn) ? ` ${uid}-phone-err` : ""}`}
-              aria-invalid={!!errors.msisdn || (touchedPhone && !!phoneProblem && !!msisdn) || undefined}
+              aria-describedby={`${uid}-phone-hint${errors.msisdn ? ` ${uid}-phone-err` : ""}`}
+              aria-invalid={!!errors.msisdn || undefined}
               required
             />
             <p id={`${uid}-phone-hint`} className="cp-hint">
               The line the problem is on. We keep it masked on our side.
             </p>
-            {(errors.msisdn || (touchedPhone && phoneProblem && msisdn)) && (
+            {/* Checked when the form is sent, never on blur: an error appearing on blur moved the
+                button from under the pointer and the first click was lost. */}
+            {errors.msisdn && (
               <p id={`${uid}-phone-err`} className="cp-error">
-                {errors.msisdn || phoneProblem}
+                {errors.msisdn}
               </p>
             )}
           </div>
@@ -302,13 +304,15 @@ function Result({ sent, onAgain, headingRef }: { sent: Sent; onAgain: () => void
         {sent.duplicate
           ? "This number sent the same words in the last two minutes, so nothing new was filed. Here is where that complaint stands."
           : sent.typedName
-            ? `Thank you, ${sent.typedName}. Keep the reference for any follow-up.`
-            : "Keep the reference for any follow-up."}
+            ? `Thank you, ${sent.typedName}. Here is where it stands.`
+            : "Thank you. Here is where it stands."}
       </p>
 
       <div className="cp-ref">
         <span className="cp-ref-label">Your reference</span>
         <span className="cp-ref-num cp-mono">{c.ref}</span>
+        {/* §7.3: nothing else carries the reference to the customer (no SMS is sent at intake). */}
+        <span className="cp-ref-save">Save it or take a screenshot: with your phone number, it is how you track this complaint.</span>
         <Link className="cp-ref-track" to={`/track?ref=${encodeURIComponent(c.ref)}`}>
           Track this complaint
         </Link>

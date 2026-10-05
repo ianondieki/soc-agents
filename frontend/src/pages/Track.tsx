@@ -9,6 +9,7 @@ import {
   msisdnProblem,
   statusOfError,
   supportApi,
+  waitPhrase,
   type Tracked,
 } from "../lib/support";
 import "./Track.css";
@@ -35,15 +36,15 @@ function normalizeRef(raw: string): string {
 }
 
 function refProblem(raw: string): string | null {
-  if (!raw.trim()) return "Enter the reference from your SMS or the complaint page.";
+  if (!raw.trim()) return "Enter your reference. It is on the page you saw after sending (it starts CMP-).";
   if (!/^CMP-\d{6,9}$/.test(normalizeRef(raw))) return "A reference looks like CMP-000123.";
   return null;
 }
 
-function waitWords(e: unknown): string {
-  const secs = isSupportApiError(e) ? e.retryAfter : null;
-  const mins = secs ? Math.max(1, Math.ceil(secs / 60)) : null;
-  return mins ? `about ${mins} ${mins === 1 ? "minute" : "minutes"}` : "a few minutes";
+/** "Please wait about 3 minutes and try again."; a daily limit (over two hours) says "tomorrow". */
+function tryAgain(e: unknown): string {
+  const wait = waitPhrase(isSupportApiError(e) ? e.retryAfter : null);
+  return wait ? `Please wait ${wait} and try again.` : "Please try again tomorrow.";
 }
 
 interface FormProblem {
@@ -55,9 +56,13 @@ interface FormProblem {
 function trackProblem(e: unknown): FormProblem {
   const s = statusOfError(e);
   if (s === 404)
-    return { text: NOT_FOUND, hint: "Check the reference in the SMS we sent you, or on the page you saw after sending, and use the phone number you complained from." };
-  if (s === 429) return { text: `You have checked several times in a short time. Please wait ${waitWords(e)} and try again.` };
-  if (s === 409 || s === 422 || s === 400) return { text: errorDetail(e, "Please check what you typed and try again.") };
+    return { text: NOT_FOUND, hint: "Check the reference on the page you saw after sending (it starts CMP-), and use the phone number you complained from." };
+  if (s === 429) {
+    const daily = isSupportApiError(e) && (e.retryAfter ?? 0) > 7200;
+    return { text: `${daily ? "This complaint has been checked many times today." : "You have checked several times in a short time."} ${tryAgain(e)}` };
+  }
+  // 413 (an oversized body) answers with the same words as a 400 or a 404.
+  if (s === 409 || s === 422 || s === 400 || s === 413) return { text: errorDetail(e, "Please check what you typed and try again.") };
   if (s != null && s >= 500) return { text: "Something failed on our side. Please try again in a moment." };
   if (isNetworkError(e)) return { text: "We couldn't reach the support desk. Check your connection and try again." };
   return { text: errorDetail(e, "We couldn't check your complaint. Please try again.") };
@@ -67,7 +72,11 @@ function trackProblem(e: unknown): FormProblem {
 function stillDownProblem(e: unknown): string {
   const s = statusOfError(e);
   if (s === 409) return errorDetail(e, "We can't take a still-down report on this complaint right now.");
-  if (s === 429) return `You have sent several reports in a short time. Please wait ${waitWords(e)} and try again.`;
+  if (s === 429) {
+    const daily = isSupportApiError(e) && (e.retryAfter ?? 0) > 7200;
+    return `${daily ? "We have had many reports from this number today." : "You have sent several reports in a short time."} ${tryAgain(e)}`;
+  }
+  if (s === 413 || s === 400) return errorDetail(e, "Your note is too long. Shorten it and try again.");
   if (s === 404) return NOT_FOUND;
   if (s != null && s >= 500) return "Something failed on our side; your report was not sent. Please try again in a moment.";
   if (isNetworkError(e)) return "We couldn't reach the support desk; your report was not sent. Check your connection and try again.";
@@ -80,13 +89,14 @@ export default function Track() {
   const [params, setParams] = useSearchParams();
   const [ref, setRef] = useState(() => normalizeRef(params.get("ref") ?? ""));
   const [msisdn, setMsisdn] = useState("");
-  const [touchedPhone, setTouchedPhone] = useState(false);
   const [errors, setErrors] = useState<Errors>({});
   const [sending, setSending] = useState(false);
   const [result, setResult] = useState<Tracked | null>(null);
   /** The number the shown result was found with: the still-down report sends it again. */
   const [foundWith, setFoundWith] = useState("");
   const [confirmation, setConfirmation] = useState("");
+  /** When the result on screen was fetched: the page says so, and "Check again" refreshes it. */
+  const [checkedAt, setCheckedAt] = useState<Date | null>(null);
   const uid = useId();
   const refRef = useRef<HTMLInputElement>(null);
   const phoneRef = useRef<HTMLInputElement>(null);
@@ -100,7 +110,7 @@ export default function Track() {
     };
   }, [result]);
 
-  // A reference from the link (the SMS, the complaint page) fills the box; the phone is next.
+  // A reference from a link (the complaint page, the restore SMS) fills the box; the phone is next.
   useEffect(() => {
     if (params.get("ref")) phoneRef.current?.focus({ preventScroll: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -130,6 +140,7 @@ export default function Track() {
       setFoundWith(msisdn.trim());
       setConfirmation("");
       setResult(t);
+      setCheckedAt(new Date());
       const nextParams = new URLSearchParams(params);
       nextParams.set("ref", t.ref || cleanRef);
       setParams(nextParams, { replace: true });
@@ -180,7 +191,7 @@ export default function Track() {
               required
             />
             <p id={`${uid}-ref-hint`} className="cp-hint">
-              It is in the SMS we sent you and on the page you saw after sending.
+              It is on the page you saw after sending (it starts CMP-).
             </p>
             {errors.ref && (
               <p id={`${uid}-ref-err`} className="cp-error">
@@ -199,20 +210,21 @@ export default function Track() {
                 setMsisdn(e.target.value);
                 if (errors.msisdn) setErrors((x) => ({ ...x, msisdn: undefined }));
               }}
-              onBlur={() => setTouchedPhone(true)}
               inputMode="tel"
               autoComplete="tel"
               placeholder="0712 345 678"
-              aria-describedby={`${uid}-phone-hint${errors.msisdn || (touchedPhone && phoneProblem && msisdn) ? ` ${uid}-phone-err` : ""}`}
-              aria-invalid={!!errors.msisdn || (touchedPhone && !!phoneProblem && !!msisdn) || undefined}
+              aria-describedby={`${uid}-phone-hint${errors.msisdn ? ` ${uid}-phone-err` : ""}`}
+              aria-invalid={!!errors.msisdn || undefined}
               required
             />
             <p id={`${uid}-phone-hint`} className="cp-hint">
-              The number you complained from. It must match the reference.
+              The number you complained from. We use your number only to find your complaint.
             </p>
-            {(errors.msisdn || (touchedPhone && phoneProblem && msisdn)) && (
+            {/* Checked when the form is sent, never on blur: an error appearing on blur moved the
+                button from under the pointer and the first click was lost. */}
+            {errors.msisdn && (
               <p id={`${uid}-phone-err`} className="cp-error">
-                {errors.msisdn || phoneProblem}
+                {errors.msisdn}
               </p>
             )}
           </div>
@@ -246,6 +258,12 @@ export default function Track() {
           onUpdated={(t, said) => {
             setResult(t);
             setConfirmation(said);
+            setCheckedAt(new Date());
+          }}
+          checkedAt={checkedAt}
+          onRechecked={(t) => {
+            setResult(t);
+            setCheckedAt(new Date());
           }}
           onAnother={another}
         />
@@ -268,17 +286,38 @@ interface StatusProps {
   headingRef: React.RefObject<HTMLHeadingElement>;
   confirmation: string;
   onUpdated: (t: Tracked, said: string) => void;
+  checkedAt: Date | null;
+  onRechecked: (t: Tracked) => void;
   onAnother: () => void;
 }
 
-function Status({ t, msisdn, headingRef, confirmation, onUpdated, onAnother }: StatusProps) {
+function Status({ t, msisdn, headingRef, confirmation, onUpdated, checkedAt, onRechecked, onAnother }: StatusProps) {
+  const [rechecking, setRechecking] = useState(false);
+  const [recheckSaid, setRecheckSaid] = useState("");
+  const recheck = async () => {
+    if (rechecking) return;
+    setRechecking(true);
+    setRecheckSaid("");
+    try {
+      const next = await supportApi.track(t.ref, msisdn);
+      onRechecked(next);
+      setRecheckSaid(next.headline === t.headline ? "Checked again: nothing has changed." : `Checked again: ${next.headline}.`);
+    } catch (e) {
+      setRecheckSaid(trackProblem(e).text);
+    } finally {
+      setRechecking(false);
+    }
+  };
+  const checked = checkedAt ? fmtClock(checkedAt.toISOString()) : "";
+  // The strip says only what the headline does not: the place when the headline does not name it.
+  const placeInHeadline = !!t.outage?.place && t.headline.includes(t.outage.place);
   const uid = useId();
   const timeline = Array.isArray(t.timeline) ? t.timeline.filter((x) => x && x.text) : [];
   const messages = Array.isArray(t.messages) ? t.messages.filter((m) => m && m.body) : [];
   const received = fmtClock(t.received_at);
-  // The reply-by time, unless the detail sentence already says it ("We will get back to you by 16:40").
+  // The reply-by time, unless the detail sentence already gives a time ("…and reply by 13:05 EAT").
   const dueAt = t.reply_due_at ? fmtClock(t.reply_due_at) : "";
-  const due = dueAt && !(t.detail || "").includes(dueAt.slice(-5)) ? dueAt : "";
+  const due = dueAt && !/\b\d{1,2}:\d{2}\b/.test(t.detail || "") ? dueAt : "";
   const confirmRef = useRef<HTMLParagraphElement>(null);
 
   useEffect(() => {
@@ -302,6 +341,11 @@ function Status({ t, msisdn, headingRef, confirmation, onUpdated, onAnother }: S
             , received <span className="cp-mono">{received}</span>
           </span>
         )}
+        {checked && (
+          <span>
+            , checked <span className="cp-mono">{checked}</span>
+          </span>
+        )}
       </p>
       <h1 ref={headingRef} tabIndex={-1} className="tk-headline">
         {t.headline}
@@ -314,33 +358,32 @@ function Status({ t, msisdn, headingRef, confirmation, onUpdated, onAnother }: S
       )}
 
       {t.outage && (
-        <div className={"tk-outage" + (t.outage.state === "restored" ? " ok" : " warn")}>
-          <div className="tk-outage-cell">
-            <span className="tk-outage-label">Outage</span>
-            <span className="tk-outage-value">{t.outage.place}</span>
-          </div>
-          <div className="tk-outage-cell">
-            <span className="tk-outage-label">Ticket</span>
-            <span className="tk-outage-value cp-mono">{t.outage.ticket}</span>
-          </div>
-          <div className="tk-outage-cell">
-            <span className="tk-outage-label">Now</span>
-            <span className="tk-outage-value tk-outage-state">
-              <span className="tk-dot" aria-hidden="true" />
-              {t.outage.state === "restored" ? (
-                t.outage.restored_at ? (
-                  <span>
-                    Restored at <span className="cp-mono">{fmtClock(t.outage.restored_at)}</span>
-                  </span>
-                ) : (
-                  "Restored"
-                )
+        // One line: the state in its signal colour, then the ticket to quote if you call. A customer
+        // who reported it still down never sees a green "Restored" (§7.3).
+        <p className={"tk-outage" + (t.outage.state === "restored" ? " ok" : " warn")}>
+          <span className="tk-dot" aria-hidden="true" />
+          <span className="tk-outage-state">
+            {t.outage.state === "still_down" ? (
+              "You told us it is still down"
+            ) : t.outage.state === "restored" ? (
+              t.outage.restored_at ? (
+                <>
+                  Restored at <span className="cp-mono">{fmtClock(t.outage.restored_at)}</span>
+                </>
               ) : (
-                "Engineers working"
-              )}
+                "Restored"
+              )
+            ) : (
+              "Engineers working"
+            )}
+            {!placeInHeadline && t.outage.place ? ` in ${t.outage.place}` : ""}
+          </span>
+          {t.outage.ticket && (
+            <span className="tk-outage-ticket">
+              Ticket <span className="cp-mono">{t.outage.ticket}</span>
             </span>
-          </div>
-        </div>
+          )}
+        </p>
       )}
 
       {/* Right under the answer it questions: "service is back", and for this customer it is not. */}
@@ -350,7 +393,7 @@ function Status({ t, msisdn, headingRef, confirmation, onUpdated, onAnother }: S
         <section className="tk-section" aria-labelledby={`${uid}-tl`}>
           <div className="tk-section-head">
             <h2 id={`${uid}-tl`}>What has happened</h2>
-            <span className="cp-hint">Kenyan time</span>
+            <span className="cp-hint">Times in EAT</span>
           </div>
           <ol className="tk-timeline">
             {timeline.map((x, i) => {
@@ -376,7 +419,7 @@ function Status({ t, msisdn, headingRef, confirmation, onUpdated, onAnother }: S
             {messages.map((m, i) => (
               <li key={`${m.at}-${i}`} className={"tk-msg" + (m.from === "you" ? " you" : " us")}>
                 <div className="tk-msg-head">
-                  <span className="tk-msg-who">{m.from === "you" ? "You" : "Us"}</span>
+                  <span className="tk-msg-who">{m.from === "you" ? "You" : "Kenya NOC Support"}</span>
                   {fmtClock(m.at) && <span className="cp-mono">{fmtClock(m.at)}</span>}
                 </div>
                 <p className="tk-msg-body">{m.body}</p>
@@ -387,6 +430,9 @@ function Status({ t, msisdn, headingRef, confirmation, onUpdated, onAnother }: S
       )}
 
       <div className="cp-result-actions tk-actions">
+        <button type="button" className="cp-btn secondary" onClick={recheck} aria-disabled={rechecking || undefined} aria-busy={rechecking || undefined}>
+          {rechecking ? "Checking…" : "Check again"}
+        </button>
         <button type="button" className="cp-btn secondary" onClick={onAnother}>
           Check another complaint
         </button>
@@ -394,6 +440,9 @@ function Status({ t, msisdn, headingRef, confirmation, onUpdated, onAnother }: S
           Send a new complaint
         </Link>
       </div>
+      <p className="tk-recheck" role="status">
+        {recheckSaid}
+      </p>
     </div>
   );
 }

@@ -29,6 +29,9 @@
 /* Nothing to say (empty queue, socket up): no gap above the empty state. */
 .hitl-summary:not(:has(> :not(:empty))) { margin-bottom: 0; }
 
+/* A `?task=` link to a card that has already left the queue: said once, plainly. */
+.hitl-gone { margin: 0 0 var(--s4); color: var(--text); font-size: var(--fs-md); }
+
 /* ---------------------------------------------------------------- list */
 /*
  * Deliberately NOT `.list`: that class caps its scroller at 440px, which is right for the
@@ -204,8 +207,15 @@
   line-height: 1.5;
 }
 .hitl-check { display: block; color: var(--text); }
-/* Focus never lands under the sticky footer; on a short viewport the footer stops sticking. */
+/* Focus never lands under the sticky footer: everything focusable above it keeps the footer's
+   measured height (`--hitl-foot`, set by ApprovalCard) clear below it, before it is focused, so
+   the scroll that focus causes already allows for it. The footer's own controls are exempt: it is
+   sticky, and a margin there would only scroll the page. On a short viewport the footer stops
+   sticking (below). */
 .hitl-card :focus-visible { scroll-margin-bottom: 9rem; }
+.hitl-card :is(pre, summary, a, button, textarea, input, [tabindex]):not(.hitl-actions *) {
+  scroll-margin-bottom: var(--hitl-foot, 9rem);
+}
 @media (max-height: 560px) {
   .hitl-actions { position: static; }
 }
@@ -440,6 +450,8 @@
 .hitl-quick-label { color: var(--muted); font-size: var(--fs-sm); white-space: nowrap; }
 .hitl-quick-list { display: flex; flex-wrap: wrap; gap: var(--s2); }
 .hitl-hint { margin-left: auto; color: var(--muted-dim); font-size: var(--fs-sm); }
+/* What "Not now" does, said once a rejection is on the table (lib/hitl `rejectTitle`). */
+.hitl-reject-means { flex-basis: 100%; color: var(--text); font-size: var(--fs-sm); line-height: 1.4; }
 .hitl-fallback-actions { margin-top: var(--s3); }
 
 /* The receipt: who decided, then what that did, centred in the footer's height. */
@@ -508,6 +520,9 @@
 /* ---------------------------------------------------------------- phone */
 @media (max-width: 600px) {
   .hitl-card { padding: var(--s3); }
+  /* The head's meta (type, claim, wait, raised) wraps to several short lines here: tighter rows. */
+  .hitl-card-head { gap: 2px var(--s3); }
+  .hitl-card-head > .hitl-title { margin-bottom: var(--s1); }
   .hitl-actions {
     margin: var(--s3) calc(-1 * var(--s3)) calc(-1 * var(--s3));
     padding: var(--s3);

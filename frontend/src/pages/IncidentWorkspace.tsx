@@ -407,10 +407,13 @@ function Workspace({ id, session, profile }: { id: string | undefined; session: 
   const cust = customers.state === "ok" ? customers.data : null;
   const toTell = cust ? Math.max(0, Number(cust.waiting) || 0) : 0;
   const noticeOpen = !cust?.notice || cust.notice.state === "none" || cust.notice.state === "waiting_for_restore";
+  // §7.1: an update held back at restore is raised again when the ticket closes.
+  const closeOpen = noticeOpen || cust?.notice?.state === "held_back";
+  const isRestored = !!inc.restored_at || ["RESTORED", "CLOSED"].includes(String(inc.status || "").toUpperCase());
   const tellWaits = noticeWaitsForPerson(inc.priority, profile?.autonomy_level, toTell);
   const tellTail = `${toTell} ${toTell === 1 ? "customer" : "customers"} service is back${tellWaits ? ", after a supervisor approves" : ""}.`;
   const restoreTells = toTell > 0 && noticeOpen ? `Restoring tells ${tellTail}` : "";
-  const closeTells = toTell > 0 && noticeOpen ? `Closing tells ${tellTail}` : "";
+  const closeTells = toTell > 0 && closeOpen ? `Closing tells ${tellTail}` : "";
   const dash = "—";
   const restored = inc.restored_at ? `restored ${fmtDateTime(inc.restored_at)}` : "";
   const resolution = [inc.resolution_code ? capFirst(humanEnum(inc.resolution_code)) : "", restored]
@@ -709,10 +712,20 @@ function Workspace({ id, session, profile }: { id: string | undefined; session: 
                 />
               </label>
               <label className="check">
-                <input type="checkbox" checked={markRestored} onChange={(e) => setMarkRestored(e.target.checked)} />
+                <input
+                  type="checkbox"
+                  checked={markRestored}
+                  onChange={(e) => setMarkRestored(e.target.checked)}
+                  aria-describedby={markRestored && restoreTells ? "restore-tells" : undefined}
+                />
                 Mark service restored
               </label>
-              {restoreTells && <p className={"ic-consequence" + (tellWaits ? " hitl" : "")}>{restoreTells}</p>}
+              {/* Said while the box is ticked: that is when posting the note restores the ticket. */}
+              {markRestored && restoreTells && (
+                <p id="restore-tells" className={"ic-consequence" + (tellWaits ? " hitl" : "")}>
+                  {restoreTells}
+                </p>
+              )}
               <div className="note-form-actions">
                 <button className="btn primary" disabled={noteBusy} aria-busy={noteBusy || undefined} onClick={addNote}>
                   {noteBusy ? "Posting…" : "Post note"}
@@ -725,7 +738,7 @@ function Workspace({ id, session, profile }: { id: string | undefined; session: 
       </div>
 
       {/* Customers on this outage: absent when nothing is linked or the Support desk is off. */}
-      {id && <IncidentCustomersPanel incidentId={id} s={customers} />}
+      {id && <IncidentCustomersPanel incidentId={id} s={customers} restored={isRestored} />}
 
       {/* Agent memory M0 (spec §7.11): what has happened at this mast before, read from the
           incidents already in the database. Self-contained — it owns its fetch and swallows its

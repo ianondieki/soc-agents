@@ -37,25 +37,25 @@
 .cp .tk-detail { margin-top: var(--s3); }
 .cp .tk-due { margin: var(--s3) 0 0; color: var(--hitl-text); font-size: var(--fs-md); font-weight: 500; }
 
-/* The outage strip: three facts on one hairline row, the state with its signal dot. */
-.tk-outage {
-  display: grid;
-  grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) minmax(0, 1.3fr);
-  margin-top: var(--s5);
+/* The outage strip: one line, the state with its signal dot, then the ticket to quote. */
+.cp .tk-outage {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--s1) var(--s3);
+  margin: var(--s5) 0 0;
+  padding: var(--s3) var(--s4);
   border: 1px solid var(--line);
   border-radius: var(--r-md);
   background: var(--surface);
 }
-.tk-outage-cell { display: grid; gap: 2px; min-width: 0; padding: var(--s3) var(--s4); }
-.tk-outage-cell + .tk-outage-cell { border-left: 1px solid var(--line); }
-.tk-outage-label { color: var(--muted); font-size: var(--fs-sm); }
-.tk-outage-value { color: var(--text-strong); font-size: var(--fs-base); font-weight: 600; line-height: 1.35; overflow-wrap: anywhere; }
-.tk-outage-value.cp-mono { font-weight: 500; }
-.tk-outage-state { display: inline-flex; align-items: center; gap: var(--s2); }
-.tk-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--muted-dim); }
+.tk-outage-state { color: var(--text-strong); font-size: var(--fs-base); font-weight: 600; line-height: 1.4; }
+.tk-outage-ticket { margin-left: auto; color: var(--muted); font-size: var(--fs-sm); }
+.tk-dot { flex: none; align-self: center; width: 8px; height: 8px; border-radius: 50%; background: var(--muted-dim); }
 .tk-outage.warn .tk-dot { background: var(--warn); }
 .tk-outage.ok .tk-dot { background: var(--ok); }
 .tk-outage.ok .tk-outage-state { color: var(--ok); }
+.tk-outage.warn .tk-outage-state { color: var(--warn); }
 
 /* Sections: a hairline above, the heading with a quiet note beside it. */
 .tk-section { margin-top: var(--s6); }
@@ -107,6 +107,8 @@
 }
 
 .tk-actions { align-items: center; }
+.cp .tk-recheck { margin-top: var(--s3); color: var(--muted); font-size: var(--fs-md); }
+.cp .tk-recheck:empty { display: none; }
 .tk-new { display: inline-flex; align-items: center; min-height: 44px; font-size: var(--fs-md); }
 
 @media (prefers-reduced-motion: reduce) {
@@ -115,8 +117,7 @@
 :root[data-quiet="on"] .tk-still-form { animation: none; }
 
 @media (max-width: 600px) {
-  .tk-outage { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
-  .tk-outage-cell:nth-child(3) { grid-column: 1 / -1; border-left: 0; border-top: 1px solid var(--line); }
+  .tk-outage-ticket { margin-left: calc(8px + var(--s3)); flex-basis: 100%; }
   .tk-step { grid-template-columns: 20px minmax(0, 1fr); }
   .tk-step-at { grid-column: 2; margin-top: 2px; }
   .tk-still-buttons .cp-btn { width: 100%; }
