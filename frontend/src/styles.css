@@ -2096,8 +2096,15 @@ textarea { width: 100%; min-height: 90px; line-height: 1.5; resize: vertical; }
 }
 
 /* A feature lane that is switched off: one dashed panel, the same on every flagged page. */
-.lane-off { border-style: dashed; }
+/* A lane switched off by its flag: an icon, "Switched off" and what turning it on would do.
+   Never the same as empty (spec §7.10): the icon and the tag say off, not nothing. */
+.lane-off { display: flex; align-items: flex-start; gap: 18px; padding: 22px 24px; }
+.lane-off-icon { display: inline-grid; flex: none; place-items: center; width: 46px; height: 46px; border-radius: 14px; background: var(--surface-raised); color: var(--muted); box-shadow: inset 0 0 0 1px var(--line); }
+.lane-off-text { min-width: 0; }
+.lane-off-tag { display: inline-flex; padding: 2px 9px; border-radius: 999px; background: var(--surface-raised); color: var(--muted); font-size: var(--fs-xs); font-weight: 600; box-shadow: inset 0 0 0 1px var(--line); }
+.lane-off .panel-kicker { margin: 8px 0 6px; }
 .lane-off-body { margin: 0; color: var(--muted); max-width: 70ch; font-size: var(--fs-md); line-height: 1.55; }
+.lane-off-body code { padding: 1px 6px; border-radius: 6px; background: var(--surface-raised); color: var(--text-strong); font-family: var(--mono); font-size: 0.9em; }
 
 /* The Workflow Map's training grid: twelve numbered cards, no connectors. */
 .rail-grid .rail-track { display: grid; grid-template-columns: repeat(auto-fill, minmax(148px, 1fr)); gap: var(--s2); }

@@ -4,7 +4,6 @@ import LaneOff from "../components/LaneOff";
 import PirEditor, { PIR_REASON_WORDS, pirStatus } from "../components/PirEditor";
 import { humanEnum, humanStatus } from "../lib/agents";
 import { detailOf, isLaneOff } from "../lib/apiError";
-import { IconDot } from "../lib/icons";
 import { fmtDateTime } from "../lib/time";
 import "./Pirs.css";
 
@@ -79,9 +78,11 @@ export default function Pirs({ tick }: { tick: number }) {
   const [loaded, setLoaded] = useState(false);
   const [failed, setFailed] = useState(false);
 
+  // Every review is asked for once and the status switch filters here, so each button can say
+  // how many reviews it holds.
   const load = useCallback(() => {
     api
-      .pirs(status === "ALL" ? "" : status)
+      .pirs("")
       .then((list: PirRow[]) => {
         setRows(list);
         setOff(false);
@@ -100,11 +101,27 @@ export default function Pirs({ tick }: { tick: number }) {
       .pirAwaitingReview()
       .then((r: { awaiting_review: number }) => setAwaiting(r?.awaiting_review ?? null))
       .catch(() => setAwaiting(null));
-  }, [status]);
+  }, []);
 
   useEffect(() => {
     load();
   }, [load, tick]);
+
+  const counts = useMemo(() => {
+    const out: Record<string, number> = { ALL: rows.length };
+    for (const r of rows) out[r.status] = (out[r.status] || 0) + 1;
+    return out;
+  }, [rows]);
+  const shown = useMemo(() => (status === "ALL" ? rows : rows.filter((r) => r.status === status)), [rows, status]);
+  const medianMttr = useMemo(() => {
+    const v = rows
+      .map((r) => r.adjusted_mttr_minutes ?? r.mttr_minutes)
+      .filter((n): n is number => typeof n === "number" && Number.isFinite(n))
+      .sort((a, b) => a - b);
+    if (!v.length) return null;
+    const mid = Math.floor(v.length / 2);
+    return v.length % 2 ? v[mid] : (v[mid - 1] + v[mid]) / 2;
+  }, [rows]);
 
   useEffect(() => {
     // Best-effort join for incident_number / site / priority. A failure costs the labels
@@ -202,48 +219,51 @@ export default function Pirs({ tick }: { tick: number }) {
       {head}
 
       {note && (
-        <div className="panel" style={{ marginBottom: "0.75rem" }} role="status">
+        <div className="panel pir-note" role="status">
           <div className="muted">{note}</div>
         </div>
       )}
 
-      <div className="form-row" role="group" aria-label="Filter reviews by status">
+      <dl className="pir-figures">
+        <div>
+          <dt>Reviews</dt>
+          <dd>{loaded ? rows.length : "—"}</dd>
+        </div>
+        <div className={awaiting ? "warn" : undefined}>
+          <dt>Waiting for a reviewer</dt>
+          <dd>{awaiting ?? "—"}</dd>
+        </div>
+        <div className={counts.PUBLISHED ? "ok" : undefined}>
+          <dt>Published</dt>
+          <dd>{loaded ? counts.PUBLISHED || 0 : "—"}</dd>
+        </div>
+        <div>
+          <dt>Time to restore, median</dt>
+          <dd>{medianMttr != null ? `${Math.round(medianMttr)} min` : "—"}</dd>
+        </div>
+      </dl>
+
+      <div className="seg pir-filter" role="group" aria-label="Filter reviews by status">
         {STATUSES.map((s) => (
-          <button
-            key={s}
-            className={"btn sm" + (status === s ? " primary" : "")}
-            aria-pressed={status === s}
-            onClick={() => setStatus(s)}
-          >
+          <button key={s} type="button" aria-pressed={status === s} onClick={() => setStatus(s)}>
             {statusWord(s)}
+            <span className="pir-n">{loaded ? counts[s] || 0 : ""}</span>
           </button>
         ))}
       </div>
 
-      <div className="panel">
-        <div className="panel-head">
-          <h2 className="panel-title">Reviews</h2>
-          <div className="facts">
-            <span>{rows.length} shown</span>
-            {awaiting != null &&
-              (awaiting > 0 ? (
-                <span className="attn warn">
-                  <IconDot /> {awaiting} awaiting review
-                </span>
-              ) : (
-                <span>none awaiting review</span>
-              ))}
-          </div>
-        </div>
-        <table>
+      <div className="panel pir-panel">
+        <table className="pir-table">
           <thead>
             <tr>
               <th>Ticket</th>
               <th>Status</th>
               <th>Why it opened</th>
-              <th>Subscribers</th>
-              <th>MTTR / adjusted</th>
-              <th>Reviewer</th>
+              <th className="num">Subscribers</th>
+              <th title="Minutes from the alarm to restore; the adjusted figure leaves out time stopped on the clock">
+                Time to restore
+              </th>
+              <th>Signed by</th>
               <th>Updated (EAT)</th>
             </tr>
           </thead>
@@ -257,48 +277,52 @@ export default function Pirs({ tick }: { tick: number }) {
                   </td>
                 </tr>
               ))}
-            {rows.map((r) => (
-              <tr
-                key={r.id}
-                onClick={() => setSelected(r.id)}
-                className={"pir-row" + (selected === r.id ? " pir-row-selected" : "")}
-              >
-                <td>
-                  {/* The keyboard's way in; the row click stays for the mouse. */}
-                  <button
-                    type="button"
-                    className="pir-open"
-                    aria-expanded={selected === r.id}
-                    aria-controls={selected === r.id ? "pir-editor" : undefined}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setSelected(r.id);
-                    }}
-                  >
-                    {label(r.incident_id)}
-                  </button>
-                  <div className="muted">
-                    {byId[r.incident_id]?.site_name || byId[r.incident_id]?.site_id || "—"}
-                  </div>
-                </td>
-                <td>
-                  {(() => {
-                    const st = pirStatus(r.status);
-                    return st.chip ? <span className={st.chip}>{st.word}</span> : st.word;
-                  })()}
-                  {r.ai_assisted ? <div className="muted">AI-assisted</div> : null}
-                </td>
-                <td className="muted">{PIR_REASON_WORDS[r.opened_reason] || humanEnum(r.opened_reason)}</td>
-                <td>{(r.impact?.users_affected ?? 0).toLocaleString()}</td>
-                <td className="muted">
-                  {r.mttr_minutes != null ? Math.round(r.mttr_minutes) + " min" : "—"}
-                  {" / "}
-                  {r.adjusted_mttr_minutes != null ? Math.round(r.adjusted_mttr_minutes) + " min" : "—"}
-                </td>
-                <td className="muted">{r.reviewer || "unsigned"}</td>
-                <td className="muted">{fmtDateTime(r.updated_at)}</td>
-              </tr>
-            ))}
+            {shown.map((r) => {
+              const inc = byId[r.incident_id];
+              const st = pirStatus(r.status);
+              const adjusted = r.adjusted_mttr_minutes != null && r.adjusted_mttr_minutes !== r.mttr_minutes;
+              return (
+                <tr
+                  key={r.id}
+                  onClick={() => setSelected(r.id)}
+                  className={"pir-row" + (selected === r.id ? " pir-row-selected" : "")}
+                >
+                  <td>
+                    {/* The keyboard's way in; the row click stays for the mouse. */}
+                    <button
+                      type="button"
+                      className="pir-open"
+                      aria-expanded={selected === r.id}
+                      aria-controls={selected === r.id ? "pir-editor" : undefined}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setSelected(r.id);
+                      }}
+                    >
+                      {inc?.site_name || inc?.site_id || label(r.incident_id)}
+                    </button>
+                    <div className="pir-sub">
+                      <span className="mono">{label(r.incident_id)}</span>
+                      {inc?.priority && <span className={`pill ${inc.priority}`}>{inc.priority}</span>}
+                    </div>
+                  </td>
+                  <td>
+                    <span className={`pir-status ${String(r.status).toLowerCase()}`}>{st.word}</span>
+                    {r.ai_assisted ? <div className="muted">AI-assisted</div> : null}
+                  </td>
+                  <td className="muted pir-c-why">{PIR_REASON_WORDS[r.opened_reason] || humanEnum(r.opened_reason)}</td>
+                  <td className="num" data-label="Subscribers">
+                    {(r.impact?.users_affected ?? 0).toLocaleString()}
+                  </td>
+                  <td data-label="Restored in">
+                    {r.mttr_minutes != null ? `${Math.round(r.mttr_minutes)} min` : "—"}
+                    {adjusted && <div className="muted">adjusted {Math.round(r.adjusted_mttr_minutes as number)} min</div>}
+                  </td>
+                  <td data-label="Signed by">{r.reviewer ? r.reviewer : <span className="pir-unsigned">Not signed yet</span>}</td>
+                  <td className="muted pir-c-updated">{fmtDateTime(r.updated_at)}</td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
         {!loaded && failed && (
@@ -309,7 +333,7 @@ export default function Pirs({ tick }: { tick: number }) {
             </button>
           </div>
         )}
-        {loaded && rows.length === 0 && status !== "ALL" && (
+        {loaded && shown.length === 0 && status !== "ALL" && (
           <div className="empty">
             No reviews with this status.{" "}
             <button className="btn sm" onClick={() => setStatus("ALL")}>
@@ -317,7 +341,7 @@ export default function Pirs({ tick }: { tick: number }) {
             </button>
           </div>
         )}
-        {loaded && rows.length === 0 && status === "ALL" && (
+        {loaded && shown.length === 0 && status === "ALL" && (
           <div className="empty">
             No reviews yet. One opens within 5 minutes of a qualifying ticket being restored or closed; open any
             other by hand above.

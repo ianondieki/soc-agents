@@ -15,3 +15,59 @@
 }
 .pir-open:hover { text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--muted-dim); }
 .pir-editor-slot { margin-top: var(--s4); }
+
+/* Four figures over the list; the status switch says how many reviews each status holds. */
+.pir-figures { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; margin: 0 0 var(--s4); overflow: hidden; border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--line); }
+.pir-figures > div { min-width: 0; padding: 12px 18px 14px; background: var(--surface); }
+.pir-figures dt { overflow: hidden; color: var(--muted); font-size: var(--fs-sm); font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.pir-figures dd { margin: 4px 0 0; color: var(--text-strong); font-size: var(--fs-xl); font-weight: 700; line-height: 1.15; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.pir-figures > .warn dd { color: var(--warn); }
+.pir-figures > .ok dd { color: var(--ok); }
+.pir-filter { margin-bottom: var(--s3); }
+.pir-filter > button { display: inline-flex; align-items: center; gap: 7px; min-height: 32px; }
+.pir-n { color: var(--muted-dim); font-size: var(--fs-xs); font-weight: 600; font-variant-numeric: tabular-nums; }
+.pir-filter > button[aria-pressed="true"] .pir-n { color: var(--accent); }
+.pir-note { margin-bottom: var(--s3); }
+.pir-panel { padding: 4px 8px 8px; }
+
+/* The ticket cell: the site leads, the number and priority under it. */
+.pir-sub { display: flex; align-items: center; gap: 8px; margin-top: 3px; color: var(--muted); font-size: var(--fs-xs); }
+.pir-sub .pill { height: 18px; padding: 0 6px; font-size: 10px; }
+
+/* A status as a pill: draft amber (nobody has finished it), in review violet (a person is on it),
+   published green, not required grey. */
+.pir-status { display: inline-flex; align-items: center; padding: 2px 10px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface-raised); color: var(--text); font-size: var(--fs-xs); font-weight: 600; white-space: nowrap; }
+.pir-status.draft { border-color: var(--warn-line); background: var(--warn-soft); color: var(--warn); }
+.pir-status.in_review { border-color: var(--hitl-line); background: var(--hitl-soft); color: var(--hitl-text); }
+.pir-status.published { border-color: var(--ok-line, var(--line)); background: var(--ok-soft); color: var(--ok); }
+.pir-status.not_required { color: var(--muted); }
+/* A review nobody signed is the failure this lane exists to catch: said in the watch colour. */
+.pir-unsigned { color: var(--warn); font-size: var(--fs-sm); font-weight: 600; }
+
+@media (max-width: 760px) {
+  .pir-figures { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+/* A phone: the switch wraps rather than run off the page, and each review becomes a small card
+   (site, number and priority beside its status; then restore time, subscribers and who signed).
+   Why it opened and when it changed are in the review itself. */
+@media (max-width: 700px) {
+  .pir-figures dt { white-space: normal; }
+  .pir-filter { flex-wrap: wrap; }
+  .pir-panel { padding: 0 12px; }
+  .pir-table, .pir-table tbody { display: block; }
+  .pir-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .pir-table tr.pir-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px 12px; height: auto; margin: 0 -12px; padding: 14px 16px; border-bottom: 1px solid var(--line); }
+  .pir-table tr.pir-row:hover > td, .pir-table tr.pir-row-selected > td { background: transparent; }
+  .pir-table tr.pir-row-selected { background: var(--accent-faint); }
+  .pir-table tr.pir-row:last-child { border-bottom: 0; }
+  .pir-table tr.pir-row > td { display: block; padding: 0; border: 0; text-align: left; }
+  .pir-table tr.pir-row > td:first-child { grid-column: 1 / 3; grid-row: 1; min-width: 0; }
+  .pir-table tr.pir-row > td:nth-child(2) { grid-column: 3; grid-row: 1; text-align: right; }
+  .pir-table tr.pir-row > .pir-c-why, .pir-table tr.pir-row > .pir-c-updated { display: none; }
+  /* Three small figures under the ticket: label over value. */
+  .pir-table tr.pir-row > td[data-label] { grid-row: 2; display: flex; flex-direction: column; gap: 2px; min-width: 0; font-size: var(--fs-sm); }
+  .pir-table tr.pir-row > td[data-label]::before { content: attr(data-label); color: var(--muted); font-family: var(--font); font-size: var(--fs-xs); font-weight: 500; }
+  .pir-table tr.pir-row > td[data-label] .muted { font-size: var(--fs-xs); }
+  .pir-table tr:not(.pir-row) { display: block; }
+  .pir-table tr:not(.pir-row) > td { display: block; }
+}
