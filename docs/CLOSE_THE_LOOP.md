@@ -212,6 +212,67 @@ are classified in `tests/system/test_rbac_matrix.py`.
 three numbers about Rongai with no incident, which opens one surge card. Restoring a storm P3 from
 the incident page then tells its customers at once; restoring a P2 raises the customer-update card.
 
+## 7. Revision 2 (after the UX review): every side is told the truth
+
+Orchestrator decisions; they override sections 1-5 and the Decisions below where they differ.
+
+**7.1 Reject is "Not now", never "never".** Rejecting an `APPROVE_CUSTOMER_UPDATE` card holds the
+update back; it does not silence the customers.
+- The held SMS rows are SUPPRESSED, the reason is kept, and the customers stay *waiting to hear*.
+- The notice's state is `held_back` (replacing `rejected`) with `reason`, `held_by` and `held_at`.
+- The update can be raised again:
+  - automatically, when the incident is closed after being held back at restore;
+  - by a person, with `POST /api/v1/support/incidents/{incident_id}/customer-update` (OPERATIONS).
+    This is allowed when the incident is RESTORED or CLOSED, someone is still untold and no card is
+    pending. It follows the same ladder, so it sends now or raises a fresh card, and answers with the
+    incident's `customers` payload.
+- Idempotency keys therefore carry the notice attempt (`support-restore:{notice_id}:{msisdn_hash}`).
+  One message per number per incident still holds through `told_restored_at`: a told number is never
+  told again.
+- Quick reject reasons on the card ("not restored yet", "wrong place", "wording") are honest under
+  this rule. The card says: "Holds the update back. The customers stay waiting, and you can send it
+  later from the outage."
+
+**7.2 The approver sees what goes out, and why it is safe.**
+- The `CONFIRM_POSSIBLE_OUTAGE` payload adds the exact confirmation SMS:
+  - `text_en` and `text_sw`;
+  - `segments_en` and `segments_sw`;
+  - `languages: {en, sw}`;
+  - `recipients` (distinct numbers);
+  - `sample: [{ref, msisdn_masked, language}]` (max 10).
+- The `APPROVE_CUSTOMER_UPDATE` payload adds the evidence that service is back:
+  - `restored_at` and `restored_by`;
+  - `restore_note` (max 200 chars, the note the restorer wrote);
+  - `incident_status`.
+- Masked numbers show the last 4 digits (`+254 7•• •• 1234`) everywhere staff see them, so two
+  numbers never look like one.
+
+**7.3 Track never tells a customer something untrue.**
+- `outage.state` gains `"still_down"`. Once this customer reports still-down, the strip shows that
+  instead of a green "Restored".
+- An `answered` network complaint with no linked incident gets the headline "We have passed your
+  report to our network team" and the detail "If we find an outage in your area, we will link your
+  complaint to it and tell you when it is fixed."
+- **Late linking** makes that promise keepable. When a new top-level incident opens through ingest:
+  - recent unlinked network complaints are linked to it when they are from the last 6 hours
+    (`late_link_hours`), from the same operator, and name a place that matches the incident (the same
+    matching as `link_incident`);
+  - each gets a step `followup/linked_late`, but no SMS. The restore notice reaches them later.
+- Timeline lines are written for customers:
+  - "We read your complaint and passed it to the network team", not "Sorted as network";
+  - our messages are labelled "Kenya NOC Support".
+- The still-down reply window is `still_down_reply_hours` (default 4), not the 24-hour default.
+  Wording: "You told us service is still down. A member of our team will check and reply by …".
+- Nothing on /track or /complain mentions an SMS the customer never received. Intake sends none. The
+  reference is on the page they saw after sending.
+
+**7.4 Smaller additions.**
+- The surges list adds `parent_incident_number`.
+- The incident customers payload adds `follow_up: {incident_id, incident_number, status} | null`,
+  the ticket opened from this incident's still-down reports.
+- `OutageRow.notice.state` adds `held_back` (above), and keeps `sent`, `awaiting_approval`, `none`
+  and `waiting_for_restore`.
+
 ## Decisions
 
 What the contract above leaves open, as built (`support/loop.py`, `support/surge.py`, the routes in
