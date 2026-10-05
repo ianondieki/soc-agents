@@ -744,7 +744,7 @@ export default function App() {
                   />
                 }
               />
-              <Route path="/maintenance" element={<Maintenance tick={revisions.incidents + manualTick} />} />
+              <Route path="/maintenance" element={<Maintenance tick={revisions.incidents + manualTick} profile={profile} />} />
               <Route path="/audit" element={<Audit tick={revisions.audit + manualTick} />} />
               <Route path="/contracts" element={<Contracts />} />
               {/* Post-incident reviews (§7.7). Refetches on the `pir` slice (pir.opened). */}

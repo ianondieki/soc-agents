@@ -1,0 +1,103 @@
+/* Maintenance (pages/Maintenance.tsx): five figures, then each window as a row with a calendar
+ * leaf, where and when it takes customers off air, its sign-off as four steps, the rain guard
+ * and Authority facts, and its actions; then the tasks, soonest first. */
+
+.mt-figures { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 1px; margin: 0 0 var(--s4); overflow: hidden; border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--line); }
+.mt-figures > div { min-width: 0; padding: 12px 18px 14px; background: var(--surface); }
+.mt-figures dt { overflow: hidden; color: var(--muted); font-size: var(--fs-sm); font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.mt-figures dd { margin: 4px 0 0; color: var(--text-strong); font-size: var(--fs-xl); font-weight: 700; line-height: 1.15; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.mt-figures dd.mt-figure-word { overflow: hidden; font-size: var(--fs-lg); line-height: 1.6; text-overflow: ellipsis; }
+.mt-figures > .hitl dd { color: var(--hitl-text); }
+.mt-figures > .ok dd { color: var(--ok); }
+.mt-figures > .bad dd { color: var(--danger); }
+
+.mt-note { margin-bottom: var(--s3); color: var(--text); font-size: var(--fs-sm); }
+.mt-panel { padding: 18px 20px 8px; }
+.mt-panel + .mt-panel { margin-top: var(--s4); }
+.mt-panel .panel-head { margin-bottom: 4px; }
+
+/* ---- A window ------------------------------------------------------------------------------ */
+.mt-windows { margin: 0; padding: 0; list-style: none; }
+.mt-window { display: grid; grid-template-columns: 64px minmax(0, 1fr) auto; align-items: start; gap: 4px 20px; padding: 18px 0; border-top: 1px solid var(--line); }
+.mt-window:first-child { border-top: 0; }
+.mt-window.past { opacity: 0.72; }
+
+/* The calendar leaf: weekday, day, month. */
+.mt-date { display: grid; justify-items: center; gap: 1px; padding: 8px 0 9px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface-raised); }
+.mt-date-wd, .mt-date-mon { color: var(--muted); font-size: var(--fs-xs); font-weight: 600; }
+.mt-date-day { color: var(--text-strong); font-size: var(--fs-xl); font-weight: 700; line-height: 1.05; font-variant-numeric: tabular-nums; }
+
+.mt-main { min-width: 0; }
+.mt-title-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
+.mt .mt-title { margin: 0; color: var(--text-strong); font-size: var(--fs-base); font-weight: 700; letter-spacing: -0.01em; line-height: 1.3; }
+.mt-when { display: flex; flex-wrap: wrap; gap: 2px 14px; margin: 3px 0 0; color: var(--text); font-size: var(--fs-sm); }
+.mt-when .mono { font-size: var(--fs-xs); }
+
+/* Sign-off: four steps on one line, done ones ticked, the next one ringed in violet. */
+.mt-steps { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 0; margin: 12px 0 0; padding: 0; list-style: none; }
+.mt-step { display: inline-flex; align-items: center; gap: 7px; color: var(--muted); font-size: var(--fs-xs); font-weight: 500; }
+.mt-step + .mt-step::before { content: ""; width: 22px; height: 2px; margin: 0 8px 0 2px; border-radius: 2px; background: var(--line-strong); }
+.mt-step.done + .mt-step.done::before, .mt-step.done + .mt-step.current::before { background: var(--ok); }
+.mt-step-dot { display: grid; place-items: center; flex: none; width: 16px; height: 16px; border: 2px solid var(--line-strong); border-radius: 50%; background: var(--surface); }
+.mt-step.done { color: var(--text); }
+.mt-step.done .mt-step-dot { border-color: var(--ok); background: var(--ok); color: var(--surface); }
+.mt-step.current { color: var(--hitl-text); font-weight: 600; }
+.mt-step.current .mt-step-dot { border-color: var(--hitl); box-shadow: 0 0 0 3px var(--hitl-soft); }
+
+.mt-facts { display: flex; flex-wrap: wrap; gap: 4px 18px; margin: 10px 0 0; padding: 0; color: var(--muted); font-size: var(--fs-xs); list-style: none; }
+.mt-facts li { display: inline-flex; align-items: center; gap: 6px; }
+.mt-facts li.bad { color: var(--danger-text); font-weight: 600; }
+.mt-facts .mono { color: var(--text); }
+.mt-hint { margin: 8px 0 0; color: var(--hitl-text); font-size: var(--fs-xs); font-weight: 500; }
+.mt-hint a { color: inherit; text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--hitl-line); }
+
+.mt-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+.mt-cancel { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.mt-cancel input { flex: 1 1 16rem; min-width: 0; }
+
+/* ---- Tasks --------------------------------------------------------------------------------- */
+.mt-table td { vertical-align: middle; }
+.mt-work { white-space: nowrap; }
+.mt-work-icon { display: inline-grid; place-items: center; width: 28px; height: 28px; margin-right: 10px; border-radius: 8px; background: var(--surface-raised); color: var(--muted); vertical-align: middle; }
+.mt-site { min-width: 0; }
+.mt-site-name { display: block; color: var(--text-strong); font-weight: 600; }
+.mt-site-sub { display: flex; flex-wrap: wrap; gap: 0 10px; color: var(--muted); font-size: var(--fs-xs); }
+.mt-due { white-space: nowrap; }
+.mt-due > span { display: block; }
+.mt-due-rel { color: var(--muted); font-size: var(--fs-xs); }
+.mt-due-rel.late { color: var(--danger-text); font-weight: 600; }
+.mt-status-word { font-size: var(--fs-sm); }
+.mt-status-word .muted { display: block; font-size: var(--fs-xs); }
+.mt-std { color: var(--muted); font-family: var(--mono); font-size: var(--fs-xs); white-space: nowrap; }
+.mt-more { padding: 10px 0 8px; border-top: 1px solid var(--line); }
+
+@media (max-width: 1099px) {
+  /* Five figures on a narrower screen: three over two, with no empty cell. */
+  .mt-figures { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+  .mt-figures > div { grid-column: span 2; }
+  .mt-figures > div:nth-child(n+4) { grid-column: span 3; }
+  .mt-window { grid-template-columns: 56px minmax(0, 1fr); }
+  .mt-actions { grid-column: 2; justify-content: flex-start; margin-top: 10px; }
+}
+@media (max-width: 760px) {
+  .mt-figures { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .mt-figures > div:nth-child(n) { grid-column: auto; }
+  .mt-figures > div:last-child:nth-child(odd) { grid-column: 1 / -1; }
+  .mt-figures dt { white-space: normal; }
+  .mt-panel { padding: 16px 14px 6px; }
+  .mt-window { grid-template-columns: 48px minmax(0, 1fr); column-gap: 14px; }
+  .mt-date-day { font-size: var(--fs-lg); }
+  .mt-steps { display: grid; gap: 8px; }
+  .mt-step + .mt-step::before { display: none; }
+
+  /* A task becomes a small card: the work and the site, then due, status and who. */
+  .mt-table, .mt-table tbody { display: block; }
+  .mt-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .mt-table tr.mt-task { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 12px; height: auto; padding: 14px 0; border-bottom: 1px solid var(--line); }
+  .mt-table tr.mt-task:hover > td { background: transparent; }
+  .mt-table tr.mt-task > td { display: block; padding: 0; border: 0; }
+  .mt-table tr.mt-task > td.mt-work, .mt-table tr.mt-task > td.mt-site { grid-column: 1 / -1; }
+  .mt-table tr.mt-task > td[data-label] { display: flex; flex-direction: column; gap: 2px; font-size: var(--fs-sm); }
+  .mt-table tr.mt-task > td[data-label]::before { content: attr(data-label); color: var(--muted); font-family: var(--font); font-size: var(--fs-xs); font-weight: 500; }
+  .mt-due { white-space: normal; }
+}
