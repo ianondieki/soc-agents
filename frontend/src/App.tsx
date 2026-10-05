@@ -732,7 +732,7 @@ export default function App() {
               <Route path="/shift" element={<ShiftDesk tick={revisions.ledger + manualTick} profile={profile} metrics={metrics} />} />
               <Route path="/agents" element={<Agents tick={revisions.runs + manualTick} />} />
               <Route path="/workflow" element={<WorkflowMap profile={profile} />} />
-              <Route path="/problems" element={<Problems tick={revisions.problems + manualTick} />} />
+              <Route path="/problems" element={<Problems tick={revisions.problems + manualTick} profile={profile} />} />
               {/* Regions dashboard (§7.4.2). Refetches on the incidents, problems and
                   signals slices (the things a region card shows), and on hitl: a region's
                   "possible outage" line goes once its card is decided (docs/CLOSE_THE_LOOP.md §3). */}

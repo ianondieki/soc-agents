@@ -1,0 +1,48 @@
+/* Problems (pages/Problems.tsx): four figures, then one card per problem: the site by name, how
+ * often it failed (a number and a dot per fault), the cause in a sentence, a link to its tickets. */
+
+.pb-figures { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; margin: 0 0 var(--s4); overflow: hidden; border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--line); }
+.pb-figures > div { min-width: 0; padding: 12px 18px 14px; background: var(--surface); }
+.pb-figures dt { overflow: hidden; color: var(--muted); font-size: var(--fs-sm); font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.pb-figures dd { margin: 4px 0 0; color: var(--text-strong); font-size: var(--fs-xl); font-weight: 700; line-height: 1.15; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.pb-figures dd.pb-figure-word { font-size: var(--fs-lg); line-height: 1.6; }
+
+.pb-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr)); gap: var(--s4); align-items: stretch; }
+
+.pb-card { display: flex; flex-direction: column; gap: 8px; min-width: 0; padding: 18px 20px; }
+.pb-card-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.pb-num { color: var(--muted); font-size: var(--fs-sm); }
+.pb-status { padding: 2px 10px; border: 1px solid var(--warn-line); border-radius: 999px; background: var(--warn-soft); color: var(--warn); font-size: var(--fs-xs); font-weight: 600; }
+.pb-status.watching { border-color: var(--accent-line); background: var(--accent-soft); color: var(--accent); }
+.pb .pb-site { margin: 4px 0 0; color: var(--text-strong); font-size: var(--fs-lg); font-weight: 700; letter-spacing: -0.01em; line-height: 1.25; overflow-wrap: anywhere; }
+.pb-where { display: flex; flex-wrap: wrap; gap: 0 12px; margin: 0; color: var(--muted); font-size: var(--fs-sm); }
+
+/* How often: the number big, then a dot per fault. */
+.pb-count { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; margin-top: 6px; }
+.pb-n { color: var(--text-strong); font-size: var(--fs-2xl); font-weight: 700; line-height: 1; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.pb-n-words { color: var(--muted); font-size: var(--fs-sm); }
+.pb-dots { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-left: auto; }
+.pb-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--warn); }
+.pb-more { color: var(--muted); font-size: var(--fs-xs); font-weight: 600; }
+
+.pb-cause { display: flex; align-items: flex-start; gap: 8px; margin: 4px 0 0; padding: 10px 12px; border-radius: var(--r-md); background: var(--surface-raised); color: var(--text); font-size: var(--fs-sm); line-height: 1.45; }
+.pb-cause svg { flex: none; margin-top: 2px; color: var(--warn); }
+.pb-foot { margin-top: auto; padding-top: 10px; border-top: 1px solid var(--line); font-size: var(--fs-sm); }
+.pb-foot a { color: var(--accent); font-weight: 500; }
+
+/* Nothing yet: the rule as a picture (three faults make a problem), then what it means. */
+.pb-empty { max-width: 46rem; padding: 26px 28px; }
+.pb-empty p { margin: 8px 0 0; color: var(--text); font-size: var(--fs-md); line-height: 1.55; }
+.pb-empty p.muted { color: var(--muted); font-size: var(--fs-sm); }
+.pb-rule { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; }
+.pb-rule .pb-dot { width: 14px; height: 14px; }
+.pb-arrow { position: relative; width: 40px; height: 2px; margin: 0 6px; background: var(--line-strong); }
+.pb-arrow::after { content: ""; position: absolute; right: -1px; top: -4px; border: 5px solid transparent; border-left: 7px solid var(--line-strong); border-right: 0; }
+.pb-made { padding: 3px 10px; border: 1px solid var(--warn-line); border-radius: 999px; background: var(--warn-soft); color: var(--warn); font-size: var(--fs-xs); font-weight: 600; }
+
+@media (max-width: 760px) {
+  .pb-figures { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .pb-figures dt { white-space: normal; }
+  .pb-empty { padding: 18px; }
+}
+.pb-empty a { color: var(--accent); text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--accent-line); }
