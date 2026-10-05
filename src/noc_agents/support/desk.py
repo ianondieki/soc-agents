@@ -573,6 +573,9 @@ def _persist(session: Session, case: _Case, *, operator_id: str, channel: str, n
         confidence=triaged.confidence, triage_json=json.dumps(triaged.detail()),
         reply=case.reply, citations_json=json.dumps(case.citations), linked_incident_id=case.linked_incident_id,
         sla_due_at=due, handle_ms=max(0, round((perf_counter() - started) * 1000)),
+        # The first place the customer named (the one link_incident looked for): what the restore
+        # SMS names and what a surge counts (docs/CLOSE_THE_LOOP.md).
+        place=triaged.places[0].name if triaged.places else None,
     )
     if case.escalation is not None:
         row.escalation_reason_code = case.escalation.reason_code

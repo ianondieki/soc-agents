@@ -206,6 +206,9 @@ HITL_TYPE_PERM: dict[str, str] = {
     HitlTaskType.APPROVE_TICKET_SYNC.value: "hitl.decide",
     HitlTaskType.APPROVE_PAGE.value: "hitl.decide",
     HitlTaskType.APPROVE_LEDGER_SYNC.value: "hitl.decide",
+    # Close the loop (docs/CLOSE_THE_LOOP.md section 5): "decided by the §9.3 row-2 deciders".
+    HitlTaskType.APPROVE_CUSTOMER_UPDATE.value: "hitl.decide",
+    HitlTaskType.CONFIRM_POSSIBLE_OUTAGE.value: "hitl.decide",
 }
 #: The route-level gate on the four HITL routes: everyone who may act on at least one type.
 PERM["hitl.any"] = frozenset().union(*(PERM[p] for p in HITL_TYPE_PERM.values()))
@@ -403,6 +406,12 @@ ROUTE_MAP: dict[tuple[str, str], str] = {
     (P, "/api/v1/support/complaints/{complaint_id}/actions/{tool_call_id}/reject"): "support.write",
     (P, "/api/v1/support/evals/run"): "support.write",
     (P, "/api/v1/support/demo/seed"): "support.write",
+    # --- close the loop (docs/CLOSE_THE_LOOP.md section 4): reads for SUPPORT_READERS, the retry for OPERATIONS
+    (G, "/api/v1/support/loop"): "support.read",
+    (G, "/api/v1/support/outages"): "support.read",
+    (G, "/api/v1/support/surges"): "support.read",
+    (P, "/api/v1/support/surges/{surge_id}/retry"): "support.write",
+    (G, "/api/v1/support/incidents/{incident_id}/customers"): "support.read",
 }
 
 #: Open on purpose, each with its reason. The ops socket is no longer here: since A-14 it is
@@ -422,6 +431,12 @@ EXEMPT: dict[tuple[str, str], str] = {
     (P, "/api/v1/support/complaints"): "the customer's public complaint form (docs/SUPPORT_DESK.md): rate-limited "
                                        "per MSISDN, and a caller without a support read role gets the public view "
                                        "(no step details, tool data or account holder)",
+    (P, "/api/v1/support/track"): "the customer's Track page (docs/CLOSE_THE_LOOP.md section 2): a reference AND "
+                                  "the number it was filed from, one 404 for every mismatch or malformed body, "
+                                  "rate-limited per address and per reference, customer words only",
+    (P, "/api/v1/support/track/still-down"): "the Track page's 'still down' button: the same matching, 404 and "
+                                             "limits as /track; allowed only within 72 h of the restore SMS and "
+                                             "once a day, and it only reopens the customer's own complaint",
 }
 #: Mounted sub-applications, which are not routes and carry no ``require_role``: whatever the
 #: mounted app serves is served on its own terms. Each one needs a reason here, or the

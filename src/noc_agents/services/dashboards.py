@@ -543,6 +543,7 @@ def _region_row(
     operator_id: str,
     now: datetime,
     since: datetime,
+    complaint_surge: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """One region card. Key order here is the contract the frontend reads."""
     signals = {
@@ -581,13 +582,32 @@ def _region_row(
         "repeat_faults_30d": rollup["repeat_faults_30d"],
         "repeat_fault_rate_30d": rollup["repeat_fault_rate_30d"],
         "signals": signals,
-        # §7.4 puts complaint surges in Phase 6 (they need the DPIA and a
-        # transparency notice before a single post is stored). The key ships now,
-        # always null, so that the lane which builds it is a value change and not
-        # a contract change for the frontend.
-        "complaint_surge": None,
+        # The region's open surge of customer complaints (docs/CLOSE_THE_LOOP.md section 3):
+        # ``{surge_id, place, complaints, numbers, first_at, last_at, card_id}``, else null.
+        # These are FIRST-PARTY complaints -- customers telling us, through our own complaint
+        # form, about their own service -- not social-media posts, so they need no new notice;
+        # §7.4's Phase 6 social lane (which does need the DPIA and a transparency notice) is a
+        # different source and is still not built. Counts and places only, never a number.
+        "complaint_surge": complaint_surge,
         "regulatory_baseline": regulatory_baseline_for(region_code, operator_id),
     }
+
+
+def _complaint_surges(session: Session, operator_id: str) -> dict[str, dict[str, Any]]:
+    """Each region's open complaint surge, from the support desk -- or none at all while the desk
+    is switched off. A support failure must never take the Regions dashboard down with it: it
+    reads as "no surge" and is logged."""
+    from noc_agents.support.context import support_desk_enabled  # the support lane is optional here
+
+    if not support_desk_enabled():
+        return {}
+    try:
+        from noc_agents.support.surge import region_surges
+
+        return region_surges(session, operator_id)
+    except Exception:  # noqa: BLE001
+        log.exception("regions dashboard: complaint surges unavailable")
+        return {}
 
 
 def regions_dashboard(session: Session, now: datetime | None = None) -> dict[str, Any]:
@@ -602,6 +622,7 @@ def regions_dashboard(session: Session, now: datetime | None = None) -> dict[str
     now = now or utcnow()
     since = now - timedelta(days=ROLLUP_WINDOW_DAYS)
     cfg = _settings().operator
+    surges = _complaint_surges(session, cfg.operator_id)
 
     regions = [
         _region_row(
@@ -611,6 +632,7 @@ def regions_dashboard(session: Session, now: datetime | None = None) -> dict[str
             operator_id=cfg.operator_id,
             now=now,
             since=since,
+            complaint_surge=surges.get(code),
         )
         for code in sorted(cfg.regions)
     ]

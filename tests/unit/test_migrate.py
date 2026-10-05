@@ -56,6 +56,8 @@ NEW_TABLES = {
     "vendor_scorecards", "vendor_scorecard_lines",      # §7.6 vendor scorecards (db/models_scorecards.py)
     # schema_version 10 — the support desk (docs/SUPPORT_DESK.md, db/models_support.py)
     "support_complaints", "support_steps", "support_tool_calls", "support_messages", "support_eval_runs",
+    # schema_version 11 — close the loop (docs/CLOSE_THE_LOOP.md)
+    "support_notices", "support_surges", "support_surge_members",
 }
 # schema_version 8, the one exception to "additive": hitl_tasks is rebuilt so that incident_id
 # can be NULL. It appears in neither set above — it is a v1 table that is REPLACED, not added —
@@ -66,7 +68,10 @@ HITL_REBUILD_DESTRUCTIVE = [
 ]
 # schema_version 9 adds no table and no column (see SCHEMA_VERSION's comment in db/migrate.py):
 # the v1 path below must show NO scorecard DROP either. schema_version 10 adds the five support
-# tables above and no column, so the ALTER list below is unchanged by it.
+# tables above and no column, so the ALTER list below is unchanged by it. schema_version 11 adds
+# three tables AND columns, but only on support tables, which a v1 file does not have: from v1
+# they are CREATEd whole, so the v1 ALTER list is still unchanged -- the v10 -> v11 path, where
+# they really are ALTERs, has its own test below.
 NEW_INCIDENT_COLUMNS = {
     "restored_source", "restored_by", "vendor_id", "context_json",
     "planned_maintenance", "access_risk", "child_site_ids_json", "assignment_confidence",
@@ -373,4 +378,70 @@ def test_outbox_idempotency_key_is_unique(tmp_path, restore_db_globals):
         con.rollback()
     finally:
         con.close()
+    engine.dispose()
+
+
+# schema_version 11 (docs/CLOSE_THE_LOOP.md): the first support release that adds COLUMNS to tables a
+# v10 file already has. From v1 they are CREATEd whole (above); from v10 they must be ALTERs.
+V11_TABLES = {"support_notices", "support_surges", "support_surge_members"}
+V11_ALTERS = [
+    "ALTER TABLE support_complaints ADD COLUMN place VARCHAR(64)",
+    "ALTER TABLE support_complaints ADD COLUMN closure_reason VARCHAR(32)",
+    "ALTER TABLE support_complaints ADD COLUMN told_restored_at DATETIME",
+    "ALTER TABLE support_complaints ADD COLUMN told_incident_id VARCHAR(36)",
+    "ALTER TABLE support_complaints ADD COLUMN still_down_at DATETIME",
+    "ALTER TABLE support_messages ADD COLUMN channel VARCHAR(16)",
+]
+V11_INDEXES = {"ix_support_complaints_operator_incident", "ix_support_complaints_operator_place"}
+
+
+def _make_v10_file(tmp_path: Path) -> Path:
+    """A file exactly as a v10 release left it: today's schema minus everything v11 added, one
+    complaint and one message in it, stamped version 10."""
+    db = tmp_path / "v10.db"
+    engine = init_db(_url(db), backup_dir=tmp_path / "unused")
+    engine.dispose()
+    con = sqlite3.connect(db)
+    try:
+        for table in sorted(V11_TABLES):
+            con.execute(f"DROP TABLE {table}")
+        for index in sorted(V11_INDEXES):
+            con.execute(f"DROP INDEX {index}")
+        for statement in V11_ALTERS:
+            table, column = statement.split()[2], statement.split()[5]
+            con.execute(f"ALTER TABLE {table} DROP COLUMN {column}")
+        con.execute(
+            "INSERT INTO support_complaints (id, operator_id, ref, created_at, updated_at, channel, msisdn, msisdn_masked,"
+            " language, subject, body, body_hash, category, urgency, sentiment, route, status, confidence, triage_json,"
+            " citations_json, sla_due_at, handle_ms) VALUES ('c1', 'safaricom', 'CMP-000001', '2026-10-01 10:00:00',"
+            " '2026-10-01 10:00:00', 'web', '+254700000001', '+254 7•• ••• 001', 'en', 's', 'No network in Kayole',"
+            " 'h', 'network', 'normal', 'calm', 'action', 'action_taken', 0.9, '{}', '[]', '2026-10-02 10:00:00', 5)")
+        con.execute("INSERT INTO support_messages (id, complaint_id, author, body, at) VALUES ('m1', 'c1', 'customer',"
+                    " 'No network in Kayole', '2026-10-01 10:00:00')")
+        con.execute("UPDATE schema_version SET version = 10 WHERE version = 11")  # a fresh file has one row
+        con.commit()
+    finally:
+        con.close()
+    assert _scalar(db, "SELECT MAX(version) FROM schema_version") == 10
+    return db
+
+
+def test_a_v10_file_gains_the_close_the_loop_tables_and_columns_additively(tmp_path, restore_db_globals):
+    db = _make_v10_file(tmp_path)
+    backups = tmp_path / "backups"
+    engine = init_db(_url(db), backup_dir=backups)
+    report = migrate.LAST_REPORT
+    assert (report.from_version, report.to_version) == (10, SCHEMA_VERSION) == (10, 11)
+    creates = {s.split()[5] for s in report.applied if s.startswith("CREATE TABLE IF NOT EXISTS ")}
+    assert creates == V11_TABLES
+    assert [s for s in report.applied if s.startswith("ALTER TABLE ")] == V11_ALTERS
+    assert V11_INDEXES <= _indexes(db, "support_complaints")
+    # Additive only: nothing dropped, renamed or rebuilt, and the v10 rows are untouched.
+    assert not [s for s in report.applied if s.split()[0] in ("DROP", "UPDATE", "DELETE")]
+    assert _scalar(db, "SELECT body || '|' || COALESCE(place, 'NULL') || '|' || COALESCE(told_restored_at, 'NULL') "
+                       "FROM support_complaints WHERE id = 'c1'") == "No network in Kayole|NULL|NULL"
+    assert _scalar(db, "SELECT COALESCE(channel, 'NULL') FROM support_messages WHERE id = 'm1'") == "NULL"
+    # Behind the usual pre-migration backup, which still holds the v10 file as it was.
+    written = sorted(backups.glob("v10.10-to-11.*.db"))
+    assert len(written) == 1 and "support_surges" not in _tables(written[0])
     engine.dispose()

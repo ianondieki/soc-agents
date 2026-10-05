@@ -408,11 +408,43 @@ def test_the_regulatory_baseline_keeps_its_keys_and_never_claims_region_granular
         assert baseline["report_date"] == "2026-03"
 
 
-def test_complaint_surge_is_declared_and_null_until_the_phase_six_lane_lands(dash):
-    """The key ships now, always null, so building the Phase 6 social lane is a value
-    change and not a breaking contract change for a page already in production."""
+def _surge(*, region: str, status: str = "open", operator: str = "safaricom", place: str = "rongai") -> str:
+    """One support surge row, written directly (the rollup is under test, not surge detection)."""
+    from noc_agents.db.models_support import SupportSurgeRow
+
+    session = get_session()
+    try:
+        row = SupportSurgeRow(operator_id=operator, place=place, region_code=region, status=status,
+                              open_place=place if status == "open" else None, card_id="card-1", complaints=4,
+                              numbers=3, first_at=NOW - timedelta(minutes=26), last_at=NOW - timedelta(minutes=9))
+        session.add(row)
+        session.commit()
+        return row.id
+    finally:
+        session.close()
+
+
+def test_complaint_surge_is_null_for_a_region_without_an_open_surge(dash):
+    """The key was declared null-only before close the loop; it stays null wherever there is no
+    open surge of customer complaints (docs/CLOSE_THE_LOOP.md section 3)."""
     for region in dash.http()["regions"]:
         assert region["complaint_surge"] is None
+
+
+def test_complaint_surge_is_the_regions_open_surge_and_only_its_own(dash, monkeypatch):
+    """First-party complaints, counts and places only: the region's OPEN surge fills the key; a
+    dismissed one, another region's and another operator's do not; the desk off reads as none."""
+    surge_id = _surge(region=SHARED_REGION)
+    _surge(region=SHARED_REGION, status="dismissed", place="kayole")
+    _surge(region=SHARED_REGION, operator="airtel", place="kitengela")
+    rows = {r["region_code"]: r["complaint_surge"] for r in dash.http()["regions"]}
+    assert rows[SHARED_REGION] == {
+        "surge_id": surge_id, "place": "Rongai", "complaints": 4, "numbers": 3,
+        "first_at": "2026-09-18T11:34:00Z", "last_at": "2026-09-18T11:51:00Z", "card_id": "card-1",
+    }
+    assert all(value is None for code, value in rows.items() if code != SHARED_REGION)
+    monkeypatch.setenv("SUPPORT_DESK_ENABLED", "false")
+    assert all(r["complaint_surge"] is None for r in dash.http()["regions"])
 
 
 def test_the_route_is_reachable_under_its_spec_path_and_is_read_only(dash):

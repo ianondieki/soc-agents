@@ -4,6 +4,8 @@ messages, and the eval runs.
 Declared against the shared ``Base`` so the additive migration in ``db/migrate.py`` creates
 them with no hand-written DDL (``db/models_all.py`` imports this module). They arrived in
 schema_version 10, which exists so the first start that creates them takes a backup first.
+schema_version 11 (docs/CLOSE_THE_LOOP.md) added the notices and surges tables and a few
+nullable columns on complaints and messages (where the customer was told, still-down reports).
 
 **Operator scoping (§8).** ``support_complaints`` and ``support_eval_runs`` carry their own
 ``operator_id`` and every read filters on it in the WHERE clause. Steps, tool calls and
@@ -41,6 +43,9 @@ class SupportComplaintRow(Base):
         Index("ix_support_complaints_operator_created", "operator_id", "created_at"),
         Index("ix_support_complaints_operator_msisdn", "operator_id", "msisdn", "created_at"),
         Index("ix_support_complaints_operator_status", "operator_id", "status"),
+        # schema_version 11: who to tell when an incident is restored, and what a surge counts.
+        Index("ix_support_complaints_operator_incident", "operator_id", "linked_incident_id"),
+        Index("ix_support_complaints_operator_place", "operator_id", "place", "created_at"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
@@ -82,6 +87,20 @@ class SupportComplaintRow(Base):
     resolved_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
     #: Wall time of the automatic pipeline (intake to reply), for the median handle time.
     handle_ms: Mapped[int] = mapped_column(Integer, default=0)
+
+    # --- schema_version 11: close the loop (docs/CLOSE_THE_LOOP.md) ----------------------------
+    # All nullable: ALTER TABLE ADD COLUMN cannot backfill, and a v10 row simply has none of them.
+    #: The place the customer named (normalised gazetteer name, "kayole"), the first one in the
+    #: text. What the restore SMS names and what a surge is keyed on; NULL when none was named.
+    place: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    #: Why a ``closed`` complaint closed: ``service_restored`` when the restore SMS closed it.
+    closure_reason: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    #: When the customer was told service is back, and about WHICH incident: a still-down report
+    #: can relink the complaint to a new ticket, which must tell them again when it is restored.
+    told_restored_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    told_incident_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    #: The latest "still down" report from the Track page (each report is also a step).
+    still_down_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
 class SupportStepRow(Base):
@@ -132,6 +151,10 @@ class SupportMessageRow(Base):
     name: Mapped[str | None] = mapped_column(String(128), nullable=True)
     body: Mapped[str] = mapped_column(Text)
     at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    #: schema_version 11: how the message travelled when it was not the desk's own reply --
+    #: ``sms`` for the restore and confirmed-outage messages, ``web`` for a Track-page report.
+    #: NULL on every earlier row (the form and the desk's reply).
+    channel: Mapped[str | None] = mapped_column(String(16), nullable=True)
 
 
 class SupportEvalRunRow(Base):
@@ -149,3 +172,84 @@ class SupportEvalRunRow(Base):
     size: Mapped[int] = mapped_column(Integer)
     passed: Mapped[int] = mapped_column(Integer)  # 0/1, as the rest of the schema stores flags
     report_json: Mapped[str] = mapped_column(Text)
+
+
+# --- schema_version 11: close the loop (docs/CLOSE_THE_LOOP.md) ------------------------------
+
+
+class SupportNoticeRow(Base):
+    """One "service is back" notice for an incident's customers: sent at once, or waiting on an
+    ``APPROVE_CUSTOMER_UPDATE`` card, or rejected. The SMS themselves are outbox rows (one per
+    number, keyed ``support-restore:{incident_id}:{msisdn_hash}``); this row is what the Outages
+    tab and the incident panel read as the notice's state, and where a rejection's reason lives."""
+
+    __tablename__ = "support_notices"
+    __table_args__ = (Index("ix_support_notices_operator_incident", "operator_id", "incident_id", "created_at"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    operator_id: Mapped[str] = mapped_column(String(32))
+    incident_id: Mapped[str] = mapped_column(String(36))
+    state: Mapped[str] = mapped_column(String(24))  # sent | awaiting_approval | rejected
+    card_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    recipients: Mapped[int] = mapped_column(Integer, default=0)
+    languages_json: Mapped[str] = mapped_column(Text, default="{}")
+    text_en: Mapped[str | None] = mapped_column(Text, nullable=True)
+    text_sw: Mapped[str | None] = mapped_column(Text, nullable=True)
+    restore_source: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    decided_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class SupportSurgeRow(Base):
+    """A burst of complaints about one place with no open incident: "Possible outage in Rongai".
+
+    ``open_place`` is the place while the surge still collects complaints (``open``, or
+    ``confirmed`` with no ticket yet because the ingest failed) and NULL once it is settled; the
+    unique key on ``(operator_id, open_place)`` is what makes "one open surge per place" true
+    even when two complaints race (SQLite treats NULLs as distinct, so settled surges never clash).
+    """
+
+    __tablename__ = "support_surges"
+    __table_args__ = (
+        UniqueConstraint("operator_id", "open_place", name="uq_support_surges_operator_open_place"),
+        Index("ix_support_surges_operator_status", "operator_id", "status"),
+        Index("ix_support_surges_operator_created", "operator_id", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    operator_id: Mapped[str] = mapped_column(String(32))
+    place: Mapped[str] = mapped_column(String(64))  # normalised, as the gazetteer names it
+    region_code: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    status: Mapped[str] = mapped_column(String(16), default="open")  # open | confirmed | dismissed
+    origin: Mapped[str] = mapped_column(String(16), default="complaints")  # complaints | still_down
+    parent_incident_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    open_place: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    card_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    incident_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    complaints: Mapped[int] = mapped_column(Integer, default=0)
+    numbers: Mapped[int] = mapped_column(Integer, default=0)
+    first_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    last_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    decided_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class SupportSurgeMemberRow(Base):
+    """A complaint (``kind="complaint"``) or a still-down report on one (``kind="still_down"``,
+    ``at`` = the report's time) counted in a surge. A complaint is counted once per surge per kind."""
+
+    __tablename__ = "support_surge_members"
+    __table_args__ = (UniqueConstraint("surge_id", "complaint_id", "kind", name="uq_support_surge_members"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    surge_id: Mapped[str] = mapped_column(String(36), ForeignKey("support_surges.id"), index=True)
+    complaint_id: Mapped[str] = mapped_column(String(36), ForeignKey("support_complaints.id"), index=True)
+    kind: Mapped[str] = mapped_column(String(16))
+    at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)

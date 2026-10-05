@@ -183,6 +183,9 @@ HITL_DECIDERS: dict[str, tuple[str, ...]] = {
     HitlTaskType.DISPUTE_SCORECARD_LINE.value: ("duty_manager", "admin"),  # row 5 "adjudicate"
     HitlTaskType.APPROVE_VENDOR_NOTICE.value: ("duty_manager", "admin"),  # row 5 "notice"
     HitlTaskType.APPROVE_PERFORMANCE_ACTION.value: ("duty_manager", "admin"),  # row 7 "decide"
+    # Close the loop (docs/CLOSE_THE_LOOP.md section 5): "decided by the §9.3 row-2 deciders".
+    HitlTaskType.APPROVE_CUSTOMER_UPDATE.value: _ROW2_DECIDERS,
+    HitlTaskType.CONFIRM_POSSIBLE_OUTAGE.value: _ROW2_DECIDERS,
 }
 
 

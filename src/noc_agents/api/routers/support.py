@@ -10,8 +10,11 @@ out in ``api/deps.SUPPORT_READERS``: reads for the operations floor plus managem
 (claim, resolve, approve, reject, seed, run the evals) for ``OPERATIONS``. Inert while
 ``AUTH_DISABLED=true``, like every gate in this codebase.
 
-**The one public route.** ``POST /complaints`` is the customer's registration form, so it
-takes no role. What makes that safe: it is rate-limited per MSISDN and per client address
+**The public routes.** ``POST /complaints`` is the customer's registration form, so it
+takes no role; ``POST /track`` and ``POST /track/still-down`` (docs/CLOSE_THE_LOOP.md) are the
+customer's Track page, which take a reference AND the number it was filed from, answer one 404 for
+every mismatch (a malformed body included, so the page cannot be used to learn which references
+exist), are rate-limited per client address and per reference, and return only customer words. What makes that safe: it is rate-limited per MSISDN and per client address
 (``support/ratelimit.py``); a reversal runs only on a transaction code the caller typed
 (``needs_verification`` otherwise); every reply echoes only what the caller typed; and a caller
 without a support read role gets the PUBLIC view of the result (``support/views.py``), built from
@@ -37,17 +40,20 @@ indistinguishable from an id that does not exist.
 
 from __future__ import annotations
 
+import json
+import logging
 from typing import Any, Literal, get_args
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field, field_validator
+from starlette.concurrency import run_in_threadpool
 
 from noc_agents.api import auth
 from noc_agents.api.auth import require_role
-from noc_agents.api.deps import OPERATIONS, SUPPORT_READERS, _actor, _settings
-from noc_agents.db.models import get_session, utcnow
-from noc_agents.db.models_support import SupportComplaintRow
-from noc_agents.support import desk, evals, views
+from noc_agents.api.deps import OPERATIONS, SUPPORT_READERS, _actor, _get_owned, _settings
+from noc_agents.db.models import IncidentRow, get_session, utcnow
+from noc_agents.db.models_support import SupportComplaintRow, SupportSurgeRow
+from noc_agents.support import desk, evals, loop, surge, views
 from noc_agents.support.context import ENABLED_ENV, SupportConfigError, default_context, support_desk_enabled
 from noc_agents.support.llm_port import triage_port
 from noc_agents.support.ratelimit import complaint_limiter
@@ -56,6 +62,7 @@ from noc_agents.support.text import InvalidMsisdn, clean, mask_msisdn, normalise
 from noc_agents.support.vocab import CATEGORIES, CHANNELS, ROUTES, STATUSES
 
 PREFIX = "/api/v1/support"
+log = logging.getLogger(__name__)
 
 
 def require_support_ready() -> None:
@@ -175,6 +182,8 @@ def register_complaint(body: ComplaintIn, request: Request, response: Response) 
             )
         except desk.DeskInputError as exc:
             raise _desk_errors(exc) from None
+        if result.created:
+            _observe_surge(session, result.complaint, ctx)
         if not result.created:
             response.status_code = 200
             if public:
@@ -182,6 +191,15 @@ def register_complaint(body: ComplaintIn, request: Request, response: Response) 
         return views.detail(session, result.complaint, public=public, policy=ctx.policy)
     finally:
         session.close()
+
+
+def _observe_surge(session: Any, row: SupportComplaintRow, ctx: Any) -> None:
+    """Count the complaint towards a possible outage (docs/CLOSE_THE_LOOP.md section 3). The
+    complaint is already committed and answered; a failure here is logged, never the caller's."""
+    try:
+        surge.observe(session, row, ctx=ctx)
+    except Exception:  # noqa: BLE001
+        log.exception("support: surge observation failed for %s", row.ref)
 
 
 # ---------------------------------------------------------------------------------- reads
@@ -333,6 +351,182 @@ def seed_complaints(principal: auth.Principal = Depends(require_role(*OPERATIONS
     try:
         created = seed_demo(session, operator_id=_operator_id(), actor=_actor(principal, None), ctx=default_context())
         return {"created": created}
+    finally:
+        session.close()
+
+
+# ------------------------------------------------------- close the loop: the Track page (public)
+
+#: A Track request is two short strings and an optional note; anything bigger is not one.
+MAX_TRACK_BODY_BYTES = 4096
+
+
+def _not_found() -> HTTPException:
+    return HTTPException(404, loop.NOT_FOUND)
+
+
+async def _track_body(request: Request) -> dict[str, Any] | None:
+    """The JSON object sent, or None for anything else -- which the caller answers with the same 404."""
+    raw = await request.body()
+    if not raw or len(raw) > MAX_TRACK_BODY_BYTES:
+        return None
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _ref_of(data: dict[str, Any] | None) -> str | None:
+    ref = data.get("ref") if data else None
+    return ref.strip().upper()[:32] if isinstance(ref, str) and ref.strip() else None
+
+
+def _track_limit(request: Request, ref: str | None) -> None:
+    """Per client address (20 per 10 minutes) and per reference (10 per 10 minutes): the reference
+    limit is what stops one reference being tried against every number. The desk's own limiter,
+    under keys of its own; every request counts, a malformed one included."""
+    rule = default_context().policy.track
+    client = request.client.host if request.client else "unknown"
+    limits = [(f"track-ip:{client}", rule.per_ip_max_requests)]
+    if ref:
+        limits.append((f"track-ref:{_operator_id()}:{ref}", rule.per_ref_max_requests))
+    retry = complaint_limiter.check(limits, window_seconds=rule.window_seconds)
+    if retry is not None:
+        raise HTTPException(429, "too many requests; please wait before trying again",
+                            headers={"Retry-After": str(max(1, int(retry) + 1))})
+
+
+def _pair(data: dict[str, Any] | None) -> tuple[str, str] | None:
+    ref, msisdn = _ref_of(data), (data or {}).get("msisdn")
+    if ref is None or not isinstance(msisdn, str):
+        return None
+    try:
+        return ref, normalise_msisdn(msisdn)
+    except InvalidMsisdn:
+        return None
+
+
+def _tracked_or_404(ref: str, msisdn: str) -> dict[str, Any]:
+    session = get_session()
+    try:
+        row = loop.find_tracked(session, _operator_id(), ref, msisdn)
+        if row is None:
+            raise _not_found()
+        return loop.tracked(session, row, policy=default_context().policy)
+    finally:
+        session.close()
+
+
+def _still_down_or_404(ref: str, msisdn: str, note: str | None) -> dict[str, Any]:
+    session = get_session()
+    try:
+        row = loop.find_tracked(session, _operator_id(), ref, msisdn)
+        if row is None:
+            raise _not_found()
+        ctx = default_context()
+        try:
+            loop.report_still_down(session, row, note=note, ctx=ctx)
+        except loop.TrackConflict as exc:
+            raise HTTPException(409, str(exc)) from None
+        return loop.tracked(session, row, policy=ctx.policy)
+    finally:
+        session.close()
+
+
+@_lane.post("/track")
+async def track_complaint(request: Request) -> dict[str, Any]:
+    """The customer's Track page: ``{ref, msisdn}`` -> ``Tracked``. POST so the number never sits in
+    a URL or an access log. Every mismatch -- a wrong reference, a wrong number, another
+    operator's reference, a malformed body -- is the same 404."""
+    data = await _track_body(request)
+    _track_limit(request, _ref_of(data))
+    pair = _pair(data)
+    if pair is None:
+        raise _not_found()
+    return await run_in_threadpool(_tracked_or_404, *pair)
+
+
+@_lane.post("/track/still-down")
+async def track_still_down(request: Request) -> dict[str, Any]:
+    """``{ref, msisdn, note?}``: the customer says service is still down after we said it was back.
+    Same matching, same 404, same limits; 409 with a plain sentence when it is not allowed now
+    (not told yet, told more than 72 hours ago, or already reported in the last 24 hours)."""
+    data = await _track_body(request)
+    _track_limit(request, _ref_of(data))
+    pair = _pair(data)
+    note = (data or {}).get("note")
+    if pair is None or not (note is None or (isinstance(note, str) and len(note) <= loop.MAX_NOTE_CHARS)):
+        raise _not_found()
+    return await run_in_threadpool(_still_down_or_404, *pair, note)
+
+
+# ----------------------------------------------------------------- close the loop: the floor
+
+
+@_lane.get("/loop", dependencies=[Depends(require_role(*SUPPORT_READERS))])
+def loop_numbers(hours: int = Query(0, ge=0, le=24 * 366, description="hours back; 0 = all time")) -> dict[str, Any]:
+    session = get_session()
+    try:
+        return loop.loop_metrics(session, _operator_id(), hours=hours, now=utcnow())
+    finally:
+        session.close()
+
+
+@_lane.get("/outages", dependencies=[Depends(require_role(*SUPPORT_READERS))])
+def list_outages(limit: int = Query(views.DEFAULT_LIST_LIMIT, ge=1, le=views.MAX_LIST_LIMIT)) -> list[dict[str, Any]]:
+    """One row per incident that customers complained about, newest incident first."""
+    session = get_session()
+    try:
+        return loop.outages(session, _operator_id(), limit=limit)
+    finally:
+        session.close()
+
+
+@_lane.get("/surges", dependencies=[Depends(require_role(*SUPPORT_READERS))])
+def list_surges(limit: int = Query(views.DEFAULT_LIST_LIMIT, ge=1, le=views.MAX_LIST_LIMIT)) -> list[dict[str, Any]]:
+    session = get_session()
+    try:
+        return surge.list_surges(session, _operator_id(), limit=limit)
+    finally:
+        session.close()
+
+
+@_lane.post("/surges/{surge_id}/retry")
+def retry_surge(surge_id: str, principal: auth.Principal = Depends(require_role(*OPERATIONS))) -> dict[str, Any]:
+    """Re-run a confirm whose ingest failed ("Try again"). The SMS that follows is still the
+    confirmer's approval; who pressed retry is in the log. 200 with the surge as it ended (its
+    ``error`` is set again if the ingest failed again)."""
+    operator_id = _operator_id()
+    session = get_session()
+    try:
+        try:
+            surge.retry(session, surge_id, operator_id=operator_id, actor=_actor(principal, None))
+        except LookupError:
+            raise HTTPException(404, "surge not found") from None
+        except surge.SurgeConflict as exc:
+            raise HTTPException(409, str(exc)) from None
+        row = session.get(SupportSurgeRow, surge_id)
+        approver, approved_at = row.decided_by or _actor(principal, None), row.decided_at or utcnow()
+    finally:
+        session.close()
+    log.info("support: %s retried the confirm of surge %s", _actor(principal, None), surge_id)
+    surge.confirm_surge(surge_id, actor=approver, approved_at=approved_at)
+    session = get_session()
+    try:
+        row = session.get(SupportSurgeRow, surge_id)
+        return surge.surge_out(session, row)
+    finally:
+        session.close()
+
+
+@_lane.get("/incidents/{incident_id}/customers", dependencies=[Depends(require_role(*SUPPORT_READERS))])
+def incident_customers(incident_id: str) -> dict[str, Any]:
+    """The incident page's panel. Another operator's incident is a 404, like one that does not exist."""
+    session = get_session()
+    try:
+        inc = _get_owned(session, IncidentRow, incident_id, what="incident")  # 404 for another operator's
+        return loop.incident_customers(session, inc)
     finally:
         session.close()
 

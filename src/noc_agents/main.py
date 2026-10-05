@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import logging
 import os
 import re
 from contextlib import asynccontextmanager
@@ -104,6 +105,7 @@ from noc_agents.services.hitl import (
 )
 from noc_agents.services.clock import to_utc
 from noc_agents.services.lifecycle import (
+    RESTORE_SOURCE_MARK,
     TERMINAL_STATUSES,
     apply_work_note_side_effects,
     close_incident,
@@ -115,7 +117,11 @@ from noc_agents.services.notify import dispatch_handover_email, handover_email_r
 from noc_agents.services.shifts import current_shift, shift_id
 from noc_agents.services.scenarios import RAIN_STORM_EVENTS, scenario_payload
 from noc_agents.services.worklog_monitor import chase_silent_incidents
+from noc_agents.support import loop as support_loop, surge as support_surge
+from noc_agents.support.context import support_desk_enabled
 import time
+
+log = logging.getLogger(__name__)
 
 ROOT = Path(__file__).resolve().parents[2]
 # NOC_FRONTEND_DIST: where the built SPA lives (default frontend/dist). A deployment that
@@ -486,6 +492,35 @@ def get_incident(
         session.close()
 
 
+def _support_followup(session, inc: IncidentRow, *, trigger: str, actor: str | None) -> None:
+    """Close the loop (docs/CLOSE_THE_LOOP.md section 1): tell the customers who complained about
+    ``inc`` that service is back, or raise the card that will -- inside THIS route's transaction,
+    after the lifecycle call and before its commit, in a SAVEPOINT of its own.
+
+    A support failure is logged and rolled back alone and never blocks or rolls back the NOC's
+    restore or close: the savepoint is released or rolled back here, and the route commits what it
+    did either way. Two details make "alone" true. The commit hook discards EVERY buffered realtime
+    event on any rollback, a savepoint's included, so the route's own events (``incident.closed``)
+    are put back after a failed savepoint. And the outbox drain is armed only after the savepoint is
+    released: a drain listener fires on a savepoint release too, and would wait on this very
+    transaction's write lock.
+    """
+    if not support_desk_enabled():
+        return
+    from noc_agents.realtime.commit_hook import EVENTS_KEY
+
+    saved = list(session.info.get(EVENTS_KEY, ()))
+    try:
+        with session.begin_nested():
+            notice = support_loop.on_incident_restored(session, inc, trigger=trigger, actor=actor)
+    except Exception:  # noqa: BLE001 -- the NOC action stands whatever the follow-up does
+        log.exception("support follow-up for %s (%s) failed; the %s stands", inc.incident_number, trigger, trigger)
+        session.info[EVENTS_KEY] = saved
+        return
+    if notice is not None and notice.state == "sent" and sync_drain_enabled():
+        drain_after_commit(session)  # transmit after the route's commit, never inside it
+
+
 # §9.3 row 1: NOTE_AUTHORS, which is the only allow-list in this file that is WIDER than
 # OPERATIONS. A note is the one write an msp_coordinator or a field_engineer is given, and
 # it is not a comment box: apply_work_note_side_effects can stamp the vendor's first
@@ -536,6 +571,7 @@ def add_note(
             source=source,
         )
         session.add(note)
+        before = (row.status, row.restored_source)  # close the loop: did THIS note confirm the restore?
         apply_work_note_side_effects(
             session,
             row,
@@ -549,6 +585,11 @@ def add_note(
             msp_action_taken=body.msp_action_taken,
             msp_percent_complete=body.msp_percent_complete,
         )
+        # "mark restored" ticked is a person saying service is back: customers are told. A note whose
+        # text merely says "restored" (VENDOR_NOTE_INFERRED) is a guess and tells nobody.
+        confirmed = (row.status, row.restored_source) == ("RESTORED", RESTORE_SOURCE_MARK)
+        if confirmed and before != (row.status, row.restored_source):
+            _support_followup(session, row, trigger="restore", actor=author)
         session.commit()
         hub.publish_sync(
             RealtimeEvent(
@@ -584,6 +625,7 @@ def close_inc(
             resolution_code=body.resolution_code,
             resolution_summary=body.resolution_summary,
         )
+        _support_followup(session, row, trigger="close", actor=actor)  # tells whoever no notice reached
         session.commit()
         return {"ok": True, "incident": incident_out(row).model_dump()}
     finally:
@@ -641,6 +683,7 @@ def restore_inc(
             note=note,
             restored_at=at,
         )
+        _support_followup(session, row, trigger="restore", actor=principal.display_name)
         session.commit()
         hub.publish_sync(
             RealtimeEvent(
@@ -1134,6 +1177,14 @@ def hitl_approve(
                     drain_after_commit(session)  # transmit after THIS commit, never inside it
                 which = f" {t.entity_id}" if t.entity_id else ""  # the shift id, when the row carries one
                 note = f"HITL approved shift handover{which}: email released to the outbox."
+            elif t.task_type == support_loop.CUSTOMER_UPDATE_TASK_TYPE and support_desk_enabled():
+                # Close the loop: the "service is back" SMS have been HELD behind this card. Released
+                # by the card's id only (never by incident, which would sweep the broadcast's rows),
+                # in this transaction; the drain after the commit transmits them (a mock adapter).
+                told = support_loop.approve_customer_update(session, t, approved_by=actor, approved_at=decided_at)
+                if told and sync_drain_enabled():
+                    drain_after_commit(session)  # transmit after THIS commit, never inside it
+                note = f"HITL approved the customer update: {told} customer(s) told service is back."
             else:  # GENERIC (monitor escalation) and any other type: record the decision only
                 note = f"HITL approved ({t.task_type})."
             # Defect #24: whatever this approval changed (priority, assignee, a released
@@ -1149,6 +1200,12 @@ def hitl_approve(
                 )
             )
             sync_incident_hitl_scalars(session, inc)
+        # A possible-outage card has no incident (it is about a place): handled outside ``if inc``.
+        # The surge is marked confirmed in this transaction; the ticket is opened AFTER the commit,
+        # because the ingest runs and commits a whole agent run of its own.
+        confirm_surge_id = None
+        if t.task_type == support_surge.SURGE_TASK_TYPE and support_desk_enabled():
+            confirm_surge_id = support_surge.mark_confirmed(session, t, actor=actor, at=decided_at)
         session.commit()
         hub.publish_sync(
             RealtimeEvent(
@@ -1163,6 +1220,9 @@ def hitl_approve(
                 },
             )
         )
+        if confirm_surge_id:
+            # Never raises: a failed ingest is kept on the surge (error) for the Outages tab's retry.
+            support_surge.confirm_surge(confirm_surge_id, actor=actor, approved_at=decided_at)
         return {"ok": True}
     finally:
         session.close()
@@ -1202,6 +1262,10 @@ def hitl_reject(
                         "status": "CANCELLED",
                         "error": error,
                     }
+            elif t.task_type == support_loop.CUSTOMER_UPDATE_TASK_TYPE and support_desk_enabled():
+                # Close the loop: the HELD "service is back" SMS are suppressed (by this card's id
+                # only); nobody is told, and the reason stays on the notice and in each trace.
+                support_loop.reject_customer_update(session, t, rejected_by=actor, reason=body.reason, at=t.resolved_at)
             session.add(
                 WorkNoteRow(
                     incident_id=inc.id,
@@ -1212,6 +1276,8 @@ def hitl_reject(
                 )
             )
             sync_incident_hitl_scalars(session, inc)
+        if t.task_type == support_surge.SURGE_TASK_TYPE and support_desk_enabled():
+            support_surge.dismiss(session, t, actor=actor, reason=body.reason, at=t.resolved_at)  # no incident
         session.commit()
         operator_id = _settings().operator.operator_id
         if finished:

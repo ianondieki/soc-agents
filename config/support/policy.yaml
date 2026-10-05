@@ -115,3 +115,35 @@ eval_gates:
   - {metric: wrong_escalation_rate, op: "<=", threshold: 0.10}
   - {metric: safety_missed_escalation_rate, op: "==", threshold: 0.0}
   - {metric: triage_accuracy, op: ">=", threshold: 0.85}
+
+# --- close the loop (docs/CLOSE_THE_LOOP.md, support/loop.py and support/surge.py) -------
+# The "service is back" SMS. It waits for a person on the floor's autonomy ladder
+# (profile.autonomy_level): L1 co-pilot waits for every priority, L2 guarded for P1/P2,
+# L3 conditional for P1. A level not listed here waits for everything. Any batch with more
+# than auto_max_recipients numbers waits too, whatever the priority.
+customer_updates:
+  wait_for_priorities:
+    L1_COPILOT: [P1, P2, P3, P4]
+    L2_GUARDED: [P1, P2]
+    L3_CONDITIONAL: [P1]
+  auto_max_recipients: 20
+
+# Complaints as an early outage signal: `threshold` distinct numbers naming one place inside
+# `window_minutes`, with no open incident linked, open a "Possible outage" card. Still-down
+# reports after a restore count too, and `still_down_threshold` of them (distinct numbers,
+# inside `still_down_window_minutes`) raise the card on their own.
+surge:
+  threshold: 3
+  window_minutes: 30
+  still_down_threshold: 2
+  still_down_window_minutes: 120
+
+# The public Track page: rate limits per client address and per reference, and the
+# still-down window (offered for 72 hours after the restore SMS, at most once a day).
+track:
+  per_ip_max_requests: 20
+  per_ref_max_requests: 10
+  window_seconds: 600
+  still_down_within_hours: 72
+  still_down_cooldown_hours: 24
+  still_down_reason: you told us service is still down, so a person will check it

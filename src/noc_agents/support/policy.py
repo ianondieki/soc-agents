@@ -59,6 +59,52 @@ class EvalGate(_Strict):
         return abs(value - self.threshold) < 1e-9
 
 
+#: The incident priorities the NOC uses; a priority outside them always waits for a person.
+PRIORITIES: tuple[str, ...] = ("P1", "P2", "P3", "P4")
+
+
+class CustomerUpdates(_Strict):
+    """When the "service is back" SMS waits for a person (docs/CLOSE_THE_LOOP.md section 1)."""
+
+    #: Priorities whose notice waits for a person, by the floor's autonomy level
+    #: (``profile.autonomy_level``). A level not listed here waits for every priority.
+    wait_for_priorities: dict[str, tuple[str, ...]] = Field(default_factory=lambda: {
+        "L1_COPILOT": PRIORITIES, "L2_GUARDED": ("P1", "P2"), "L3_CONDITIONAL": ("P1",)})
+    #: Any batch with more numbers than this waits, whatever the priority.
+    auto_max_recipients: int = Field(20, ge=0)
+
+    def waits(self, autonomy: str, priority: str | None, recipients: int) -> bool:
+        """True when a person must approve the notice before it is sent."""
+        if recipients > self.auto_max_recipients:
+            return True
+        rung = self.wait_for_priorities.get(autonomy)
+        return rung is None or priority not in PRIORITIES or priority in rung
+
+
+class SurgeRule(_Strict):
+    """When complaints about one place become a "Possible outage" card (section 3)."""
+
+    threshold: int = Field(3, ge=2)  # distinct numbers
+    window_minutes: int = Field(30, ge=1)
+    #: Still-down reports after a restore: this many distinct numbers raise the card on their own.
+    still_down_threshold: int = Field(2, ge=1)
+    still_down_window_minutes: int = Field(120, ge=1)
+
+
+class TrackRule(_Strict):
+    """The public Track page (section 2)."""
+
+    per_ip_max_requests: int = Field(20, ge=1)
+    per_ref_max_requests: int = Field(10, ge=1)
+    window_seconds: int = Field(600, ge=1)
+    #: "Still down" is offered for this long after the restore SMS ...
+    still_down_within_hours: int = Field(72, ge=1)
+    #: ... and at most once in this many hours.
+    still_down_cooldown_hours: int = Field(24, ge=1)
+    #: The customer-facing reason for ``still_down_after_restore``.
+    still_down_reason: str = "you told us service is still down, so a person will check it"
+
+
 class SupportPolicy(_Strict):
     version: int = 1
     grounding_threshold: float = Field(4.0, gt=0)
@@ -79,6 +125,10 @@ class SupportPolicy(_Strict):
     #: What the customer is told instead of an account-derived reason (escalation.ACCOUNT_REASONS).
     account_review_reason: str = "we need to check some account details before we can finish this"
     eval_gates: tuple[EvalGate, ...] = ()
+    # Close the loop (docs/CLOSE_THE_LOOP.md).
+    customer_updates: CustomerUpdates = CustomerUpdates()
+    surge: SurgeRule = SurgeRule()
+    track: TrackRule = TrackRule()
 
     @model_validator(mode="after")
     def _complete(self) -> "SupportPolicy":

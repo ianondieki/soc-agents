@@ -233,7 +233,13 @@ from noc_agents.db.models import Base, HitlTaskRow, IncidentRow, SchemaVersionRo
 # 10 = the support desk (docs/SUPPORT_DESK.md, db/models_support.py): support_complaints,
 #     support_steps, support_tool_calls, support_messages, support_eval_runs. New tables only,
 #     created by the ordinary additive pass behind the usual pre-migration backup.
-SCHEMA_VERSION = 10  # bump per release that adds tables/columns
+# 11 = close the loop (docs/CLOSE_THE_LOOP.md): support_notices, support_surges,
+#     support_surge_members (new tables), and nullable columns on two v10 tables --
+#     support_complaints.{place, closure_reason, told_restored_at, told_incident_id,
+#     still_down_at} and support_messages.channel -- plus two indexes on support_complaints.
+#     All additive (ADD COLUMN with no default, CREATE TABLE/INDEX); the columns are why this
+#     bump is not optional (see below).
+SCHEMA_VERSION = 11  # bump per release that adds tables/columns
 
 # Why the bump is not optional when a release adds COLUMNS, even though new TABLES seem to
 # appear without one: init_db() calls Base.metadata.create_all() after migrate_additive(),

@@ -92,6 +92,13 @@ class HitlTaskType(str, Enum):
     APPROVE_TICKET_SYNC = "APPROVE_TICKET_SYNC"
     APPROVE_PAGE = "APPROVE_PAGE"
     APPROVE_LEDGER_SYNC = "APPROVE_LEDGER_SYNC"
+    # Close the loop (docs/CLOSE_THE_LOOP.md). The "service is back" SMS to the customers who
+    # complained about an incident, when the autonomy ladder says a person sends it (incident-
+    # bound: the SMS wait HELD behind it); and a burst of complaints about a place with no open
+    # incident, which a person confirms into a ticket or dismisses (incident_id NULL, entity
+    # support_surge). Both are §9.3 row-2 decisions (api/deps.HITL_DECIDERS).
+    APPROVE_CUSTOMER_UPDATE = "APPROVE_CUSTOMER_UPDATE"
+    CONFIRM_POSSIBLE_OUTAGE = "CONFIRM_POSSIBLE_OUTAGE"
 
 
 class HitlTaskStatus(str, Enum):
