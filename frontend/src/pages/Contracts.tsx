@@ -1,9 +1,12 @@
 import { useEffect, useState } from "react";
+import { FileText, Search } from "lucide-react";
 import { useLocation } from "react-router-dom";
 import { api } from "../api";
 import ContractsDrawer from "../components/ContractsDrawer";
 import LaneOff from "../components/LaneOff";
 import { humanEnum } from "../lib/agents";
+import { fmtDate } from "../lib/time";
+import "./Contracts.css";
 
 /** "duty_manager" → "duty manager": a role id as a person reads it. */
 function roleWords(value: string): string {
@@ -47,6 +50,30 @@ type Status = {
   disclosure: string;
 };
 
+/** A seeded sample's title starts "SAMPLE (SYNTHETIC)": that becomes a tag, the rest the title. */
+const SAMPLE_PREFIX = /^\s*SAMPLE\s*\(SYNTHETIC\)\s*/i;
+function titleOf(title: string): { sample: boolean; text: string } {
+  const t = String(title || "");
+  return SAMPLE_PREFIX.test(t) ? { sample: true, text: t.replace(SAMPLE_PREFIX, "") } : { sample: false, text: t };
+}
+
+/** "vendor-sfc-egypro-fibre" -> "Egypro Fibre": the counterparty as a name; the id stays in the title. */
+function vendorWords(id: string): string {
+  const parts = String(id || "").split("-").filter(Boolean);
+  if (parts[0] === "vendor") parts.shift();
+  if (parts.length > 1 && parts[0].length <= 4) parts.shift();
+  const out = parts.map((w) => w[0].toUpperCase() + w.slice(1)).join(" ");
+  return out || id;
+}
+
+/** Roles as a person reads them, "MSP coordinator" included. */
+function rolesWords(roles: string[]): string {
+  return roles.map((r) => roleWords(r).replace(/^msp /, "MSP ")).join(", ");
+}
+
+/** Search results shown until asked for the rest. */
+const HITS_SHOWN = 8;
+
 type Hit = {
   clause_id: string;
   contract_title: string;
@@ -63,8 +90,11 @@ export default function Contracts() {
   const [status, setStatus] = useState<Status | null>(null);
   const [off, setOff] = useState(false);
   const [rows, setRows] = useState<Contract[]>([]);
+  const [listed, setListed] = useState(false);
   const [q, setQ] = useState("");
   const [hits, setHits] = useState<Hit[] | null>(null);
+  const [searching, setSearching] = useState(false);
+  const [allHits, setAllHits] = useState(false);
   const [searchNote, setSearchNote] = useState<string | null>(null);
 
   useEffect(() => {
@@ -75,7 +105,11 @@ export default function Contracts() {
         if (!live) return;
         setStatus(s);
         setOff(false);
-        api.contracts().then((r: Contract[]) => live && setRows(r)).catch(() => live && setRows([]));
+        api
+          .contracts()
+          .then((r: Contract[]) => live && setRows(Array.isArray(r) ? r : []))
+          .catch(() => live && setRows([]))
+          .finally(() => live && setListed(true));
       })
       .catch((e: any) => {
         if (!live) return;
@@ -91,18 +125,25 @@ export default function Contracts() {
     const query = q.trim();
     if (!query) return;
     setSearchNote(null);
+    setSearching(true);
     try {
       const res = await api.contractsSearch(query, incidentId);
       setHits(res.hits || []);
+      setAllHits(false);
       if (res.reason) setSearchNote(res.reason);
     } catch {
       setHits([]);
       setSearchNote("Search failed. The rest of this page is unaffected.");
+    } finally {
+      setSearching(false);
     }
   };
 
+  const clauses = rows.reduce((sum, c) => sum + (Number(c.clauses) || 0), 0);
+  const corpus = status?.corpus;
+
   return (
-    <div className="content-narrow">
+    <div className="ct">
       <div className="page-head">
         <div>
           <h1>Contracts</h1>
@@ -110,9 +151,15 @@ export default function Contracts() {
             className="lead"
             title="Advisory only: nothing here writes a credit, a penalty or a regulator submission."
           >
-            Clause search and cited, advisory answers from the contracts you may see.
+            Search the clauses, or ask a question and get an advisory answer that cites them. Only the contracts your role
+            may see.
           </p>
         </div>
+        {status && (
+          <div className="page-actions">
+            <span className="ct-role">Viewing as {roleWords(status.role)}</span>
+          </div>
+        )}
       </div>
 
       {off && (
@@ -122,112 +169,183 @@ export default function Contracts() {
       )}
 
       {status && (
-        <div className="panel" style={{ marginBottom: "1rem" }}>
-          <div className="panel-head">
-            <h2 className="panel-title">Status</h2>
-            <div className="facts">
-              <span>Role: {roleWords(status.role)}</span>
-              {status.llm.cited_answers ? (
-                <span>Cited answers from {status.llm.model}</span>
-              ) : (
-                <span>Clause list only: {status.llm.unavailable_reason || "no citations provider"}</span>
+        <>
+          <dl className="ct-figures">
+            <div>
+              <dt>Contracts you may see</dt>
+              <dd>{corpus?.contracts ?? rows.length}</dd>
+            </div>
+            <div>
+              <dt>Clauses indexed</dt>
+              <dd>{listed ? clauses.toLocaleString() : "—"}</dd>
+            </div>
+            <div className={status.llm.cited_answers ? "ok" : undefined}>
+              <dt>Answers</dt>
+              <dd className="ct-figure-word">{status.llm.cited_answers ? "Cited by the model" : "Clause list only"}</dd>
+            </div>
+            <div className={status.fts5_available ? undefined : "bad"}>
+              <dt>Clause search</dt>
+              <dd className="ct-figure-word">{status.fts5_available ? "Ready" : "Unavailable"}</dd>
+            </div>
+          </dl>
+          <p
+            className="ct-how"
+            title={`Corpus about ${corpus?.est_tokens.toLocaleString()} tokens (chars/4 estimate) against a ${corpus?.ceiling_tokens.toLocaleString()}-token line. ${
+              corpus?.fits_in_prompt
+                ? "Below the line: the whole allowed corpus is placed in the prompt for a cited answer; BM25 ranks clauses for the list and the nearest-clause fallback."
+                : "Above the line: only the BM25 top-20 clauses are sent to the model."
+            }`}
+          >
+            {status.llm.cited_answers
+              ? corpus?.fits_in_prompt
+                ? `Your contracts are small enough (about ${corpus.est_tokens.toLocaleString()} tokens) for the model to read them whole and quote the clauses it relies on.`
+                : "Your contracts are too large to read whole, so the model reads the twenty clauses that match best and quotes the ones it relies on."
+              : `The model is off on this deployment${
+                  status.llm.unavailable_reason && status.llm.unavailable_reason !== "disabled"
+                    ? ` (${humanEnum(status.llm.unavailable_reason)})`
+                    : ""
+                }, so a question returns the clauses that match it, ranked, with no judgement in them.`}
+          </p>
+        </>
+      )}
+
+      {!off && (
+        <div className="ct-grid">
+          <div className="ct-main">
+            <ContractsDrawer incidentId={incidentId} defaultOpen flush />
+
+            <section className="panel ct-search" aria-labelledby="ct-search-title">
+              <div className="panel-head">
+                <h2 id="ct-search-title" className="panel-title">
+                  Search the clauses
+                </h2>
+                {incidentId && <span className="muted">Narrowed to ticket {incidentId.slice(0, 8)}…</span>}
+              </div>
+              <form
+                className="ct-search-row"
+                role="search"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  search();
+                }}
+              >
+                <span className="ct-search-field">
+                  <Search size={16} strokeWidth={1.75} aria-hidden="true" />
+                  <input
+                    aria-label="Search clause text and headings"
+                    value={q}
+                    onChange={(e) => setQ(e.target.value)}
+                    placeholder="Restoration time for a rural site"
+                  />
+                </span>
+                <button className="btn" type="submit" disabled={!q.trim() || searching}>
+                  {searching ? "Searching…" : "Search"}
+                </button>
+              </form>
+              <p className="ct-hint" title="Deterministic BM25 over clause text and headings.">
+                Words matched against clause text and headings, best first. No model and no judgement.
+              </p>
+              {searchNote && <p className="ct-hint">{searchNote}</p>}
+              {hits && hits.length === 0 && !searchNote && <div className="empty">No clause matched.</div>}
+              {hits && hits.length > 0 && (
+                <ol className="ct-hits">
+                  {(allHits ? hits : hits.slice(0, HITS_SHOWN)).map((h) => {
+                    const t = titleOf(h.contract_title);
+                    return (
+                      <li key={h.clause_id} className="ct-hit">
+                        <span className="ct-clause">§{h.clause_number}</span>
+                        <div className="ct-hit-main">
+                          <p className="ct-hit-head">
+                            <strong>{h.heading ? h.heading.replace(/\s*\((SAMPLE|FICTIONAL)[^)]*\)\s*$/i, "") : `Clause ${h.clause_number}`}</strong>
+                            <span>{t.text}</span>
+                          </p>
+                          <p className="ct-hit-text">{h.text.length > 300 ? h.text.slice(0, 299) + "…" : h.text}</p>
+                        </div>
+                        <span className="ct-rank" title="Rank in this search">
+                          {h.rank}
+                        </span>
+                      </li>
+                    );
+                  })}
+                </ol>
               )}
-              {status.fts5_available ? <span>FTS5 index</span> : <span className="chip danger">FTS5 unavailable</span>}
-            </div>
-          </div>
-          <p className="muted">
-            Corpus you may see: {status.corpus.contracts} contract{status.corpus.contracts === 1 ? "" : "s"}, about{" "}
-            {status.corpus.est_tokens.toLocaleString()} tokens (chars/4 estimate) against a {status.corpus.ceiling_tokens.toLocaleString()}-token
-            line.{" "}
-            {status.corpus.fits_in_prompt
-              ? "Below the line: the whole allowed corpus is placed in the prompt for a cited answer; BM25 ranks clauses for the list and the nearest-clause fallback."
-              : "Above the line: only the BM25 top-20 clauses are sent to the model."}
-          </p>
-        </div>
-      )}
-
-      {!off && <ContractsDrawer incidentId={incidentId} defaultOpen />}
-
-      {!off && (
-        <div className="panel" style={{ marginTop: "1rem" }}>
-          <div className="panel-head">
-            <h2 className="panel-title">Clause search</h2>
-            {incidentId && <span className="muted">Narrowed to ticket {incidentId.slice(0, 8)}…</span>}
-          </div>
-          <div style={{ display: "flex", gap: "0.5rem" }}>
-            <input
-              aria-label="Search clause text and headings"
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && search()}
-              placeholder="restoration time rural site…"
-              style={{ flex: 1 }}
-            />
-            <button className="btn" onClick={search} disabled={!q.trim()}>
-              Search
-            </button>
-          </div>
-          <p className="muted" style={{ marginTop: "0.4rem" }}>
-            Deterministic BM25 over clause text and headings. No model, no judgement — a ranked list, nothing more.
-          </p>
-          {searchNote && <p className="muted">{searchNote}</p>}
-          {hits && hits.length === 0 && !searchNote && <div className="empty">No clause matched.</div>}
-          {hits && hits.length > 0 && (
-            <div className="list">
-              {hits.map((h) => (
-                <div key={h.clause_id} className="row" style={{ cursor: "default" }}>
-                  <span className="mono">§{h.clause_number}</span>
-                  <div>
-                    <div className="head-row">
-                      <strong>{h.contract_title}</strong>
-                      {h.heading ? <span className="muted">{h.heading}</span> : null}
-                    </div>
-                    <div className="muted">{h.text.length > 300 ? h.text.slice(0, 299) + "…" : h.text}</div>
-                  </div>
-                  <span className="muted">#{h.rank}</span>
+              {hits && hits.length > HITS_SHOWN && (
+                <div className="ct-more">
+                  <button className="btn sm" onClick={() => setAllHits((v) => !v)} aria-expanded={allHits}>
+                    {allHits ? `Show the best ${HITS_SHOWN}` : `Show all ${hits.length} clauses`}
+                  </button>
                 </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
+              )}
+            </section>
+          </div>
 
-      {!off && (
-        <div className="panel" style={{ marginTop: "1rem" }}>
-          <h2 className="panel-title">Contracts you may see</h2>
-          <table>
-            <thead>
-              <tr>
-                <th>Title</th>
-                <th>Vendor</th>
-                <th>Effective</th>
-                <th>Version</th>
-                <th>Clauses</th>
-                <th>Tokens (est.)</th>
-                <th>Roles</th>
-                <th>Hosted model</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((c) => (
-                <tr key={c.id}>
-                  <td>{c.title}</td>
-                  <td className="muted">{c.counterparty_vendor_id}</td>
-                  <td>{c.effective_date || "—"}</td>
-                  <td>{c.version}</td>
-                  <td>{c.clauses ?? "—"}</td>
-                  <td>{c.token_count.toLocaleString()}</td>
-                  <td className="muted">{c.allowed_roles.map(roleWords).join(", ")}</td>
-                  <td>{c.third_party_processing_permitted ? "permitted" : "local only"}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {rows.length === 0 && (
-            <div className="empty">
-              No contract is visible to your role. Legal decides each contract's allowed roles at ingest.
+          <section className="panel ct-list" aria-labelledby="ct-list-title">
+            <div className="panel-head">
+              <h2 id="ct-list-title" className="panel-title">
+                Contracts you may see
+              </h2>
+              {listed && <span className="muted">{rows.length}</span>}
             </div>
-          )}
+            {!listed && status && (
+              <div className="skeleton-rows" aria-hidden="true">
+                <span className="skeleton" />
+                <span className="skeleton" />
+              </div>
+            )}
+            {listed && rows.length === 0 && (
+              <div className="empty">
+                No contract is visible to your role. Legal decides each contract's allowed roles when it is loaded; a duty
+                manager, management, legal or an MSP coordinator sees the samples.
+              </div>
+            )}
+            {rows.length > 0 && (
+              <ul className="ct-contracts">
+                {rows.map((c) => {
+                  const t = titleOf(c.title);
+                  return (
+                    <li key={c.id} className="ct-contract">
+                      <div className="ct-contract-head">
+                        <span className="ct-doc" aria-hidden="true">
+                          <FileText size={18} strokeWidth={1.75} />
+                        </span>
+                        <div className="ct-contract-title">
+                          <h3>{t.text}</h3>
+                          <p title={c.counterparty_vendor_id}>
+                            {vendorWords(c.counterparty_vendor_id)}
+                            {t.sample && <span className="ct-sample">Sample, made up for this demo</span>}
+                          </p>
+                        </div>
+                      </div>
+                      <dl className="ct-facts">
+                        <div>
+                          <dt>In force from</dt>
+                          <dd>{c.effective_date ? fmtDate(c.effective_date) : "—"}</dd>
+                        </div>
+                        <div>
+                          <dt>Version</dt>
+                          <dd className="mono">{c.version}</dd>
+                        </div>
+                        <div>
+                          <dt>Clauses</dt>
+                          <dd>{c.clauses ?? "—"}</dd>
+                        </div>
+                        <div>
+                          <dt>Size</dt>
+                          <dd title="Tokens, estimated as characters divided by four">{c.token_count.toLocaleString()} tokens</dd>
+                        </div>
+                      </dl>
+                      <p className="ct-who">
+                        <span>Readable by {rolesWords(c.allowed_roles)}.</span>
+                        <span className={c.third_party_processing_permitted ? undefined : "local"}>
+                          {c.third_party_processing_permitted ? "The hosted model may read it." : "Never sent to a hosted model."}
+                        </span>
+                      </p>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </section>
         </div>
       )}
     </div>

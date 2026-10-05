@@ -1,0 +1,65 @@
+/* Contracts (pages/Contracts.tsx): four figures and one plain sentence on how answers are made,
+ * then the two ways in (ask a question, search the clauses) beside the contracts this role may
+ * see, each as a card: what it is, with whom, in force from when, how big, and who may read it. */
+
+.ct-role { padding: 4px 12px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); font-size: var(--fs-sm); white-space: nowrap; }
+
+.ct-figures { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; margin: 0 0 10px; overflow: hidden; border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--line); }
+.ct-figures > div { min-width: 0; padding: 12px 18px 14px; background: var(--surface); }
+.ct-figures dt { overflow: hidden; color: var(--muted); font-size: var(--fs-sm); font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.ct-figures dd { margin: 4px 0 0; color: var(--text-strong); font-size: var(--fs-xl); font-weight: 700; line-height: 1.15; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.ct-figures dd.ct-figure-word { overflow: hidden; font-size: var(--fs-lg); line-height: 1.6; text-overflow: ellipsis; }
+.ct-figures > .ok dd { color: var(--ok); }
+.ct-figures > .bad dd { color: var(--danger); }
+.ct-how { max-width: 90ch; margin: 0 0 var(--s4); color: var(--muted); font-size: var(--fs-sm); line-height: 1.5; }
+
+.ct-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, 400px); gap: var(--s4); align-items: start; }
+.ct-main { display: grid; gap: var(--s4); min-width: 0; }
+
+/* Ask: the shared drawer, laid out for this page. */
+.ct .ctd textarea { width: 100%; min-height: 5.5rem; resize: vertical; }
+.ct .ctd .ctd-actions .muted { font-size: var(--fs-xs); }
+
+/* Search the clauses. */
+.ct-search-row { display: flex; gap: 8px; }
+.ct-search-field { position: relative; display: flex; flex: 1 1 12rem; align-items: center; min-width: 0; }
+.ct-search-field > svg { position: absolute; left: 12px; color: var(--muted); pointer-events: none; }
+.ct-search-field > input { width: 100%; padding-left: 38px; }
+.ct-hint { margin: 8px 0 0; color: var(--muted); font-size: var(--fs-xs); }
+.ct-hits { margin: 14px 0 0; padding: 0; list-style: none; }
+.ct-hit { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: start; gap: 4px 14px; padding: 12px 0; border-top: 1px solid var(--line); }
+.ct-clause { min-width: 3.2rem; padding: 3px 8px; border-radius: 6px; background: var(--accent-soft); color: var(--accent); font-family: var(--mono); font-size: var(--fs-xs); font-weight: 600; text-align: center; }
+.ct-hit-main { min-width: 0; }
+.ct-hit-head { display: flex; flex-wrap: wrap; gap: 0 10px; margin: 0; font-size: var(--fs-sm); }
+.ct-hit-head strong { color: var(--text-strong); }
+.ct-hit-head span { color: var(--muted); font-size: var(--fs-xs); }
+.ct-hit-text { margin: 4px 0 0; color: var(--text); font-size: var(--fs-sm); line-height: 1.5; }
+.ct-rank { color: var(--muted-dim); font-size: var(--fs-xs); font-variant-numeric: tabular-nums; }
+
+/* The contracts this role may see. */
+.ct-list { position: sticky; top: calc(var(--topbar-h) + var(--s4)); }
+.ct-contracts { display: grid; gap: 12px; margin: 0; padding: 0; list-style: none; }
+.ct-contract { padding: 14px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface-raised); }
+.ct-contract-head { display: flex; align-items: flex-start; gap: 12px; }
+.ct-doc { display: grid; flex: none; place-items: center; width: 34px; height: 34px; border-radius: 9px; background: var(--accent-soft); color: var(--accent); }
+.ct-contract-title { min-width: 0; }
+.ct .ct-contract-title h3 { margin: 0; color: var(--text-strong); font-size: var(--fs-sm); font-weight: 700; line-height: 1.35; }
+.ct-contract-title p { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; margin: 3px 0 0; color: var(--muted); font-size: var(--fs-xs); }
+.ct-sample { padding: 1px 8px; border: 1px solid var(--warn-line); border-radius: 999px; background: var(--warn-soft); color: var(--warn); font-weight: 600; }
+.ct-facts { display: grid; grid-template-columns: repeat(4, minmax(0, auto)); justify-content: start; gap: 4px 18px; margin: 12px 0 0; }
+.ct-facts dt { color: var(--muted); font-size: 11px; font-weight: 500; white-space: nowrap; }
+.ct-facts dd { margin: 1px 0 0; color: var(--text); font-size: var(--fs-sm); font-weight: 600; white-space: nowrap; }
+.ct-who { display: grid; gap: 2px; margin: 10px 0 0; padding-top: 10px; border-top: 1px solid var(--line); color: var(--muted); font-size: var(--fs-xs); line-height: 1.45; }
+.ct-who .local { color: var(--text); font-weight: 600; }
+
+@media (max-width: 1099px) {
+  .ct-grid { grid-template-columns: minmax(0, 1fr); }
+  .ct-list { position: static; }
+}
+@media (max-width: 760px) {
+  .ct-figures { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ct-figures dt { white-space: normal; }
+  .ct-facts { grid-template-columns: repeat(2, minmax(0, auto)); }
+  .ct-search-row .btn { flex: none; }
+}
+.ct-more { padding: 10px 0 2px; border-top: 1px solid var(--line); }

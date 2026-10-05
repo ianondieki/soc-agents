@@ -78,9 +78,12 @@ function sourceChipClass(source: ContractAnswer["source"]): string {
 export default function ContractsDrawer({
   incidentId,
   defaultOpen = false,
+  flush = false,
 }: {
   incidentId?: string | null;
   defaultOpen?: boolean;
+  /** No top margin: the Contracts page lays it out in its own grid. */
+  flush?: boolean;
 }) {
   const [open, setOpen] = useState(defaultOpen);
   const [question, setQuestion] = useState("");
@@ -115,9 +118,11 @@ export default function ContractsDrawer({
   };
 
   return (
-    <div className="panel" style={{ marginTop: "1rem" }}>
+    <section className="panel ctd" style={flush ? undefined : { marginTop: "1rem" }} aria-labelledby="ctd-title">
       <div className="panel-head">
-        <h2 className="panel-title">Ask the contracts</h2>
+        <h2 id="ctd-title" className="panel-title">
+          Ask the contracts
+        </h2>
         <div className="head-row">
           {incidentId && (
             <span className="muted" title="Answers are narrowed to this ticket's vendor">
@@ -138,8 +143,9 @@ export default function ContractsDrawer({
             onChange={(e) => setQuestion(e.target.value)}
             placeholder="e.g. What is the response time for a Priority 1 fault?"
             maxLength={2000}
+            rows={3}
           />
-          <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", marginTop: "0.5rem" }}>
+          <div className="ctd-actions" style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem", alignItems: "center", marginTop: "0.5rem" }}>
             <button className="btn primary" onClick={ask} disabled={busy || !question.trim()}>
               {busy ? "Asking…" : "Ask"}
             </button>
@@ -216,6 +222,6 @@ export default function ContractsDrawer({
           )}
         </>
       )}
-    </div>
+    </section>
   );
 }
