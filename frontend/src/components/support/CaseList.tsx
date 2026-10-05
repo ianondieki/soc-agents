@@ -1,5 +1,5 @@
 import { memo } from "react";
-import { CATEGORY_WORD, STATUS_WORD, fmtAge, fmtDue, minutesUntil, needsPerson, reasonWord, type Complaint } from "../../lib/support";
+import { CATEGORY_WORD, fmtAge, fmtDue, minutesUntil, needsPerson, reasonWord, statusWordOf, type Complaint } from "../../lib/support";
 
 /**
  * The queue's left column: one button per case, two lines each (reference and age; subject),
@@ -31,8 +31,7 @@ const CaseList = memo(function CaseList({ items, selectedId, onSelect, person = 
         const since = person && c.escalation?.at ? c.escalation.at : c.created_at;
         const act = needsPerson(c.status);
         const overdue = (minutesUntil(c.sla_due_at) ?? 1) < 0;
-        const status =
-          c.status === "in_progress" && c.escalation?.claimed_by ? `Claimed by ${c.escalation.claimed_by}` : STATUS_WORD[c.status] ?? c.status;
+        const status = statusWordOf(c);
         return (
           <li key={c.id}>
             <button type="button" className="sd-row" data-id={c.id} aria-current={selected ? "true" : undefined} onClick={() => onSelect(c.id)}>

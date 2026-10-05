@@ -269,7 +269,7 @@ export default function CasePane({ id, who, tick, stacked, onBack, onChanged, ti
             received <span className="mono">{fmtEAT(c.created_at)}</span>, {fmtAge(c.created_at)} ago
           </span>
         </span>
-        <StatusWord status={c.status} claimedBy={c.escalation?.claimed_by} />
+        <StatusWord status={c.status} claimedBy={c.escalation?.claimed_by} closureReason={c.closure_reason} />
       </header>
 
       <div className="sd-hero">

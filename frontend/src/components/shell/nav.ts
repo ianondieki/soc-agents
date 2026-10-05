@@ -42,6 +42,7 @@ export const NAV_GROUPS: NavGroupDef[] = [
     links: [
       { to: "/support", label: "Support desk" },
       { to: "/complain", label: "Complaint form" },
+      { to: "/track", label: "Track a complaint" },
     ],
   },
   {

@@ -28,7 +28,7 @@ export type Outcome = "auto_resolved" | "action_completed" | "escalated" | "huma
 export type Channel = "web" | "sms" | "app" | "call_centre" | "social";
 export type Language = "en" | "sw" | "mixed";
 export type ToolStatus = "ok" | "refused" | "needs_approval" | "approved" | "rejected" | "failed";
-export type Agent = "intake" | "triage" | "resolver" | "action" | "escalation" | "human";
+export type Agent = "intake" | "triage" | "resolver" | "action" | "escalation" | "human" | "followup";
 
 export interface Citation {
   article_id: string;
@@ -72,6 +72,10 @@ export interface Complaint {
   citations: Citation[];
   linked_incident: LinkedIncident | null;
   sla_due_at: string;
+  /** docs/CLOSE_THE_LOOP.md: why a `closed` case closed ("service_restored"), when one did. */
+  closure_reason?: string | null;
+  told_restored_at?: string | null;
+  still_down_at?: string | null;
 }
 
 export interface Step {
@@ -212,6 +216,99 @@ export interface EvalReport {
   by_split?: Record<string, EvalMetrics>;
 }
 
+// ------------------------------------------------- close the loop (docs/CLOSE_THE_LOOP.md)
+
+export type TrackStage = "received" | "answered" | "fixed" | "with_a_person" | "outage_known" | "restored" | "closed";
+
+/** What the public Track page receives: customer words only, never an account fact or a staff name. */
+export interface Tracked {
+  ref: string;
+  stage: TrackStage;
+  headline: string;
+  detail: string | null;
+  received_at: string;
+  reply_due_at: string | null;
+  outage: { place: string; ticket: string; state: "working" | "restored"; restored_at: string | null } | null;
+  timeline: { at: string; text: string }[];
+  messages: { at: string; from: "you" | "us"; body: string }[];
+  can_report_still_down: boolean;
+}
+
+export interface Loop {
+  waiting_to_hear: number;
+  told: number;
+  told_median_minutes: number | null;
+  told_p90_minutes: number | null;
+  notices_waiting: number;
+  recipients_waiting: number;
+  still_down_reports: number;
+  repeat_contacts: number;
+  outages_with_complaints: number;
+  repeat_contacts_per_outage: number | null;
+  spotted_by_customers: number;
+  surges: { open: number; confirmed: number; dismissed: number };
+}
+
+export type NoticeState = "none" | "waiting_for_restore" | "sent" | "awaiting_approval" | "rejected";
+
+export interface OutageNotice {
+  state: NoticeState;
+  card_id: string | null;
+  recipients: number;
+  sent_at: string | null;
+}
+
+export interface OutageRow {
+  incident_id: string;
+  incident_number: string;
+  title: string;
+  priority: string;
+  status: string;
+  places: string[];
+  restored_at: string | null;
+  restore_source: string | null;
+  customers: number;
+  told: number;
+  waiting: number;
+  still_down: number;
+  repeat_contacts: number;
+  notice: OutageNotice;
+  from_customer_reports: boolean;
+}
+
+export type SurgeStatus = "open" | "confirmed" | "dismissed";
+
+export interface Surge {
+  id: string;
+  place: string;
+  region_code: string | null;
+  status: SurgeStatus | string;
+  origin: "new_complaints" | "still_down" | string;
+  complaints: number;
+  numbers: number;
+  first_at: string | null;
+  last_at: string | null;
+  card_id: string | null;
+  incident_id: string | null;
+  incident_number: string | null;
+  error: string | null;
+  decided_by: string | null;
+  decided_at: string | null;
+  reason: string | null;
+  complaint_refs: string[];
+  /** The incident a still-down surge came from, when the API names it. */
+  parent_incident_number?: string | null;
+}
+
+export interface IncidentCustomers {
+  customers: number;
+  told: number;
+  waiting: number;
+  still_down: number;
+  notice: OutageNotice;
+  complaints: { id: string; ref: string; msisdn_masked: string; status: Status; told_restored_at: string | null; still_down_at: string | null; closure_reason?: string | null }[];
+}
+
 // ---------------------------------------------------------------------------------- API
 
 /** What a failed call carries: the status, the body (parsed when JSON) and Retry-After, in seconds. */
@@ -344,6 +441,18 @@ export const supportApi = {
   evalsLatest: () => json<EvalReport>("/evals/latest"),
   evalsRun: () => json<EvalReport>("/evals/run", { method: "POST", body: "{}" }),
   seed: () => json<{ created: number }>("/demo/seed", { method: "POST", body: "{}" }),
+  // Close the loop. Track is a POST so a phone number never sits in a URL or an access log.
+  track: (ref: string, msisdn: string) => json<Tracked>("/track", { method: "POST", body: JSON.stringify({ ref, msisdn }) }),
+  stillDown: (ref: string, msisdn: string, note?: string) =>
+    json<Tracked>("/track/still-down", {
+      method: "POST",
+      body: JSON.stringify(note && note.trim() ? { ref, msisdn, note: note.trim() } : { ref, msisdn }),
+    }),
+  loop: (hours = 0) => json<Loop>(`/loop?hours=${hours}`),
+  outages: () => json<OutageRow[]>("/outages"),
+  surges: () => json<Surge[]>("/surges"),
+  retrySurge: (id: string) => json<unknown>(`/surges/${encodeURIComponent(id)}/retry`, { method: "POST", body: "{}" }),
+  incidentCustomers: (incidentId: string) => json<IncidentCustomers>(`/incidents/${encodeURIComponent(incidentId)}/customers`),
 };
 
 // ---------------------------------------------------------------------------------- words
@@ -371,6 +480,13 @@ export const STATUS_WORD: Record<Status, string> = {
   closed: "Closed",
 };
 
+/** A case's status in words: "Closed: service restored" when the follow-up agent closed it. */
+export function statusWordOf(c: { status: Status; closure_reason?: string | null; escalation?: { claimed_by: string | null } | null }): string {
+  if (c.status === "closed" && c.closure_reason === "service_restored") return "Closed: service restored";
+  if (c.status === "in_progress" && c.escalation?.claimed_by) return `Claimed by ${c.escalation.claimed_by}`;
+  return STATUS_WORD[c.status] ?? humanWords(c.status);
+}
+
 /** A person must act now: the two statuses the queue marks in violet. */
 export const needsPerson = (s: Status): boolean => s === "escalated" || s === "awaiting_approval";
 export const STATUSES = Object.keys(STATUS_WORD) as Status[];
@@ -395,6 +511,7 @@ export const AGENT_WORD: Record<Agent, string> = {
   action: "Action agent",
   escalation: "Escalation",
   human: "Person",
+  followup: "Follow-up agent",
 };
 
 /** What each agent does, in one line, for the trace. */
@@ -405,6 +522,7 @@ export const AGENT_DOES: Record<Agent, string> = {
   action: "Looked up the account and called tools under their policy limits.",
   escalation: "Sent the case to a person, with the reason.",
   human: "A member of staff decided.",
+  followup: "Kept the promise to the customer: told them when service came back, and took their word when it had not.",
 };
 
 export const TOOL_STATUS_WORD: Record<ToolStatus, string> = {
@@ -522,6 +640,22 @@ export function stepSentence(step: Step, titles: Record<string, string> = {}): s
       return `${d.decided_by ?? d.approved_by ?? "A person"} approved ${toolPhrase(d.tool)}${d.tool ? "" : " the held call"}.`;
     case "human/rejected":
       return `${d.decided_by ?? d.rejected_by ?? "A person"} rejected ${toolPhrase(d.tool)}${d.reason ? `: ${String(d.reason)}` : ""}.`;
+    // docs/CLOSE_THE_LOOP.md: the follow-up agent keeps the "we'll tell you" promise.
+    case "followup/told_restored": {
+      if (step.summary) return step.summary;
+      const place = typeof d.place === "string" && d.place ? ` in ${d.place}` : "";
+      const inc = typeof d.incident_number === "string" && d.incident_number ? ` (${d.incident_number})` : "";
+      return `Told the customer service is back${place}${inc}.`;
+    }
+    case "followup/still_down_reported": {
+      const place = typeof d.place === "string" && d.place ? ` in ${d.place}` : "";
+      return `The customer says service is still down${place} after the restore; the case went back to a person.`;
+    }
+    case "followup/linked_confirmed_outage": {
+      const inc = typeof d.incident_number === "string" && d.incident_number ? d.incident_number : "the new ticket";
+      const by = typeof d.decided_by === "string" && d.decided_by ? `, confirmed by ${d.decided_by}` : "";
+      return `Linked to ${inc}, the outage customers reported${by}, and told the customer.`;
+    }
     default:
       return step.summary || humanWords(step.action);
   }
@@ -539,6 +673,7 @@ export const REASON_WORD: Record<string, string> = {
   low_confidence: "triage was not confident",
   not_grounded: "no grounded article to answer from",
   tool_failed: "a tool call failed",
+  still_down_after_restore: "still down after the restore",
 };
 export const reasonWord = (code: unknown): string => REASON_WORD[String(code)] ?? humanWords(code);
 
@@ -812,8 +947,13 @@ export function verdictOf(d: CaseDetail): Verdict {
       const by = String(step?.detail?.resolved_by ?? who ?? "a person");
       return { text: `Resolved by ${by}`, sub: c.escalation ? reasonWord(c.escalation.reason_code) : undefined, tone: "", route: "human" };
     }
-    case "closed":
+    case "closed": {
+      if (c.closure_reason === "service_restored") {
+        const told = [...d.steps].reverse().find((s) => s.agent === "followup" && s.action === "told_restored");
+        return { text: "Closed: service restored", sub: told ? stepSentence(told) : undefined, tone: "", route: c.route };
+      }
       return { text: "Closed", tone: "", route: c.route };
+    }
     default:
       return { text: STATUS_WORD[c.status] ?? humanWords(c.status), tone: "", route: c.route };
   }
@@ -857,6 +997,7 @@ const CUSTOMER_REASON: Record<string, string> = {
   low_confidence: "A person will read it, as our agents were not sure what it was about",
   not_grounded: "A person will answer it, as our help articles do not cover it",
   tool_failed: "A person will finish the fix",
+  still_down_after_restore: "You told us service is still down, so a person will check it",
 };
 
 function toolDone(call: ToolCall): string {
@@ -924,6 +1065,87 @@ export function msisdnProblem(raw: string): string | null {
 
 export const BODY_MIN = 5;
 export const BODY_MAX = 4000;
+
+// ------------------------------------------------------------------- close the loop: words
+
+/** "16:40" today (EAT), else "05 Oct, 16:40"; "" when unparseable. */
+export function fmtClock(iso: unknown): string {
+  const d = parseInstant(iso);
+  if (!d) return "";
+  const sameDay = fmtDateTime(d).slice(0, 6) === fmtDateTime(new Date()).slice(0, 6);
+  return sameDay ? fmtHM(d) : fmtDateTime(d).replace(/:\d{2}$/, "");
+}
+
+/** How the restore was recorded, as the end of "Restored 16:40 …". */
+export const RESTORE_SOURCE_WORD: Record<string, string> = {
+  SUPERVISOR: "by a supervisor",
+  MARK_RESTORED: "from a work note",
+  ALARM_CLEAR: "when the alarm cleared",
+  VENDOR_NOTE_INFERRED: "a vendor note says so, not yet confirmed",
+  CLOSED: "when the ticket was closed",
+};
+export const restoreSourceWord = (src: unknown): string => (src ? RESTORE_SOURCE_WORD[String(src).toUpperCase()] ?? humanWords(src) : "");
+
+export interface NoticeWords {
+  text: string;
+  /** A quieter second part: "6 customers", "nobody was told". */
+  sub: string;
+  tone: Tone;
+  /** Where the words lead: the Approvals queue while a card waits. */
+  to?: string;
+}
+
+/** The customer notice for one outage, in words (docs/CLOSE_THE_LOOP.md §1). */
+export function noticeWords(n: OutageNotice | null | undefined): NoticeWords {
+  const count = n && n.recipients > 0 ? `${n.recipients} ${n.recipients === 1 ? "customer" : "customers"}` : "";
+  switch (n?.state) {
+    case "waiting_for_restore":
+      return { text: "Waiting for a confirmed restore", sub: "", tone: "" };
+    case "sent": {
+      const at = fmtClock(n.sent_at);
+      return { text: at ? `Sent ${at}` : "Sent", sub: count, tone: "ok" };
+    }
+    case "awaiting_approval":
+      return { text: "Waiting for approval", sub: count, tone: "hitl", to: "/hitl" };
+    case "rejected":
+      return { text: "Rejected", sub: "nobody was told", tone: "" };
+    case "none":
+      // Restored or closed and no notice was ever written (the desk was off, or telling failed).
+      return { text: "No notice was sent", sub: "", tone: "" };
+    default:
+      return { text: "No notice yet", sub: "", tone: "" };
+  }
+}
+
+/** Autonomy levels as the floor's ladder: L1 co-pilot, L2 guarded (the default), L3 conditional. */
+const AUTO_MAX_RECIPIENTS = 20;
+
+/**
+ * Whether telling customers will wait for a supervisor (docs/CLOSE_THE_LOOP.md §1): L1 always; L2 for
+ * P1 and P2; L3 for P1; and any batch above `auto_max_recipients` (20 by default) whatever the level.
+ */
+export function noticeWaitsForPerson(priority: unknown, autonomy: unknown, recipients: number): boolean {
+  if (recipients > AUTO_MAX_RECIPIENTS) return true;
+  const level = String(autonomy || "L2_GUARDED").toUpperCase();
+  const p = String(priority || "").toUpperCase();
+  if (level.startsWith("L1")) return true;
+  if (level.startsWith("L3")) return p === "P1";
+  return p === "P1" || p === "P2";
+}
+
+/** Where a possible outage came from, as the end of a sentence. */
+export function surgeOriginWords(origin: unknown, parentIncident?: unknown): string {
+  if (origin === "still_down") {
+    return typeof parentIncident === "string" && parentIncident ? `still down after ${parentIncident} was restored` : "still down after a restore";
+  }
+  return "new complaints, no ticket open there";
+}
+
+export const SURGE_STATUS_WORD: Record<string, string> = {
+  open: "Waiting for a decision",
+  confirmed: "Confirmed",
+  dismissed: "Dismissed",
+};
 
 // -------------------------------------------------------------------------------- evals
 

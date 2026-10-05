@@ -1,7 +1,6 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
-import { BrandMark } from "../components/shell/BrandMark";
-import ThemeToggle from "../components/support/ThemeToggle";
+import PublicFrame from "../components/support/PublicFrame";
 import {
   BODY_MAX,
   BODY_MIN,
@@ -165,152 +164,124 @@ export default function Complain() {
   };
 
   return (
-    <div className="cp">
-      <a className="skip-link" href="#main">
-        Skip to content
-      </a>
-      <header className="cp-top">
-        <div className="cp-wrap">
-          <Link className="cp-brand" to="/complain" aria-label="Kenya NOC Support, the complaint form">
-            <BrandMark />
-            <span>Kenya NOC Support</span>
-          </Link>
-          <div className="cp-top-actions">
-            <Link className="cp-quiet-link" to="/">
-              Front page
-            </Link>
-            <ThemeToggle className="cp-icon-btn" />
-          </div>
-        </div>
-      </header>
+    <PublicFrame>
+      {!sent ? (
+        <form className="cp-form" onSubmit={submit} noValidate>
+          <h1 ref={headingRef} tabIndex={-1}>
+            Tell us what went wrong
+          </h1>
+          <p className="cp-lead">
+            Write it in your own words, in English or Kiswahili. Our agents read it straight away; when it needs a person, one takes it and you
+            are told why.
+          </p>
 
-      <main id="main" className="cp-main" tabIndex={-1}>
-        <div className="cp-wrap">
-          {!sent ? (
-            <form className="cp-form" onSubmit={submit} noValidate>
-              <h1 ref={headingRef} tabIndex={-1}>
-                Tell us what went wrong
-              </h1>
-              <p className="cp-lead">
-                Write it in your own words, in English or Kiswahili. Our agents read it straight away; when it needs a person, one takes it and you
-                are told why.
+          <div className="cp-field">
+            <div className="cp-label-row">
+              <label htmlFor={`${uid}-body`}>What went wrong?</label>
+              <span className={"cp-count" + (bodyLen > BODY_MAX ? " over" : "")} aria-live="polite">
+                <span className="cp-mono">{bodyLen.toLocaleString("en-KE")}</span> of {BODY_MAX.toLocaleString("en-KE")}
+              </span>
+            </div>
+            <textarea
+              id={`${uid}-body`}
+              ref={bodyRef}
+              value={body}
+              onChange={(e) => {
+                setBody(e.target.value);
+                if (errors.body) setErrors((x) => ({ ...x, body: undefined }));
+              }}
+              rows={5}
+              maxLength={BODY_MAX + 200}
+              aria-describedby={`${uid}-body-hint${errors.body ? ` ${uid}-body-err` : ""}`}
+              aria-invalid={!!errors.body || undefined}
+              required
+            />
+            <p id={`${uid}-body-hint`} className="cp-hint">
+              Say what happened, where, and when. If it's about an M-PESA transfer, include the 10-character code from the confirmation SMS.
+            </p>
+            {errors.body && (
+              <p id={`${uid}-body-err`} className="cp-error">
+                {errors.body}
               </p>
-
-              <div className="cp-field">
-                <div className="cp-label-row">
-                  <label htmlFor={`${uid}-body`}>What went wrong?</label>
-                  <span className={"cp-count" + (bodyLen > BODY_MAX ? " over" : "")} aria-live="polite">
-                    <span className="cp-mono">{bodyLen.toLocaleString("en-KE")}</span> of {BODY_MAX.toLocaleString("en-KE")}
-                  </span>
-                </div>
-                <textarea
-                  id={`${uid}-body`}
-                  ref={bodyRef}
-                  value={body}
-                  onChange={(e) => {
-                    setBody(e.target.value);
-                    if (errors.body) setErrors((x) => ({ ...x, body: undefined }));
-                  }}
-                  rows={5}
-                  maxLength={BODY_MAX + 200}
-                  aria-describedby={`${uid}-body-hint${errors.body ? ` ${uid}-body-err` : ""}`}
-                  aria-invalid={!!errors.body || undefined}
-                  required
-                />
-                <p id={`${uid}-body-hint`} className="cp-hint">
-                  Say what happened, where, and when. If it's about an M-PESA transfer, include the 10-character code from the confirmation SMS.
-                </p>
-                {errors.body && (
-                  <p id={`${uid}-body-err`} className="cp-error">
-                    {errors.body}
-                  </p>
-                )}
-                <div className="cp-examples">
-                  <span className="cp-examples-label" id={`${uid}-ex`}>
-                    Or start from an example
-                  </span>
-                  <div className="cp-chips" role="group" aria-labelledby={`${uid}-ex`}>
-                    {EXAMPLES.map((ex) => (
-                      <button key={ex.label} type="button" className="cp-chip" onClick={() => fill(ex)} title={ex.text}>
-                        {ex.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </div>
-
-              <div className="cp-field">
-                <label htmlFor={`${uid}-phone`}>Phone number</label>
-                <input
-                  id={`${uid}-phone`}
-                  ref={phoneRef}
-                  value={msisdn}
-                  onChange={(e) => {
-                    setMsisdn(e.target.value);
-                    if (errors.msisdn) setErrors((x) => ({ ...x, msisdn: undefined }));
-                  }}
-                  onBlur={() => setTouchedPhone(true)}
-                  inputMode="tel"
-                  autoComplete="tel"
-                  placeholder="0712 345 678"
-                  aria-describedby={`${uid}-phone-hint${errors.msisdn || (touchedPhone && phoneProblem && msisdn) ? ` ${uid}-phone-err` : ""}`}
-                  aria-invalid={!!errors.msisdn || (touchedPhone && !!phoneProblem && !!msisdn) || undefined}
-                  required
-                />
-                <p id={`${uid}-phone-hint`} className="cp-hint">
-                  The line the problem is on. We keep it masked on our side.
-                </p>
-                {(errors.msisdn || (touchedPhone && phoneProblem && msisdn)) && (
-                  <p id={`${uid}-phone-err`} className="cp-error">
-                    {errors.msisdn || phoneProblem}
-                  </p>
-                )}
-              </div>
-
-              <details className="cp-more" open={moreOpen} onToggle={(e) => setMoreOpen((e.currentTarget as HTMLDetailsElement).open)}>
-                <summary>Add your name or account number (optional)</summary>
-                <div className="cp-more-body">
-                  <div className="cp-field">
-                    <label htmlFor={`${uid}-name`}>Your name</label>
-                    <input id={`${uid}-name`} value={name} onChange={(e) => setName(e.target.value)} autoComplete="name" maxLength={128} />
-                    <p className="cp-hint">So the reply can greet you.</p>
-                    {errors.name && <p className="cp-error">{errors.name}</p>}
-                  </div>
-                  <div className="cp-field">
-                    <label htmlFor={`${uid}-acct`}>Account number</label>
-                    <input id={`${uid}-acct`} value={account} onChange={(e) => setAccount(e.target.value)} autoComplete="off" maxLength={32} placeholder="ACC-100412" className="cp-mono" />
-                    <p className="cp-hint">Your account number, if you know it. Put an M-PESA transaction code in the message above instead.</p>
-                    {errors.account_ref && <p className="cp-error">{errors.account_ref}</p>}
-                  </div>
-                </div>
-              </details>
-
-              <div className="cp-submit">
-                <div className="cp-submit-row">
-                  <button type="submit" className="cp-btn primary" aria-disabled={sending || undefined} aria-busy={sending || undefined}>
-                    {sending ? "Sending…" : "Send complaint"}
+            )}
+            <div className="cp-examples">
+              <span className="cp-examples-label" id={`${uid}-ex`}>
+                Or start from an example
+              </span>
+              <div className="cp-chips" role="group" aria-labelledby={`${uid}-ex`}>
+                {EXAMPLES.map((ex) => (
+                  <button key={ex.label} type="button" className="cp-chip" onClick={() => fill(ex)} title={ex.text}>
+                    {ex.label}
                   </button>
-                  {errors.form && (
-                    <div className="cp-alert" role="alert" ref={formErrorRef} tabIndex={-1}>
-                      {errors.form}
-                    </div>
-                  )}
-                </div>
-                <p className="cp-hint">Sending runs your complaint through our agents now. You get a reference and a first reply on this page.</p>
+                ))}
               </div>
-            </form>
-          ) : (
-            <Result sent={sent} onAgain={again} headingRef={headingRef} />
-          )}
-        </div>
-      </main>
+            </div>
+          </div>
 
-      <footer className="cp-foot">
-        <div className="cp-wrap">
-          <span>Demo and training product. Not an official Safaricom or Airtel system.</span>
-        </div>
-      </footer>
-    </div>
+          <div className="cp-field">
+            <label htmlFor={`${uid}-phone`}>Phone number</label>
+            <input
+              id={`${uid}-phone`}
+              ref={phoneRef}
+              value={msisdn}
+              onChange={(e) => {
+                setMsisdn(e.target.value);
+                if (errors.msisdn) setErrors((x) => ({ ...x, msisdn: undefined }));
+              }}
+              onBlur={() => setTouchedPhone(true)}
+              inputMode="tel"
+              autoComplete="tel"
+              placeholder="0712 345 678"
+              aria-describedby={`${uid}-phone-hint${errors.msisdn || (touchedPhone && phoneProblem && msisdn) ? ` ${uid}-phone-err` : ""}`}
+              aria-invalid={!!errors.msisdn || (touchedPhone && !!phoneProblem && !!msisdn) || undefined}
+              required
+            />
+            <p id={`${uid}-phone-hint`} className="cp-hint">
+              The line the problem is on. We keep it masked on our side.
+            </p>
+            {(errors.msisdn || (touchedPhone && phoneProblem && msisdn)) && (
+              <p id={`${uid}-phone-err`} className="cp-error">
+                {errors.msisdn || phoneProblem}
+              </p>
+            )}
+          </div>
+
+          <details className="cp-more" open={moreOpen} onToggle={(e) => setMoreOpen((e.currentTarget as HTMLDetailsElement).open)}>
+            <summary>Add your name or account number (optional)</summary>
+            <div className="cp-more-body">
+              <div className="cp-field">
+                <label htmlFor={`${uid}-name`}>Your name</label>
+                <input id={`${uid}-name`} value={name} onChange={(e) => setName(e.target.value)} autoComplete="name" maxLength={128} />
+                <p className="cp-hint">So the reply can greet you.</p>
+                {errors.name && <p className="cp-error">{errors.name}</p>}
+              </div>
+              <div className="cp-field">
+                <label htmlFor={`${uid}-acct`}>Account number</label>
+                <input id={`${uid}-acct`} value={account} onChange={(e) => setAccount(e.target.value)} autoComplete="off" maxLength={32} placeholder="ACC-100412" className="cp-mono" />
+                <p className="cp-hint">Your account number, if you know it. Put an M-PESA transaction code in the message above instead.</p>
+                {errors.account_ref && <p className="cp-error">{errors.account_ref}</p>}
+              </div>
+            </div>
+          </details>
+
+          <div className="cp-submit">
+            <div className="cp-submit-row">
+              <button type="submit" className="cp-btn primary" aria-disabled={sending || undefined} aria-busy={sending || undefined}>
+                {sending ? "Sending…" : "Send complaint"}
+              </button>
+              {errors.form && (
+                <div className="cp-alert" role="alert" ref={formErrorRef} tabIndex={-1}>
+                  {errors.form}
+                </div>
+              )}
+            </div>
+            <p className="cp-hint">Sending runs your complaint through our agents now. You get a reference and a first reply on this page.</p>
+          </div>
+        </form>
+      ) : (
+        <Result sent={sent} onAgain={again} headingRef={headingRef} />
+      )}
+    </PublicFrame>
   );
 }
 
@@ -338,6 +309,9 @@ function Result({ sent, onAgain, headingRef }: { sent: Sent; onAgain: () => void
       <div className="cp-ref">
         <span className="cp-ref-label">Your reference</span>
         <span className="cp-ref-num cp-mono">{c.ref}</span>
+        <Link className="cp-ref-track" to={`/track?ref=${encodeURIComponent(c.ref)}`}>
+          Track this complaint
+        </Link>
       </div>
 
       <section className="cp-what" aria-labelledby="cp-what-h">

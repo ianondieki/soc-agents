@@ -26,6 +26,7 @@
  */
 
 import { Fragment, useCallback, useEffect, useId, useState } from "react";
+import { Link } from "react-router-dom";
 import { priorityTitle } from "../lib/agents";
 import { api } from "../api";
 import { IconDot } from "../lib/icons";
@@ -164,6 +165,28 @@ function Counts({ region }: { region: any }) {
   );
 }
 
+/**
+ * A burst of complaints about a place in this region with no ticket open (docs/CLOSE_THE_LOOP.md
+ * §3): one line, violet because a supervisor decides it on Approvals. Absent when the key is null.
+ */
+function SurgeLine({ surge }: { surge: unknown }) {
+  const s = obj(surge);
+  const place = typeof s.place === "string" ? s.place.trim() : "";
+  if (!place) return null;
+  const n = num(s.complaints, NaN);
+  const count = Number.isFinite(n) ? `${n} ${n === 1 ? "complaint" : "complaints"}, ` : "";
+  return (
+    <p className="region-surge">
+      <Link to="/hitl" className="attn hitl region-surge-link">
+        <IconDot />
+        <span>
+          Possible outage in {place}: {count}no ticket
+        </span>
+      </Link>
+    </p>
+  );
+}
+
 function RegionCard({ region, allBlind }: { region: any; allBlind: boolean }) {
   const headId = useId();
   const status = typeof region.status === "string" ? region.status : "STALE";
@@ -199,6 +222,8 @@ function RegionCard({ region, allBlind }: { region: any; allBlind: boolean }) {
       </div>
 
       <p className="region-counties">{counties.length ? counties.join(", ") : "Counties not configured"}</p>
+
+      <SurgeLine surge={region.complaint_surge} />
 
       <Counts region={region} />
 

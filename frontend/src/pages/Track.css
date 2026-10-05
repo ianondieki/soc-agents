@@ -1,0 +1,125 @@
+/* "Track my complaint" at /track. Owned by pages/Track.tsx; the frame, the form fields, the
+   buttons and the alert are the complaint form's (.cp-*, pages/Complain.css), so the two public
+   pages read as one product. Built from the Shift light tokens only. Colour is a signal here
+   too: amber while engineers work on an outage, green once it is restored, violet while a
+   person has the complaint; everything else is ink. Nothing moves except the disclosure. */
+
+.tk-ref-input { letter-spacing: 0.02em; }
+.cp .tk-alert-hint { display: block; margin-top: var(--s1); color: var(--text); font-size: var(--fs-sm); }
+.tk-link {
+  color: var(--accent);
+  font-weight: 500;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-color: var(--accent-line);
+}
+.tk-link:hover { text-decoration-color: var(--accent); }
+.cp-btn.ghost { border-color: transparent; background: transparent; color: var(--muted); }
+.cp-btn.ghost:hover { background: var(--surface-raised); color: var(--text-strong); }
+
+/* ------------------------------------------------------------------ status */
+.tk-result { display: flex; flex-direction: column; }
+.cp .tk-confirm {
+  margin: 0 0 var(--s5);
+  padding: var(--s3) var(--s4);
+  border: 1px solid var(--ok-line);
+  border-radius: var(--r-md);
+  background: var(--ok-soft);
+  color: var(--text-strong);
+  font-size: var(--fs-base);
+  line-height: 1.5;
+}
+.tk-confirm:focus { outline: none; }
+.tk-confirm:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.cp .tk-ref { margin: 0 0 var(--s2); color: var(--muted); font-size: var(--fs-md); }
+.tk-ref-num { color: var(--text-strong); font-weight: 600; }
+.cp h1.tk-headline { max-width: 24ch; }
+.cp .tk-detail { margin-top: var(--s3); }
+.cp .tk-due { margin: var(--s3) 0 0; color: var(--hitl-text); font-size: var(--fs-md); font-weight: 500; }
+
+/* The outage strip: three facts on one hairline row, the state with its signal dot. */
+.tk-outage {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) minmax(0, 1.3fr);
+  margin-top: var(--s5);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface);
+}
+.tk-outage-cell { display: grid; gap: 2px; min-width: 0; padding: var(--s3) var(--s4); }
+.tk-outage-cell + .tk-outage-cell { border-left: 1px solid var(--line); }
+.tk-outage-label { color: var(--muted); font-size: var(--fs-sm); }
+.tk-outage-value { color: var(--text-strong); font-size: var(--fs-base); font-weight: 600; line-height: 1.35; overflow-wrap: anywhere; }
+.tk-outage-value.cp-mono { font-weight: 500; }
+.tk-outage-state { display: inline-flex; align-items: center; gap: var(--s2); }
+.tk-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--muted-dim); }
+.tk-outage.warn .tk-dot { background: var(--warn); }
+.tk-outage.ok .tk-dot { background: var(--ok); }
+.tk-outage.ok .tk-outage-state { color: var(--ok); }
+
+/* Sections: a hairline above, the heading with a quiet note beside it. */
+.tk-section { margin-top: var(--s6); }
+.tk-section-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: var(--s1) var(--s4); margin-bottom: var(--s3); }
+
+/* The timeline, oldest first: a dot and a line down the left, the time at the end of each line;
+   the newest entry carries the stage's colour. */
+.tk-timeline { margin: 0; padding: 0; list-style: none; }
+.tk-step {
+  position: relative;
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  column-gap: var(--s3);
+  align-items: baseline;
+  padding-bottom: var(--s3);
+}
+.tk-step::before { content: ""; position: absolute; left: 9px; top: 18px; bottom: 0; width: 2px; background: var(--line); }
+.tk-step:last-child::before { display: none; }
+.tk-step:last-child { padding-bottom: 0; }
+.tk-step-dot { position: relative; top: 3px; width: 12px; height: 12px; margin-left: 4px; border: 2px solid var(--line-strong); border-radius: 50%; background: var(--surface); }
+.tk-step-text { color: var(--text); font-size: var(--fs-base); line-height: 1.45; overflow-wrap: anywhere; }
+.tk-step-at { color: var(--muted-dim); font-size: var(--fs-sm); white-space: nowrap; }
+.tk-step.now .tk-step-dot { border-color: var(--text-strong); background: var(--text-strong); }
+.tk-step.now .tk-step-text { color: var(--text-strong); font-weight: 600; }
+.tk-step.now.warn .tk-step-dot { border-color: var(--warn); background: var(--warn); }
+.tk-step.now.ok .tk-step-dot { border-color: var(--ok); background: var(--ok); }
+.tk-step.now.hitl .tk-step-dot { border-color: var(--hitl); background: var(--hitl); }
+
+/* The conversation: who and when, then the words; ours on the surface, theirs on the canvas. */
+.tk-msgs { display: grid; gap: var(--s3); margin: 0; padding: 0; list-style: none; }
+.tk-msg { padding: var(--s3) var(--s4); border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface); }
+.tk-msg.you { background: transparent; border-style: dashed; }
+.tk-msg-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s1) var(--s3); color: var(--muted); font-size: var(--fs-sm); }
+.tk-msg-who { color: var(--text-strong); font-weight: 600; }
+.cp .tk-msg-body { margin: var(--s1) 0 0; color: var(--text); font-size: var(--fs-base); line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* Still down: one sentence and one secondary button; the note and the confirm open under it. */
+.tk-section.tk-still { margin-top: var(--s5); padding-bottom: var(--s5); border-bottom: 1px solid var(--line); }
+.tk-still .tk-section-head { margin-bottom: var(--s2); }
+.cp .tk-still-text { max-width: 56ch; margin: 0 0 var(--s4); color: var(--muted); font-size: var(--fs-base); line-height: 1.5; }
+.tk-still-form { display: flex; flex-direction: column; gap: var(--s2); max-width: 36rem; animation: tk-open 200ms var(--ease) both; }
+.tk-still-form label { color: var(--text-strong); font-size: var(--fs-md); font-weight: 600; }
+.tk-still-form textarea { width: 100%; min-height: 5.5rem; padding: 10px 12px; font-size: var(--fs-base); line-height: 1.5; }
+.tk-still-buttons { margin-top: var(--s2); }
+.tk-still-error { margin: var(--s2) 0 0; }
+@keyframes tk-open {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: none; }
+}
+
+.tk-actions { align-items: center; }
+.tk-new { display: inline-flex; align-items: center; min-height: 44px; font-size: var(--fs-md); }
+
+@media (prefers-reduced-motion: reduce) {
+  .tk-still-form { animation: none; }
+}
+:root[data-quiet="on"] .tk-still-form { animation: none; }
+
+@media (max-width: 600px) {
+  .tk-outage { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .tk-outage-cell:nth-child(3) { grid-column: 1 / -1; border-left: 0; border-top: 1px solid var(--line); }
+  .tk-step { grid-template-columns: 20px minmax(0, 1fr); }
+  .tk-step-at { grid-column: 2; margin-top: 2px; }
+  .tk-still-buttons .cp-btn { width: 100%; }
+  .tk-actions { flex-direction: column; align-items: stretch; }
+  .tk-new { justify-content: center; }
+}

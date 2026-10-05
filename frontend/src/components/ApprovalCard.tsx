@@ -5,16 +5,20 @@ import { fmtDateTime } from "../lib/time";
 import {
   ageMinutes,
   channelsFor,
+  customerUpdateTitle,
   extraEntries,
   factsFor,
   fmtAge,
   labelFor,
   ladderBreached,
+  possibleOutageTitle,
   rawPayload,
   renderingSource,
   specFor,
 } from "../lib/hitl";
 import { hitlSubject, hitlSubjectIsIncident } from "../lib/hitlSubject";
+import { fmtClock } from "../lib/support";
+import { CustomerUpdateBody, PossibleOutageBody } from "./LoopCardBodies";
 
 /**
  * The side-by-side approval card.
@@ -153,6 +157,8 @@ export interface ApprovalCardProps {
   task: any;
   /** Full incident row when the board fetch succeeded; `null` is fine. */
   incident?: any;
+  /** The operator profile, for region names; optional. */
+  profile?: any;
   /** Display name of the signed-in operator. */
   who: string;
   /** The request in flight for this task, or `null`. */
@@ -175,6 +181,7 @@ export interface ApprovalCardProps {
 export default function ApprovalCard({
   task,
   incident,
+  profile,
   who,
   busy,
   error,
@@ -203,15 +210,26 @@ export default function ApprovalCard({
 
   const spec = specFor(t.task_type);
   const label = labelFor(t.task_type);
-  const channels = useMemo(() => channelsFor(payload), [payload]);
-  const facts = useMemo(() => factsFor(t, incident), [t, incident]);
-  const entries = useMemo(() => extraEntries(t, facts), [t, facts]);
+  // The two close-the-loop cards (docs/CLOSE_THE_LOOP.md §5) draw their own body; the head, the
+  // effect line, the raw payload and the decision footer stay this card's.
+  const loopKind = t.task_type === "APPROVE_CUSTOMER_UPDATE" ? "update" : t.task_type === "CONFIRM_POSSIBLE_OUTAGE" ? "surge" : null;
+  const channels = useMemo(() => (loopKind ? [] : channelsFor(payload)), [payload, loopKind]);
+  const facts = useMemo(() => (loopKind ? [] : factsFor(t, incident)), [t, incident, loopKind]);
+  const entries = useMemo(() => (loopKind ? [] : extraEntries(t, facts)), [t, facts, loopKind]);
   const source = renderingSource(payload);
+  const heading =
+    loopKind === "update" ? customerUpdateTitle(payload) : loopKind === "surge" ? possibleOutageTitle(payload, (iso) => fmtClock(iso)) : hitlSubject(t);
+  const approveLabel = spec.approveLabel ? spec.approveLabel(payload) : "Approve";
+  const rejectLabel = spec.rejectLabel ?? "Reject";
+  const rejectReasons = spec.rejectReasons ?? REJECT_REASONS;
+  const busyLabel = (a: CardAction) =>
+    a === "approve" && spec.approveBusy ? spec.approveBusy : a === "reject" && spec.rejectBusy ? spec.rejectBusy : BUSY_LABEL[a];
 
   const headingId = useId();
   const mins = ageMinutes(t.created_at);
   const late = ladderBreached(mins, t.priority, t.claimed_by);
-  const priority = typeof t.priority === "string" && t.priority ? t.priority : "P4";
+  // No pill on a card without a priority (a possible outage, a maintenance window): "P4" would be a guess.
+  const priority = typeof t.priority === "string" && /^P[1-4]$/.test(t.priority) ? t.priority : "";
   const claimed = typeof t.claimed_by === "string" && t.claimed_by ? t.claimed_by : "";
   const claimedByMe = claimed && claimed === who;
   // When the claim lands the Claim button goes away; keyboard focus moves to the reason box.
@@ -272,12 +290,17 @@ export default function ApprovalCard({
     <article className="hitl-card" aria-labelledby={headingId}>
       <header className="hitl-card-head">
         <span className="hitl-title">
-          <span className={`pill ${priority}`} title={priorityTitle(priority)}>{priority}</span>
+          {priority && (
+            <span className={`pill ${priority}`} title={priorityTitle(priority)}>
+              {priority}
+            </span>
+          )}
           {/* Since v8 a maintenance card has no incident; say what it IS about (lib/hitlSubject).
-              An incident number is an identifier (mono); a maintenance heading is prose. */}
+              An incident number is an identifier (mono); a maintenance heading is prose, and so
+              is a close-the-loop card's, which says the decision in words. */}
           {/* Focusable from script only: after a failed claim, or when the card above it is decided. */}
-          <h2 id={headingId} className={hitlSubjectIsIncident(t) ? "hitl-inc" : "hitl-subject"} tabIndex={-1}>
-            {hitlSubject(t)}
+          <h2 id={headingId} className={!loopKind && hitlSubjectIsIncident(t) ? "hitl-inc" : "hitl-subject"} tabIndex={-1}>
+            {heading}
           </h2>
         </span>
         <span className="hitl-type" title={typeof t.task_type === "string" ? t.task_type : "no task_type"}>
@@ -310,8 +333,11 @@ export default function ApprovalCard({
           channels to read, else under the effect. */}
       <p className="hitl-effect">
         {spec.effect}
-        {spec.check && channels.length === 0 && <span className="hitl-check">{spec.check}</span>}
+        {spec.check && channels.length === 0 && !loopKind && <span className="hitl-check">{spec.check}</span>}
       </p>
+
+      {loopKind === "update" && <CustomerUpdateBody task={t} headingId={headingId} check={spec.check} />}
+      {loopKind === "surge" && <PossibleOutageBody task={t} headingId={headingId} check={spec.check} profile={profile} />}
 
       {facts.length > 0 && (
         <dl className="hitl-facts">
@@ -455,7 +481,7 @@ export default function ApprovalCard({
             </div>
             {/* Three fixed slots: Claim's stays reserved once the card is claimed, and a busy
                 label fits its button, so the reason box never changes width. */}
-            <div className="hitl-buttons">
+            <div className={"hitl-buttons" + (spec.approveLabel || spec.rejectLabel ? " wide" : "")}>
               {/* The head chip already says who holds a claimed card; the button only exists to claim. */}
               {!claimed && (
                 <button
@@ -465,7 +491,7 @@ export default function ApprovalCard({
                   aria-disabled={busy ? true : undefined}
                   tabIndex={receipt ? -1 : undefined}
                 >
-                  {busy === "claim" ? BUSY_LABEL.claim : "Claim"}
+                  {busy === "claim" ? busyLabel("claim") : "Claim"}
                 </button>
               )}
               <button
@@ -476,17 +502,17 @@ export default function ApprovalCard({
                 title={spec.effect}
                 tabIndex={receipt ? -1 : undefined}
               >
-                {busy === "approve" ? BUSY_LABEL.approve : "Approve"}
+                {busy === "approve" ? busyLabel("approve") : approveLabel}
               </button>
               <button
                 type="button"
                 className="btn danger hitl-reject"
                 onClick={reject}
                 aria-disabled={busy ? true : undefined}
-                title="Suppress the drafts and cancel"
+                title={loopKind === "surge" ? "Dismiss: the complaints stay as they were" : loopKind === "update" ? "Tell nobody; the reason is kept" : "Suppress the drafts and cancel"}
                 tabIndex={receipt ? -1 : undefined}
               >
-                {busy === "reject" ? BUSY_LABEL.reject : "Reject"}
+                {busy === "reject" ? busyLabel("reject") : rejectLabel}
               </button>
             </div>
           </div>
@@ -497,10 +523,10 @@ export default function ApprovalCard({
               {(rejectArmed || reasonMissing) && (
                 <>
                   <span className="hitl-quick-label" id={`${headingId}-quick`}>
-                    Reject because
+                    {rejectLabel} because
                   </span>
                   <span className="hitl-quick-list" role="group" aria-labelledby={`${headingId}-quick`}>
-                    {REJECT_REASONS.map((r) => (
+                    {rejectReasons.map((r) => (
                       <button
                         key={r}
                         type="button"

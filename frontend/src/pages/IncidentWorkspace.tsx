@@ -29,6 +29,8 @@ import RegulatoryCountdown from "../components/RegulatoryCountdown";
 import StopClockPanel from "../components/StopClockPanel";
 import { fmtDateTime } from "../lib/time";
 import { useIncidentRevision } from "../realtime/RealtimeContext";
+import IncidentCustomersPanel, { useIncidentCustomers } from "../components/support/IncidentCustomers";
+import { noticeWaitsForPerson } from "../lib/support";
 
 /** Non-breaking space: a fact in the head ("RNIO RNIO-RFT") wraps as a whole, never inside. */
 const NB = " ";
@@ -187,15 +189,17 @@ function Skeleton({ rows, label }: { rows: number; label: string }) {
  * a clean page (no fields, forms or messages carried over) and an answer that arrives for the
  * ticket just left is dropped with the instance that asked for it.
  */
-export default function IncidentWorkspace({ session }: { session: any }) {
+export default function IncidentWorkspace({ session, profile }: { session: any; profile?: any }) {
   const { id } = useParams();
-  return <Workspace key={id || ""} id={id} session={session} />;
+  return <Workspace key={id || ""} id={id} session={session} profile={profile} />;
 }
 
-function Workspace({ id, session }: { id: string | undefined; session: any }) {
+function Workspace({ id, session, profile }: { id: string | undefined; session: any; profile?: any }) {
   // Defect #26: this page reloads when an event names *this* incident (or when
   // an unrecognised event forces a full resync), not on every WS frame.
   const rev = useIncidentRevision(id);
+  // The customers whose complaints are linked to this ticket (docs/CLOSE_THE_LOOP.md §4).
+  const customers = useIncidentCustomers(id, rev);
   const [inc, setInc] = useState<any>(null);
   const [wf, setWf] = useState<any>(null);
   // null until the first answer, so the timeline never reads as empty while it loads.
@@ -398,6 +402,15 @@ function Workspace({ id, session }: { id: string | undefined; session: any }) {
     siteClass !== "STANDARD" &&
     !(siteClass === "CRITICAL" && inc.priority !== "P1") &&
     !(siteClass === "MAJOR" && inc.priority !== "P2");
+  // What restoring or closing does for the customers still waiting to hear (docs/CLOSE_THE_LOOP.md
+  // §1): nothing to say once a notice is sent, waits for approval or was rejected.
+  const cust = customers.state === "ok" ? customers.data : null;
+  const toTell = cust ? Math.max(0, Number(cust.waiting) || 0) : 0;
+  const noticeOpen = !cust?.notice || cust.notice.state === "none" || cust.notice.state === "waiting_for_restore";
+  const tellWaits = noticeWaitsForPerson(inc.priority, profile?.autonomy_level, toTell);
+  const tellTail = `${toTell} ${toTell === 1 ? "customer" : "customers"} service is back${tellWaits ? ", after a supervisor approves" : ""}.`;
+  const restoreTells = toTell > 0 && noticeOpen ? `Restoring tells ${tellTail}` : "";
+  const closeTells = toTell > 0 && noticeOpen ? `Closing tells ${tellTail}` : "";
   const dash = "—";
   const restored = inc.restored_at ? `restored ${fmtDateTime(inc.restored_at)}` : "";
   const resolution = [inc.resolution_code ? capFirst(humanEnum(inc.resolution_code)) : "", restored]
@@ -603,6 +616,7 @@ function Workspace({ id, session }: { id: string | undefined; session: any }) {
               </button>
             )}
           </div>
+          {closeTells && !reassigning && <p className={"ic-consequence" + (tellWaits ? " hitl" : "")}>{closeTells}</p>}
           {reassigning && (
             <div className="note-form" role="group" aria-label="Reassign to another vendor">
               <div className="note-form-row">
@@ -698,6 +712,7 @@ function Workspace({ id, session }: { id: string | undefined; session: any }) {
                 <input type="checkbox" checked={markRestored} onChange={(e) => setMarkRestored(e.target.checked)} />
                 Mark service restored
               </label>
+              {restoreTells && <p className={"ic-consequence" + (tellWaits ? " hitl" : "")}>{restoreTells}</p>}
               <div className="note-form-actions">
                 <button className="btn primary" disabled={noteBusy} aria-busy={noteBusy || undefined} onClick={addNote}>
                   {noteBusy ? "Posting…" : "Post note"}
@@ -708,6 +723,9 @@ function Workspace({ id, session }: { id: string | undefined; session: any }) {
           </div>
         </div>
       </div>
+
+      {/* Customers on this outage: absent when nothing is linked or the Support desk is off. */}
+      {id && <IncidentCustomersPanel incidentId={id} s={customers} />}
 
       {/* Agent memory M0 (spec §7.11): what has happened at this mast before, read from the
           incidents already in the database. Self-contained — it owns its fetch and swallows its

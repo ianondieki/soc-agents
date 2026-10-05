@@ -44,6 +44,12 @@ export function hitlSubject(task: unknown): string {
     );
   }
 
+  // A burst of complaints about a place with no ticket (docs/CLOSE_THE_LOOP.md §3).
+  if (type === "CONFIRM_POSSIBLE_OUTAGE") {
+    const place = text(payload.place);
+    return place ? `Possible outage in ${place}` : "Possible outage";
+  }
+
   // Any other incident-less card (a scorecard dispute, a vendor notice): its type, plus the
   // first thing the payload names it as being about.
   const about = text(payload.site_id) || text(payload.vendor_id) || text(payload.scope);

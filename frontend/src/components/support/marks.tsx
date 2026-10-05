@@ -1,5 +1,5 @@
-import { BookOpen, Inbox, Split, UserRound, Wrench, type LucideIcon } from "lucide-react";
-import { AGENT_WORD, ROUTE_WORD, STATUS_WORD, TOOL_STATUS_WORD, withPerson, type Agent, type Route, type Status, type ToolStatus } from "../../lib/support";
+import { BookOpen, Inbox, MessageSquareReply, Split, UserRound, Wrench, type LucideIcon } from "lucide-react";
+import { AGENT_WORD, ROUTE_WORD, TOOL_STATUS_WORD, statusWordOf, withPerson, type Agent, type Route, type Status, type ToolStatus } from "../../lib/support";
 
 /**
  * The small marks the Support desk repeats: a route with its icon (the person's in violet), an
@@ -15,6 +15,7 @@ export const AGENT_ICON: Record<Agent, LucideIcon> = {
   action: Wrench,
   escalation: UserRound,
   human: UserRound,
+  followup: MessageSquareReply,
 };
 
 export function RouteMark({ route, size = 12, word = true }: { route: Route; size?: number; word?: boolean }) {
@@ -27,9 +28,9 @@ export function RouteMark({ route, size = 12, word = true }: { route: Route; siz
   );
 }
 
-export function StatusWord({ status, claimedBy }: { status: Status; claimedBy?: string | null }) {
+export function StatusWord({ status, claimedBy, closureReason }: { status: Status; claimedBy?: string | null; closureReason?: string | null }) {
   const person = withPerson(status);
-  const word = status === "in_progress" && claimedBy ? `Claimed by ${claimedBy}` : STATUS_WORD[status] ?? status;
+  const word = statusWordOf({ status, closure_reason: closureReason, escalation: claimedBy ? { claimed_by: claimedBy } : null });
   return <span className={"sd-status" + (person ? " hitl" : "")}>{word}</span>;
 }
 

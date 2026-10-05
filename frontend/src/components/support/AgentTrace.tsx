@@ -345,6 +345,10 @@ function pivotSeq(detail: CaseDetail): number | null {
   const steps = detail.steps;
   const find = (fn: (s: Step) => boolean) => steps.find(fn)?.seq ?? null;
   const last = (fn: (s: Step) => boolean) => [...steps].reverse().find(fn)?.seq ?? null;
+  // The follow-up agent's step is what a reopened or restored case turns on.
+  if (c.escalation?.reason_code === "still_down_after_restore" && (c.status === "escalated" || c.status === "in_progress"))
+    return last((s) => s.agent === "followup" && s.action === "still_down_reported") ?? last((s) => s.agent === "followup");
+  if (c.status === "closed") return last((s) => s.agent === "followup");
   if (c.status === "awaiting_approval") return last((s) => s.agent === "action" && s.action === "called_tool" && (s.detail as any)?.status === "needs_approval") ?? find((s) => s.agent === "escalation");
   if (c.status === "escalated" || c.status === "in_progress" || c.status === "resolved") return last((s) => s.agent === "escalation") ?? last((s) => s.agent === "human");
   if (c.status === "answered") return last((s) => s.agent === "resolver");

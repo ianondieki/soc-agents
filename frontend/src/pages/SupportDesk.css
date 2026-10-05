@@ -97,6 +97,24 @@
   border-bottom: 1px solid var(--line);
 }
 .sd-filters-note { min-height: 56px; align-items: center; }
+/* The queue narrowed to one ticket's complaints (`?incident=`): the current selection, in the accent. */
+.sd-scope {
+  flex: 1 1 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s1) var(--s2);
+  min-height: 36px;
+  padding: 2px 2px 2px var(--s3);
+  border: 1px solid var(--accent-line);
+  border-radius: var(--r-md);
+  background: var(--accent-soft);
+  color: var(--text-strong);
+  font-size: var(--fs-sm);
+}
+.sd-scope .mono { font-weight: 500; }
+.sd-scope-clear { gap: 4px; color: var(--text); }
 .sd-filters select {
   flex: 1 1 auto;
   min-width: 0;
@@ -532,7 +550,7 @@ tbody tr:hover .sd-cell.off { background: color-mix(in oklab, var(--danger) calc
 }
 /* Tap targets: 44 px on phones and touch screens. */
 @media (max-width: 700px), (pointer: coarse) {
-  .sd-filters select, .sd-search > input { min-height: 44px; }
+  .sd-filters select, .sd-search > input, .sd-scope-clear { min-height: 44px; }
   .sd-buttons .btn, .sd-back .btn { min-height: 44px; }
   .sd-kpi-sub .sd-kpi-link { display: inline-block; padding: 10px 2px; margin: -10px -2px; }
   .sd-tab { min-height: 44px; }
@@ -560,4 +578,100 @@ tbody tr:hover .sd-cell.off { background: color-mix(in oklab, var(--danger) calc
 :root[data-quiet="on"] .sd-row, :root[data-quiet="on"] .sd-tab { transition: none; }
 @media (prefers-reduced-motion: reduce) {
   .sd-row, .sd-tab { transition: none; }
+}
+
+/* ---------------------------------------------------------------- outages (docs/CLOSE_THE_LOOP.md) */
+/* The loop in five figures, then the outages with customers, then the possible outages. Colour is
+   spent on a still-down report (amber), a notice or a surge waiting for a person (violet) and a
+   notice sent (green); everything else is ink. */
+.ol > * + * { margin-top: var(--s4); }
+.kpis.ol-kpis { margin-bottom: 0; }
+/* The shared strip reorders Mission control's tiles on a phone; these five keep their order. */
+.kpis.ol-kpis > .kpi:nth-child(n) { order: 0; }
+.ol-kpi-link { color: var(--hitl); font-weight: 600; text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--hitl-line); }
+.ol-kpi-link:hover { text-decoration-color: var(--hitl); }
+
+.ol-panel { padding-bottom: var(--s2); }
+.ol-stale { margin: 0 0 var(--s3); border: 1px solid var(--danger-line); border-radius: var(--r-md); }
+.ol-cols,
+.ol-row {
+  display: grid;
+  grid-template-columns: minmax(0, 2.2fr) minmax(0, 1.25fr) minmax(0, 1.35fr) minmax(0, 1.35fr) 7.5rem;
+  column-gap: var(--s4);
+}
+.ol-cols { padding: 0 0 var(--s2); border-bottom: 1px solid var(--line-strong); color: var(--muted); font-size: var(--fs-xs); font-weight: 600; }
+.ol-rows { margin: 0; padding: 0; list-style: none; }
+.ol-row { align-items: start; padding: var(--s3) 0; border-bottom: 1px solid var(--line); }
+.ol-rows > .ol-row:last-child { border-bottom: 0; }
+.ol-what { min-width: 0; }
+.ol-what-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s1) var(--s3); min-height: 24px; }
+.ol-inc { color: var(--accent); font-weight: 500; text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--accent-line); }
+.ol-inc:hover { text-decoration-color: var(--accent); }
+.ol-title { margin-top: 2px; color: var(--text-strong); font-size: var(--fs-md); font-weight: 500; line-height: 1.4; overflow-wrap: anywhere; }
+.ol-sub { display: block; margin-top: 2px; color: var(--muted); font-size: var(--fs-sm); line-height: 1.4; overflow-wrap: anywhere; }
+.ol-sub.warn, .ol-part.warn { color: var(--warn); }
+.ol-part.warn { font-weight: 600; }
+.ol-cell { display: flex; flex-direction: column; align-items: flex-start; min-width: 0; }
+.ol-cell:focus { outline: none; }
+.ol-cell:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: var(--r-sm); }
+/* Each value's label: the column heads say it on a wide screen; a narrow one shows it. */
+.ol-k { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.ol-v { color: var(--text); font-size: var(--fs-md); line-height: 1.4; }
+.ol-notice { color: var(--text); font-weight: 500; }
+.ol-notice.ok { color: var(--ok); font-weight: 600; }
+.ol-notice.hitl { color: var(--hitl); font-weight: 600; }
+a.ol-notice { text-decoration: underline; text-underline-offset: 3px; text-decoration-color: currentColor; }
+.ol-go { display: flex; justify-content: flex-end; }
+
+/* A possible outage: the place and what customers said, its status, then a retry when it failed. */
+.ol-row.ol-surge { grid-template-columns: minmax(0, 2.2fr) minmax(0, 2.6fr) 7.5rem; }
+.ol-place { color: var(--text-strong); font-size: var(--fs-base); font-weight: 600; }
+.ol-region { color: var(--muted); font-size: var(--fs-sm); }
+.ol-refs { margin-top: var(--s1); }
+.ol-refs > summary { width: fit-content; color: var(--muted); font-size: var(--fs-sm); }
+.ol-refs > summary:hover { color: var(--text); }
+.ol-ref-list { display: block; margin-top: var(--s1); white-space: normal; color: var(--text); font-size: var(--fs-sm); line-height: 1.6; }
+.ol-surge-state .ol-inc { margin-top: 2px; }
+.ol-error {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: baseline;
+  gap: var(--s2);
+  margin-top: var(--s3);
+  padding: var(--s2) var(--s3);
+  border: 1px solid var(--danger-line);
+  border-radius: var(--r-md);
+  background: var(--danger-soft);
+  color: var(--danger-text);
+  font-size: var(--fs-md);
+  line-height: 1.45;
+}
+.ol-error > svg { flex: none; color: var(--danger); align-self: center; }
+
+/* Narrower than the five columns: the outage on its own line, the three facts under it. */
+@media (max-width: 1199px) {
+  .ol-cols { display: none; }
+  .ol-row { grid-template-columns: repeat(3, minmax(0, 1fr)) auto; row-gap: var(--s2); }
+  .ol-row > .ol-what { grid-column: 1 / -1; }
+  .ol-row.ol-surge { grid-template-columns: minmax(0, 1fr) auto; }
+  .ol-row.ol-surge > .ol-what { grid-column: 1 / -1; }
+  .ol-k { position: static; width: auto; height: auto; margin: 0 0 2px; overflow: visible; clip: auto; white-space: normal; color: var(--muted-dim); font-size: var(--fs-xs); font-weight: 600; }
+}
+/* Phones: one column, each fact labelled on its left. */
+@media (max-width: 700px) {
+  .ol-row, .ol-row.ol-surge { grid-template-columns: minmax(0, 1fr); }
+  .ol-cell { display: grid; grid-template-columns: 7.5rem minmax(0, 1fr); column-gap: var(--s3); align-items: baseline; }
+  .ol-cell > .ol-k { grid-row: 1 / span 3; margin: 0; }
+  .ol-cell > :not(.ol-k) { grid-column: 2; justify-self: start; }
+  .ol-go { justify-content: flex-start; }
+  .ol-go:empty { display: none; }
+  .ol-go .btn, .ol-inc, .ol-refs > summary, a.ol-notice, .ol-kpi-link { min-height: 44px; display: inline-flex; align-items: center; }
+  .kpis.ol-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .kpis.ol-kpis > .kpi:last-child { grid-column: 1 / -1; }
+}
+/* Tablets: the shared strip's 4 + 3 grid would leave a gap under five tiles; 3 + 2 instead. */
+@media (min-width: 701px) and (max-width: 1120px) {
+  .kpis.ol-kpis { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+  .kpis.ol-kpis > .kpi:nth-child(n) { grid-column: span 2; }
+  .kpis.ol-kpis > .kpi:nth-child(n + 4) { grid-column: span 3; }
 }

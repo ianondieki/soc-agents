@@ -126,6 +126,20 @@ export interface TaskTypeSpec {
   readonly reasonRequired: boolean;
   /** False for the fallback spec — the card says so out loud. */
   readonly known: boolean;
+  /**
+   * The words on the decision buttons when "Approve" and "Reject" undersell what happens
+   * ("Send to 6 customers", "Dismiss"), the busy words while the request runs, the quick reasons
+   * offered once a rejection is on the table, and the receipt's second line once decided.
+   * Absent: the card's defaults.
+   */
+  readonly approveLabel?: (payload: unknown) => string;
+  readonly approveBusy?: string;
+  readonly rejectLabel?: string;
+  readonly rejectBusy?: string;
+  readonly rejectedVerb?: string;
+  readonly rejectReasons?: readonly string[];
+  readonly approvedEffect?: (payload: unknown) => string;
+  readonly rejectedEffect?: string;
 }
 
 const BROADCAST: TaskTypeSpec = {
@@ -216,6 +230,43 @@ export const TASK_TYPES: Readonly<Record<string, TaskTypeSpec>> = {
     reasonRequired: true,
     known: true,
   },
+  // docs/CLOSE_THE_LOOP.md §1 and §5: the restore notice to the customers of one outage.
+  APPROVE_CUSTOMER_UPDATE: {
+    label: "Customer update",
+    effect: "Approving sends the SMS below to each customer, in their language.",
+    check: "Is service really back for them? A customer told it is back when it is not calls again, angrier.",
+    channels: false,
+    reasonRequired: true,
+    known: true,
+    approveLabel: (p) => {
+      const n = customerUpdateOf(p).recipients;
+      return n != null ? `Send to ${n} ${n === 1 ? "customer" : "customers"}` : "Send to the customers";
+    },
+    approveBusy: "Sending…",
+    rejectReasons: ["not restored yet", "wrong place", "wording"],
+    approvedEffect: (p) => {
+      const n = customerUpdateOf(p).recipients;
+      return `The SMS is released to ${n != null ? `${n} ${n === 1 ? "customer" : "customers"}` : "the customers"}.`;
+    },
+    rejectedEffect: "Nobody is told; the reason is kept.",
+  },
+  // docs/CLOSE_THE_LOOP.md §3 and §5: a burst of complaints about a place with no open ticket.
+  CONFIRM_POSSIBLE_OUTAGE: {
+    label: "Possible outage",
+    effect: "Approving opens a ticket through the normal alarm pipeline, links these complaints to it and tells the customers it is confirmed.",
+    check: "Do these read like one place losing service? Dismissing leaves the complaints as they were.",
+    channels: false,
+    reasonRequired: true,
+    known: true,
+    approveLabel: () => "Open a ticket and tell them",
+    approveBusy: "Opening…",
+    rejectLabel: "Dismiss",
+    rejectBusy: "Dismissing…",
+    rejectedVerb: "Dismissed",
+    rejectReasons: ["already on a ticket", "not a network fault", "planned maintenance"],
+    approvedEffect: () => "A ticket opens and the customers are told it is confirmed.",
+    rejectedEffect: "The complaints stay as they were.",
+  },
 };
 
 /**
@@ -257,6 +308,101 @@ export function humanizeType(taskType: unknown): string {
 export function labelFor(taskType: unknown): string {
   const spec = specFor(taskType);
   return spec.known ? spec.label : humanizeType(taskType);
+}
+
+/* ------------------------------------------------------------------ *
+ * Close-the-loop payloads (docs/CLOSE_THE_LOOP.md §5)                 *
+ * ------------------------------------------------------------------ */
+
+export interface CustomerUpdate {
+  incidentNumber: string;
+  placeSummary: string;
+  recipients: number | null;
+  languages: { en: number | null; sw: number | null };
+  textEn: string;
+  textSw: string;
+  segmentsEn: number | null;
+  segmentsSw: number | null;
+  sample: { ref: string; msisdnMasked: string; language: string }[];
+  restoreSource: string;
+}
+
+/** An APPROVE_CUSTOMER_UPDATE payload, read defensively: a missing field is empty, never a throw. */
+export function customerUpdateOf(payload: unknown): CustomerUpdate {
+  const p = isPlainObject(payload) ? payload : {};
+  const langs = isPlainObject(own(p, "languages")) ? (own(p, "languages") as Record<string, unknown>) : {};
+  const sample = Array.isArray(own(p, "sample")) ? (own(p, "sample") as unknown[]) : [];
+  return {
+    incidentNumber: clamp(firstString(own(p, "incident_number")), 40),
+    placeSummary: clamp(firstString(own(p, "place_summary")), 120),
+    recipients: firstNumber(own(p, "recipients")),
+    languages: { en: firstNumber(own(langs, "en")), sw: firstNumber(own(langs, "sw")) },
+    textEn: clamp(firstString(own(p, "text_en")), 1000),
+    textSw: clamp(firstString(own(p, "text_sw")), 1000),
+    segmentsEn: firstNumber(own(p, "segments_en")),
+    segmentsSw: firstNumber(own(p, "segments_sw")),
+    sample: sample.filter(isPlainObject).slice(0, 10).map((x) => ({
+      ref: clamp(firstString(own(x, "ref")), 24),
+      msisdnMasked: clamp(firstString(own(x, "msisdn_masked")), 32),
+      language: clamp(firstString(own(x, "language")), 8),
+    })),
+    restoreSource: clamp(firstString(own(p, "restore_source")), 40),
+  };
+}
+
+/** "Tell 6 customers service is back in Kayole". */
+export function customerUpdateTitle(payload: unknown): string {
+  const u = customerUpdateOf(payload);
+  const who = u.recipients != null ? `${u.recipients} ${u.recipients === 1 ? "customer" : "customers"}` : "customers";
+  return `Tell ${who} service is back${u.placeSummary ? ` in ${u.placeSummary}` : ""}`;
+}
+
+export interface PossibleOutage {
+  place: string;
+  regionCode: string;
+  complaints: number | null;
+  numbers: number | null;
+  firstAt: string;
+  lastAt: string;
+  origin: string;
+  parentIncidentNumber: string;
+  excerpts: { ref: string; text: string; at: string }[];
+}
+
+/** A CONFIRM_POSSIBLE_OUTAGE payload, read defensively. */
+export function possibleOutageOf(payload: unknown): PossibleOutage {
+  const p = isPlainObject(payload) ? payload : {};
+  const ex = Array.isArray(own(p, "excerpts")) ? (own(p, "excerpts") as unknown[]) : [];
+  return {
+    place: clamp(firstString(own(p, "place")), 80),
+    regionCode: clamp(firstString(own(p, "region_code")), 24),
+    complaints: firstNumber(own(p, "complaints")),
+    numbers: firstNumber(own(p, "numbers")),
+    firstAt: firstString(own(p, "first_at")),
+    lastAt: firstString(own(p, "last_at")),
+    origin: firstString(own(p, "origin")),
+    parentIncidentNumber: clamp(firstString(own(p, "parent_incident_number")), 40),
+    excerpts: ex.filter(isPlainObject).slice(0, 6).map((x) => ({
+      ref: clamp(firstString(own(x, "ref")), 24),
+      text: clamp(firstString(own(x, "text")), 160),
+      at: firstString(own(x, "at")),
+    })),
+  };
+}
+
+/**
+ * "Possible outage in Rongai: 4 complaints from 3 numbers since 14:05, no network alarm".
+ * `clock` formats the time (the card passes its EAT formatter); parts the payload lacks are left out.
+ */
+export function possibleOutageTitle(payload: unknown, clock: (iso: string) => string): string {
+  const o = possibleOutageOf(payload);
+  const head = `Possible outage${o.place ? ` in ${o.place}` : ""}`;
+  const counts: string[] = [];
+  if (o.complaints != null) counts.push(`${o.complaints} ${o.complaints === 1 ? "complaint" : "complaints"}`);
+  if (o.numbers != null) counts.push(`from ${o.numbers} ${o.numbers === 1 ? "number" : "numbers"}`);
+  const since = o.firstAt ? clock(o.firstAt) : "";
+  const tail = [counts.join(" ") + (since ? ` since ${since}` : ""), "no network alarm"].filter((x) => x.trim()).join(", ");
+  return `${head}: ${tail}`;
 }
 
 /* ------------------------------------------------------------------ *

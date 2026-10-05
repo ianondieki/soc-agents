@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { Search } from "lucide-react";
+import { Search, X } from "lucide-react";
 import LaneOff from "../components/LaneOff";
 import CaseList from "../components/support/CaseList";
 import CasePane from "../components/support/CasePane";
 import Evals from "../components/support/Evals";
 import KnowledgeBase from "../components/support/KnowledgeBase";
+import Outages from "../components/support/Outages";
 import { useNarrow } from "../lib/layout";
 import {
   CATEGORIES,
@@ -34,20 +35,24 @@ import "./SupportDesk.css";
 
 /**
  * The Support desk at /support (docs/SUPPORT_DESK.md). Operate mode: the figures that matter,
- * then four views on one tab row. The queue is master-detail: the cases on the left, the open
+ * then five views on one tab row. The queue is master-detail: the cases on the left, the open
  * case on the right with the customer's words, the verdict, the agent trace and, where a person
  * decides, the decision. "Needs a person" is the same pane over the cases waiting for one. The
  * knowledge base is what the resolver answers from. Evals is the desk scored against its gates.
+ * Outages (docs/CLOSE_THE_LOOP.md) is the desk keeping its promise: who waits to hear that an
+ * outage is fixed, who was told, who says it is still down, and the outages customers spotted
+ * first. The queue takes `?incident=<id>` to show only the complaints linked to one ticket.
  *
  * Refresh: `tick` is `revisions.support` from the WS renderer table (support.created,
  * support.escalated, support.updated) plus App's nudge every 8 s while the stream is down.
  * A 404 on the queue is the lane switched off (`SUPPORT_DESK_ENABLED=false`), not an error.
  */
 
-type Tab = "queue" | "person" | "kb" | "evals";
+type Tab = "queue" | "person" | "outages" | "kb" | "evals";
 const TABS: { key: Tab; label: string }[] = [
   { key: "queue", label: "Queue" },
   { key: "person", label: "Needs a person" },
+  { key: "outages", label: "Outages" },
   { key: "kb", label: "Knowledge base" },
   { key: "evals", label: "Evals" },
 ];
@@ -71,10 +76,11 @@ function runErrorText(e: unknown): string {
   return `The eval run did not start: ${errorDetail(e, "the API refused it")}. The last report below is unchanged.`;
 }
 
-export default function SupportDesk({ session, tick = 0 }: { session: any; tick?: number }) {
+export default function SupportDesk({ session, tick = 0, profile }: { session: any; tick?: number; profile?: any }) {
   const [params, setParams] = useSearchParams();
   const tab: Tab = isTab(params.get("tab")) ? (params.get("tab") as Tab) : "queue";
   const caseParam = params.get("case");
+  const incidentParam = params.get("incident");
   const stacked = useNarrow(STACK_QUERY);
   const who = String(session?.display_name || "NOC Analyst");
 
@@ -189,6 +195,7 @@ export default function SupportDesk({ session, tick = 0 }: { session: any; tick?
     }
     const q = filters.q.trim().toLowerCase();
     return items.filter((c) => {
+      if (incidentParam && c.linked_incident?.id !== incidentParam) return false;
       if (filters.status && c.status !== filters.status) return false;
       if (filters.route && c.route !== filters.route) return false;
       if (filters.category && c.category !== filters.category) return false;
@@ -198,7 +205,7 @@ export default function SupportDesk({ session, tick = 0 }: { session: any; tick?
       }
       return true;
     });
-  }, [items, tab, filters]);
+  }, [items, tab, filters, incidentParam]);
 
   const personCount = useMemo(() => items.filter((c) => withPerson(c.status)).length, [items]);
   // The open case: the URL's, else the first visible one on a wide screen (never on a phone, where
@@ -209,6 +216,16 @@ export default function SupportDesk({ session, tick = 0 }: { session: any; tick?
     const next = new URLSearchParams(params);
     if (t === "queue") next.delete("tab");
     else next.set("tab", t);
+    setParams(next, { replace: true });
+  };
+  // The ticket the queue is narrowed to, by its number when a linked case names it.
+  const incidentNumber = incidentParam
+    ? items.find((c) => c.linked_incident?.id === incidentParam)?.linked_incident?.incident_number ?? null
+    : null;
+  const clearIncident = () => {
+    const next = new URLSearchParams(params);
+    next.delete("incident");
+    next.delete("case");
     setParams(next, { replace: true });
   };
   const selectCase = (id: string | null) => {
@@ -406,8 +423,11 @@ export default function SupportDesk({ session, tick = 0 }: { session: any; tick?
             seeding={seeding}
             onSeed={seed}
             emptyQueue={emptyQueue}
+            incident={incidentParam ? { id: incidentParam, number: incidentNumber } : null}
+            onClearIncident={clearIncident}
           />
         )}
+        {tab === "outages" && <Outages tick={tick} profile={profile} />}
         {tab === "kb" && <KnowledgeBase stacked={stacked} articles={kb} state={kbState} error={kbError} onRetry={loadKb} />}
         {tab === "evals" && <Evals report={evals} state={evalsState} error={evalsError} running={running} onRun={runEvals} onRetry={loadEvals} runError={runError} />}
       </div>
@@ -450,13 +470,16 @@ interface QueueViewProps {
   seeding: boolean;
   onSeed: () => void;
   emptyQueue: boolean;
+  /** `?incident=`: only the complaints linked to this ticket. */
+  incident: { id: string; number: string | null } | null;
+  onClearIncident: () => void;
 }
 
 function QueueView(p: QueueViewProps) {
   const person = p.tab === "person";
   const hasCase = !!p.selectedId;
   const showList = !p.stacked || !hasCase;
-  const filtered = p.filters.q || p.filters.status || p.filters.route || p.filters.category;
+  const filtered = p.filters.q || p.filters.status || p.filters.route || p.filters.category || p.incident;
   const caseCol = useRef<HTMLDivElement>(null);
   // A case a person picked scrolls to its top; the one the page opened on its own does not move
   // the view. "Back" returns focus to the row that was open.
@@ -569,6 +592,17 @@ function QueueView(p: QueueViewProps) {
             )
           ) : (
             <div className="sd-filters" role="search">
+              {p.incident && (
+                <div className="sd-scope">
+                  <span>
+                    Linked to <span className="mono">{p.incident.number ?? "this ticket"}</span>
+                  </span>
+                  <button type="button" className="btn ghost sm sd-scope-clear" onClick={p.onClearIncident}>
+                    <X size={14} strokeWidth={1.75} aria-hidden="true" />
+                    <span>Show every complaint</span>
+                  </button>
+                </div>
+              )}
               <label className="sd-search">
                 <Search size={16} strokeWidth={1.75} aria-hidden="true" />
                 <span className="sr-only">Search complaints</span>
@@ -579,7 +613,7 @@ function QueueView(p: QueueViewProps) {
               </label>
               <select id="sd-f-status" value={p.filters.status} onChange={(e) => p.onFilters({ ...p.filters, status: e.target.value })}>
                 <option value="">Status</option>
-                {STATUSES.filter((s) => s !== "closed").map((s) => (
+                {STATUSES.map((s) => (
                   <option key={s} value={s}>
                     {STATUS_WORD[s]}
                   </option>
@@ -616,7 +650,14 @@ function QueueView(p: QueueViewProps) {
               ) : filtered ? (
                 <>
                   No case matches these filters.{" "}
-                  <button type="button" className="link sd-clear" onClick={() => p.onFilters({ q: "", status: "", route: "", category: "" })}>
+                  <button
+                    type="button"
+                    className="link sd-clear"
+                    onClick={() => {
+                      p.onFilters({ q: "", status: "", route: "", category: "" });
+                      if (p.incident) p.onClearIncident();
+                    }}
+                  >
                     Clear them
                   </button>
                 </>

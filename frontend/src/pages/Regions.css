@@ -59,3 +59,12 @@
   text-underline-offset: 3px;
   text-decoration-color: var(--accent-line);
 }
+
+/* A possible outage from customer complaints (docs/CLOSE_THE_LOOP.md §3): one violet line that
+   leads to the card on Approvals, where a supervisor opens the ticket or dismisses it. */
+.region-surge { margin: 0 0 var(--s3); font-size: var(--fs-md); }
+.region-surge-link { color: var(--hitl-text); font-weight: 600; text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--hitl-line); }
+.region-surge-link:hover { text-decoration-color: var(--hitl); }
+@media (max-width: 700px), (pointer: coarse) {
+  .region-surge-link { min-height: 44px; }
+}

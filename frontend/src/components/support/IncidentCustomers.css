@@ -1,0 +1,60 @@
+/* "Customers on this outage" on the incident page, and the one sentence beside the restore and
+   close controls. Owned by components/support/IncidentCustomers.tsx; built from the Shift light
+   tokens and the shared primitives (.panel, .btn, .attn, .mono). Colour only where it means
+   something: amber for a still-down report, violet while a notice waits for a person, green once
+   it is sent. */
+
+/* Four counts on one aligned row, the way a region card counts tickets. */
+.ic-counts {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 7rem));
+  gap: var(--s2) var(--s4);
+  margin: 0 0 var(--s4);
+}
+.ic-counts > div { min-width: 0; }
+.ic-counts dt { color: var(--muted); font-size: var(--fs-sm); font-weight: 500; }
+.ic-counts dd { margin: 2px 0 0; color: var(--text-strong); font-size: var(--fs-xl); font-weight: 600; line-height: 1.2; font-variant-numeric: tabular-nums; }
+.ic-counts .zero dd { color: var(--muted-dim); font-weight: 500; }
+.ic-counts .warn dd .attn { color: var(--warn); font-weight: 600; }
+
+.ic-notice { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s1) var(--s3); margin: 0 0 var(--s3); font-size: var(--fs-md); }
+.ic-notice-label { color: var(--muted); }
+.ic-notice-state { color: var(--text-strong); font-weight: 500; }
+.ic-notice-state.ok, .ic-notice-state.hitl { font-weight: 600; }
+.ic-notice-state.ok { color: var(--ok); }
+.ic-notice-state.hitl { color: var(--hitl); }
+a.ic-notice-state { text-decoration: underline; text-underline-offset: 3px; text-decoration-color: currentColor; }
+
+/* The complaints: reference, masked number, status, the last thing that happened. */
+.ic-list { margin: 0; padding: 0; list-style: none; border-top: 1px solid var(--line); }
+.ic-row {
+  display: grid;
+  grid-template-columns: 7.5rem 9.5rem minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: var(--s4);
+  min-height: 44px;
+  padding: var(--s1) 0;
+  border-bottom: 1px solid var(--line);
+  font-size: var(--fs-md);
+}
+.ic-ref { color: var(--accent); font-weight: 500; text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--accent-line); }
+.ic-ref:hover { text-decoration-color: var(--accent); }
+.ic-num { color: var(--muted); font-size: var(--fs-sm); }
+.ic-status { min-width: 0; color: var(--text); }
+.ic-status.hitl { color: var(--hitl); font-weight: 600; }
+.ic-when { color: var(--muted-dim); font-size: var(--fs-sm); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.ic-when.warn { color: var(--warn); }
+.ic-more { margin-top: var(--s2); margin-left: calc(-1 * var(--s2)); }
+
+/* What restoring or closing will do for the customers: one quiet sentence under the control. */
+.ic-consequence { margin: 0; color: var(--muted); font-size: var(--fs-sm); line-height: 1.45; }
+.ic-consequence.hitl { color: var(--hitl-text); }
+
+@media (max-width: 700px) {
+  .ic-counts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ic-row { grid-template-columns: auto minmax(0, 1fr); row-gap: 0; padding: var(--s2) 0; }
+  .ic-num { justify-self: end; }
+  .ic-status { grid-column: 1; }
+  .ic-when { grid-column: 2; justify-self: end; }
+  .ic-ref, .ic-more, a.ic-notice-state { display: inline-flex; align-items: center; min-height: 44px; }
+}

@@ -316,6 +316,28 @@
   font-size: var(--fs-md);
 }
 
+/* ---------------------------------------------------------------- close-the-loop cards */
+/* docs/CLOSE_THE_LOOP.md §5: the restore notice and the possible outage (components/LoopCardBodies). */
+.loop-warn { color: var(--warn); }
+.loop-sample > summary { color: var(--muted); }
+.loop-sample-list {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  gap: var(--s1) var(--s4);
+  margin: var(--s2) 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--fs-sm);
+  color: var(--text);
+}
+.loop-sample-list > li { display: contents; }
+.loop-sample-list .mono { font-size: var(--fs-sm); }
+.loop-excerpts { display: grid; gap: var(--s3); margin: 0 0 var(--s4); padding: 0; list-style: none; }
+/* One quote per customer: the words, then its reference and time, on one 1px rule. */
+.loop-excerpts > li { min-width: 0; max-width: 72ch; padding: 2px 0 2px var(--s3); border-left: 1px solid var(--line-strong); }
+.loop-excerpt { margin: 0; color: var(--text-bright); font-size: var(--fs-md); line-height: 1.5; overflow-wrap: anywhere; }
+.loop-excerpt-meta { display: flex; flex-wrap: wrap; gap: var(--s1) var(--s3); margin-top: 2px; color: var(--muted); font-size: var(--fs-xs); }
+
 /* ---------------------------------------------------------------- raw payload */
 .hitl-field-pre { margin: 0; max-height: 18rem; overflow: auto; overflow-wrap: anywhere; }
 
@@ -411,6 +433,9 @@
 .hitl-approve { grid-column: 2; }
 .hitl-reject { grid-column: 3; }
 .hitl-buttons .btn[aria-disabled="true"] { opacity: 0.6; cursor: progress; }
+/* A card whose buttons say what happens ("Send to 6 customers", "Open a ticket and tell them",
+   "Dismiss"): the approve slot takes the width its words need; Claim and Reject keep theirs. */
+.hitl-buttons.wide { grid-template-columns: 7rem auto 7rem; }
 .hitl-reason-quick { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2) var(--s3); }
 .hitl-quick-label { color: var(--muted); font-size: var(--fs-sm); white-space: nowrap; }
 .hitl-quick-list { display: flex; flex-wrap: wrap; gap: var(--s2); }
@@ -494,6 +519,13 @@
   .hitl-buttons { width: 100%; grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); }
   .hitl-buttons .btn { grid-column: auto; }
   .hitl-buttons .btn { min-height: 44px; }
+  /* Long words on the approve button: it takes the free width and may wrap to two lines. */
+  .hitl-buttons.wide { grid-auto-flow: row; grid-template-columns: auto minmax(0, 1fr) auto; }
+  .hitl-buttons.wide .hitl-claim { grid-column: 1; }
+  .hitl-buttons.wide .hitl-approve { grid-column: 2; white-space: normal; line-height: 1.2; }
+  .hitl-buttons.wide .hitl-reject { grid-column: 3; }
+  .loop-sample-list { grid-template-columns: auto minmax(0, 1fr); }
+  .loop-sample-list > li > span:nth-child(3) { grid-column: 1 / -1; margin-bottom: var(--s1); color: var(--muted); }
   /* A row is two lines here: pill, ticket and wait; then type and site code. */
   .hitl-row {
     grid-template-columns: auto auto minmax(0, 1fr);

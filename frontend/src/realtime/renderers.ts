@@ -329,6 +329,28 @@ export const RENDERERS: Readonly<Record<string, RendererSpec>> = {
     critical: false,
     why: "a claim, a resolution or a decision on a held tool call changed one case's status; the desk refetches, the NOC lists do not",
   },
+  // docs/CLOSE_THE_LOOP.md: the desk keeps its promise, and complaints become an outage signal.
+  "support.customers_told": {
+    slices: ["support"],
+    incidentScoped: true,
+    ticker: true,
+    critical: false,
+    why: "{incident_number, count}: customers were told service is back (sent at once, or released by an approval); the desk's Outages tab and the incident's customers panel refetch",
+  },
+  "support.still_down": {
+    slices: ["support"],
+    incidentScoped: true,
+    ticker: true,
+    critical: true,
+    why: "{ref, incident_number, place}: a customer says service is still down after a restore; the case is back with a person and a work note lands on the incident, so quiet mode never hides it",
+  },
+  "support.surge": {
+    slices: ["support", "signals"],
+    incidentScoped: false,
+    ticker: true,
+    critical: false,
+    why: "{surge_id, place, complaints}: complaints about a place with no open ticket opened or grew a possible outage; its card arrives through hitl.created, and Regions (which refetches on signals, as for complaint.surge) shows the line on the region's card",
+  },
 
   // ---- housekeeping --------------------------------------------------------
   "monitor.chase": {
@@ -526,6 +548,19 @@ const DESCRIBERS: Readonly<Record<string, (p: Record<string, any>) => string>> =
     return supportLine(p, why ? `needs a person: ${why}` : "needs a person");
   },
   "support.updated": (p) => supportLine(p, p.status ? `now ${SUPPORT_STATUS[String(p.status)] ?? String(p.status).replace(/_/g, " ")}` : ""),
+  // support/loop.py: {incident_number, count}; {ref, incident_number, place}; support/surge.py: {surge_id, place, complaints}
+  "support.customers_told": (p) => {
+    const n = typeof p.count === "number" ? p.count : null;
+    const who = n == null ? "service is back" : `${num(n)} ${n === 1 ? "customer" : "customers"}`;
+    return `${who}${p.incident_number ? ` on ${String(p.incident_number)}` : ""}`;
+  },
+  "support.still_down": (p) =>
+    [p.ref ? String(p.ref) : "a customer", p.place ? `in ${String(p.place)},` : ",", p.incident_number ? `after ${String(p.incident_number)} was restored` : "after the restore"]
+      .filter(Boolean)
+      .join(" ")
+      .replace(" ,", ","),
+  // Sent when a possible outage opens, grows or is decided, so it says only where and how many.
+  "support.surge": (p) => `${p.place ? String(p.place) : "a place"}${typeof p.complaints === "number" ? `, ${num(p.complaints)} complaints` : ""}`,
   // services/notify.record_email_outcome: {incident_number, mode, to, detail, status}. A mock
   // send's detail names env vars ("No DEMO_EMAIL_TO / GMAIL_ADDRESS — …") or lists the
   // addresses it would have used; the floor reads what happened, not how to configure it.
@@ -596,6 +631,9 @@ const KEY_EVENT_TYPES: ReadonlySet<string> = new Set([
   "scheduler.job_failed",
   "security.redaction_miss",
   "support.escalated",
+  "support.customers_told",
+  "support.still_down",
+  "support.surge",
 ]);
 
 export function isKeyEvent(ev: NocEvent): boolean {

@@ -18,6 +18,7 @@ import {
   queueSummary,
   rawPayload,
   sortQueue,
+  specFor,
   verdictOfConflict,
   type ElsewhereDecision,
   type Verdict,
@@ -98,16 +99,18 @@ const canHover = () =>
 
 const taskId = (t: any, i: number) => (typeof t?.id === "string" && t.id ? t.id : `row-${i}`);
 
-/** What a decision did, in one sentence (the receipt's second line). */
-function effectOf(verdict: Verdict | null, broadcast: boolean): string {
-  if (verdict === "approved") return broadcast ? "The SMS and email are released for sending." : "The change goes ahead.";
-  if (verdict === "rejected") return broadcast ? "The drafts are suppressed; nothing is sent." : "Nothing goes ahead.";
+/** What a decision did, in one sentence (the receipt's second line). A card type may say it in
+ *  its own words (lib/hitl `approvedEffect` / `rejectedEffect`: "The SMS is released to 6 customers"). */
+function effectOf(verdict: Verdict | null, broadcast: boolean, task?: any): string {
+  const spec = specFor(task?.task_type);
+  if (verdict === "approved") return spec.approvedEffect ? spec.approvedEffect(task?.proposed_payload) : broadcast ? "The SMS and email are released for sending." : "The change goes ahead.";
+  if (verdict === "rejected") return spec.rejectedEffect ?? (broadcast ? "The drafts are suppressed; nothing is sent." : "Nothing goes ahead.");
   return "";
 }
 
 const hm = (ts: unknown) => fmtHM(ts, "");
 
-export default function HitlInbox({ session, tick }: { session: any; tick: number }) {
+export default function HitlInbox({ session, tick, profile }: { session: any; tick: number; profile?: any }) {
   const [tasks, setTasks] = useState<any[]>([]);
   const [incidents, setIncidents] = useState<Record<string, any>>({});
   // What screen readers hear after a claim or a decision; never drawn.
@@ -298,7 +301,7 @@ export default function HitlInbox({ session, tick }: { session: any; tick: numbe
       let d: ElsewhereDecision = { verdict: known?.verdict ?? hint, by: known?.by ?? null, at: known?.at ?? null };
       const receiptOf = (x: ElsewhereDecision): CardReceipt => ({
         headline: elsewhereHeadline(x, hm),
-        effect: effectOf(x.verdict, broadcast),
+        effect: effectOf(x.verdict, broadcast, task),
         approved: x.verdict === "approved",
         elsewhere: true,
         lostReason: lost || undefined,
@@ -431,8 +434,8 @@ export default function HitlInbox({ session, tick }: { session: any; tick: numbe
           setTasks((ts) => ts.map((t) => (t?.id === id ? { ...t, claimed_by: who, status: "CLAIMED" } : t)));
           setAnnounce(`Claimed ${subject}. Write a reason, then approve or reject.`);
         } else {
-          const verb = action === "approve" ? "Approved" : "Rejected";
-          const effect = effectOf(action === "approve" ? "approved" : "rejected", broadcast);
+          const verb = action === "approve" ? "Approved" : specFor(task?.task_type).rejectedVerb ?? "Rejected";
+          const effect = effectOf(action === "approve" ? "approved" : "rejected", broadcast, task);
           decidedIds.current.add(id);
           const receipt = { headline: `${verb} by ${who}`, effect, approved: action === "approve" };
           setDecided((d) => ({ ...d, [id]: { task, receipt, folding: false } }));
@@ -654,6 +657,7 @@ export default function HitlInbox({ session, tick }: { session: any; tick: numbe
                     <ApprovalCard
                       task={t}
                       incident={t?.incident_id ? incidents[t.incident_id] : null}
+                      profile={profile}
                       who={who}
                       busy={busy[id] ?? null}
                       error={err?.text || ""}

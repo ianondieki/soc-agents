@@ -59,6 +59,7 @@ const Showcase = lazy(() => import("./pages/Showcase"));
 const Landing = lazy(() => import("./pages/Landing"));
 const SupportDesk = lazy(() => import("./pages/SupportDesk"));
 const Complain = lazy(() => import("./pages/Complain"));
+const Track = lazy(() => import("./pages/Track"));
 // The guide bar is closed on almost every first paint: its chunk arrives beside the page's,
 // behind its own null fallback, instead of in the shell.
 const DemoGuide = lazy(() => import("./components/DemoGuide"));
@@ -470,7 +471,8 @@ export default function App() {
 
   const isWall = loc.pathname.startsWith("/wallboard");
   const isLanding = loc.pathname === "/";
-  const isComplain = loc.pathname.startsWith("/complain");
+  // The public support pages (the complaint form and Track my complaint) have their own frame.
+  const isComplain = loc.pathname.startsWith("/complain") || loc.pathname === "/track";
   const org = profile?.display_name ? String(profile.display_name).replace(" (demo profile)", "") : "Connecting…";
   const orgMeta = `${humanAutonomy(profile?.autonomy_level)}, ${profile?.shift ? String(profile.shift).toLowerCase() : "day"} shift`;
   // "L2 guarded", explained: what the agents may do on their own at this level (Settings says it too).
@@ -490,6 +492,7 @@ export default function App() {
           <Routes>
             <Route path="/" element={<Landing profile={profile} metrics={metrics} runsRev={revisions.runs + manualTick} />} />
             <Route path="/complain" element={<Complain />} />
+            <Route path="/track" element={<Track />} />
           </Routes>
         </Suspense>
       </RealtimeProvider>
@@ -657,7 +660,7 @@ export default function App() {
                   />
                 }
               />
-              <Route path="/support" element={<SupportDesk session={session} tick={revisions.support + manualTick} />} />
+              <Route path="/support" element={<SupportDesk session={session} tick={revisions.support + manualTick} profile={profile} />} />
               <Route
                 path="/showcase"
                 element={<Showcase profile={profile} metrics={metrics} runsRev={revisions.runs + manualTick} />}
@@ -666,19 +669,20 @@ export default function App() {
                 path="/incidents"
                 element={<IncidentBoard tick={revisions.incidents + manualTick} profile={profile} />}
               />
-              <Route path="/incidents/:id" element={<IncidentWorkspace session={session} />} />
-              <Route path="/hitl" element={<HitlInbox session={session} tick={revisions.hitl + manualTick} />} />
+              <Route path="/incidents/:id" element={<IncidentWorkspace session={session} profile={profile} />} />
+              <Route path="/hitl" element={<HitlInbox session={session} tick={revisions.hitl + manualTick} profile={profile} />} />
               <Route path="/shift" element={<ShiftDesk tick={revisions.ledger + manualTick} profile={profile} />} />
               <Route path="/agents" element={<Agents tick={revisions.runs + manualTick} />} />
               <Route path="/workflow" element={<WorkflowMap profile={profile} />} />
               <Route path="/problems" element={<Problems tick={revisions.problems + manualTick} />} />
               {/* Regions dashboard (§7.4.2). Refetches on the incidents, problems and
-                  signals slices — the three things a region card actually shows. */}
+                  signals slices (the things a region card shows), and on hitl: a region's
+                  "possible outage" line goes once its card is decided (docs/CLOSE_THE_LOOP.md §3). */}
               <Route
                 path="/regions"
                 element={
                   <Regions
-                    tick={revisions.incidents + revisions.problems + revisions.signals + manualTick}
+                    tick={revisions.incidents + revisions.problems + revisions.signals + revisions.hitl + manualTick}
                   />
                 }
               />
