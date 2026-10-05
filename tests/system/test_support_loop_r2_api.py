@@ -120,6 +120,12 @@ def test_the_storm_late_links_an_earlier_complaint_and_kayole_links_its_hub_as_w
     kayole = complain(client, "Manze hakuna network huku Kayole tangu saa nne, kuna shida gani?")
     assert kayole["linked_incident"]["title"].find("Embakasi East Aggregation HUB") >= 0
     assert row(kayole["id"]).link_strength == "wide_area"
+    # Staff are told how a complaint was matched (with auth off the form answers the staff view too).
+    staff = client.get(f"{BASE}/complaints/{kayole['id']}").json()["complaint"]
+    assert staff["link_strength"] == "wide_area"
+    hub = kayole["linked_incident"]["id"]
+    panel = client.get(f"{BASE}/incidents/{hub}/customers").json()
+    assert {c["ref"]: c["link_strength"] for c in panel["complaints"]}[kayole["ref"]] == "wide_area"
 
 
 def test_the_events_routes_late_link_and_a_merged_duplicate_does_not(client):

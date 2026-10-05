@@ -112,6 +112,7 @@ type Complaint = {
   reply: string | null;       // the customer-facing reply
   citations: { article_id: string; title: string; score: number }[];
   linked_incident: { id: string; incident_number: string; title: string; status: string } | null;
+  link_strength: "site" | "county" | "wide_area" | "person" | null;  // how it was linked (docs/CLOSE_THE_LOOP.md); null in the public view
   sla_due_at: string;
 };
 type Step = {

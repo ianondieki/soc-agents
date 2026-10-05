@@ -19,7 +19,7 @@ SECRET = "support-api-secret"
 
 COMPLAINT_KEYS = {"id", "ref", "created_at", "updated_at", "channel", "customer", "language", "subject", "body",
                   "category", "urgency", "sentiment", "route", "status", "outcome", "confidence", "escalation",
-                  "reply", "citations", "linked_incident", "sla_due_at"}
+                  "reply", "citations", "linked_incident", "link_strength", "sla_due_at"}
 STEP_KEYS = {"seq", "agent", "action", "summary", "detail", "duration_ms", "at"}
 TOOL_CALL_KEYS = {"id", "tool", "args", "result", "status", "policy", "at", "decided_by"}
 MESSAGE_KEYS = {"id", "author", "name", "body", "at"}

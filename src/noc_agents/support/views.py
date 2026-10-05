@@ -125,6 +125,8 @@ def complaint_out(session: Session, row: SupportComplaintRow, *, public: bool = 
         "reply": row.reply,
         "citations": _loads(row.citations_json, []),
         "linked_incident": _linked_incident(session, row),
+        # How the link was made (site, county, wide_area, person); staff only, it is a reading of the network.
+        "link_strength": None if public else row.link_strength,
         "sla_due_at": iso_z(row.sla_due_at),
     }
 
@@ -223,7 +225,8 @@ def duplicate_view(row: SupportComplaintRow, *, msisdn_masked: str) -> dict[str,
     reads it like any detail); the rest are empty, and the masked number is the caller's own."""
     complaint = {key: None for key in (
         "id", "created_at", "updated_at", "channel", "language", "subject", "body", "category", "urgency",
-        "sentiment", "route", "outcome", "confidence", "escalation", "reply", "linked_incident", "sla_due_at")}
+        "sentiment", "route", "outcome", "confidence", "escalation", "reply", "linked_incident", "link_strength",
+        "sla_due_at")}
     complaint.update({
         "ref": row.ref,
         "status": "escalated" if row.status == "awaiting_approval" else row.status,

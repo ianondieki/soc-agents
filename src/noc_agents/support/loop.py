@@ -1109,7 +1109,7 @@ def incident_customers(session: Session, inc: IncidentRow) -> dict[str, Any]:
         "complaints": [{"id": r.id, "ref": r.ref, "msisdn_masked": mask_msisdn_staff(r.msisdn), "status": r.status,
                         "told_restored_at": iso_z(ledger.told_at.get((inc.id, r.id))),
                         "still_down_at": iso_z(ledger.down_at.get((inc.id, r.id))),
-                        "closure_reason": r.closure_reason}
+                        "closure_reason": r.closure_reason, "link_strength": r.link_strength}
                        for r in rows],
         "follow_up": _follow_up(session, inc),
     }
