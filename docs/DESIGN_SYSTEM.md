@@ -250,6 +250,30 @@ when not zero) and one bar split by priority, with a legend naming only the prio
 nothing open is one phrase. Then repeat faults, open problems (a link to Problems) and each problem on a
 line: its number, the site, how many times and when last.
 
+**Vendor scorecards.** Five figures (cards, released to vendors, waiting for a person, withheld by the
+gate, the latest month), a filter bar (vendor, month, status, Refresh) and, for a shift supervisor and
+above, "Compute an ended month". Then the cards as rows: the vendor by name with its code and month, the
+status as a pill with its words (draft grey, shadow violet, withheld red, published and final green), the
+data-quality gate, the terms ("Default terms, no contract" in amber) and the dispute window. A row opens
+the card under the list: its state and summary, the terms notice, four facts (gate, shadow review,
+published or disputes close, computed), "What a person does next" (each act a labelled field above its
+button) and the 22 lines by KPI in seven columns, the "All priorities" line in bold. The dispute control
+is in each line's own panel, switched off with its reason, not a disabled button on every row.
+
+**Contracts.** Four figures (contracts this role may see, clauses indexed, how answers come, whether
+clause search is ready) and one plain sentence on how an answer is made. Then the two ways in, ask a
+question and search the clauses (the best eight first), beside the contracts as cards: the title with a
+"Sample" tag when it is one, the counterparty by name, in force from, version, clauses, size, who may read
+it and whether the hosted model may.
+
+**Maintenance.** Five figures (windows ahead, waiting for sign-off, scheduled, tasks due in 30 days or
+missed, the next window). Each window is a row: a calendar leaf (weekday, day, month), the site or region
+by name, when and for how long it takes customers off air, its sign-off as four steps (proposed, sign-off
+asked, signed off, scheduled; done ones ticked green, the next ringed violet), the rain guard's own
+verdict, the Authority approval and the customer notice, and its actions. The tasks follow, soonest first:
+the work behind its icon, the site by name, the due date with how far off, the status and the proposed
+crew; the first ten until asked.
+
 **The Wallboard** (always Night, made for a TV across the room). The head: the mark, "NOC wallboard"
 and the operator; on the right the live state as a pill (green dot while live, red words when the wall
 has stopped updating, the escalation count beside it at the same size) and the time in Nairobi, big, in

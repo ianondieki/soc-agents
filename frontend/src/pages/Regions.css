@@ -14,10 +14,14 @@
 .region-figures > .bad dd { color: var(--danger); }
 .region-figures > .warn dd { color: var(--warn); }
 @media (max-width: 900px) {
-  .region-figures { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  /* Five figures on a narrower screen: three over two, with no empty cell. */
+  .region-figures { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+  .region-figures > div { grid-column: span 2; }
+  .region-figures > div:nth-child(n+4) { grid-column: span 3; }
 }
 @media (max-width: 600px) {
   .region-figures { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .region-figures > div:nth-child(n) { grid-column: auto; }
   .region-figures > div:last-child:nth-child(odd) { grid-column: 1 / -1; }
   .region-figures dt { white-space: normal; }
 }
