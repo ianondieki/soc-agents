@@ -26,6 +26,7 @@ import {
 import { statusOf } from "../lib/apiError";
 import { hitlSubject, hitlSubjectIsIncident } from "../lib/hitlSubject";
 import { IconDot } from "../lib/icons";
+import { useNarrow } from "../lib/layout";
 import { fmtHM } from "../lib/time";
 import { useRealtimeState } from "../realtime/RealtimeContext";
 import type { NocEvent } from "../realtime/renderers";
@@ -41,6 +42,11 @@ import "./HitlInbox.css";
  * forty cards waiting the queue is about two screens instead of forty card heights, and the four
  * P1s are at the top instead of 2,700 to 16,000 px down. A reason typed on a card survives its
  * card being folded to a row and opened again.
+ *
+ * WIDE SCREENS (1360 px and up): the open card on the left, and beside it the queue, every card
+ * one row with the open one marked, kept in view while the page scrolls. Narrower, the open card
+ * sits in the queue between its rows. Five figures over the page say how many wait, the P1s and
+ * P2s, how many nobody has claimed, and the longest wait.
  *
  * STATES: skeleton rows until the first answer; "Couldn't load" + Retry (the shared
  * `.empty[role=alert]`) when the first load (or a refetch of an empty queue) fails; a one-line
@@ -521,6 +527,100 @@ export default function HitlInbox({ session, tick, profile }: { session: any; ti
     return tasks.length > 1 && late > tasks.length / 2;
   }, [tasks]);
   const showList = loaded && display.length > 0;
+  // The figures over the queue: how many wait, the urgent ones, how many nobody holds yet.
+  const figures = useMemo(() => {
+    let p1 = 0;
+    let p2 = 0;
+    let unclaimed = 0;
+    for (const t of tasks) {
+      if (t?.priority === "P1") p1 += 1;
+      else if (t?.priority === "P2") p2 += 1;
+      if (!(typeof t?.claimed_by === "string" && t.claimed_by)) unclaimed += 1;
+    }
+    return { p1, p2, unclaimed };
+  }, [tasks]);
+  // A wide screen sets the open card beside the queue (every card one row, the open one marked);
+  // narrower, the open card sits in the queue between its rows, as one column.
+  const wide = useNarrow("(min-width: 1360px)");
+
+  /**
+   * One card's slot: the open card (the decision) or its one-line row. Every slot carries the
+   * card's id (`data-card-id`), which is how the focus and the fold find it; on a wide screen the
+   * open card's row is drawn in the queue as well, after the card in the page, so the card is the
+   * slot found first.
+   */
+  const slotFor = (entry: Entry, asCard: boolean, cls: string, selected = false) => {
+    const { id, task: t, decided: d } = entry;
+    const err = errors[id];
+    return (
+      <div key={id} className={cls} data-card-id={id}>
+        <CardBoundary
+          fallback={
+            <article className="hitl-card">
+              <header className="hitl-card-head">
+                <span className="chip danger">card failed to render</span>
+                <h2 className="hitl-inc" tabIndex={-1}>
+                  {typeof t?.incident_number === "string" && t.incident_number ? t.incident_number : id}
+                </h2>
+                <span className="hitl-type">{labelFor(t?.task_type)}</span>
+              </header>
+              <p className="hitl-effect">
+                This card could not be drawn. The raw payload is below; decide from it, or open the
+                ticket.
+              </p>
+              <pre className="pre hitl-field-pre" tabIndex={0}>
+                {rawPayload(t?.proposed_payload)}
+              </pre>
+              <div className="hitl-buttons hitl-fallback-actions">
+                <button
+                  className="btn danger"
+                  aria-disabled={busy[id] || d ? true : undefined}
+                  onClick={() => {
+                    if (!busy[id] && !d) act(t, "reject", "card render failure — rejected unread");
+                  }}
+                >
+                  {busy[id] === "reject" ? "Rejecting…" : "Reject unread"}
+                </button>
+              </div>
+            </article>
+          }
+        >
+          {asCard ? (
+            <ApprovalCard
+              task={t}
+              incident={t?.incident_id ? incidents[t.incident_id] : null}
+              profile={profile}
+              who={who}
+              busy={busy[id] ?? null}
+              error={err?.text || ""}
+              errorDetail={err?.detail}
+              receipt={d?.receipt ?? null}
+              initialReason={reasons.current[id] ?? ""}
+              onReasonChange={(r) => {
+                reasons.current[id] = r;
+              }}
+              onClaim={() => act(t, "claim")}
+              onApprove={(reason) => act(t, "approve", reason)}
+              onReject={(reason) => act(t, "reject", reason)}
+            />
+          ) : (
+            <QueueRow
+              id={id}
+              task={t}
+              incident={t?.incident_id ? incidents[t.incident_id] : null}
+              who={who}
+              receipt={d?.receipt ?? null}
+              markLate={!mostlyLate}
+              selected={selected}
+              onOpen={openCard}
+            />
+          )}
+        </CardBoundary>
+      </div>
+    );
+  };
+  const slotClass = (parts: Array<string | false>) => ["hitl-slot", ...parts].filter(Boolean).join(" ");
+  const openEntry = display.find((e) => e.id === openId) ?? null;
 
   return (
     <div>
@@ -538,29 +638,45 @@ export default function HitlInbox({ session, tick, profile }: { session: any; ti
         </div>
       </div>
 
-      {/* Plain facts, 16 px apart, no chips. */}
-      <div className="hitl-summary">
-        {loaded && tasks.length > 0 && (
-          <>
-            {summary.byPriority && <span>{summary.byPriority}</span>}
-            <span>{summary.waiting} waiting</span>
-            {summary.oldest != null && (
-              <span
-                className={mostlyLate ? "hitl-summary-late" : undefined}
-                title={mostlyLate ? "Most cards are past the escalation ladder: unclaimed at 5 minutes or more." : undefined}
-              >
-                oldest {fmtWait(summary.oldest)}
-              </span>
-            )}
-          </>
-        )}
-        {!connected && (
+      {/* The queue in figures: how many wait, the urgent ones, how many nobody has claimed, and
+          the longest wait (in the watch colour when most cards are past the escalation ladder). */}
+      {loaded && tasks.length > 0 && (
+        <dl className="hitl-figures">
+          <div className="hitl-figure">
+            <dt>Waiting</dt>
+            <dd>{summary.waiting}</dd>
+          </div>
+          <div className={"hitl-figure" + (figures.p1 ? " p1" : " zero")}>
+            <dt>P1 critical</dt>
+            <dd>{figures.p1}</dd>
+          </div>
+          <div className={"hitl-figure" + (figures.p2 ? " p2" : " zero")}>
+            <dt>P2 major</dt>
+            <dd>{figures.p2}</dd>
+          </div>
+          <div className={"hitl-figure" + (figures.unclaimed ? " hitl" : " zero")}>
+            <dt>Nobody has claimed</dt>
+            <dd>{figures.unclaimed}</dd>
+          </div>
+          {summary.oldest != null && (
+            <div
+              className={"hitl-figure" + (mostlyLate ? " late" : "")}
+              title={mostlyLate ? "Most cards are past the escalation ladder: unclaimed at 5 minutes or more." : undefined}
+            >
+              <dt>Longest wait</dt>
+              <dd className="hitl-figure-time">{fmtWait(summary.oldest)}</dd>
+            </div>
+          )}
+        </dl>
+      )}
+      {!connected && (
+        <div className="hitl-summary">
           <span className="attn warn" title="No WebSocket. The queue is being polled instead.">
             <IconDot />
             Live updates are down; checking every {DISCONNECTED_POLL_MS / 1000}&nbsp;s
           </span>
-        )}
-      </div>
+        </div>
+      )}
       {/* Always mounted, so each claim and decision is spoken; the receipt on the card is what
           a sighted presenter reads. */}
       <span className="hitl-sr" role="status">
@@ -634,88 +750,43 @@ export default function HitlInbox({ session, tick, profile }: { session: any; ti
         </div>
       )}
 
-      {showList && (
+      {showList && !wide && (
         <div className="hitl-list" ref={listRef}>
-          {display.map(({ id, task: t, decided: d }, i) => {
-            const open = id === openId;
+          {display.map((entry, i) => {
+            const open = entry.id === openId;
             const rowBefore = i > 0 && display[i - 1].id !== openId;
             const rowAfter = i < display.length - 1 && display[i + 1].id !== openId;
-            const cls = [
-              "hitl-slot",
-              open ? "is-open" : "is-row",
-              !open && !rowBefore ? "run-start" : "",
-              !open && !rowAfter ? "run-end" : "",
-              d?.folding ? "folding" : "",
-            ]
-              .filter(Boolean)
-              .join(" ");
-            const err = errors[id];
-            return (
-              <div key={id} className={cls} data-card-id={id}>
-                <CardBoundary
-                  fallback={
-                    <article className="hitl-card">
-                      <header className="hitl-card-head">
-                        <span className="chip danger">card failed to render</span>
-                        <h2 className="hitl-inc" tabIndex={-1}>
-                          {typeof t?.incident_number === "string" && t.incident_number ? t.incident_number : id}
-                        </h2>
-                        <span className="hitl-type">{labelFor(t?.task_type)}</span>
-                      </header>
-                      <p className="hitl-effect">
-                        This card could not be drawn. The raw payload is below; decide from it, or open the
-                        ticket.
-                      </p>
-                      <pre className="pre hitl-field-pre" tabIndex={0}>
-                        {rawPayload(t?.proposed_payload)}
-                      </pre>
-                      <div className="hitl-buttons hitl-fallback-actions">
-                        <button
-                          className="btn danger"
-                          aria-disabled={busy[id] || d ? true : undefined}
-                          onClick={() => {
-                            if (!busy[id] && !d) act(t, "reject", "card render failure — rejected unread");
-                          }}
-                        >
-                          {busy[id] === "reject" ? "Rejecting…" : "Reject unread"}
-                        </button>
-                      </div>
-                    </article>
-                  }
-                >
-                  {open ? (
-                    <ApprovalCard
-                      task={t}
-                      incident={t?.incident_id ? incidents[t.incident_id] : null}
-                      profile={profile}
-                      who={who}
-                      busy={busy[id] ?? null}
-                      error={err?.text || ""}
-                      errorDetail={err?.detail}
-                      receipt={d?.receipt ?? null}
-                      initialReason={reasons.current[id] ?? ""}
-                      onReasonChange={(r) => {
-                        reasons.current[id] = r;
-                      }}
-                      onClaim={() => act(t, "claim")}
-                      onApprove={(reason) => act(t, "approve", reason)}
-                      onReject={(reason) => act(t, "reject", reason)}
-                    />
-                  ) : (
-                    <QueueRow
-                      id={id}
-                      task={t}
-                      incident={t?.incident_id ? incidents[t.incident_id] : null}
-                      who={who}
-                      receipt={d?.receipt ?? null}
-                      markLate={!mostlyLate}
-                      onOpen={openCard}
-                    />
-                  )}
-                </CardBoundary>
-              </div>
+            return slotFor(
+              entry,
+              open,
+              slotClass([open ? "is-open" : "is-row", !open && !rowBefore && "run-start", !open && !rowAfter && "run-end", !!entry.decided?.folding && "folding"])
             );
           })}
+        </div>
+      )}
+
+      {/* Wide: the decision on the left, the queue beside it, in the page's reading order. The
+          queue keeps its place while the page scrolls and lists every card, the open one marked. */}
+      {showList && wide && (
+        <div className="hitl-split" ref={listRef}>
+          <div className="hitl-detail">
+            {openEntry && slotFor(openEntry, true, slotClass(["is-open", !!openEntry.decided?.folding && "folding"]))}
+          </div>
+          <section className="hitl-queue" aria-labelledby="hitl-queue-title">
+            <h2 id="hitl-queue-title" className="hitl-queue-title">
+              Waiting <span>{display.filter((e) => !e.decided).length}</span>
+            </h2>
+            <div className="hitl-queue-list">
+              {display.map((entry, i) =>
+                slotFor(
+                  entry,
+                  false,
+                  slotClass(["is-row", i === 0 && "run-start", i === display.length - 1 && "run-end", !!entry.decided?.folding && "folding"]),
+                  entry.id === openId
+                )
+              )}
+            </div>
+          </section>
         </div>
       )}
     </div>
@@ -734,6 +805,7 @@ const QueueRow = memo(function QueueRow({
   who,
   receipt,
   markLate,
+  selected = false,
   onOpen,
 }: {
   id: string;
@@ -743,6 +815,8 @@ const QueueRow = memo(function QueueRow({
   receipt: CardReceipt | null;
   /** False when most of the queue is late and the summary says so once. */
   markLate: boolean;
+  /** On a wide screen, the row of the card open beside the queue. */
+  selected?: boolean;
   onOpen: (id: string) => void;
 }) {
   const t = task && typeof task === "object" ? task : {};
@@ -773,7 +847,13 @@ const QueueRow = memo(function QueueRow({
   const late = markLate && ladderBreached(mins, t.priority, t.claimed_by);
   return (
     <h2 className="hitl-row-h">
-      <button type="button" className="hitl-row" aria-expanded={false} onClick={() => onOpen(id)}>
+      <button
+        type="button"
+        className={"hitl-row" + (selected ? " selected" : "")}
+        aria-expanded={selected ? undefined : false}
+        aria-current={selected ? "true" : undefined}
+        onClick={() => onOpen(id)}
+      >
         {pill}
         {subject}
         <span className="hitl-row-type">{labelFor(t.task_type)}</span>

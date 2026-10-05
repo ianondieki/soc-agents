@@ -194,6 +194,13 @@ with a vendor, blue with the NOC, green restored, grey closed), how long it has 
 carry a red edge. On a narrower panel the region and then the owner fold into the site's second line
 (a container query), so the table never scrolls sideways; a phone gets one card per ticket.
 
+**Approvals.** Five figures over the page: waiting, P1, P2, nobody has claimed (violet) and the
+longest wait (in the watch colour when most cards are past the escalation ladder). From 1360px the
+open card takes the left and the queue the right ("Waiting", every card one two-line row, the open
+one marked in the accent), kept in view while the page scrolls and scrolling on its own when long;
+narrower, the open card sits in the queue between its rows. On the card, what Approve causes is a
+soft violet panel over the facts; the drafts and the sticky decision bar are unchanged.
+
 **The Wallboard** (always Night, made for a TV across the room). The head: the mark, "NOC wallboard"
 and the operator; on the right the live state as a pill (green dot while live, red words when the wall
 has stopped updating, the escalation count beside it at the same size) and the time in Nairobi, big, in

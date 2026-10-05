@@ -2,7 +2,8 @@
  * after styles.css and built only from its tokens (--fs-*, --s*, --r-*, the colour roles).
  *
  * The queue is one open card between runs of one-line rows: each run of rows is one surface
- * with hairlines between its rows, and the open card is the only box with a decision bar.
+ * with hairlines between its rows, and the open card is the only box with a decision bar. From
+ * 1360 px the open card sits on the left and the queue beside it (`.hitl-split`, at the end).
  *
  * Sentence case throughout: no rule here changes letter case or adds tracking. One thing moves:
  * a decided card folds away (about 0.2 s) after its receipt has been on screen (1.2 s, or 4 s
@@ -12,7 +13,7 @@
  */
 
 /* ---------------------------------------------------------------- summary row */
-/* Plain facts under the page head, 16 px apart. No chips: counts are text. */
+/* The line under the figures (`.hitl-figures`, below) when live updates are down. */
 .hitl-summary {
   display: flex;
   flex-wrap: wrap;
@@ -577,3 +578,109 @@
 @media (max-width: 700px) {
   .hitl-hint { display: none; }
 }
+
+/* ---------------------------------------------------------------- figures */
+/* The queue in figures over the page: one slab, hairlines between, colour only on a figure that
+   is not zero (the longest wait in the watch colour when most cards are late). */
+.hitl-figures {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 1px;
+  margin: 0 0 var(--s4);
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--line);
+}
+.hitl-figure { min-width: 0; padding: 12px 18px 14px; background: var(--surface); }
+.hitl-figure dt { overflow: hidden; color: var(--muted); font-size: var(--fs-sm); font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.hitl-figure dd {
+  margin: 4px 0 0;
+  color: var(--text-strong);
+  font-size: var(--fs-xl);
+  font-weight: 700;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.hitl-figure.zero dd { color: var(--muted-dim); font-weight: 500; }
+.hitl-figure.p1 dd { color: var(--p1); }
+.hitl-figure.p2 dd { color: var(--p2); }
+.hitl-figure.hitl dd { color: var(--hitl); }
+.hitl-figure.late dd { color: var(--warn); }
+@media (max-width: 760px) {
+  .hitl-figures { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .hitl-figure:last-child:nth-child(odd) { grid-column: 1 / -1; }
+  .hitl-figure { padding: 10px 14px 12px; }
+}
+
+/* What Approve causes, said once over the card's facts: a soft violet panel (a person decides). */
+.hitl-card > .hitl-effect {
+  max-width: none;
+  margin: var(--s3) 0 var(--s4);
+  padding: 10px 14px;
+  border-radius: var(--r-md);
+  background: var(--hitl-soft);
+  color: var(--text);
+}
+
+/* ---------------------------------------------------------------- wide: card beside queue */
+/* From 1360 px the open card takes the left and the queue the right, in the page's reading order:
+   the decision first, then what else waits. The queue stays in view as the page scrolls (its own
+   list scrolls when it is longer than the screen); the card scrolls with the page, so its sticky
+   decision bar still meets the bottom of the window. */
+.hitl-split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(300px, 340px); gap: var(--s4); align-items: start; }
+.hitl-detail { min-width: 0; }
+.hitl-detail > .hitl-slot { margin-bottom: 0; }
+.hitl-queue {
+  position: sticky;
+  top: calc(var(--topbar-h) + var(--s4));
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  max-height: calc(100vh - var(--topbar-h) - 2 * var(--s4));
+  overflow: hidden;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+}
+.hitl-queue-title {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin: 0;
+  padding: 14px 16px 12px;
+  border-bottom: 1px solid var(--line);
+  color: var(--text-strong);
+  font-size: var(--fs-md);
+  font-weight: 600;
+}
+.hitl-queue-title > span { color: var(--muted); font-size: var(--fs-sm); font-weight: 500; font-variant-numeric: tabular-nums; }
+.hitl-queue-list { min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 6px; }
+.hitl-queue .hitl-slot, .hitl-queue .hitl-slot.is-row.run-end { margin-bottom: 0; }
+.hitl-queue .hitl-slot + .hitl-slot { margin-top: 2px; }
+/* A queue row in the narrow column: two lines, the ticket and the wait, then the type and the site. */
+.hitl-queue .hitl-slot .hitl-row {
+  grid-template-columns: 2.4rem minmax(0, 1fr) auto;
+  grid-template-areas: "pill id wait" "pill type type" "pill site site" "pill claim claim";
+  align-items: start;
+  row-gap: 2px;
+  column-gap: 10px;
+  padding: 10px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+}
+.hitl-queue .hitl-slot .hitl-row:hover { background: var(--surface-raised); }
+.hitl-queue .hitl-slot .hitl-row:focus-visible { border-radius: var(--r-sm); }
+.hitl-queue .hitl-row > .pill { grid-area: pill; margin-top: 1px; }
+.hitl-queue .hitl-row-id, .hitl-queue .hitl-row-subject { grid-area: id; overflow: hidden; text-overflow: ellipsis; }
+.hitl-queue .hitl-row-type { grid-area: type; }
+.hitl-queue .hitl-row-site { grid-area: site; gap: var(--s2); font-size: var(--fs-xs); }
+.hitl-queue .hitl-row-claim { grid-area: claim; font-size: var(--fs-xs); }
+.hitl-queue .hitl-row-wait { grid-area: wait; font-size: var(--fs-xs); }
+/* The card open beside the queue: its row marked in the accent, as the current one. */
+.hitl-queue .hitl-slot .hitl-row.selected { background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); color: var(--text); }
+.hitl-queue .hitl-slot .hitl-row.selected .hitl-row-id { color: var(--accent); }
+.hitl-queue .hitl-slot .hitl-row.decided { border-radius: var(--r-sm); }
