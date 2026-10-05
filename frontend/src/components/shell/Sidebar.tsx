@@ -1,26 +1,29 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type FocusEvent, type KeyboardEvent, type PointerEvent } from "react";
+import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState, type FocusEvent, type KeyboardEvent, type PointerEvent } from "react";
 import { Link, NavLink, useLocation } from "react-router-dom";
-import { ChevronDown, PanelLeftClose, PanelLeftOpen } from "lucide-react";
+import { ChevronDown, PanelLeftClose, PanelLeftOpen, Search } from "lucide-react";
 import { BrandMark } from "./BrandMark";
 import { NAV_GROUPS, groupKeyOf, linksIn, readOpenGroups, roveFocus, writeOpenGroups, type NavCounts, type NavGroupDef } from "./nav";
 
 /**
  * The console's sidebar (docs/DESIGN_SYSTEM.md, "The shell"). Two shapes:
  *
- *  - expanded (248 px): the brand row, six disclosure groups, "Collapse sidebar" at the foot.
- *    A group header is a button with the group's icon, name, a count when it has one and a
- *    chevron; its links open and close on a `grid-template-rows` animation. The group holding
- *    the current page opens itself; the rest keep their state in localStorage.
- *  - rail (72 px): one icon button per group. Pressing it, or resting a mouse on it for 150 ms,
- *    opens a flyout beside the rail with that group's pages. The flyout closes on Escape,
- *    outside click or navigation and hands focus back to its icon.
+ *  - expanded (248 px): the brand row, "Go to a page" (GoTo.tsx, also Ctrl+K), six disclosure
+ *    groups (a hairline after the two daily desks), "Collapse sidebar" at the foot. A group
+ *    header is a button with the group's icon, name, a count while it is closed and a chevron;
+ *    its pages hang from a guide line under the icon and open on a `grid-template-rows`
+ *    animation. Once open, the count sits on the page it belongs to (Approvals, Support desk).
+ *    The group holding the current page opens itself; the rest keep their state in localStorage.
+ *  - rail (72 px): the search icon, then one icon button per group. Pressing it, or resting a
+ *    mouse on it for 150 ms, opens a flyout beside the rail with that group's pages. The flyout
+ *    closes on Escape, outside click or navigation and hands focus back to its icon.
  *
  * The phone sheet (PhoneMenu.tsx) reuses the group list below.
  */
 
 const ICON = { size: 18, strokeWidth: 1.75 } as const;
-/* Group headers are the quiet layer (12 px, muted): a 16 px icon sits level with them. */
-const HEAD_ICON = { size: 16, strokeWidth: 1.75 } as const;
+
+/** "Ctrl K", or "⌘ K" on a Mac: the shortcut for "Go to a page". */
+export const GOTO_KEYS = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent) ? "⌘ K" : "Ctrl K";
 
 /** Which groups are open: the stored state, plus the current page's group. */
 export function useOpenGroups(pathname: string) {
@@ -79,25 +82,37 @@ export function NavGroup({
         aria-controls={panelId}
         onClick={() => onToggle(group.key)}
       >
-        <Icon {...HEAD_ICON} aria-hidden="true" />
+        <Icon {...ICON} aria-hidden="true" />
         <span className="nav-group-name">{group.title}</span>
-        <CountBadge n={count} label={group.countLabel} className={"nav-count" + (group.countTone ? ` ${group.countTone}` : "")} />
-        <ChevronDown className="nav-chevron" size={16} strokeWidth={1.75} aria-hidden="true" />
+        {!open && <CountBadge n={count} label={group.countLabel} className={countClass(group)} />}
+        <ChevronDown className="nav-chevron" size={15} strokeWidth={1.75} aria-hidden="true" />
       </button>
       <div className="nav-group-panel" id={panelId}>
         <div className="nav-group-inner">
-          <ul className="nav-links">
-            {group.links.map((l) => (
-              <li key={l.to}>
-                <NavLink to={l.to} end={l.end} onClick={onNavigate}>
-                  {l.label}
-                </NavLink>
-              </li>
-            ))}
-          </ul>
+          <NavLinks group={group} count={open ? count : null} onNavigate={onNavigate} />
         </div>
       </div>
     </div>
+  );
+}
+
+function countClass(group: NavGroupDef): string {
+  return "nav-count" + (group.countTone ? ` ${group.countTone}` : "");
+}
+
+/** A group's pages; the group's count, when given, on the page it belongs to. */
+function NavLinks({ group, count, onNavigate }: { group: NavGroupDef; count?: number | null; onNavigate?: () => void }) {
+  return (
+    <ul className="nav-links">
+      {group.links.map((l) => (
+        <li key={l.to}>
+          <NavLink to={l.to} end={l.end} onClick={onNavigate}>
+            <span className="nav-link-label">{l.label}</span>
+            {l.to === group.countTo && <CountBadge n={count} label={group.countLabel} className={countClass(group)} />}
+          </NavLink>
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -118,16 +133,18 @@ export function NavGroups({
   return (
     <>
       {NAV_GROUPS.map((g) => (
-        <NavGroup
-          key={g.key}
-          group={g}
-          open={!!open[g.key]}
-          active={activeKey === g.key}
-          count={counts[g.key]}
-          onToggle={toggle}
-          onNavigate={onNavigate}
-          idPrefix={idPrefix}
-        />
+        <Fragment key={g.key}>
+          {g.sectionStart && <div className="nav-sep" aria-hidden="true" />}
+          <NavGroup
+            group={g}
+            open={!!open[g.key]}
+            active={activeKey === g.key}
+            count={counts[g.key]}
+            onToggle={toggle}
+            onNavigate={onNavigate}
+            idPrefix={idPrefix}
+          />
+        </Fragment>
       ))}
     </>
   );
@@ -138,7 +155,18 @@ type Flyout = { key: string; byHover: boolean; top: number };
 const HOVER_OPEN_MS = 150;
 const HOVER_CLOSE_MS = 220;
 
-export function Sidebar({ rail, onToggleRail, counts }: { rail: boolean; onToggleRail: () => void; counts: NavCounts }) {
+export function Sidebar({
+  rail,
+  onToggleRail,
+  counts,
+  onSearch,
+}: {
+  rail: boolean;
+  onToggleRail: () => void;
+  counts: NavCounts;
+  /** Opens "Go to a page"; no search control without it. */
+  onSearch?: () => void;
+}) {
   const { pathname } = useLocation();
   const activeKey = groupKeyOf(pathname);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -274,16 +302,30 @@ export function Sidebar({ rail, onToggleRail, counts }: { rail: boolean; onToggl
       <nav className="nav rail" aria-label="Main">
         <div className="nav-brand">
           <Link to="/" className="brand" aria-label="Kenya NOC, front page" title="Kenya NOC">
-            <BrandMark />
+            <BrandMark size={26} />
           </Link>
         </div>
         <ul className="nav-rail-list">
+          {onSearch && (
+            <li className="nav-rail-search">
+              <button
+                type="button"
+                className="nav-rail-btn"
+                aria-label="Go to a page"
+                aria-keyshortcuts="Control+K Meta+K"
+                title={`Go to a page (${GOTO_KEYS})`}
+                onClick={onSearch}
+              >
+                <Search {...ICON} aria-hidden="true" />
+              </button>
+            </li>
+          )}
           {NAV_GROUPS.map((g) => {
             const Icon = g.icon;
             const n = counts[g.key];
             const expanded = flyout?.key === g.key;
             return (
-              <li key={g.key}>
+              <li key={g.key} className={g.sectionStart ? "nav-rail-section" : undefined}>
                 <button
                   ref={(el) => {
                     btnRefs.current[g.key] = el;
@@ -320,15 +362,7 @@ export function Sidebar({ rail, onToggleRail, counts }: { rail: boolean; onToggl
                     }}
                   >
                     <div className="nav-flyout-title">{fg.title}</div>
-                    <ul className="nav-links">
-                      {fg.links.map((l) => (
-                        <li key={l.to}>
-                          <NavLink to={l.to} end={l.end}>
-                            {l.label}
-                          </NavLink>
-                        </li>
-                      ))}
-                    </ul>
+                    <NavLinks group={fg} count={counts[fg.key]} />
                   </div>
                 )}
               </li>
@@ -348,10 +382,19 @@ export function Sidebar({ rail, onToggleRail, counts }: { rail: boolean; onToggl
     <nav className="nav" aria-label="Main">
       <div className="nav-brand">
         <Link to="/" className="brand" title="Front page">
-          <BrandMark />
+          <BrandMark size={26} />
           <span>Kenya NOC</span>
         </Link>
       </div>
+      {onSearch && (
+        <div className="nav-search-row">
+          <button type="button" className="nav-search" aria-keyshortcuts="Control+K Meta+K" onClick={onSearch}>
+            <Search size={16} strokeWidth={1.75} aria-hidden="true" />
+            <span>Go to a page</span>
+            <kbd aria-hidden="true">{GOTO_KEYS}</kbd>
+          </button>
+        </div>
+      )}
       <div className="nav-scroll" ref={scrollRef}>
         <NavGroups pathname={pathname} counts={counts} />
       </div>

@@ -12,6 +12,7 @@ import { PhoneMenu } from "./components/shell/PhoneMenu";
 import { DisplayMenu, type DisplayState } from "./components/shell/DisplayMenu";
 import { BrandMark } from "./components/shell/BrandMark";
 import TopbarStatus, { type LiveTone } from "./components/shell/TopbarStatus";
+import GoTo, { useGoToShortcut } from "./components/shell/GoTo";
 import { useSupportCount } from "./components/shell/useSupportCount";
 import { readRailPref, writeRailPref, type NavCounts } from "./components/shell/nav";
 import {
@@ -219,6 +220,22 @@ export default function App() {
     window.addEventListener("scroll", onScroll, { passive: true });
     return () => window.removeEventListener("scroll", onScroll);
   }, []);
+  // "Go to a page" (Ctrl+K): only inside the console shell, never over the front page, the public
+  // support pages or the Wallboard.
+  const [gotoOpen, setGotoOpen] = useState(false);
+  const inShell = !(
+    loc.pathname === "/" ||
+    loc.pathname.startsWith("/complain") ||
+    loc.pathname === "/track" ||
+    loc.pathname.startsWith("/wallboard")
+  );
+  const toggleGoto = useCallback(() => {
+    if (inShell) setGotoOpen((o) => !o);
+  }, [inShell]);
+  useGoToShortcut(toggleGoto);
+  useEffect(() => {
+    if (!inShell) setGotoOpen(false);
+  }, [inShell]);
 
   // The shell's shape: a phone has no sidebar; a tablet starts on the rail; a person's choice
   // (localStorage "noc.nav.rail") wins over the width default once made.
@@ -549,7 +566,8 @@ export default function App() {
         >
           Skip to content
         </a>
-        {!phone && <Sidebar rail={rail} onToggleRail={toggleRail} counts={navCounts} />}
+        {!phone && <Sidebar rail={rail} onToggleRail={toggleRail} counts={navCounts} onSearch={() => setGotoOpen(true)} />}
+        <GoTo open={gotoOpen} onClose={() => setGotoOpen(false)} />
         <div className="main">
           <header className={"topbar" + (scrolled ? " is-scrolled" : "")} ref={headerRef}>
             {/* On a phone the brand moves up here (there is no sidebar); the operator and the

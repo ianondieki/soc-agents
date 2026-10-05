@@ -136,12 +136,19 @@ Desktop >= 1100px                         Tablet 761-1099px          Phone <= 76
 +----------+---------------------------+  +--+--------------------+  +------------------------+
 ```
 
-- **Sidebar groups are dropdowns.** Each group header is a `<button aria-expanded>` with the group's icon,
-  its name, a count when it has one (Approvals waiting, Support cases with a person) and a chevron. The
-  group holding the current page opens itself; the rest remember their state (`localStorage
-  ["noc.nav.groups"]`). Several may be open at once.
+- **Sidebar groups are dropdowns.** Each group header is a `<button aria-expanded>` with the group's icon
+  (accent when it holds the current page), its name in 14px semibold, a count while it is closed and a
+  chevron. Its pages hang from a 1px guide line under the icon, their text lined up with the group's name,
+  in muted ink; the current page is filled in the accent tint and lights its stretch of the guide line.
+  Once a group is open its count moves onto the page it belongs to (Approvals, Support desk). A hairline
+  separates the two daily desks (Operate, Support) from the rest. The group holding the current page opens
+  itself; the rest remember their state (`localStorage["noc.nav.groups"]`). Several may be open at once.
+- **Go to a page.** A quiet search box under the brand (the first icon on the rail) and Ctrl+K / Cmd+K
+  anywhere in the console open one dialog with a combobox over every page: it matches the label, the group
+  and a few keywords per page (`nav.ts`), the arrow keys move, Enter opens, Escape or the scrim closes and
+  focus goes back where it was. Never over the front page, the public support pages or the Wallboard.
 - **Collapse to a rail.** The foot of the sidebar has "Collapse sidebar". Collapsed (72px), each group is an
-  icon button; pressing it (or hovering for 150ms with a fine pointer) opens a flyout menu beside the rail
+  icon button (the current one tinted, with a 3px accent tab on the screen edge); pressing it (or hovering for 150ms with a fine pointer) opens a flyout menu beside the rail
   listing that group's pages. The flyout is `position: fixed`, closes on Escape, outside click or
   navigation, and returns focus to its icon. Remembered in `localStorage["noc.nav.rail"]`.
 - **Phone.** The sidebar is replaced by a "Menu" dropdown in the top bar that opens a sheet over the page

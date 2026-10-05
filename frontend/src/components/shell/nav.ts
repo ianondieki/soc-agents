@@ -6,7 +6,8 @@ import { Bot, ClipboardCheck, Handshake, Headset, Radar, Settings2, type LucideI
  * their state in localStorage. A label is its page's title, in sentence case.
  */
 
-export type NavLinkDef = { to: string; label: string; end?: boolean };
+/** `keywords`: the other words a person types for this page in "Go to a page" (GoTo.tsx). */
+export type NavLinkDef = { to: string; label: string; end?: boolean; keywords?: string };
 
 export type NavGroupDef = {
   key: string;
@@ -17,6 +18,10 @@ export type NavGroupDef = {
   countLabel?: (n: number) => string;
   /** "hitl" when the count means a person holds something (Support); neutral ink otherwise. */
   countTone?: "hitl";
+  /** The page the count belongs to: on the group while it is closed, on this page once it opens. */
+  countTo?: string;
+  /** True on the first group after the daily desks (Operate, Support): a hairline goes above it. */
+  sectionStart?: boolean;
 };
 
 export const NAV_GROUPS: NavGroupDef[] = [
@@ -25,12 +30,13 @@ export const NAV_GROUPS: NavGroupDef[] = [
     title: "Operate",
     icon: Radar,
     countLabel: (n) => `${n} waiting for a decision`,
+    countTo: "/hitl",
     links: [
-      { to: "/mission", label: "Mission control" },
-      { to: "/incidents", label: "Incident board" },
-      { to: "/hitl", label: "Approvals" },
-      { to: "/shift", label: "Shift desk" },
-      { to: "/wallboard", label: "Wallboard" },
+      { to: "/mission", label: "Mission control", keywords: "home dashboard storm alarms live" },
+      { to: "/incidents", label: "Incident board", keywords: "tickets incidents outages sites" },
+      { to: "/hitl", label: "Approvals", keywords: "decisions hitl waiting approve reject cards" },
+      { to: "/shift", label: "Shift desk", keywords: "handover ledger shift" },
+      { to: "/wallboard", label: "Wallboard", keywords: "tv screen projector big" },
     ],
   },
   {
@@ -39,20 +45,22 @@ export const NAV_GROUPS: NavGroupDef[] = [
     icon: Headset,
     countLabel: (n) => `${n} with a person`,
     countTone: "hitl",
+    countTo: "/support",
     links: [
-      { to: "/support", label: "Support desk" },
-      { to: "/complain", label: "Complaint form" },
-      { to: "/track", label: "Track a complaint" },
+      { to: "/support", label: "Support desk", keywords: "complaints cases refunds evals outages customers" },
+      { to: "/complain", label: "Complaint form", keywords: "customer send complaint public" },
+      { to: "/track", label: "Track a complaint", keywords: "reference status customer public" },
     ],
   },
   {
     key: "agents",
     title: "Agents",
     icon: Bot,
+    sectionStart: true,
     links: [
-      { to: "/showcase", label: "Showcase" },
-      { to: "/agents", label: "Agent observatory" },
-      { to: "/workflow", label: "Workflow map" },
+      { to: "/showcase", label: "Showcase", keywords: "demo agents tour" },
+      { to: "/agents", label: "Agent observatory", keywords: "runs tools agents metrics" },
+      { to: "/workflow", label: "Workflow map", keywords: "graph steps pipeline flow" },
     ],
   },
   {
@@ -60,9 +68,9 @@ export const NAV_GROUPS: NavGroupDef[] = [
     title: "Quality",
     icon: ClipboardCheck,
     links: [
-      { to: "/problems", label: "Problems" },
-      { to: "/pirs", label: "Post-incident reviews" },
-      { to: "/regions", label: "Regions" },
+      { to: "/problems", label: "Problems", keywords: "root cause recurring" },
+      { to: "/pirs", label: "Post-incident reviews", keywords: "pir review lessons" },
+      { to: "/regions", label: "Regions", keywords: "counties map nairobi rift coast" },
     ],
   },
   {
@@ -70,9 +78,9 @@ export const NAV_GROUPS: NavGroupDef[] = [
     title: "Vendors",
     icon: Handshake,
     links: [
-      { to: "/scorecards", label: "Vendor scorecards" },
-      { to: "/contracts", label: "Contracts" },
-      { to: "/maintenance", label: "Maintenance" },
+      { to: "/scorecards", label: "Vendor scorecards", keywords: "vendors sla suppliers" },
+      { to: "/contracts", label: "Contracts", keywords: "vendors sla penalties" },
+      { to: "/maintenance", label: "Maintenance", keywords: "planned works windows" },
     ],
   },
   {
@@ -80,8 +88,8 @@ export const NAV_GROUPS: NavGroupDef[] = [
     title: "Platform",
     icon: Settings2,
     links: [
-      { to: "/audit", label: "Audit trail" },
-      { to: "/settings", label: "Settings" },
+      { to: "/audit", label: "Audit trail", keywords: "log history who did what" },
+      { to: "/settings", label: "Settings", keywords: "autonomy profile operator preferences" },
     ],
   },
 ];

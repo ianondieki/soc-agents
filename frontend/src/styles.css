@@ -338,51 +338,92 @@ input, select, textarea, button { caret-color: var(--accent); }
   display: inline-flex;
   align-items: center;
   gap: 10px;
-  min-height: 36px;
+  min-height: 38px;
   margin-left: -8px;
   padding: 0 8px;
   border-radius: var(--r-sm);
   color: var(--text-strong);
   font-size: 15px;
   font-weight: 700;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.015em;
   white-space: nowrap;
   transition: background-color 160ms var(--ease);
 }
 .brand:hover { background: var(--surface-raised); text-decoration: none; }
 .brand-mark { flex: none; display: block; }
-.nav-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: var(--s3) 10px; }
 
-/* A group: a disclosure button, then its pages on a grid-rows animation. */
-.nav-group + .nav-group { margin-top: 2px; }
-.nav-group-btn {
-  display: grid;
-  grid-template-columns: 16px minmax(0, 1fr) auto 16px;
+/* "Go to a page": a quiet search box under the brand, the shortcut on its right. */
+.nav-search-row { flex: none; padding: 12px 10px 2px; }
+.nav-search {
+  display: flex;
   align-items: center;
   gap: 10px;
   width: 100%;
-  height: 34px;
-  padding: 0 8px 0 10px;
+  height: 36px;
+  padding: 0 6px 0 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  color: var(--muted);
+  font: 500 var(--fs-sm) / 1 var(--font);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 160ms var(--ease), color 160ms var(--ease);
+}
+.nav-search:hover { border-color: var(--line-strong); color: var(--text-strong); }
+.nav-search svg { flex: none; color: var(--muted-dim); }
+.nav-search > span { flex: 1 1 auto; }
+kbd {
+  display: inline-grid;
+  place-items: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  border: 1px solid var(--line);
+  border-bottom-width: 2px;
+  border-radius: 6px;
+  background: var(--surface-nav);
+  color: var(--muted);
+  font: 600 11px / 1 var(--mono);
+  white-space: nowrap;
+}
+
+.nav-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 10px 10px var(--s3); }
+
+/* A group: a disclosure button (icon, name, a count while closed, chevron), then its pages
+   hanging from a guide line under the icon, on a grid-rows animation. */
+.nav-group + .nav-group { margin-top: 2px; }
+.nav-sep { height: 1px; margin: 10px 10px; background: var(--line); }
+.nav-group-btn {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto 15px;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  height: 36px;
+  padding: 0 9px 0 10px;
   border: 0;
   border-radius: var(--r-sm);
   background: transparent;
-  color: var(--muted-dim);
-  font: 600 var(--fs-xs) / 1 var(--font);
+  color: var(--text);
+  font: 600 var(--fs-md) / 1 var(--font);
+  letter-spacing: -0.005em;
   text-align: left;
   cursor: pointer;
   transition: background-color 160ms var(--ease), color 160ms var(--ease);
 }
 .nav-group-btn:hover { background: var(--surface-raised); color: var(--text-strong); }
 .nav-group-btn:active { background: var(--surface-sunk); }
-.nav-group-btn > svg:first-child { color: var(--muted-dim); transition: color 160ms var(--ease); }
+.nav-group-btn > svg:first-child { color: var(--muted); transition: color 160ms var(--ease); }
 .nav-group-btn:hover > svg:first-child { color: var(--text-strong); }
+.nav-group.active .nav-group-btn { color: var(--text-strong); }
 .nav-group.active .nav-group-btn > svg:first-child { color: var(--accent); }
-.nav-group.active .nav-group-btn { color: var(--text); }
 .nav-group-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .nav-chevron { grid-column: 4; color: var(--muted-dim); transition: transform 200ms var(--ease); }
 .nav-group.open .nav-chevron { transform: rotate(180deg); }
-/* A count on a group: neutral ink for Operate (the decisions figure already has its violet on
-   the top bar and in Approvals); violet only on Support, where it means a person holds a case. */
+/* A count: on the group while it is closed, on its own page once open. Neutral ink for Operate
+   (the decisions figure has its violet on the top bar and in Approvals); violet on Support,
+   where it means a person holds a case. */
 .nav-count {
   grid-column: 3;
   display: inline-grid;
@@ -404,25 +445,31 @@ input, select, textarea, button { caret-color: var(--accent); }
 /* Closed pages are out of the tab order (visibility), a beat after the fold so the fold is seen. */
 .nav-group-inner { min-height: 0; overflow: hidden; visibility: hidden; transition: visibility 0s linear 200ms; }
 .nav-group.open .nav-group-inner { visibility: visible; transition-delay: 0s; }
-.nav-links { display: grid; gap: 1px; list-style: none; margin: 0; padding: 2px 0 6px; }
+/* The guide line runs under the group's icon (its centre is 19 px in); the pages' text lines up
+   with the group's name. */
+.nav-links { position: relative; display: grid; gap: 1px; list-style: none; margin: 0; padding: 2px 0 8px 28px; }
+.nav-links::before { content: ""; position: absolute; left: 18.5px; top: 2px; bottom: 8px; width: 1px; background: var(--line); }
 .nav-links a {
   position: relative;
   display: flex;
   align-items: center;
-  min-height: 36px;
-  padding: 0 10px 0 36px;
+  gap: 8px;
+  min-height: 34px;
+  padding: 0 8px 0 10px;
   border-radius: var(--r-sm);
-  color: var(--text);
+  color: var(--muted);
   font-size: var(--fs-md);
   font-weight: 500;
   line-height: 1.3;
   transition: background-color 160ms var(--ease), color 160ms var(--ease);
 }
+.nav-link-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nav-links a .nav-count { flex: none; }
 .nav-links a:hover { background: var(--surface-raised); color: var(--text-strong); text-decoration: none; }
 .nav-links a:active { background: var(--surface-sunk); }
-.nav-links a.active, .nav-links a.active:hover { color: var(--accent); font-weight: 600; }
-/* The current page: one 2 px accent marker inside the link's own padding, in the icon column. */
-.nav-links a.active::before { content: ""; position: absolute; left: 12px; top: 50%; width: 2px; height: 16px; margin-top: -8px; border-radius: 2px; background: var(--accent); }
+.nav-links a.active, .nav-links a.active:hover { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+/* The current page lights its stretch of the guide line. */
+.nav-links a.active::before { content: ""; position: absolute; left: -10px; top: 50%; width: 2px; height: 20px; margin-top: -10px; border-radius: 2px; background: var(--accent); }
 .nav-foot { flex: none; padding: 10px; border-top: 1px solid var(--line); }
 .nav-collapse {
   display: flex;
@@ -439,12 +486,17 @@ input, select, textarea, button { caret-color: var(--accent); }
   cursor: pointer;
   transition: background-color 160ms var(--ease), color 160ms var(--ease);
 }
+.nav-collapse svg { color: var(--muted-dim); }
 .nav-collapse:hover { background: var(--surface-raised); color: var(--text-strong); }
+.nav-collapse:hover svg { color: var(--text-strong); }
 
-/* The rail: one icon per group; the flyout beside it lists the group's pages. */
+/* The rail: the search icon, then one icon per group (a hairline after the daily desks); the
+   flyout beside it lists the group's pages. */
 .nav.rail .nav-brand { justify-content: center; padding: 0; }
-.nav.rail .brand { width: 36px; margin: 0; padding: 0; justify-content: center; }
+.nav.rail .brand { width: 40px; margin: 0; padding: 0; justify-content: center; }
 .nav-rail-list { display: grid; align-content: start; gap: 4px; justify-items: center; flex: 1 1 auto; min-height: 0; overflow-y: auto; list-style: none; margin: 0; padding: var(--s3) 0; }
+.nav-rail-search { padding-bottom: 8px; margin-bottom: 4px; border-bottom: 1px solid var(--line); }
+.nav-rail-section { padding-top: 8px; margin-top: 4px; border-top: 1px solid var(--line); }
 .nav.rail .nav-foot { display: grid; justify-items: center; padding: 10px 0; }
 .nav-rail-btn {
   position: relative;
@@ -462,6 +514,8 @@ input, select, textarea, button { caret-color: var(--accent); }
 .nav-rail-btn:hover, .nav-rail-btn[aria-expanded="true"] { background: var(--surface-raised); color: var(--text-strong); }
 .nav-rail-btn:active { background: var(--surface-sunk); }
 .nav-rail-btn.active { background: var(--accent-soft); color: var(--accent); }
+/* The current group on the rail: a 3 px accent tab on the screen edge. */
+.nav-rail-btn.active::before { content: ""; position: absolute; left: -14px; top: 50%; width: 3px; height: 20px; margin-top: -10px; border-radius: 0 3px 3px 0; background: var(--accent); }
 /* The count on the rail is a dot beside the icon (the number is in the button's name). */
 .nav-rail-count { position: absolute; top: 7px; right: 8px; width: 7px; height: 7px; border-radius: 50%; background: var(--text); box-shadow: 0 0 0 2px var(--surface-nav); }
 .nav-rail-count.hitl { background: var(--hitl); }
@@ -470,7 +524,7 @@ input, select, textarea, button { caret-color: var(--accent); }
   position: fixed;
   left: calc(var(--nav-rail-w) + 6px);
   z-index: 60;
-  min-width: 224px;
+  min-width: 232px;
   padding: 6px;
   background: var(--surface);
   border: 1px solid var(--line);
@@ -478,10 +532,61 @@ input, select, textarea, button { caret-color: var(--accent); }
   box-shadow: var(--shadow-float);
   animation: menuIn 160ms var(--ease);
 }
-.nav-flyout-title { padding: 6px 10px 4px; color: var(--muted-dim); font-size: var(--fs-xs); font-weight: 600; }
+.nav-flyout-title { padding: 8px 10px 6px; color: var(--text-strong); font-size: var(--fs-sm); font-weight: 600; }
 .nav-flyout .nav-links { padding: 0; }
-.nav-flyout .nav-links a { padding-left: 10px; }
+.nav-flyout .nav-links::before { display: none; }
+.nav-flyout .nav-links a { padding-left: 10px; color: var(--text); }
 .nav-flyout .nav-links a.active::before { display: none; }
+
+/* "Go to a page" (GoTo.tsx): a centred dialog over a scrim; one box, the pages below it. */
+.goto-layer { position: fixed; inset: 0; z-index: 80; display: grid; justify-items: center; align-items: start; padding: 12vh 16px 16px; }
+.goto-scrim { position: fixed; inset: 0; background: var(--scrim); animation: fadeIn 160ms var(--ease); }
+.goto {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: min(560px, 100%);
+  max-height: min(520px, 76vh);
+  overflow: hidden;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-float);
+  animation: menuIn 160ms var(--ease);
+}
+.goto-field { flex: none; display: flex; align-items: center; gap: 12px; height: 56px; padding: 0 14px 0 18px; border-bottom: 1px solid var(--line); }
+.goto-field > svg { flex: none; color: var(--muted); }
+.goto-input { flex: 1 1 auto; min-width: 0; height: 100%; border: 0; outline: 0; background: transparent; color: var(--text-strong); font: 500 var(--fs-base) / 1 var(--font); }
+.goto-input::placeholder { color: var(--muted-dim); }
+/* The box is the dialog's one control: no field chrome of its own, and its focus shows as an
+   accent rule under the whole field. */
+.goto .goto-input, .goto .goto-input:hover, .goto .goto-input:focus { min-height: 0; padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
+.goto .goto-input:focus-visible { outline: none; }
+.goto-field { position: relative; }
+.goto-field:focus-within::after { content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; background: var(--accent); }
+.goto-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; list-style: none; margin: 0; padding: 6px; }
+.goto-opt {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto 14px;
+  align-items: center;
+  gap: 12px;
+  min-height: 40px;
+  padding: 0 12px;
+  border-radius: var(--r-sm);
+  color: var(--text);
+  font-size: var(--fs-md);
+  font-weight: 500;
+  cursor: pointer;
+}
+.goto-opt.is-active { background: var(--accent-soft); color: var(--text-strong); }
+.goto-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.goto-label mark { background: transparent; color: var(--accent); font-weight: 700; }
+.goto-group { color: var(--muted); font-size: var(--fs-sm); white-space: nowrap; }
+.goto-opt.is-current .goto-group { color: var(--accent); }
+.goto-enter { color: var(--accent); opacity: 0; }
+.goto-opt.is-active .goto-enter { opacity: 1; }
+.goto-empty { margin: 0; padding: 22px 18px 26px; color: var(--muted); font-size: var(--fs-md); }
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 @keyframes menuIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
 
 /* Top bar: the operator and one quiet track for the state of the floor (live link, autonomy,
@@ -1238,6 +1343,8 @@ textarea { width: 100%; min-height: 90px; line-height: 1.5; resize: vertical; }
 :root[data-quiet="on"] .switch-thumb { transition: none !important; }
 :root[data-quiet="on"] .menu,
 :root[data-quiet="on"] .nav-flyout,
+:root[data-quiet="on"] .goto,
+:root[data-quiet="on"] .goto-scrim,
 :root[data-quiet="on"] .sheet { animation: none !important; }
 
 
@@ -1926,7 +2033,7 @@ textarea { width: 100%; min-height: 90px; line-height: 1.5; resize: vertical; }
   .wb-card.escalated, .wb-escalation-strip { animation: none !important; }
   summary::before { transition: none !important; }
   .rail-btn, .row, .kpi, .region-bar-fill, .nav-group-panel, .nav-chevron, .switch-track, .switch-thumb { transition: none !important; }
-  .menu, .nav-flyout, .sheet { animation: none !important; }
+  .menu, .nav-flyout, .sheet, .goto, .goto-scrim { animation: none !important; }
 }
 
 /* Fit: wide tables scroll inside their panel on a phone; secondary top-bar items give way
