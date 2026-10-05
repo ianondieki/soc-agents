@@ -119,8 +119,9 @@ export default function Outages({ tick, profile }: { tick: number; profile?: any
 
   // Open first, then newest first as the API sends them.
   const orderedSurges = useMemo(() => {
-    const open = surges.filter((s) => s.status === "open");
-    return [...open, ...surges.filter((s) => s.status !== "open")];
+    // Still in play first (waiting for a decision, or opening its ticket), then the settled ones.
+    const live = (s: Surge) => s.status === "open" || s.status === "ingesting";
+    return [...surges.filter(live), ...surges.filter((s) => !live(s))];
   }, [surges]);
 
   if (loopState === "missing" && rowsState === "missing" && surgesState === "missing") {
@@ -518,10 +519,26 @@ function SurgeItem({ s, onRetried, onAnnounce, region }: { s: Surge; onRetried: 
           <Link to={cardLink(s.card_id)} className="ol-v ol-notice hitl">
             {SURGE_STATUS_WORD.open}
           </Link>
+        ) : s.status === "ingesting" ? (
+          <>
+            <span className="ol-v">{SURGE_STATUS_WORD.ingesting}</span>
+            <span className="ol-sub">confirmed{s.decided_by ? ` by ${s.decided_by}` : ""}; the alarm is going through the agents</span>
+          </>
+        ) : s.status === "stale" ? (
+          <>
+            <span className="ol-v">{SURGE_STATUS_WORD.stale}</span>
+            <span className="ol-sub">Its card was decided while the Support desk was off. The next complaint about {s.place} starts a new card.</span>
+          </>
         ) : s.status === "confirmed" ? (
           <>
             <span className={"ol-v ol-notice" + (failed ? "" : " ok")}>
-              {failed ? "Confirmed, but the ticket did not open" : s.incident_number ? "Confirmed, ticket opened" : SURGE_STATUS_WORD.confirmed}
+              {failed
+                ? "Confirmed, but the ticket did not open"
+                : s.outcome === "linked_existing"
+                  ? "Linked to a ticket already open"
+                  : s.incident_number
+                    ? "Confirmed, ticket opened"
+                    : SURGE_STATUS_WORD.confirmed}
             </span>
             {s.incident_id && s.incident_number && (
               <Link to={`/incidents/${encodeURIComponent(s.incident_id)}`} className="mono ol-inc">

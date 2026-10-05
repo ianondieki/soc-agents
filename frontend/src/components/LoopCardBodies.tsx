@@ -1,7 +1,8 @@
 import { Link } from "react-router-dom";
 import { customerUpdateOf, possibleOutageOf, smsMetrics, type LoopSms } from "../lib/hitl";
 import { humanStatus, regionName } from "../lib/agents";
-import { fmtClock, restoreSourceWord, surgeOriginWords } from "../lib/support";
+import { Fragment } from "react";
+import { TICKET_SLOT, fmtClock, restoreSourceWord, surgeOriginWords } from "../lib/support";
 
 /**
  * The bodies of the two close-the-loop approval cards (docs/CLOSE_THE_LOOP.md §5, §7.2), in the
@@ -17,6 +18,29 @@ import { fmtClock, restoreSourceWord, surgeOriginWords } from "../lib/support";
  *    view: texts and references, never a number beyond its masked form), then the confirmation
  *    SMS approving sends, in the same block as the customer update's.
  */
+
+/**
+ * The SMS text as sent, with the `{ticket}` slot (filled once the ticket exists) drawn as a
+ * visible placeholder chip, never as raw braces.
+ */
+function SmsText({ text }: { text: string }) {
+  if (!text.includes(TICKET_SLOT)) return <>{text}</>;
+  const parts = text.split(TICKET_SLOT);
+  return (
+    <>
+      {parts.map((part, i) => (
+        <Fragment key={i}>
+          {part}
+          {i < parts.length - 1 && (
+            <span className="loop-slot" title="Filled in with the ticket number once the ticket is open">
+              the new ticket number
+            </span>
+          )}
+        </Fragment>
+      ))}
+    </>
+  );
+}
 
 const LANGUAGE: Record<string, string> = { en: "English", sw: "Kiswahili", mixed: "English and Kiswahili" };
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
@@ -74,7 +98,7 @@ function SmsBlock({ sms, headingId, check, intro }: { sms: LoopSms; headingId: s
                   <SmsMeta text={c.text} segments={c.segments} recipients={c.n} />
                 </div>
                 <pre className="pre hitl-channel-body full" tabIndex={0} data-keep-tab="" lang={c.lang} aria-label={`${c.label} text`}>
-                  {c.text}
+                  <SmsText text={c.text} />
                 </pre>
               </div>
             ))}
@@ -219,11 +243,21 @@ export function PossibleOutageBody({ task, headingId, check, profile }: { task: 
             <dd className="mono">{first && last && first !== last ? `${first} to ${last}` : first || last}</dd>
           </div>
         )}
+        {o.coveringIncidentNumber && (
+          <div className="hitl-fact wide">
+            <dt>Already open</dt>
+            <dd className="attn warn">
+              <span>
+                <span className="mono">{o.coveringIncidentNumber}</span> covers this place: approving links these complaints to it instead of opening a ticket
+              </span>
+            </dd>
+          </div>
+        )}
         <div className="hitl-fact wide">
           <dt>Origin</dt>
           <dd>
             {origin[0].toUpperCase() + origin.slice(1)}
-            {o.origin !== "still_down" ? "; no network alarm" : ""}
+            {o.origin !== "still_down" && !o.coveringIncidentNumber ? "; no network alarm" : ""}
           </dd>
         </div>
       </dl>
@@ -251,7 +285,12 @@ export function PossibleOutageBody({ task, headingId, check, profile }: { task: 
       </div>
 
       {/* §7.2: approving sends this SMS too, so the approver reads it before deciding. */}
-      <SmsBlock sms={o} headingId={headingId} check="" intro="Sent once the ticket is open; shown for one customer" />
+      <SmsBlock
+        sms={o}
+        headingId={headingId}
+        check=""
+        intro={o.coveringIncidentNumber ? "Sent once the complaints are linked; shown for one customer" : "Sent once the ticket is open; shown for one customer"}
+      />
     </>
   );
 }

@@ -308,14 +308,16 @@ export interface OutageRow {
   from_customer_reports: boolean;
 }
 
-export type SurgeStatus = "open" | "confirmed" | "dismissed";
+/** `ingesting` while the confirm opens a ticket; `stale` when its card was decided without it. */
+export type SurgeStatus = "open" | "ingesting" | "confirmed" | "dismissed" | "stale";
 
 export interface Surge {
   id: string;
   place: string;
   region_code: string | null;
   status: SurgeStatus | string;
-  origin: "new_complaints" | "still_down" | string;
+  /** The backend says `complaints`; an older build said `new_complaints`. Both read as new complaints. */
+  origin: "complaints" | "new_complaints" | "still_down" | string;
   complaints: number;
   numbers: number;
   first_at: string | null;
@@ -330,6 +332,8 @@ export interface Surge {
   complaint_refs: string[];
   /** The incident a still-down surge came from, when the API names it. */
   parent_incident_number?: string | null;
+  /** How a confirm ended: a new ticket, or linked to an incident already covering the place. */
+  outcome?: "ticket_opened" | "linked_existing" | string | null;
 }
 
 export interface IncidentCustomers {
@@ -688,6 +692,17 @@ export function stepSentence(step: Step, titles: Record<string, string> = {}): s
       const place = typeof d.place === "string" && d.place ? ` in ${d.place}` : "";
       return `The customer says service is still down${place} after the restore; the case went back to a person.`;
     }
+    case "followup/sms_capped": {
+      const cap = typeof d.cap === "number" ? d.cap : null;
+      const inc = typeof d.incident_number === "string" && d.incident_number ? ` about ${d.incident_number}` : "";
+      return `Not told${inc} yet: this number already had ${cap ?? "the most"} of our messages in the last 24 hours, so the customer stays waiting.`;
+    }
+    case "followup/linked_late": {
+      const inc = typeof d.incident_number === "string" && d.incident_number ? d.incident_number : "an outage opened later";
+      return `Linked to ${inc}, which opened after the complaint; the customer hears when it is restored.`;
+    }
+    case "followup/restore_notice_rejected":
+      return step.summary || "The restore update was held back; the customer stays waiting.";
     case "followup/linked_confirmed_outage": {
       const inc = typeof d.incident_number === "string" && d.incident_number ? d.incident_number : "the new ticket";
       const by = typeof d.decided_by === "string" && d.decided_by ? `, confirmed by ${d.decided_by}` : "";
@@ -1199,9 +1214,14 @@ export function surgeOriginWords(origin: unknown, parentIncident?: unknown): str
 
 export const SURGE_STATUS_WORD: Record<string, string> = {
   open: "Waiting for a decision",
+  ingesting: "Opening a ticket…",
   confirmed: "Confirmed",
   dismissed: "Dismissed",
+  stale: "No longer counted",
 };
+
+/** The `{ticket}` slot a confirmation SMS carries until the ticket exists. */
+export const TICKET_SLOT = "{ticket}";
 
 // -------------------------------------------------------------------------------- evals
 

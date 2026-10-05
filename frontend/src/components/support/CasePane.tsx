@@ -288,7 +288,8 @@ export default function CasePane({ id, who, tick, stacked, onBack, onChanged, ti
         <Icon size={18} strokeWidth={1.75} aria-hidden="true" />
         <div>
           <p className="sd-verdict-text">{v.text}</p>
-          {v.sub && <p className="sd-verdict-sub">{v.sub}</p>}
+          {/* The reason as the API wrote it for the customer ("you told us…"), as a sentence here. */}
+          {v.sub && <p className="sd-verdict-sub">{v.sub[0].toUpperCase() + v.sub.slice(1)}</p>}
           <div className="facts sd-verdict-facts">
             {/* How a linked complaint was matched to its incident: a weak match reads as one. */}
             {c.linked_incident && linkStrengthWord(c.link_strength) && (

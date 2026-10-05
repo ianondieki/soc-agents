@@ -273,7 +273,10 @@ export const TASK_TYPES: Readonly<Record<string, TaskTypeSpec>> = {
     channels: false,
     reasonRequired: true,
     known: true,
-    approveLabel: () => "Open a ticket and tell them",
+    approveLabel: (p) => {
+      const covering = possibleOutageOf(p).coveringIncidentNumber;
+      return covering ? `Link to ${covering} and tell them` : "Open a ticket and tell them";
+    },
     approveBusy: "Opening…",
     rejectLabel: "Dismiss",
     rejectBusy: "Dismissing…",
@@ -282,12 +285,16 @@ export const TASK_TYPES: Readonly<Record<string, TaskTypeSpec>> = {
     approveReasons: ["several areas confirm", "matches field report"],
     // §7.2: the confirmation SMS is on the card, so the effect line counts who gets it.
     effectFor: (p) => {
-      const n = possibleOutageOf(p).recipients;
-      return `Opens a ticket and sends the SMS below to ${n != null ? `${n} ${n === 1 ? "number" : "numbers"}` : "these numbers"}.`;
+      const o = possibleOutageOf(p);
+      const to = o.recipients != null ? `${o.recipients} ${o.recipients === 1 ? "number" : "numbers"}` : "these numbers";
+      return o.coveringIncidentNumber
+        ? `Links these complaints to ${o.coveringIncidentNumber}, already open, and sends the SMS below to ${to}.`
+        : `Opens a ticket and sends the SMS below to ${to}.`;
     },
     approvedEffect: (p) => {
-      const n = possibleOutageOf(p).recipients;
-      return `A ticket opens and the SMS goes to ${n != null ? `${n} ${n === 1 ? "number" : "numbers"}` : "the customers"}.`;
+      const o = possibleOutageOf(p);
+      const to = o.recipients != null ? `${o.recipients} ${o.recipients === 1 ? "number" : "numbers"}` : "the customers";
+      return o.coveringIncidentNumber ? `Linked to ${o.coveringIncidentNumber}; the SMS goes to ${to}.` : `A ticket opens and the SMS goes to ${to}.`;
     },
     rejectedEffect: "The complaints stay as they were.",
   },
@@ -409,6 +416,8 @@ export interface PossibleOutage extends LoopSms {
   lastAt: string;
   origin: string;
   parentIncidentNumber: string;
+  /** An open ticket that already covers the place: a confirm links to it instead of opening one. */
+  coveringIncidentNumber: string;
   excerpts: { ref: string; text: string; at: string }[];
 }
 
@@ -426,6 +435,7 @@ export function possibleOutageOf(payload: unknown): PossibleOutage {
     lastAt: firstString(own(p, "last_at")),
     origin: firstString(own(p, "origin")),
     parentIncidentNumber: clamp(firstString(own(p, "parent_incident_number")), 40),
+    coveringIncidentNumber: clamp(firstString(own(p, "covering_incident_number")), 40),
     excerpts: ex.filter(isPlainObject).slice(0, 6).map((x) => ({
       ref: clamp(firstString(own(x, "ref")), 24),
       text: clamp(firstString(own(x, "text")), 160),

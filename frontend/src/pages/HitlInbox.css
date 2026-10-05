@@ -329,6 +329,20 @@
 /* ---------------------------------------------------------------- close-the-loop cards */
 /* docs/CLOSE_THE_LOOP.md §5: the restore notice and the possible outage (components/LoopCardBodies). */
 .loop-warn { color: var(--warn); }
+/* The ticket number a confirmation SMS will carry once the ticket exists: a placeholder, plainly. */
+.loop-slot {
+  display: inline-block;
+  padding: 0 6px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  font-family: var(--font);
+  font-size: 0.92em;
+  font-style: italic;
+  line-height: 1.35;
+  white-space: nowrap;
+}
 .loop-sample > summary { color: var(--muted); }
 .loop-sample-list {
   display: grid;
