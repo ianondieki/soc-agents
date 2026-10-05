@@ -436,7 +436,7 @@ function MissionControl({
             {incLoad === "stale" && <StaleNote />}
             {incLoad === "ok" && open.length === 0 && !storming && (
               <div className="empty">
-                No open tickets. Launch the storm above, or see closed ones on the <Link to="/incidents">Incident board</Link>.
+                No open tickets. Launch the storm above, or see closed ones on the <Link to="/incidents?state=closed">Incident board</Link>.
               </div>
             )}
             {incLoad !== "loading" && open.length === 0 && storming && (

@@ -183,6 +183,17 @@ side at two thirds and one third: Live tickets, each row led by its site with th
 beside it, and Approvals. Then one row of three panels of one height: the agent activity, the recent
 runs and the open tickets by region.
 
+**The Incident board.** A toolbar where every filter says how many tickets it holds: a switch for
+Open (the default), Restored, Closed and All; the four priorities as buttons in their own colours,
+one chosen at a time; the search (ticket number, site code or site name) and the region. The view
+lives in the address (`/incidents?state=closed&p=P1&region=NBI_E`), and one line under the toolbar
+says what is shown, with "Clear filters". The table is led by the site: its name strong, the ticket
+number, site code and domain under it; then region, owner, the status as a pill with a dot (amber
+with a vendor, blue with the NOC, green restored, grey closed), how long it has been open (red, with
+"past restore SLA", once the restore deadline has gone; "took 3 h" once done) and M-PESA. P1 rows
+carry a red edge. On a narrower panel the region and then the owner fold into the site's second line
+(a container query), so the table never scrolls sideways; a phone gets one card per ticket.
+
 **The Wallboard** (always Night, made for a TV across the room). The head: the mark, "NOC wallboard"
 and the operator; on the right the live state as a pill (green dot while live, red words when the wall
 has stopped updating, the escalation count beside it at the same size) and the time in Nairobi, big, in

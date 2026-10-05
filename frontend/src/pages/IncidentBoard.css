@@ -1,0 +1,138 @@
+/* The Incident board (pages/IncidentBoard.tsx): a toolbar of filters that say how many tickets
+ * each holds, one line saying what is shown, then the table. The table is led by the site; the
+ * region and owner columns fold into the site's second line when the panel is narrow (a container
+ * query: the panel's width decides, not the window's), so it never scrolls sideways. */
+
+/* ---- Toolbar --------------------------------------------------------------------------------- */
+.ib-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; margin-bottom: 10px; }
+.ib-states > button { display: inline-flex; align-items: center; gap: 7px; min-height: 32px; padding: 0 12px; }
+.ib-n { min-width: 1ch; color: var(--muted-dim); font-size: var(--fs-xs); font-weight: 600; font-variant-numeric: tabular-nums; }
+.ib-states > button[aria-pressed="true"] .ib-n { color: var(--accent); }
+
+/* The priority buttons: the priority's own colour as a dot-sized key, filled when chosen. */
+.ib-prios { display: inline-flex; flex-wrap: wrap; gap: 6px; }
+.ib-prio {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 0 10px 0 6px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  font: 600 var(--fs-sm) / 1 var(--font);
+  cursor: pointer;
+  transition: border-color 160ms var(--ease), background-color 160ms var(--ease);
+}
+.ib-prio:hover { border-color: var(--line-strong); }
+.ib-prio-key { display: inline-grid; place-items: center; min-width: 28px; height: 22px; padding: 0 6px; border-radius: 999px; font-family: var(--mono); font-size: var(--fs-xs); font-weight: 700; }
+.ib-prio.P1 .ib-prio-key { background: var(--p1); color: var(--p1-ink); }
+.ib-prio.P2 .ib-prio-key { background: var(--p2); color: var(--p2-ink); }
+.ib-prio.P3 .ib-prio-key { background: var(--p3); color: var(--p3-ink); }
+.ib-prio.P4 .ib-prio-key { background: var(--p4); color: var(--p4-ink); }
+.ib-prio[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent); }
+.ib-prio[aria-pressed="true"] .ib-n { color: var(--accent); }
+
+.ib-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-left: auto; }
+.ib-search { position: relative; display: inline-flex; align-items: center; }
+.ib-search > svg { position: absolute; left: 10px; color: var(--muted-dim); pointer-events: none; }
+.ib-search > input { width: 15rem; padding-left: 34px; }
+.ib-tools select { min-width: 10rem; }
+
+.ib-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; min-height: 30px; margin-bottom: 10px; color: var(--muted); font-size: var(--fs-sm); }
+
+/* ---- Table ----------------------------------------------------------------------------------- */
+.ib-panel { container-type: inline-size; padding: 4px 8px 8px; }
+.ib-table { table-layout: fixed; }
+.ib-c-prio { width: 76px; }
+.ib-c-region { width: 136px; }
+.ib-c-owner { width: 132px; }
+.ib-c-status { width: 172px; }
+.ib-c-age { width: 136px; }
+.ib-c-mpesa { width: 96px; }
+.ib-table thead th { background: var(--surface); }
+.ib-row { cursor: pointer; }
+.ib-row td { height: 60px; padding-top: 8px; padding-bottom: 8px; }
+/* A P1 is marked down its first cell's edge as well as by its pill. */
+.ib-row.P1 > td:first-child { box-shadow: inset 3px 0 0 var(--p1); }
+.ib-site-cell { min-width: 0; }
+.ib-site {
+  display: block;
+  overflow: hidden;
+  color: var(--text-strong);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ib-site:hover { color: var(--text-strong); text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--line-strong); }
+.ib-sub { display: flex; gap: 0 14px; margin-top: 3px; overflow: hidden; color: var(--muted); font-size: var(--fs-xs); white-space: nowrap; }
+/* The number and a folded region never shrink; the rest cut with an ellipsis. */
+.ib-sub > span { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.ib-sub > .ib-num, .ib-sub > .ib-fold-region { flex-shrink: 0; }
+.ib-sub > .ib-num { color: var(--text); }
+.ib-fold-region, .ib-fold-owner { display: none; }
+
+/* A status as a pill: the word, with a dot that helps the eye group them. */
+.ib-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  max-width: 100%;
+  padding: 3px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-raised);
+  color: var(--text);
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  white-space: nowrap;
+}
+.ib-status-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
+.ib-status.warn .ib-status-dot { background: var(--warn); }
+.ib-status.ok .ib-status-dot { background: var(--ok); }
+.ib-status.done { color: var(--muted); }
+.ib-status.done .ib-status-dot { background: var(--muted-dim); }
+
+/* How long: tabular, red with its words when past the restore SLA, quieter once done. */
+.ib-age { display: grid; gap: 2px; }
+.ib-age-time { color: var(--text); font-size: var(--fs-sm); font-weight: 500; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.ib-age.late .ib-age-time { color: var(--danger-text); font-weight: 600; }
+.ib-age-late { color: var(--danger-text); font-size: var(--fs-xs); font-weight: 600; white-space: nowrap; }
+.ib-age.done .ib-age-time { color: var(--muted); font-size: var(--fs-xs); }
+
+.ib-flag { display: inline-flex; align-items: center; height: 22px; padding: 0 9px; border-radius: 999px; background: var(--danger-soft); color: var(--danger-text); font-size: var(--fs-xs); font-weight: 600; white-space: nowrap; }
+
+/* Narrower panel: the region folds into the site line; narrower still, the owner too. */
+@container (max-width: 1000px) {
+  .ib-table .ib-c-region { display: none; }
+  .ib-fold-region { display: inline; }
+  .ib-domain, .ib-code { display: none; }
+}
+@container (max-width: 820px) {
+  .ib-table .ib-c-owner { display: none; }
+  .ib-fold-owner { display: inline; }
+  .ib-c-status { width: 150px; }
+  .ib-c-age { width: 120px; }
+}
+
+/* ---- Phone cards ----------------------------------------------------------------------------- */
+.ib-cards { display: flex; flex-direction: column; }
+.ib-card { display: grid; gap: 4px; padding: 12px 10px 12px 12px; border-top: 1px solid var(--line); color: var(--text); text-decoration: none; }
+.ib-card:first-child { border-top: 0; }
+.ib-card:hover { background: var(--surface-raised); text-decoration: none; }
+.ib-card.P1 { box-shadow: inset 3px 0 0 var(--p1); }
+.ib-card-top { display: flex; align-items: flex-start; gap: 10px; min-width: 0; }
+.ib-card-top > .pill { margin-top: 1px; }
+.ib-card-site { flex: 1 1 auto; min-width: 0; color: var(--text-strong); font-weight: 600; line-height: 1.3; overflow-wrap: anywhere; }
+.ib-card .ib-age { flex: none; justify-items: end; }
+.ib-card-facts { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; color: var(--muted); font-size: var(--fs-xs); }
+
+@media (max-width: 760px) {
+  .ib-tools { width: 100%; margin-left: 0; }
+  .ib-search { flex: 1 1 12rem; }
+  .ib-search > input { width: 100%; }
+  .ib-tools select { flex: 1 1 9rem; min-width: 0; }
+  .ib-states { width: 100%; }
+  .ib-states > button { flex: 1 1 0; justify-content: center; padding: 0 6px; }
+}
