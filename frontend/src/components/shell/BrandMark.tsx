@@ -1,15 +1,23 @@
 /**
- * The mark: three fibre strands (blue, orange, green: the first three colours of a 12-fibre tube)
- * running into one splice. Drawn at 24 px, crisp at 22. Identity only, so it uses the fibre
- * colours and the ink; never a status colour.
+ * The mark: the agent dial. A ring, half of it lit in the agents' blue (the work they do on their
+ * own), ending in the violet dot where a person decides; inside, three ascending bars for the
+ * network the desk keeps up. The same story as the dial on the front page, in one glyph.
+ *
+ * Drawn on a 24 grid, crisp from 20 px. The dot cuts the ring with the colour behind the mark:
+ * `--mark-cut` (the nav surface unless a page sets it). public/favicon.svg is the same drawing
+ * with fixed colours.
  */
-export function BrandMark({ size = 22 }: { size?: number }) {
+export function BrandMark({ size = 24 }: { size?: number }) {
   return (
     <svg className="brand-mark" width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false">
-      <path d="M2.5 5.5C9.5 5.5 12.5 12 19 12" stroke="var(--fibre-1)" strokeWidth="2.2" strokeLinecap="round" />
-      <path d="M2.5 12H19" stroke="var(--fibre-2)" strokeWidth="2.2" strokeLinecap="round" />
-      <path d="M2.5 18.5C9.5 18.5 12.5 12 19 12" stroke="var(--fibre-3)" strokeWidth="2.2" strokeLinecap="round" />
-      <circle cx="19" cy="12" r="3" fill="var(--text-strong)" stroke="var(--surface-nav)" strokeWidth="1.5" />
+      <circle cx="12" cy="12" r="9" stroke="var(--line-strong)" strokeWidth="2.4" />
+      <path d="M12 3a9 9 0 0 1 0 18" stroke="var(--accent)" strokeWidth="2.4" strokeLinecap="round" />
+      <circle cx="12" cy="21" r="2.6" fill="var(--hitl)" stroke="var(--mark-cut, var(--surface-nav))" strokeWidth="1.6" />
+      <g fill="var(--text-strong)">
+        <rect x="7.4" y="12.9" width="2.2" height="3.4" rx="1.1" />
+        <rect x="10.9" y="10.5" width="2.2" height="5.8" rx="1.1" />
+        <rect x="14.4" y="8.1" width="2.2" height="8.2" rx="1.1" />
+      </g>
     </svg>
   );
 }

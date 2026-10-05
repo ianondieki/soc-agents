@@ -24,7 +24,7 @@
 .cp-mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
 
 /* ------------------------------------------------------------------ header */
-.cp-top { position: sticky; top: 0; z-index: 20; background: var(--bg); border-bottom: 1px solid var(--line); }
+.cp-top { --mark-cut: var(--bg); position: sticky; top: 0; z-index: 20; background: var(--bg); border-bottom: 1px solid var(--line); }
 .cp-top > .cp-wrap { display: flex; align-items: center; justify-content: space-between; gap: var(--s4); height: 56px; }
 .cp-brand { display: inline-flex; align-items: center; gap: 10px; color: var(--text-strong); font-size: var(--fs-base); font-weight: 600; letter-spacing: -0.01em; white-space: nowrap; }
 .cp-brand:hover { text-decoration: none; }

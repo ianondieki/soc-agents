@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none">
+  <!-- The agent dial (components/shell/BrandMark.tsx) on the Night nav tile, so it reads on light
+       and dark tab strips alike. -->
+  <rect width="32" height="32" rx="8" fill="#13161C"/>
+  <g transform="translate(4 4)">
+    <circle cx="12" cy="12" r="9" stroke="#363E4B" stroke-width="2.6"/>
+    <path d="M12 3a9 9 0 0 1 0 18" stroke="#7C9CFF" stroke-width="2.6" stroke-linecap="round"/>
+    <circle cx="12" cy="21" r="2.8" fill="#C9A2FF" stroke="#13161C" stroke-width="1.6"/>
+    <g fill="#FFFFFF">
+      <rect x="7.3" y="12.7" width="2.4" height="3.6" rx="1.2"/>
+      <rect x="10.8" y="10.3" width="2.4" height="6" rx="1.2"/>
+      <rect x="14.3" y="7.9" width="2.4" height="8.4" rx="1.2"/>
+    </g>
+  </g>
+</svg>

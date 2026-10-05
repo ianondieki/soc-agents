@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { api } from "../api";
 import AgentDial, { type DialRun } from "../components/landing/AgentDial";
 import SupportFlow from "../components/landing/SupportFlow";
+import { BrandMark } from "../components/shell/BrandMark";
 import {
   alarmSite,
   audienceWord,
@@ -203,24 +204,6 @@ function ThemeButton() {
   );
 }
 
-/** The brand mark: five fibres fanning out of one tube. Drawn on a 26 x 20 grid. */
-function BrandMark({ scale = 1 }: { scale?: number }) {
-  return (
-    <svg width={26 * scale} height={20 * scale} viewBox="0 0 26 20" aria-hidden="true" focusable="false">
-      {[1, 2, 3, 4, 5].map((n, i) => (
-        <path
-          key={n}
-          d={`M2 10 C 9 10, 11 ${2.5 + i * 3.75}, 24 ${2.5 + i * 3.75}`}
-          fill="none"
-          stroke={`var(--fibre-${n})`}
-          strokeWidth="2"
-          strokeLinecap="round"
-        />
-      ))}
-    </svg>
-  );
-}
-
 // -------------------------------------------------------------------- page --
 
 export default function Landing({ profile, metrics, runsRev }: { profile: any; metrics: any; runsRev: number }) {
@@ -285,7 +268,7 @@ export default function Landing({ profile, metrics, runsRev }: { profile: any; m
       <header className={"ld-top" + (scrolled ? " is-scrolled" : "")}>
         <div className="ld-wrap ld-top-row">
           <a className="ld-brand" href="/" aria-label="Kenya NOC Mission Control, front page">
-            <BrandMark scale={1.2} />
+            <BrandMark size={28} />
             <span className="ld-brand-name">Kenya NOC</span>
             <span className="ld-brand-sub">Mission Control</span>
           </a>

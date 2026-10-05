@@ -113,6 +113,7 @@
    live state with the two actions. Flush with the hero at the top of the page; once content
    scrolls under it, it gains a hairline and a soft shadow, so the page reads as passing under it. */
 .ld-top {
+  --mark-cut: var(--bg);
   position: sticky;
   top: 0;
   z-index: 20;
