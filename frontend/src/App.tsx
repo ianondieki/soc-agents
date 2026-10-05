@@ -1,4 +1,5 @@
 import { Link, Route, Routes, useLocation, useNavigate } from "react-router-dom";
+import { Presentation, UserRoundCheck } from "lucide-react";
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { api } from "./api";
 import { apiHealthy, subscribeHealth } from "./realtime/apiHealth";
@@ -10,6 +11,7 @@ import { Sidebar } from "./components/shell/Sidebar";
 import { PhoneMenu } from "./components/shell/PhoneMenu";
 import { DisplayMenu, type DisplayState } from "./components/shell/DisplayMenu";
 import { BrandMark } from "./components/shell/BrandMark";
+import TopbarStatus, { type LiveTone } from "./components/shell/TopbarStatus";
 import { useSupportCount } from "./components/shell/useSupportCount";
 import { readRailPref, writeRailPref, type NavCounts } from "./components/shell/nav";
 import {
@@ -209,6 +211,14 @@ export default function App() {
   const nav = useNavigate();
   const loc = useLocation();
   const headerRef = useRef<HTMLElement>(null);
+  // The top bar lifts off the page (a hairline shadow) once the page has scrolled under it.
+  const [scrolled, setScrolled] = useState(false);
+  useEffect(() => {
+    const onScroll = () => setScrolled(window.scrollY > 4);
+    onScroll();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
 
   // The shell's shape: a phone has no sidebar; a tablet starts on the rail; a person's choice
   // (localStorage "noc.nav.rail") wins over the width default once made.
@@ -474,14 +484,16 @@ export default function App() {
   // The public support pages (the complaint form and Track my complaint) have their own frame.
   const isComplain = loc.pathname.startsWith("/complain") || loc.pathname === "/track";
   const org = profile?.display_name ? String(profile.display_name).replace(" (demo profile)", "") : "Connecting…";
-  const orgMeta = `${humanAutonomy(profile?.autonomy_level)}, ${profile?.shift ? String(profile.shift).toLowerCase() : "day"} shift`;
+  const autonomy = humanAutonomy(profile?.autonomy_level);
+  const shift = profile?.shift ? String(profile.shift).toLowerCase() : "day";
   // "L2 guarded", explained: what the agents may do on their own at this level (Settings says it too).
-  const autonomyTitle = autonomyMeaning(profile?.autonomy_level) || orgMeta;
+  const autonomyTitle = autonomyMeaning(profile?.autonomy_level) || `${autonomy}, ${shift} shift`;
   const pending: number | null = typeof metrics?.hitl_pending === "number" ? metrics.hitl_pending : metrics ? 0 : null;
   const navCounts: NavCounts = useMemo(() => ({ operate: pending, support: supportCount }), [pending, supportCount]);
   const userName = String(session?.display_name || "NOC Analyst");
   const userTitle = `${userName}${session?.role ? `, ${roleLabel(String(session.role))}` : ""}`;
   const liveBad = !apiOk || link === "down";
+  const liveTone: LiveTone = liveBad ? "bad" : link === "live" ? "ok" : "wait";
   const liveText = !apiOk ? "API unreachable" : link === "live" ? "Live" : link === "connecting" ? "Connecting…" : "Reconnecting";
   const liveTitle = !apiOk ? "The API is not answering" : "Live updates from the agents";
 
@@ -539,9 +551,9 @@ export default function App() {
         </a>
         {!phone && <Sidebar rail={rail} onToggleRail={toggleRail} counts={navCounts} />}
         <div className="main">
-          <header className="topbar" ref={headerRef}>
-            {/* On a phone the brand moves up here (there is no sidebar) and the identity line
-                takes the second row. */}
+          <header className={"topbar" + (scrolled ? " is-scrolled" : "")} ref={headerRef}>
+            {/* On a phone the brand moves up here (there is no sidebar); the operator and the
+                state of the floor move to the top of the menu sheet. */}
             {phone && (
               <Link to="/" className="brand topbar-brand" title="Front page">
                 <BrandMark />
@@ -549,16 +561,17 @@ export default function App() {
               </Link>
             )}
             <div className="topbar-left">
-              <span className="topbar-id">{org}</span>
-              <span className="topbar-meta" title={autonomyTitle}>
-                {orgMeta}
-              </span>
-              {/* Healthy is not news: "Live" stays a muted word; only a broken link turns red, and
-                  never in the first seconds while the stream is still connecting. On a phone it
-                  is a dot, with the words for a screen reader. */}
-              <span className={"topbar-live" + (liveBad ? " bad" : "") + (phone ? " dot" : "")} role="status" title={liveTitle}>
-                {phone ? <span className="sr-only">{liveText}</span> : liveText}
-              </span>
+              {!phone && <span className="topbar-id">{org}</span>}
+              {!phone && (
+                <TopbarStatus live={liveTone} liveText={liveText} liveTitle={liveTitle} autonomy={autonomy} autonomyTitle={autonomyTitle} shift={shift} />
+              )}
+              {/* On a phone, live is a dot: green while the stream is up, red when it is broken;
+                  the words stay for a screen reader. */}
+              {phone && (
+                <span className={`topbar-live dot ${liveTone}`} role="status" title={liveTitle}>
+                  <span className="sr-only">{liveText}</span>
+                </span>
+              )}
             </div>
             <div className="topbar-right">
               <button
@@ -567,11 +580,28 @@ export default function App() {
                 onClick={() => nav("/hitl")}
                 title="Open Approvals"
               >
+                <UserRoundCheck size={16} strokeWidth={1.75} aria-hidden="true" />
                 {/* One width for every state on a desktop; the short form below 1100 px. */}
                 <span className="topbar-decisions-long">
-                  {pending == null ? "Approvals" : pending > 0 ? `${pending} ${WAITING_WORD}` : "No decisions waiting"}
+                  {pending == null ? (
+                    "Approvals"
+                  ) : pending > 0 ? (
+                    <>
+                      <b className="topbar-count">{pending}</b> {WAITING_WORD}
+                    </>
+                  ) : (
+                    "No decisions waiting"
+                  )}
                 </span>
-                <span className="topbar-decisions-short">{pending && pending > 0 ? `${pending} waiting` : "Approvals"}</span>
+                <span className="topbar-decisions-short">
+                  {pending && pending > 0 ? (
+                    <>
+                      <b className="topbar-count">{pending}</b> waiting
+                    </>
+                  ) : (
+                    "Approvals"
+                  )}
+                </span>
               </button>
               {!phone && (
                 <>
@@ -582,11 +612,14 @@ export default function App() {
                     aria-pressed={guideOpen}
                     aria-controls={guideOpen ? "guide-bar" : undefined}
                     data-guide-toggle=""
+                    aria-label="Guided demo"
                     title="A five-step walkthrough for presenting the prototype"
                   >
-                    Guided demo
+                    <Presentation size={16} strokeWidth={1.75} aria-hidden="true" />
+                    <span className="topbar-guide-label">Guided demo</span>
                   </button>
                   <DisplayMenu d={display} />
+                  <span className="topbar-sep" aria-hidden="true" />
                   <span className="avatar" title={userTitle} role="img" aria-label={userTitle}>
                     {initialsOf(userName)}
                   </span>
@@ -602,10 +635,16 @@ export default function App() {
                   identity={
                     <>
                       <span className="topbar-id">{org}</span>
-                      <span className="topbar-meta" title={autonomyTitle}>
-                        {orgMeta}
-                      </span>
-                      <span className={"topbar-live" + (liveBad ? " bad" : "")}>{liveText}</span>
+                      <TopbarStatus
+                        live={liveTone}
+                        liveText={liveText}
+                        liveTitle={liveTitle}
+                        autonomy={autonomy}
+                        autonomyTitle={autonomyTitle}
+                        shift={shift}
+                        clock={false}
+                        announce={false}
+                      />
                     </>
                   }
                 />

@@ -146,10 +146,19 @@ Desktop >= 1100px                         Tablet 761-1099px          Phone <= 76
   navigation, and returns focus to its icon. Remembered in `localStorage["noc.nav.rail"]`.
 - **Phone.** The sidebar is replaced by a "Menu" dropdown in the top bar that opens a sheet over the page
   with the same accordion groups; it closes on navigation and Escape and traps nothing else.
-- **Top bar (56px).** Left: the operator ("Safaricom PLC"), its autonomy and shift as plain text, and the
-  live state (a muted "Live"; red only when broken). Right: the decisions button ("4 waiting for a
-  decision", violet when non-zero), Guided demo, a **Display** menu (Theme: Auto, Day, Night; Quiet mode;
-  Projector) and the user's initials. Three buttons and a menu, never seven chips.
+- **Top bar (56px).** Left: the operator ("Safaricom PLC") and one quiet pill track for the state of the
+  floor: the live link (a green dot while the stream is up; red words only when it is broken), the autonomy
+  level (its meaning on hover), the shift, and the time in Nairobi in Mono ("14:05 EAT", hidden below
+  1280px; the autonomy level goes below 1100px). Right: the decisions button ("5 waiting for a decision",
+  the count in a violet bubble; the one coloured control, quiet at zero), Guided demo and the **Display**
+  menu (Theme: Auto, Day, Night; Quiet mode; Projector) as quiet buttons with no box until hovered, a
+  hairline, and the user's initials. Once the page scrolls under it, the bar lifts with a soft shadow. On
+  a phone: the mark, the live dot, the decisions count and Menu; the operator and the track open at the
+  top of the sheet.
+- **The mark** (`components/shell/BrandMark.tsx`, and `public/favicon.svg` with fixed colours): the agent
+  dial. A ring, half of it lit in the accent blue (the work the agents do on their own) ending in the violet
+  dot where a person decides, with three ascending ink bars for the network inside. The dot is cut out of
+  the ring with the colour behind it (`--mark-cut`, set by pages whose header sits on `--bg`).
 - Icons: `lucide-react`, 1.75 stroke, 18px in the sidebar, 16px inline. No emoji or unicode glyphs as icons.
 
 ## Page anatomy

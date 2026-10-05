@@ -484,8 +484,9 @@ input, select, textarea, button { caret-color: var(--accent); }
 .nav-flyout .nav-links a.active::before { display: none; }
 @keyframes menuIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
 
-/* Top bar: who and how on the left as plain text; three controls, the Display panel and the
-   person's initials on the right. */
+/* Top bar: the operator and one quiet track for the state of the floor (live link, autonomy,
+   shift, the time in Nairobi) on the left; the decisions count (the one coloured control), the
+   guide and Display as quiet buttons, a hairline, and the person's initials on the right. */
 .topbar {
   position: sticky;
   top: 0;
@@ -499,41 +500,104 @@ input, select, textarea, button { caret-color: var(--accent); }
   background: var(--surface-nav);
   border-bottom: 1px solid var(--line);
   font-size: var(--fs-sm);
+  transition: box-shadow 200ms var(--ease);
 }
-.topbar-left { display: flex; flex: 1 1 auto; align-items: baseline; gap: var(--s3); min-width: 0; }
-.topbar-id { color: var(--text-strong); font-size: var(--fs-md); font-weight: 600; white-space: nowrap; }
-.topbar-meta { min-width: 0; overflow: hidden; color: var(--muted); text-overflow: ellipsis; white-space: nowrap; }
-.topbar-live { position: relative; padding-left: 14px; color: var(--muted); white-space: nowrap; }
-.topbar-live::before { content: ""; position: absolute; left: 0; top: 50%; width: 6px; height: 6px; margin-top: -3px; border-radius: 50%; background: var(--muted-dim); }
-.topbar-live.bad { color: var(--danger); font-weight: 600; }
-.topbar-live.bad::before { background: var(--danger); }
-.topbar-right { display: flex; flex: none; align-items: center; gap: var(--s2); }
+.topbar.is-scrolled { box-shadow: 0 12px 26px -24px rgba(0, 0, 0, 0.55); }
+.topbar-left { display: flex; flex: 1 1 auto; align-items: center; gap: 14px; min-width: 0; }
+.topbar-id { color: var(--text-strong); font-size: var(--fs-md); font-weight: 650; letter-spacing: -0.01em; white-space: nowrap; }
+
+.tb-status {
+  display: inline-flex;
+  flex: 0 1 auto;
+  align-items: center;
+  min-width: 0;
+  height: 30px;
+  padding: 0 2px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+}
+.tb-item {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  height: 100%;
+  padding: 0 11px;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  white-space: nowrap;
+  cursor: default;
+}
+.tb-item + .tb-item::before { content: ""; position: absolute; left: 0; top: 8px; bottom: 8px; width: 1px; background: var(--line); }
+.tb-item svg { flex: none; color: var(--muted-dim); }
+.tb-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--muted-dim); }
+.tb-live.ok .tb-dot { background: var(--ok); box-shadow: 0 0 0 3px var(--ok-soft); }
+.tb-live.bad { color: var(--danger); font-weight: 600; }
+.tb-live.bad .tb-dot { background: var(--danger); box-shadow: 0 0 0 3px var(--danger-soft); }
+.tb-clock { gap: 5px; color: var(--text); font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.tb-zone { color: var(--muted-dim); font-size: var(--fs-xs); }
+
+.topbar-right { display: flex; flex: none; align-items: center; gap: 6px; }
 /* One width for "Approvals", "4 waiting for a decision" and "No decisions waiting", so the
    controls beside it never move; the short form below 1100 px. */
-.topbar-decisions { min-width: 13.5em; }
+.topbar-decisions { min-width: 15em; gap: 7px; }
+.topbar-decisions svg { flex: none; }
+.topbar-decisions.quiet { color: var(--muted); }
+.topbar-decisions-long { display: inline-flex; align-items: center; gap: 5px; }
 .topbar-decisions-short { display: none; }
+.topbar-count {
+  display: inline-grid;
+  place-items: center;
+  min-width: 20px;
+  height: 20px;
+  margin-right: 1px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--hitl);
+  color: var(--surface);
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+/* The guide and Display are quiet: no box until a hover, the open panel or a pressed guide. */
+.topbar .topbar-guide, .topbar .topbar-display-btn { border-color: transparent; background: transparent; color: var(--text); }
+.topbar .topbar-guide svg, .topbar .topbar-display-btn svg { color: var(--muted); }
+.topbar .topbar-guide:hover, .topbar .topbar-display-btn:hover, .topbar .topbar-display-btn.is-open { background: var(--surface-raised); border-color: var(--line); color: var(--text-strong); }
+.topbar .topbar-guide[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent-line); color: var(--accent); }
+.topbar .topbar-guide[aria-pressed="true"] svg { color: var(--accent); }
 .topbar-display-btn .btn-chevron { margin-right: -2px; color: var(--muted-dim); transition: transform 200ms var(--ease); }
 .topbar-display-btn.is-open .btn-chevron { transform: rotate(180deg); }
+.topbar-sep { flex: none; width: 1px; height: 22px; margin: 0 6px; background: var(--line); }
 .avatar {
   display: inline-grid;
   place-items: center;
   width: 32px;
   height: 32px;
-  margin-left: var(--s1);
   border-radius: 50%;
   background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px var(--accent-line);
   color: var(--accent);
   font-size: var(--fs-xs);
   font-weight: 700;
   letter-spacing: 0.02em;
   cursor: default;
 }
+@media (max-width: 1279px) {
+  .tb-clock { display: none; }
+}
 @media (max-width: 1099px) {
   .topbar { padding: 0 var(--s4); }
-  .topbar-meta { display: none; }
+  .tb-autonomy { display: none; }
   .topbar-decisions { min-width: 0; }
   .topbar-decisions-long { display: none; }
-  .topbar-decisions-short { display: inline; }
+  .topbar-decisions-short { display: inline-flex; align-items: center; gap: 5px; }
+}
+@media (max-width: 899px) {
+  .topbar-guide-label { display: none; }
+  .topbar .topbar-guide { padding: 4px 8px; }
 }
 
 /* Floating panels (the Display panel, the rail's flyout, the phone sheet): the one place a
@@ -584,20 +648,20 @@ input, select, textarea, button { caret-color: var(--accent); }
 /* Phone: the brand moves into the top bar, the identity line takes the second row, and the
    Menu drops a sheet over the page. */
 /* One 56 px row: the mark (its wordmark goes first on the narrowest phones), the live dot, the
-   decisions count and Menu. The operator and shift move to the top of the menu sheet. */
+   decisions count and Menu. The operator and the state of the floor move to the top of the sheet. */
 .app.phone .topbar { padding: 0 var(--s4); gap: var(--s2); }
 .app.phone .topbar-left { flex: 1 1 auto; justify-content: flex-end; }
-/* Scoped to the bar: the same spans render again at the top of the menu sheet. */
-.app.phone .topbar-left > .topbar-id, .app.phone .topbar-left > .topbar-meta { display: none; }
 .app.phone .topbar-right { flex: none; }
 /* Live as a dot: the words stay for a screen reader (sr-only inside). */
-.topbar-live.dot { width: 20px; height: 20px; padding: 0; display: inline-grid; place-items: center; }
-.topbar-live.dot::before { position: static; margin: 0; width: 8px; height: 8px; }
+.topbar-live.dot { display: inline-grid; place-items: center; width: 20px; height: 20px; }
+.topbar-live.dot::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--muted-dim); }
+.topbar-live.dot.ok::before { background: var(--ok); box-shadow: 0 0 0 3px var(--ok-soft); }
+.topbar-live.dot.bad::before { background: var(--danger); box-shadow: 0 0 0 3px var(--danger-soft); }
 @media (max-width: 399px) { .app.phone .topbar-brand > span { display: none; } }
-.sheet-identity { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s1) var(--s3); padding: 10px 10px 12px; font-size: var(--fs-sm); color: var(--muted); }
-.sheet-identity .topbar-id { display: inline; color: var(--text-strong); font-size: var(--fs-md); font-weight: 600; }
-.sheet-identity .topbar-meta { display: inline; }
-.sheet-identity .topbar-live { padding-left: 14px; }
+.sheet-identity { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding: 10px 10px 12px; font-size: var(--fs-sm); color: var(--muted); }
+.sheet-identity .topbar-id { display: inline; }
+.sheet-identity .tb-status { max-width: 100%; }
+.sheet-identity .tb-autonomy { display: inline-flex; }
 .phone-menu-btn { gap: 6px; }
 .sheet-scrim { position: fixed; left: 0; right: 0; bottom: 0; z-index: 40; background: var(--scrim); }
 .sheet {
@@ -1954,12 +2018,13 @@ td.num { text-align: right; font-family: var(--mono); font-variant-numeric: tabu
 /* Muted and lead text at 500: a 400 stroke is the next thing a weak projector loses. Low
    specificity (:where), so a heavier rule on the same element still wins. */
 :root[data-display="projector"] :where(.muted, .lead, .facts, .head-row > span, .ticker-line, .ticker-why, .status,
-  .lr-foot, .lr-run, .topbar-meta, .topbar-live, .topbar-user, .empty, .storm-counts, .storm-progress, .list-stale,
+  .lr-foot, .lr-run, .tb-item, .empty, .storm-counts, .storm-progress, .list-stale,
   .rail-agent, .rail-meta, .rail-dl dd, .agent-stats, .agent-tags, .hop-what, .lane-off-body, .kpis-note,
   .wb-more-what, .wb-more-where, .wb-head-sub) { font-weight: 500; }
 /* Panels: a 2 px edge in a light slate that survives the wash. */
 :root[data-display="projector"] .panel { border: 2px solid var(--panel-line); }
 :root[data-display="projector"] .topbar { border-bottom: 2px solid var(--panel-line); }
+:root[data-display="projector"] .tb-status { border: 2px solid var(--panel-line); }
 :root[data-display="projector"] .nav { border-right: 2px solid var(--panel-line); }
 :root[data-display="projector"] .nav-brand, :root[data-display="projector"] .nav-foot { border-color: var(--panel-line); }
 :root[data-display="projector"] .rail-btn { border-width: 2px; }
