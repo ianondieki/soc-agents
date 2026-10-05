@@ -399,3 +399,51 @@ def test_with_nothing_open_the_handover_fails_closed(client, sent):
     assert ho["email"]["ok"] is False
     assert _read(_handover_rows) == []
     assert sent == []
+
+
+def _renumber(incident_id: str, number: str) -> None:
+    """Give a ticket a number in another style, as a database from before inc9 holds them."""
+    session = get_session()
+    try:
+        session.get(IncidentRow, incident_id).incident_number = number
+        session.commit()
+    finally:
+        session.close()
+
+
+def test_a_ticket_numbered_in_another_style_never_anchors_the_handover(client, sent):
+    """The §6.1 envelope accepts ``INC`` and six digits only, and the handover's envelope is
+    built from its anchor: a dated or legacy number at the top of the watchlist used to fail
+    the whole route with a 500. The next ticket the envelope accepts anchors it instead."""
+    legacy = client.post("/api/v1/events", json=HUB_EVENT).json()["incident"]
+    other = client.post(
+        "/api/v1/events",
+        json={**HUB_EVENT, "site_id": "SFC-RFT-HUB-NKR", "site_name": "Nakuru Rift HUB", "region_code": "RFT", "users_affected": 280000},
+    ).json()["incident"]
+    _renumber(legacy["id"], "SFC-INC-20260716-00028")
+
+    res = client.post("/api/v1/shifts/handover")
+
+    assert res.status_code == 200
+    ho = res.json()
+    assert ho["hitl"]["task_id"]
+    task = _read(lambda s: s.get(HitlTaskRow, ho["hitl"]["task_id"]))
+    assert task.incident_id == other["id"]
+    assert task.proposed_payload["anchor_incident_number"] == other["incident_number"]
+    assert sent == []
+
+
+def test_with_only_other_style_numbers_open_the_handover_fails_closed_and_says_why(client, sent):
+    inc = client.post("/api/v1/events", json=HUB_EVENT).json()["incident"]
+    _renumber(inc["id"], "SFC-INC-20260716-00028")
+
+    res = client.post("/api/v1/shifts/handover")
+
+    assert res.status_code == 200
+    ho = res.json()
+    assert ho["watch_count"] == 1
+    assert ho["hitl"]["status"] == "NOT_QUEUED"
+    assert ho["hitl"]["task_id"] is None
+    assert "INC and six digits" in ho["hitl"]["blocked_reason"]
+    assert _read(_handover_rows) == []
+    assert sent == []

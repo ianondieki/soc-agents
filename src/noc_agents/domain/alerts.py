@@ -71,10 +71,15 @@ def _as_utc(dt: datetime) -> datetime:
 UtcDateTime = Annotated[datetime, AfterValidator(_as_utc)]
 
 
+# §6.1's incident number (the inc9 style). One home: services/handover.py reads it to pick a
+# ticket that can head a handover envelope.
+INCIDENT_NUMBER_PATTERN = r"^INC\d{6}$"
+
+
 class IncidentRef(BaseModel):
     model_config = ConfigDict(extra="forbid")
     id: str
-    incident_number: str = Field(pattern=r"^INC\d{6}$")
+    incident_number: str = Field(pattern=INCIDENT_NUMBER_PATTERN)
     fingerprint: str
 
 

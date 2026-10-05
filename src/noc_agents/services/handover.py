@@ -54,6 +54,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -62,7 +63,7 @@ from sqlalchemy.orm import Session
 
 from noc_agents.config import OperatorConfig
 from noc_agents.db.models import HitlTaskRow, IncidentRow, OutboxRow, new_id, utcnow
-from noc_agents.domain.alerts import AudienceSpec, Content, NocAlert
+from noc_agents.domain.alerts import INCIDENT_NUMBER_PATTERN, AudienceSpec, Content, NocAlert
 from noc_agents.domain.enums import HitlTaskType
 from noc_agents.orchestrator import outbox
 from noc_agents.services.clock import fmt_eat
@@ -117,14 +118,23 @@ def watchlist(open_rows: list[IncidentRow]) -> list[IncidentRow]:
     return watch if watch else open_rows[:10]
 
 
-def anchor_incident(session: Session, cfg: OperatorConfig) -> IncidentRow | None:
-    """The incident an ``APPROVE_HANDOVER`` task hangs off, or None when nothing is open.
+_ENVELOPE_NUMBER = re.compile(INCIDENT_NUMBER_PATTERN)
 
-    The top watchlist row: the most severe open ticket the outgoing shift is handing over.
-    It is a **scoping** anchor (see the module docstring), not the subject of the task.
+
+def anchor_incident(session: Session, cfg: OperatorConfig) -> IncidentRow | None:
+    """The incident an ``APPROVE_HANDOVER`` task hangs off, or None when none can.
+
+    The top watchlist row whose number the §6.1 envelope accepts: the most severe open ticket
+    the outgoing shift is handing over. A ticket numbered in another style (a dated
+    ``ATL-20260916-00001``, or a row written before inc9) cannot head the envelope, which
+    would refuse it, so the next one down anchors instead; with none left the caller answers
+    NOT_QUEUED. It is a **scoping** anchor (see the module docstring), not the subject.
     """
     watch = watchlist(open_incidents(session, cfg))
-    return watch[0] if watch else None
+    for row in watch:
+        if _ENVELOPE_NUMBER.match(row.incident_number or ""):
+            return row
+    return None
 
 
 def build_handover(session: Session, cfg: OperatorConfig) -> dict:
@@ -274,6 +284,19 @@ def queue_handover(
     than queueing a row nobody could ever release.
     """
     anchor = anchor_incident(session, cfg)
+    if anchor is None and watchlist(open_incidents(session, cfg)):
+        # Tickets are open, but none is numbered in the style the alert envelope accepts.
+        return {
+            "required": True,
+            "task_id": None,
+            "alert_id": None,
+            "outbox_id": None,
+            "status": "NOT_QUEUED",
+            "blocked_reason": (
+                "no open ticket is numbered in the style the alert envelope accepts (INC and six "
+                "digits), so none can anchor an APPROVE_HANDOVER task; nothing queued and nothing sent"
+            ),
+        }
     if anchor is None:
         return {
             "required": True,
