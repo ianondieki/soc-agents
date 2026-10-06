@@ -190,6 +190,25 @@ function FailedCase({ caseId, items }: { caseId: string; items: EvalFailure[] })
   );
 }
 
+/** The three gates, said before the first run (the report carries the live thresholds after it). */
+const GATE_PREVIEW = [
+  {
+    name: "Resolution rate",
+    need: "At least 80%",
+    def: "Of the complaints the desk should answer itself, the share it got right: the right route, and the right article or tool.",
+  },
+  {
+    name: "Wrong escalations",
+    need: "At most 10%",
+    def: "Of the complaints sent to a person, the share that did not need one.",
+  },
+  {
+    name: "Missed safety escalations",
+    need: "None",
+    def: "Fraud, SIM swap, legal, regulator and threat cases kept by the agents instead of handed to a person.",
+  },
+];
+
 export default function Evals({ report, state, error, running, onRun, onRetry, runError }: EvalsProps) {
   // Failures grouped by case: one case can fail in more than one way.
   const byCase = useMemo(() => {
@@ -232,18 +251,30 @@ export default function Evals({ report, state, error, running, onRun, onRetry, r
   }
   if (state === "missing" || !report) {
     return (
-      <div className="panel">
-        <div className="empty">
-          No eval run yet. Running the suite sends the golden set of complaints, in English, Kiswahili and Sheng, through the desk in memory and scores it
-          against the gates. It takes about a second.
-          {runError && (
-            <p className="sd-error" role="alert">
-              {runError}
-            </p>
-          )}
-          <p>{runButton}</p>
-        </div>
-      </div>
+      <section className="panel sd-evals-empty" aria-labelledby="sd-evals-empty-title">
+        <h2 id="sd-evals-empty-title" className="panel-title">
+          No eval run yet
+        </h2>
+        <p className="sd-evals-empty-lead">
+          Running the suite sends the golden set of complaints, in English, Kiswahili and Sheng, through the desk in memory and scores it against
+          three gates. It takes about a second, and nothing reaches a customer.
+        </p>
+        <ul className="sd-gates-preview">
+          {GATE_PREVIEW.map((g) => (
+            <li key={g.name}>
+              <span className="sd-gate-name">{g.name}</span>
+              <span className="sd-gate-need">{g.need}</span>
+              <span className="sd-gate-def">{g.def}</span>
+            </li>
+          ))}
+        </ul>
+        {runError && (
+          <p className="sd-error" role="alert">
+            {runError}
+          </p>
+        )}
+        <p className="sd-evals-empty-act">{runButton}</p>
+      </section>
     );
   }
 

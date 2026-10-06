@@ -845,6 +845,8 @@ export function valueText(k: string, v: unknown): string {
   if (k === "status" && (TOOL_STATUS_WORD as Record<string, string>)[s]) return (TOOL_STATUS_WORD as Record<string, string>)[s];
   if (k === "reason_code" || k === "held_tool" || k === "tool" || k === "intent") return s; // codes stay codes
   if (/^[a-z_]+$/.test(s) && s.includes("_")) return humanWords(s);
+  // A NOC enum in a tool's result ("AWAITING_VENDOR") reads as words too; a code with digits stays.
+  if (/^[A-Z]+(?:_[A-Z]+)+$/.test(s)) return humanWords(s.toLowerCase());
   return s;
 }
 

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, AtSign, Bot, Globe, MessageSquare, Phone, Smartphone, UserRound, type LucideIcon } from "lucide-react";
 import { humanStatus } from "../../lib/agents";
 import { IconCheck } from "../../lib/icons";
 import {
@@ -26,6 +26,9 @@ import {
 import { fmtEAT, fmtTime } from "../../lib/time";
 import AgentTrace from "./AgentTrace";
 import { ROUTE_ICON, StatusWord } from "./marks";
+
+/** The way the complaint came in, as an icon beside its word. */
+const CHANNEL_ICON: Record<string, LucideIcon> = { web: Globe, sms: MessageSquare, app: Smartphone, call_centre: Phone, social: AtSign };
 
 /**
  * The case: the customer's message as the hero, one verdict line, the agent trace as a short
@@ -260,29 +263,41 @@ export default function CasePane({ id, who, tick, stacked, onBack, onChanged, ti
       </span>
 
       <header className="sd-case-head">
-        <h2 id={`${uid}-ref`} ref={headRef} tabIndex={-1} className="sd-case-ref mono">
-          {c.ref}
-        </h2>
-        <span className="facts sd-case-facts">
-          <span>{CHANNEL_WORD[c.channel] ?? c.channel}</span>
+        <div className="sd-case-title">
+          <h2 id={`${uid}-ref`} ref={headRef} tabIndex={-1} className="sd-case-ref mono">
+            {c.ref}
+          </h2>
+          <StatusWord status={c.status} claimedBy={c.escalation?.claimed_by} closureReason={c.closure_reason} />
+        </div>
+        <p className="sd-case-meta">
+          <span className="sd-case-channel">
+            {(() => {
+              const Ch = CHANNEL_ICON[c.channel] ?? Globe;
+              return <Ch size={14} strokeWidth={1.75} aria-hidden="true" />;
+            })()}
+            {CHANNEL_WORD[c.channel] ?? c.channel}
+          </span>
           <span>{LANGUAGE_WORD[c.language] ?? c.language}</span>
           <span>
-            received <span className="mono">{fmtEAT(c.created_at)}</span>, {fmtAge(c.created_at)} ago
+            Received {fmtEAT(c.created_at)}, {fmtAge(c.created_at)} ago
           </span>
-        </span>
-        <StatusWord status={c.status} claimedBy={c.escalation?.claimed_by} closureReason={c.closure_reason} />
+        </p>
       </header>
 
-      <div className="sd-hero">
-        <div className="sd-hero-who">
+      {/* The hero: the customer's own words, as a quote, with who sent them above it. */}
+      <figure className="sd-hero">
+        <figcaption className="sd-hero-who">
+          <span className="sd-hero-avatar" aria-hidden="true">
+            <UserRound size={16} strokeWidth={1.75} />
+          </span>
           <span className="sd-hero-name">{c.customer.name || "Customer"}</span>
           <span className="mono">{c.customer.msisdn_masked}</span>
           {c.customer.account_ref && <span className="mono">{c.customer.account_ref}</span>}
-        </div>
-        <p className="sd-hero-body" lang={c.language === "sw" ? "sw" : undefined}>
+        </figcaption>
+        <blockquote className="sd-hero-body" lang={c.language === "sw" ? "sw" : undefined}>
           {c.body}
-        </p>
-      </div>
+        </blockquote>
+      </figure>
 
       <div className={"sd-verdict" + (v.tone ? ` ${v.tone}` : "")}>
         <Icon size={18} strokeWidth={1.75} aria-hidden="true" />
@@ -302,7 +317,7 @@ export default function CasePane({ id, who, tick, stacked, onBack, onChanged, ti
             <span>{c.sentiment === "calm" ? "calm" : `sounds ${c.sentiment}`}</span>
             {person && (
               <span className={dueTone ? `attn${dueTone}` : undefined}>
-                {dueMin != null && dueMin < 0 ? "reply overdue, was due" : "reply due"} <span className="mono">{fmtDue(c.sla_due_at)}</span>
+                {dueMin != null && dueMin < 0 ? "reply overdue, was due" : "reply due"} {fmtDue(c.sla_due_at)}
               </span>
             )}
           </div>
@@ -335,13 +350,18 @@ export default function CasePane({ id, who, tick, stacked, onBack, onChanged, ti
           {replies.length === 0 && <span>none sent</span>}
         </div>
         {replies.map((m) => (
-          <div key={m.id} className="sd-msg">
-            <div className="sd-msg-head">
-              <span className="sd-msg-who">{m.author === "staff" ? m.name || "A member of staff" : "Support desk"}</span>
-              <span className="mono">{fmtTime(m.at)}</span>
-              {m.author === "staff" && <span>a person</span>}
+          <div key={m.id} className={"sd-msg" + (m.author === "staff" ? " staff" : "")}>
+            <span className="sd-msg-avatar" aria-hidden="true">
+              {m.author === "staff" ? <UserRound size={15} strokeWidth={1.75} /> : <Bot size={15} strokeWidth={1.75} />}
+            </span>
+            <div className="sd-msg-main">
+              <div className="sd-msg-head">
+                <span className="sd-msg-who">{m.author === "staff" ? m.name || "A member of staff" : "Support desk"}</span>
+                <span>{fmtTime(m.at)}</span>
+                <span>{m.author === "staff" ? "a person" : "the agents"}</span>
+              </div>
+              <p className="sd-msg-body">{m.body}</p>
             </div>
-            <p className="sd-msg-body">{m.body}</p>
           </div>
         ))}
       </section>

@@ -301,6 +301,14 @@ by a stated time; follow it with your reference; never share your M-PESA PIN), o
 be (received, with a person, part of a known outage, answered or fixed). The page widens only while the
 note is there, header and footer with it.
 
+**Support desk.** The queue's rows each lead with how the desk handled the case (the resolver, the
+action agent, or a person in violet), then the reference and age, the customer's words on two lines, and
+a status pill (violet while a person has it) with the category and, for a person, when the reply is due.
+The open case has a rail and a tint in the list. The case: its reference and status pill, how and when it
+came in, then the customer's words as a quote card, the verdict, the agents' steps, the linked ticket and
+the replies as messages (the agents' and a person's each behind its own mark). Before the first eval run
+the Evals tab shows the three gates the desk is scored against.
+
 **The Wallboard** (always Night, made for a TV across the room). The head: the mark, "NOC wallboard"
 and the operator; on the right the live state as a pill (green dot while live, red words when the wall
 has stopped updating, the escalation count beside it at the same size) and the time in Nairobi, big, in

@@ -28,10 +28,17 @@ export function RouteMark({ route, size = 12, word = true }: { route: Route; siz
   );
 }
 
+/** A status as a small pill: violet when a person has the case, quiet ink otherwise. */
+export function statusTone(status: Status): "hitl" | "done" | "" {
+  if (withPerson(status)) return "hitl";
+  if (status === "resolved" || status === "closed") return "done";
+  return "";
+}
+
 export function StatusWord({ status, claimedBy, closureReason }: { status: Status; claimedBy?: string | null; closureReason?: string | null }) {
-  const person = withPerson(status);
+  const tone = statusTone(status);
   const word = statusWordOf({ status, closure_reason: closureReason, escalation: claimedBy ? { claimed_by: claimedBy } : null });
-  return <span className={"sd-status" + (person ? " hitl" : "")}>{word}</span>;
+  return <span className={"sd-pill" + (tone ? ` ${tone}` : "")}>{word}</span>;
 }
 
 /** A tool call's status as a state word (lib/icons idiom: colour only for the exceptions). */
