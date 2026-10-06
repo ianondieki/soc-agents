@@ -318,7 +318,7 @@ they fire). The tiles: a priority stripe down the left edge (P1 also tinted), ne
 round; the priority, the ticket number (a long one cut at its start, so the end that differs stays) and
 how long it has been open; the site, big; the region, the subscribers (900k) and the owner with the state,
 each behind a small icon; the flags as tinted chips. As many whole rows as fit the glass, the last tile
-saying how many more and where.
+saying how many more and where. Tickets still down come before restored ones.
 
 ## Writing
 

@@ -225,3 +225,32 @@
   .wb-card.escalated,
   .wb-escalation-strip { animation: none !important; }
 }
+
+/* ---- Second pass: still down first, late ages, restored tiles, regions --------------------- */
+.wallboard .wb-note.late { color: var(--danger-text); }
+.wallboard .wb-note.quiet { color: var(--muted); font-weight: 500; }
+/* Past the restore deadline: the age in red, with the word, on its tile. */
+.wb-age.late { color: var(--danger-text); }
+.wb-age.late svg { color: var(--danger-text); }
+.wb-late-word { margin-left: 2px; padding: 0 8px; border-radius: 999px; background: var(--danger-soft); font-size: 0.85em; font-weight: 700; }
+/* Restored, not yet closed: the green stripe, the words quieter, no priority tint. */
+.wallboard .wb-card.restored { border-color: var(--line); background: var(--surface); }
+.wallboard .wb-card.restored::before { background: var(--ok); }
+/* Quieter by colour, not by opacity (opacity would take the small words below their contrast). */
+.wallboard .wb-card.restored .wb-site { color: var(--text); }
+.wallboard .wb-card.restored .wb-owner { color: var(--text); font-weight: 500; }
+.wb-age.done { color: var(--ok); }
+.wb-age.done svg { color: var(--ok); }
+/* Where the trouble is: the tickets still down, by region, on the notes row's right. */
+.wb-regions { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 18px; margin: 0 0 0 auto; padding: 0; list-style: none; font-size: calc(var(--fs-wall) * 0.85); }
+.wb-regions > li { display: inline-flex; align-items: baseline; gap: 7px; white-space: nowrap; }
+.wb-region-name { color: var(--muted); }
+.wb-region-n { color: var(--text-strong); font-weight: 700; font-variant-numeric: tabular-nums; }
+.wb-regions > li.p1 .wb-region-n { color: var(--p1); }
+/* Only where the notes row has room to keep one line (a TV): below that, a row of tiles is worth
+   more than the region counts, which the Regions page has anyway. */
+@media (max-width: 1599px) {
+  .wb-regions { display: none; }
+}
+/* Projector type is larger: the region counts would wrap the notes, so they give way there too. */
+:root[data-display="projector"] .wb-regions { display: none; }

@@ -64,12 +64,28 @@ const nameOf = (s: unknown) => {
     .join(" ");
 };
 
+/** The owner as the glass says it: an enum through `nameOf`, and a one-word vendor code in capitals
+ *  ("TETRANET", "EGYPRO") as a name ("Tetranet", "Egypro"), so every tile reads alike. A short code
+ *  (ATC, ECTA) or one with digits or a hyphen (FE-RFT-01, NOC-QUEUE) stays as written. */
+const ownerOf = (s: unknown) => {
+  const raw = String(s ?? "").trim();
+  if (/^[A-Z]{5,}$/.test(raw)) return raw[0] + raw.slice(1).toLowerCase();
+  return nameOf(raw);
+};
+
+/** A ticket restored but not yet closed: still on the glass, but no longer an outage. */
+const isRestored = (i: any) => String(i?.status ?? "").toUpperCase() === "RESTORED" || (!!i?.restored_at && String(i?.status ?? "").toUpperCase() !== "CLOSED");
+
 /** Skeleton bar widths for the cards shown before the first answer. */
 const SKELETON_WIDTHS = ["46%", "78%", "62%", "54%"];
 
-/** The glass's order: P1 first, then P2; within a priority the ticket open longest first. */
+/** The glass's order: tickets still down before restored ones; then P1 before P2; within a
+ *  priority the ticket open longest first. */
 const RANK: Record<string, number> = { P1: 0, P2: 1 };
 function wallOrder(a: any, b: any): number {
+  const ra = isRestored(a) ? 1 : 0;
+  const rb = isRestored(b) ? 1 : 0;
+  if (ra !== rb) return ra - rb;
   const r = (RANK[a?.priority] ?? 9) - (RANK[b?.priority] ?? 9);
   if (r) return r;
   const ta = parseInstant(a?.created_at)?.getTime() ?? Infinity;
@@ -222,6 +238,29 @@ export default function Wallboard({
     return f.mpesa || f.decision;
   });
 
+  // Past the restore deadline: on its tile while few are; said once in the notes when most are.
+  const down = list.filter((i) => !isRestored(i));
+  const isLate = (i: any) => {
+    if (isRestored(i)) return false;
+    const due = parseInstant(i.sla_restore_due);
+    return !!due && due.getTime() < now.getTime();
+  };
+  const lateCount = down.filter(isLate).length;
+  const dropLate = lateCount * 2 > down.length;
+  const restoredCount = list.length - down.length;
+
+  // Where the trouble is: the tickets still down, by region, the ones with a P1 first.
+  const byRegion = new Map<string, { p1: number; n: number }>();
+  for (const i of down) {
+    const k = String(i.region_code || "");
+    if (!k) continue;
+    const r = byRegion.get(k) || { p1: 0, n: 0 };
+    r.n += 1;
+    if (i.priority === "P1") r.p1 += 1;
+    byRegion.set(k, r);
+  }
+  const regions = [...byRegion.entries()].sort((a, b) => b[1].p1 - a[1].p1 || b[1].n - a[1].n || a[0].localeCompare(b[0]));
+
   // ---- fit the glass: never a scrollbar on the wall ------------------------------------------
   // As many whole rows of tiles as fit under the header; when the tickets need more, the last
   // tile says how many more there are. Tiles are one height (the grid's rows are 1fr), so one
@@ -266,17 +305,19 @@ export default function Wallboard({
     const next = cols * fitRows;
     setCap((c) => (c === next ? c : next));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rows, red.length, offGrid.length, viewport, dropMpesa, dropDecision, anyTileFlag, stale, metricsStale]);
+  }, [rows, red.length, offGrid.length, viewport, dropMpesa, dropDecision, anyTileFlag, stale, metricsStale, dropLate, restoredCount, regions.length]);
 
   const overflow = cap != null && list.length > cap;
   const shown = overflow ? list.slice(0, Math.max(1, cap - 1)) : list;
   const hidden = list.slice(shown.length);
-  const hiddenP1 = hidden.filter((i) => i.priority === "P1").length;
-  const hiddenP2 = hidden.length - hiddenP1;
+  const hiddenRestored = hidden.filter(isRestored).length;
+  const hiddenP1 = hidden.filter((i) => i.priority === "P1" && !isRestored(i)).length;
+  const hiddenP2 = hidden.length - hiddenP1 - hiddenRestored;
   // "3 P1 and 24 P2 tickets", with a part left out when it is zero ("24 P2 tickets", never "and 0 P2").
   const hiddenWhat = [hiddenP1 > 0 ? `${hiddenP1} P1` : "", hiddenP2 > 0 ? `${hiddenP2} P2` : ""]
     .filter(Boolean)
     .join(" and ");
+  const hiddenDown = hiddenP1 + hiddenP2;
 
   // The link to the agents: green only while live and the polls answer; red when the wall has
   // stopped updating.
@@ -329,12 +370,27 @@ export default function Wallboard({
             Decision waiting on {decisionCount} of {list.length} tickets
           </p>
         )}
+        {dropLate && down.length > 0 && (
+          <p className="wb-note late">
+            Past the restore deadline on {lateCount} of {down.length}
+          </p>
+        )}
         <CardBoundary fallback={null}>
           <AgentsStatusTile />
         </CardBoundary>
         <CardBoundary fallback={null}>
           <RedactionMissChip />
         </CardBoundary>
+        {regions.length > 1 && (
+          <ul className="wb-regions" aria-label="Tickets still down, by region">
+            {regions.slice(0, 6).map(([code, r]) => (
+              <li key={code} className={r.p1 ? "p1" : undefined} title={r.p1 ? `${r.p1} P1, ${r.n - r.p1} P2` : `${r.n} P2`}>
+                <span className="wb-region-name">{regionName(code, profile)}</span>
+                <span className="wb-region-n">{r.n}</span>
+              </li>
+            ))}
+          </ul>
+        )}
       </div>
       {/*
         Weather context sits above the incident grid so it stays on screen during
@@ -396,13 +452,19 @@ export default function Wallboard({
         {shown.map((i) => {
           const esc = redByIncident.get(String(i.id));
           const flags = tileFlags(i);
-          const age = openFor(i.created_at, now);
+          const restored = isRestored(i);
+          const late = !dropLate && isLate(i);
+          const age = restored ? (i.restored_at ? `restored ${fmtHM(i.restored_at)}` : "restored") : openFor(i.created_at, now);
           const subs = typeof i.users_affected === "number" ? i.users_affected : Number(i.users_affected);
-          const status = [humanEnum(i.status), i.tt_category ? humanEnum(i.tt_category) : i.failure_domain ? humanEnum(i.failure_domain) : ""]
+          const status = [restored ? "" : humanEnum(i.status), i.tt_category ? humanEnum(i.tt_category) : i.failure_domain ? humanEnum(i.failure_domain) : ""]
             .filter(Boolean)
             .join(", ");
           return (
-            <article key={i.id} className={`wb-card ${i.priority}${esc ? " escalated" : ""}`} aria-label={`${i.priority} ${i.site_name || i.incident_number}`}>
+            <article
+              key={i.id}
+              className={`wb-card ${i.priority}${esc ? " escalated" : ""}${restored ? " restored" : ""}`}
+              aria-label={`${i.priority} ${i.site_name || i.incident_number}${restored ? ", restored" : late ? ", past the restore deadline" : ""}`}
+            >
               <div className="wb-card-top">
                 <span className={`wb-prio ${i.priority}`}>{i.priority}</span>
                 {/* A long number is cut at its start, so its end (the part that differs) stays. */}
@@ -410,9 +472,10 @@ export default function Wallboard({
                   <bdi>{i.incident_number}</bdi>
                 </span>
                 {age && (
-                  <span className="wb-age" title="Open for">
+                  <span className={"wb-age" + (late ? " late" : "") + (restored ? " done" : "")} title={restored ? "Service restored" : late ? "Open for, past the restore deadline" : "Open for"}>
                     <Timer {...CARD_ICON} />
                     {age}
+                    {late && <span className="wb-late-word">late</span>}
                   </span>
                 )}
               </div>
@@ -432,7 +495,7 @@ export default function Wallboard({
               <div className="wb-owner-line">
                 <span className="wb-owner">
                   <Wrench {...CARD_ICON} />
-                  <span className="wb-tx">{nameOf(i.assignee_name) || "Unassigned"}</span>
+                  <span className="wb-tx">{ownerOf(i.assignee_name) || "Unassigned"}</span>
                 </span>
                 {status && <span className="wb-status">{status}</span>}
               </div>
@@ -461,7 +524,9 @@ export default function Wallboard({
           <a className="wb-card wb-more" href="/incidents">
             <span className="wb-more-n">+{hidden.length} more</span>
             <span className="wb-more-what">
-              {hiddenWhat} {hidden.length === 1 ? "ticket" : "tickets"}, opened more recently
+              {hiddenDown > 0
+                ? `${hiddenWhat} ${hiddenDown === 1 ? "ticket" : "tickets"}, opened more recently${hiddenRestored ? `, and ${hiddenRestored} restored` : ""}`
+                : `${hiddenRestored} restored ${hiddenRestored === 1 ? "ticket" : "tickets"}`}
             </span>
             <span className="wb-more-where">On the Incident board</span>
           </a>
