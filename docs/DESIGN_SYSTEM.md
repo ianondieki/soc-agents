@@ -299,13 +299,17 @@ shift: three numbered steps and when it is due, "Prepare the handover"; once pre
 ledger" gives this shift's workbook.
 
 **The Agent observatory.** Five figures (agents, steps run, steps failed, waiting for a person, alarm to
-ticket median), then the twelve agents as cards in pipeline order (two columns on a wide screen) beside
-the live runs, which stay in view as the page scrolls. A card: the agent's fibre marks (one per step it
-runs, identity only), its name and steps, its mission, four small figures (steps, average, failed, last
-step), what an error does (stops the run, or fails only its step), its connections (read only, or how
-many can write with approval) and how many are hosted abroad. "Tools and data" opens its own tools, each
-declared connection (access, maturity, where it runs, why) and what it may and may never see; an open
-card takes the whole row.
+ticket median), then the twelve agents as one roster in pipeline order beside the live and recent runs
+(kept in view as the page scrolls). Each row: the agent's fibre marks, its name in Archivo and where it
+sits ("Steps 1 and 2: Ingest, Correlate"), then the same four numbers in the same columns so the twelve
+compare at a glance: steps with a bar on one scale, the average time, failures (red when not zero), the
+last step. Under them, across the row: the mission, its guard (a shield: "An error stops the run" or
+"fails only its step"), its connections, what is hosted abroad (amber), how many of its steps wait for
+a person (violet, to Approvals), and "Tools and data", which unfolds its tools, declared connections and
+what it may and may never see under the row. A row lights for a moment, in green with its marks
+popping, when its agent works a live step ("just worked"), and says "working now" while a running run
+is at its step; quiet mode and reduced motion keep the words and drop the glow. On a phone each agent
+is a block with its four numbers as a labelled strip.
 
 **The Workflow map.** Four figures (steps per alarm, minutes by hand per alarm, the agents' median alarm
 to ticket, alarms through so far), then the twelve steps on one line in six phases (take the alarm in,

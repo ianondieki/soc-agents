@@ -1,6 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
+import { ChevronDown, ShieldAlert, ShieldCheck } from "lucide-react";
 import { api } from "../api";
+import { useQuietMode, useRunFrames } from "../realtime/RealtimeContext";
 import { RunState } from "../components/LiveRunPanel";
 import { agentDisplayName, alarmSite, fmtInt, fmtMs, humanEnum, humanGraph, nodeLabel, runOutcome, runOutcomeOf, runStatusWord } from "../lib/agents";
 import { fibreColour, fibreOf } from "../lib/fibre";
@@ -130,6 +132,11 @@ export default function Agents({ tick = 0 }: { tick?: number }) {
   }, [tick, retry]);
 
   const steps = totals?.steps;
+  const byNode: Record<string, any> = useMemo(() => {
+    const out: Record<string, any> = {};
+    for (const n of totals?.steps?.by_node || []) if (n?.node) out[String(n.node)] = n;
+    return out;
+  }, [totals]);
   return (
     <div className="ag">
       <div className="page-head">
@@ -166,141 +173,26 @@ export default function Agents({ tick = 0 }: { tick?: number }) {
         </div>
       </dl>
       <div className="ag-grid">
-        <section aria-labelledby="ag-roster-title">
-          <h2 id="ag-roster-title" className="sr-only">
-            The agents
-          </h2>
-          <div className="ag-cards" aria-busy={agents === null || undefined}>
-            {agents === null && agentsFailed && (
-              <div className="panel empty" role="alert">
-                Couldn't load the agent roster.{" "}
-                <button className="btn sm" onClick={() => setAgentsRetry((n) => n + 1)}>
-                  Retry
-                </button>
-              </div>
-            )}
-            {agents === null && !agentsFailed && (
-              <div className="panel">
-                <Skeleton rows={8} />
-              </div>
-            )}
-            {agents !== null && agents.length === 0 && <div className="panel empty">No agents are registered.</div>}
-            {/* In pipeline order (the fibre ribbon's), an agent that runs on request last. */}
-            {(agents || [])
-              .slice()
-              .sort((x, y) => (fibreOf(x?.node_ids?.[0])?.n ?? 99) - (fibreOf(y?.node_ids?.[0])?.n ?? 99))
-              .map((a) => {
-                const s = stats[a.name];
-                const failed = s?.failed || 0;
-                const nodes: string[] = Array.isArray(a.node_ids) ? a.node_ids : [];
-                const stepNames = nodes.map(nodeLabel);
-                const first = fibreOf(nodes[0]);
-                const last = fibreOf(nodes[nodes.length - 1]);
-                const where = !first ? "Runs on request" : first.n === last?.n ? `Step ${first.n}` : `Steps ${first.n} and ${last?.n}`;
-                const mcp: any[] = Array.isArray(a.mcp) ? a.mcp : [];
-                const abroad = mcp.filter((m) => m?.residency === "abroad").length;
-                const writes = mcp.filter((m) => Array.isArray(m?.write_tools) && m.write_tools.length).length;
-                const tools: string[] = Array.isArray(a.tools) ? a.tools : [];
-                const may: string[] = Array.isArray(a.data_may_see) ? a.data_may_see : [];
-                const never: string[] = Array.isArray(a.data_must_not_see) ? a.data_must_not_see : [];
-                return (
-                  <article key={a.name} className="panel ag-card" aria-labelledby={`ag-${a.name}`}>
-                    <header className="ag-card-head">
-                      <FibreMarks nodes={nodes} />
-                      <div className="ag-card-title">
-                        <h3 id={`ag-${a.name}`}>{agentDisplayName(a.name)}</h3>
-                        <p>
-                          <span>{where}</span>
-                          {stepNames.length > 0 && <span>{stepNames.join(", ")}</span>}
-                        </p>
-                      </div>
-                    </header>
-                    <p className="ag-mission">{a.mission}</p>
-                    <dl className="ag-stats">
-                      <div>
-                        <dt>Steps</dt>
-                        <dd>{fmtInt(s?.steps ?? 0)}</dd>
-                      </div>
-                      <div>
-                        <dt>Average</dt>
-                        <dd>{fmtMs(s?.avg_ms)}</dd>
-                      </div>
-                      <div className={failed ? "bad" : undefined}>
-                        <dt>Failed</dt>
-                        <dd>{fmtInt(failed)}</dd>
-                      </div>
-                      <div>
-                        <dt>Last step</dt>
-                        <dd>{s?.last_step_at ? fmtTime(s.last_step_at) : "—"}</dd>
-                      </div>
-                    </dl>
-                    <p className="ag-tags">
-                      <span className={a.criticality === "fail_closed" ? "ag-tag strict" : "ag-tag"}>
-                        {a.criticality === "fail_closed" ? "An error stops the run" : "An error fails only its step"}
-                      </span>
-                      {mcp.length > 0 && (
-                        <span className="ag-tag">
-                          {mcp.length} connection{mcp.length === 1 ? "" : "s"}
-                          {writes ? `, ${writes} can write with approval` : ", read only"}
-                        </span>
-                      )}
-                      {abroad > 0 && <span className="ag-tag warn">{abroad} hosted abroad</span>}
-                    </p>
-                    {(tools.length > 0 || mcp.length > 0 || never.length > 0) && (
-                      <details className="ag-more">
-                        <summary>Tools and data</summary>
-                        <div className="ag-more-body">
-                          {tools.length > 0 && (
-                            <div>
-                              <h4>Its own tools</h4>
-                              <p className="ag-chips">
-                                {tools.map((t) => (
-                                  <code key={t}>{t}</code>
-                                ))}
-                              </p>
-                            </div>
-                          )}
-                          {mcp.length > 0 && (
-                            <div>
-                              <h4>Connections declared (none switched on in this demo)</h4>
-                              <ul className="ag-conns">
-                                {mcp.map((m) => (
-                                  <li key={m.server}>
-                                    <span className="ag-conn-name">{m.server}</span>
-                                    <span className="ag-conn-facts">
-                                      <span>{Array.isArray(m.write_tools) && m.write_tools.length ? "writes behind an approval" : "read only"}</span>
-                                      {m.maturity && <span>{humanEnum(m.maturity)}</span>}
-                                      <span className={m.residency === "abroad" ? "warn" : undefined}>
-                                        {m.residency === "abroad" ? "hosted abroad" : "runs locally"}
-                                      </span>
-                                    </span>
-                                    {m.purpose && <span className="ag-conn-why">{m.purpose}</span>}
-                                  </li>
-                                ))}
-                              </ul>
-                            </div>
-                          )}
-                          {(may.length > 0 || never.length > 0) && (
-                            <div className="ag-data">
-                              {may.length > 0 && (
-                                <p>
-                                  <strong>May see</strong> {may.map(dataWord).join(", ")}
-                                </p>
-                              )}
-                              {never.length > 0 && (
-                                <p>
-                                  <strong>Never sees</strong> {never.map(dataWord).join(", ")}
-                                </p>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      </details>
-                    )}
-                  </article>
-                );
-              })}
+        <section className="panel ag-roster-panel" aria-labelledby="ag-roster-title">
+          <div className="panel-head">
+            <h2 id="ag-roster-title" className="panel-title">
+              The twelve agents
+            </h2>
+            <span className="muted">In pipeline order, all time</span>
           </div>
+          {agents === null && agentsFailed && (
+            <div className="empty" role="alert">
+              Couldn't load the agent roster.{" "}
+              <button className="btn sm" onClick={() => setAgentsRetry((n) => n + 1)}>
+                Retry
+              </button>
+            </div>
+          )}
+          {agents === null && !agentsFailed && <Skeleton rows={10} />}
+          {agents !== null && agents.length === 0 && <div className="empty">No agents are registered.</div>}
+          {agents !== null && agents.length > 0 && (
+            <Roster agents={agents} stats={stats} byNode={byNode} runs={runs} />
+          )}
         </section>
         <section className="panel ag-runs" aria-labelledby="ag-runs-title">
           <div className="panel-head">
@@ -379,5 +271,225 @@ export default function Agents({ tick = 0 }: { tick?: number }) {
         </section>
       </div>
     </div>
+  );
+}
+
+/** How long a row stays marked "just worked" after its agent's latest live frame. */
+const JUST_MS = 2600;
+
+/**
+ * The roster: the twelve agents as rows on one panel, in pipeline order, so they can be compared
+ * at a glance. Each row: the agent's fibre marks, its name and where it sits, its mission and its
+ * guard; then the same four numbers in the same columns (steps with a bar on one scale, the
+ * average time, failures, the last step). A row lights for a moment when its agent works a live
+ * step (the rail's own pop and ring) and says "working" while a run is parked at its step. Tools,
+ * connections and data unfold under the row.
+ */
+function Roster({ agents, stats, byNode, runs }: { agents: any[]; stats: Record<string, any>; byNode: Record<string, any>; runs: any[] | null }) {
+  const [open, setOpen] = useState<string | null>(null);
+  const frames = useRunFrames();
+  const quiet = useQuietMode();
+  const [now, setNow] = useState(() => Date.now());
+
+  // The newest live frame for each step, so a row can light when its agent works.
+  const lastByNode = useMemo(() => {
+    const out: Record<string, number> = {};
+    for (const f of frames) {
+      if (f.type !== "agent.step.completed" && f.type !== "agent.step.started") continue;
+      const node = String(f.payload?.node || "");
+      if (node) out[node] = Math.max(out[node] ?? 0, f.receivedAt);
+    }
+    return out;
+  }, [frames]);
+  // Re-render when the newest mark should go out.
+  useEffect(() => {
+    const t = Date.now();
+    setNow(t);
+    const due = Object.values(lastByNode)
+      .map((at) => at + JUST_MS - t)
+      .filter((ms) => ms > 0);
+    if (!due.length) return;
+    const id = window.setTimeout(() => setNow(Date.now()), Math.min(...due) + 20);
+    return () => window.clearTimeout(id);
+  }, [lastByNode]);
+
+  // Steps a run is at right now (a running run's current step).
+  const workingNodes = useMemo(() => {
+    const out = new Set<string>();
+    for (const r of runs || []) if (String(r?.status || "").toUpperCase() === "RUNNING" && r.current_node) out.add(String(r.current_node));
+    return out;
+  }, [runs]);
+
+  const ordered = agents
+    .slice()
+    .sort((x, y) => (fibreOf(x?.node_ids?.[0])?.n ?? 99) - (fibreOf(y?.node_ids?.[0])?.n ?? 99));
+  const most = Math.max(1, ...ordered.map((a) => Number(stats[a.name]?.steps || 0)));
+
+  return (
+    <>
+      {/* The column heads, for the eye; each row names its own numbers for a screen reader. */}
+      <div className="ag-roster-head" aria-hidden="true">
+        <span>Agent</span>
+        <span>Steps</span>
+        <span>Average</span>
+        <span>Failed</span>
+        <span>Last step</span>
+      </div>
+      <ol className="ag-roster">
+        {ordered.map((a) => {
+          const s = stats[a.name];
+          const failed = Number(s?.failed || 0);
+          const count = Number(s?.steps || 0);
+          const nodes: string[] = Array.isArray(a.node_ids) ? a.node_ids : [];
+          const stepNames = nodes.map(nodeLabel);
+          const first = fibreOf(nodes[0]);
+          const last = fibreOf(nodes[nodes.length - 1]);
+          const where = !first ? "Runs on request" : first.n === last?.n ? `Step ${first.n}` : `Steps ${first.n} and ${last?.n}`;
+          const mcp: any[] = Array.isArray(a.mcp) ? a.mcp : [];
+          const abroad = mcp.filter((m) => m?.residency === "abroad").length;
+          const writes = mcp.filter((m) => Array.isArray(m?.write_tools) && m.write_tools.length).length;
+          const tools: string[] = Array.isArray(a.tools) ? a.tools : [];
+          const may: string[] = Array.isArray(a.data_may_see) ? a.data_may_see : [];
+          const never: string[] = Array.isArray(a.data_must_not_see) ? a.data_must_not_see : [];
+          const waiting = nodes.reduce((sum, n) => sum + Number(byNode[n]?.waiting_hitl || 0), 0);
+          const strict = a.criticality === "fail_closed";
+          const justAt = Math.max(0, ...nodes.map((n) => lastByNode[n] ?? 0));
+          const just = justAt > 0 && now - justAt < JUST_MS;
+          const working = nodes.some((n) => workingNodes.has(n));
+          const isOpen = open === a.name;
+          const bodyId = `ag-more-${a.name}`;
+          const hasMore = tools.length > 0 || mcp.length > 0 || may.length > 0 || never.length > 0;
+          return (
+            <li
+              key={a.name}
+              className={"ag-row" + (just && !quiet ? " lit" : "") + (working ? " working" : "") + (isOpen ? " open" : "")}
+              aria-labelledby={`ag-${a.name}`}
+            >
+              <div className="ag-who">
+                <FibreMarks nodes={nodes} />
+                <div className="ag-who-text">
+                  <h3 id={`ag-${a.name}`}>
+                    {agentDisplayName(a.name)}
+                    {working ? (
+                      <span className="ag-now working">working now</span>
+                    ) : just ? (
+                      <span className="ag-now just">just worked</span>
+                    ) : null}
+                  </h3>
+                  <p className="ag-where">
+                    <span>{where}</span>
+                    {stepNames.length > 0 && <span>{stepNames.join(", ")}</span>}
+                  </p>
+                </div>
+              </div>
+              {/* What it does and how it is guarded, across the whole row under the numbers. */}
+              <div className="ag-desc">
+                  <p className="ag-mission">{a.mission}</p>
+                  <p className="ag-tags">
+                    <span className={"ag-guard" + (strict ? " strict" : "")}>
+                      {strict ? <ShieldAlert size={14} strokeWidth={1.75} aria-hidden="true" /> : <ShieldCheck size={14} strokeWidth={1.75} aria-hidden="true" />}
+                      {strict ? "An error stops the run" : "An error fails only its step"}
+                    </span>
+                    {mcp.length > 0 && (
+                      <span>
+                        {mcp.length} connection{mcp.length === 1 ? "" : "s"}
+                        {writes ? `, ${writes} can write with approval` : ", read only"}
+                      </span>
+                    )}
+                    {abroad > 0 && <span className="warn">{abroad} hosted abroad</span>}
+                    {waiting > 0 && (
+                      <Link className="hitl" to="/hitl">
+                        {fmtInt(waiting)} waiting for a person
+                      </Link>
+                    )}
+                    {hasMore && (
+                      <button
+                        type="button"
+                        className="ag-expand"
+                        aria-expanded={isOpen}
+                        aria-controls={bodyId}
+                        onClick={() => setOpen(isOpen ? null : a.name)}
+                      >
+                        <span>Tools and data</span>
+                        <ChevronDown size={14} strokeWidth={1.75} aria-hidden="true" />
+                      </button>
+                    )}
+                  </p>
+              </div>
+              <dl className="ag-nums">
+                <div className="steps">
+                  <dt>Steps</dt>
+                  <dd>
+                    <span className="v">{fmtInt(count)}</span>
+                    <span className="ag-bar" aria-hidden="true">
+                      <i style={{ width: `${(count / most) * 100}%` }} />
+                    </span>
+                  </dd>
+                </div>
+                <div>
+                  <dt>Average</dt>
+                  <dd className="mono">{fmtMs(s?.avg_ms)}</dd>
+                </div>
+                <div className={failed ? "bad" : undefined}>
+                  <dt>Failed</dt>
+                  <dd>{fmtInt(failed)}</dd>
+                </div>
+                <div>
+                  <dt>Last step</dt>
+                  <dd className="mono">{s?.last_step_at ? fmtTime(s.last_step_at) : "—"}</dd>
+                </div>
+              </dl>
+              {hasMore && (
+                <div className="ag-more-body" id={bodyId} hidden={!isOpen}>
+                  {tools.length > 0 && (
+                    <div>
+                      <h4>Its own tools</h4>
+                      <p className="ag-chips">
+                        {tools.map((t) => (
+                          <code key={t}>{t}</code>
+                        ))}
+                      </p>
+                    </div>
+                  )}
+                  {mcp.length > 0 && (
+                    <div>
+                      <h4>Connections declared (none switched on in this demo)</h4>
+                      <ul className="ag-conns">
+                        {mcp.map((m) => (
+                          <li key={m.server}>
+                            <span className="ag-conn-name">{m.server}</span>
+                            <span className="ag-conn-facts">
+                              <span>{Array.isArray(m.write_tools) && m.write_tools.length ? "writes behind an approval" : "read only"}</span>
+                              {m.maturity && <span>{humanEnum(m.maturity)}</span>}
+                              <span className={m.residency === "abroad" ? "warn" : undefined}>{m.residency === "abroad" ? "hosted abroad" : "runs locally"}</span>
+                            </span>
+                            {m.purpose && <span className="ag-conn-why">{m.purpose}</span>}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  {(may.length > 0 || never.length > 0) && (
+                    <div className="ag-data">
+                      <h4>Data</h4>
+                      {may.length > 0 && (
+                        <p>
+                          <strong>May see</strong> {may.map(dataWord).join(", ")}
+                        </p>
+                      )}
+                      {never.length > 0 && (
+                        <p>
+                          <strong>Never sees</strong> {never.map(dataWord).join(", ")}
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+            </li>
+          );
+        })}
+      </ol>
+    </>
   );
 }

@@ -1,6 +1,6 @@
-/* The Agent observatory (pages/Agents.tsx): five figures, then the twelve agents as cards (two
- * columns on a wide screen) beside the live runs, which stay in view as the page scrolls. Each
- * card wears its fibre marks (lib/fibre.ts): identity only, never a status, never behind text. */
+/* The Agent observatory (pages/Agents.tsx): five figures, then the twelve agents as one roster in
+ * pipeline order beside the live runs, which stay in view as the page scrolls. Each row wears
+ * its agent's fibre marks (lib/fibre.ts): identity only, never a status, never behind text. */
 
 /* ---- Figures --------------------------------------------------------------------------------- */
 .ag-figures { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 1px; margin: 0 0 var(--s4); overflow: hidden; border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--line); }
@@ -12,48 +12,92 @@
 
 /* ---- Layout ---------------------------------------------------------------------------------- */
 .ag-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(300px, 360px); gap: var(--s4); align-items: start; }
-.ag-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 330px), 1fr)); gap: var(--s4); align-items: stretch; }
 
-/* ---- An agent -------------------------------------------------------------------------------- */
-.ag-card { display: flex; flex-direction: column; gap: 12px; min-width: 0; padding: 18px 20px; }
-.ag-card-head { display: flex; align-items: flex-start; gap: 12px; }
-.ag-fibres { display: inline-flex; flex: none; gap: 4px; margin-top: 5px; }
+/* ---- The roster ---------------------------------------------------------------------------------
+ * One panel, one row per agent in pipeline order, the same numbers in the same columns so the
+ * twelve compare at a glance. The columns: who (marks, name, where, mission, guard), steps with a
+ * bar on one scale, average, failed, last step. */
+.ag-roster-panel { padding-bottom: 6px; }
+.ag-roster-panel .panel-head { margin-bottom: var(--s2); }
+.ag-roster-head,
+.ag-row { display: grid; grid-template-columns: minmax(0, 1fr) 132px 72px 56px 84px; column-gap: var(--s4); }
+.ag-roster-head { padding: 0 0 8px; border-bottom: 1px solid var(--line-strong); color: var(--muted); font-size: var(--fs-xs); font-weight: 500; }
+.ag-roster-head > span:not(:first-child) { text-align: right; }
+.ag-roster { margin: 0; padding: 0; list-style: none; }
+.ag-row { position: relative; align-items: start; padding: 14px 0 12px; border-bottom: 1px solid var(--line); }
+.ag-who { grid-row: 1; }
+.ag-row:last-child { border-bottom: 0; }
+
+.ag-who { display: flex; align-items: flex-start; gap: 12px; min-width: 0; }
+.ag-fibres { display: inline-flex; flex: none; gap: 4px; width: 32px; margin-top: 4px; }
 .ag-fibre { width: 14px; height: 14px; border-radius: 50%; }
 .ag-fibre.outlined { box-shadow: inset 0 0 0 1px var(--fibre-outline, var(--line-strong)); }
-.ag-fibre.none { flex: none; width: 14px; height: 14px; margin-top: 5px; border: 2px dashed var(--line-strong); }
-.ag-card-title { min-width: 0; }
-.ag-card-title h3 { margin: 0; color: var(--text-strong); font-size: var(--fs-base); font-weight: 700; letter-spacing: -0.01em; line-height: 1.3; }
-.ag-card-title p { display: flex; flex-wrap: wrap; gap: 0 10px; margin: 2px 0 0; color: var(--muted); font-size: var(--fs-xs); }
-.ag-card-title p > span:first-child { color: var(--text); font-weight: 600; }
-.ag-mission { margin: 0; color: var(--text); font-size: var(--fs-sm); line-height: 1.5; }
+.ag-fibre.none { flex: none; width: 14px; height: 14px; margin-top: 4px; margin-right: 18px; border: 2px dashed var(--line-strong); }
+.ag-who-text { min-width: 0; }
+.ag .ag-who h3 { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; margin: 0; color: var(--text-strong); font-family: var(--font-display); font-size: var(--fs-base); font-weight: 650; letter-spacing: -0.005em; line-height: 1.3; }
+.ag-where { display: flex; flex-wrap: wrap; gap: 0 10px; margin: 2px 0 0; color: var(--muted); font-size: var(--fs-xs); }
+.ag-where > span:first-child { color: var(--text); font-weight: 600; }
+/* The mission and the guard run under the name and the numbers, across the row. */
+.ag-desc { grid-column: 1 / -1; grid-row: 2; min-width: 0; margin-left: 44px; }
+.ag-mission { max-width: 86ch; margin: 6px 0 0; color: var(--text); font-size: var(--fs-sm); line-height: 1.5; text-wrap: pretty; }
+.ag-tags { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 16px; margin: 6px 0 0; color: var(--muted); font-size: var(--fs-xs); }
+.ag-tags .warn { color: var(--warn); font-weight: 600; }
+.ag-tags a.hitl { display: inline-flex; align-items: center; min-height: 24px; color: var(--hitl-text); font-weight: 600; text-decoration: underline; text-decoration-color: var(--hitl-line); text-underline-offset: 3px; }
+@media (pointer: coarse) { .ag-tags a.hitl { min-height: 44px; } }
+.ag-guard { display: inline-flex; align-items: center; gap: 5px; }
+.ag-guard.strict { color: var(--text); font-weight: 600; }
+.ag-guard.strict svg { color: var(--accent); }
 
-.ag-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; margin: 0; overflow: hidden; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--line); }
-.ag-stats > div { min-width: 0; padding: 7px 10px 8px; background: var(--surface-raised); }
-.ag-stats dt { color: var(--muted); font-size: 11px; font-weight: 500; white-space: nowrap; }
-.ag-stats dd { margin: 2px 0 0; color: var(--text-strong); font-size: var(--fs-sm); font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.ag-stats > .bad dd { color: var(--danger); }
+/* The numbers: right-aligned in their columns, steps with a bar on one scale under its figure. */
+.ag-nums { display: contents; margin: 0; }
+.ag-nums > div { grid-row: 1; min-width: 0; padding-top: 1px; text-align: right; }
+.ag-nums dt { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.ag-nums dd { margin: 0; color: var(--text-strong); font-size: var(--fs-sm); font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.ag-nums dd.mono { font-family: var(--mono); font-size: var(--fs-xs); font-weight: 500; color: var(--text); padding-top: 2px; }
+.ag-nums .steps dd { display: grid; justify-items: end; gap: 6px; }
+.ag-nums .steps .v { font-family: var(--font-display); font-size: var(--fs-lg); font-weight: 700; line-height: 1; }
+.ag-bar { display: block; width: 100%; height: 5px; border-radius: 3px; background: var(--surface-sunk); overflow: hidden; }
+.ag-bar i { display: block; height: 100%; border-radius: 3px; background: var(--line-strong); }
+.ag-nums > .bad dd { color: var(--danger); }
 
-.ag-tags { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; }
-.ag-tag { display: inline-flex; align-items: center; padding: 2px 9px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); font-size: var(--fs-xs); white-space: nowrap; }
-.ag-tag.strict { border-color: var(--accent-line); background: var(--accent-soft); color: var(--accent); }
-.ag-tag.warn { border-color: var(--warn-line, var(--line)); background: var(--warn-soft); color: var(--warn); }
-
-/* Tools and data, folded until asked for. */
-.ag-more { margin-top: auto; border-top: 1px solid var(--line); padding-top: 10px; }
-.ag-more > summary { color: var(--accent); font-size: var(--fs-sm); font-weight: 500; cursor: pointer; }
-.ag-more-body { display: grid; gap: 14px; margin-top: 12px; }
+/* Tools and data: a quiet disclosure under the row, its body across the whole row. */
+.ag-expand { display: inline-flex; align-items: center; gap: 4px; min-height: 24px; margin-left: auto; padding: 0; border: 0; background: transparent; color: var(--accent); font: inherit; font-size: var(--fs-sm); font-weight: 500; cursor: pointer; }
+@media (pointer: coarse) { .ag-expand { min-height: 44px; } }
+.ag-expand:hover span { text-decoration: underline; text-underline-offset: 3px; }
+.ag-expand:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+.ag-expand svg { transition: transform 160ms var(--ease); }
+.ag-expand[aria-expanded="true"] svg { transform: rotate(180deg); }
+.ag-more-body { grid-column: 1 / -1; grid-row: 3; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); gap: 14px 28px; margin: 10px 0 4px 44px; padding: 14px 16px; border-radius: var(--r-md); background: var(--surface-raised); }
+.ag-more-body[hidden] { display: none; }
 .ag-more-body h4 { margin: 0 0 6px; color: var(--muted); font-size: var(--fs-xs); font-weight: 600; }
 .ag-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; }
-.ag-chips code { padding: 2px 7px; border-radius: 6px; background: var(--surface-raised); color: var(--text); font-family: var(--mono); font-size: 11px; }
+.ag-chips code { padding: 2px 7px; border-radius: 6px; background: var(--surface); color: var(--text); font-family: var(--mono); font-size: 11px; }
 .ag-conns { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
 .ag-conns > li { display: grid; gap: 2px; }
 .ag-conn-name { color: var(--text-strong); font-size: var(--fs-sm); font-weight: 600; }
 .ag-conn-facts { display: flex; flex-wrap: wrap; gap: 0 10px; color: var(--muted); font-size: var(--fs-xs); }
 .ag-conn-facts .warn { color: var(--warn); }
 .ag-conn-why { color: var(--muted); font-size: var(--fs-xs); line-height: 1.45; }
-.ag-data { display: grid; gap: 4px; }
+.ag-data { display: grid; gap: 4px; align-content: start; }
 .ag-data p { margin: 0; color: var(--muted); font-size: var(--fs-xs); line-height: 1.5; }
 .ag-data strong { margin-right: 6px; color: var(--text); font-weight: 600; }
+
+/* Live: a row lights for a moment as its agent works a step (the rail's pop and ring, here a
+   glow along the row and its marks), and says "working now" while a run is at its step. */
+.ag-now { padding: 1px 8px; border-radius: 999px; font-family: var(--font); font-size: var(--fs-xs); font-weight: 600; line-height: 1.5; }
+.ag-now.working { border: 1px solid var(--accent-line); background: var(--accent-soft); color: var(--accent); }
+.ag-now.just { color: var(--ok); }
+.ag-row.lit::before { content: ""; position: absolute; inset: 4px -12px; z-index: -1; border-radius: var(--r-md); animation: agRowLit 2.6s ease-out both; }
+.ag-row.lit .ag-fibre { animation: agFibrePop 520ms var(--ease) both; }
+.ag-row.working .ag-fibres { position: relative; }
+@keyframes agRowLit { 0% { background: var(--ok-soft); } 100% { background: transparent; } }
+@keyframes agFibrePop { 0% { transform: scale(0.6); } 55% { transform: scale(1.25); } 100% { transform: none; } }
+:root[data-quiet="on"] .ag-row.lit::before, :root[data-quiet="on"] .ag-row.lit .ag-fibre { animation: none; }
+@media (prefers-reduced-motion: reduce) {
+  .ag-row.lit::before, .ag-row.lit .ag-fibre { animation: none; }
+  .ag-expand svg { transition: none; }
+}
+.ag-roster-panel { position: relative; isolation: isolate; }
 
 /* ---- Live runs ------------------------------------------------------------------------------- */
 .ag-runs { position: sticky; top: calc(var(--topbar-h) + var(--s4)); display: flex; flex-direction: column; min-height: 0; max-height: calc(100vh - var(--topbar-h) - 2 * var(--s4)); }
@@ -69,20 +113,30 @@
   .ag-figures { grid-template-columns: repeat(6, minmax(0, 1fr)); }
   .ag-figures > div { grid-column: span 2; }
   .ag-figures > div:nth-child(n+4) { grid-column: span 3; }
+  .ag-roster-head, .ag-row { grid-template-columns: minmax(0, 1fr) 110px 64px 48px 76px; column-gap: var(--s3); }
 }
 @media (max-width: 1099px) {
   .ag-grid { grid-template-columns: minmax(0, 1fr); }
   .ag-runs { position: static; max-height: none; }
   .ag-runs-list { max-height: 440px; }
 }
-@media (max-width: 600px) {
+/* Phones: each agent is a block; its four numbers become a labelled strip under the mission. */
+@media (max-width: 700px) {
   .ag-figures { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .ag-figures > div:nth-child(n) { grid-column: auto; }
   .ag-figures > div:last-child:nth-child(odd) { grid-column: 1 / -1; }
-  .ag-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ag-roster-head { display: none; }
+  .ag-row { grid-template-columns: minmax(0, 1fr); padding: 16px 0 12px; }
+  .ag-desc { grid-row: 2; margin-left: 44px; }
+  .ag-nums { grid-row: 3; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; margin: 12px 0 0 44px; overflow: hidden; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--line); }
+  .ag-nums > div { grid-row: auto; padding: 7px 10px 8px; background: var(--surface-raised); text-align: left; }
+  .ag-nums dt { position: static; width: auto; height: auto; overflow: visible; clip-path: none; color: var(--muted); font-size: 11px; font-weight: 500; }
+  .ag-nums .steps dd { justify-items: start; gap: 4px; margin-top: 2px; }
+  .ag-nums .steps .v { font-size: var(--fs-sm); }
+  .ag-nums dd, .ag-nums dd.mono { margin-top: 2px; }
+  .ag-more-body { grid-row: 4; margin-left: 0; }
 }
-
-/* A card with its tools and data open takes the whole row, so its neighbour is never stretched
-   into an empty box; the connections then sit side by side. */
-.ag-card:has(.ag-more[open]) { grid-column: 1 / -1; }
-.ag-card:has(.ag-more[open]) .ag-conns { grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr)); gap: 14px 24px; }
+@media (max-width: 420px) {
+  .ag-nums { grid-template-columns: repeat(2, minmax(0, 1fr)); margin-left: 0; }
+  .ag-desc { margin-left: 0; }
+}
