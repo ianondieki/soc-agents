@@ -285,6 +285,16 @@ the role is for, and Save), autonomy and display as three cards, email with its 
 alarms (the storm, then one card per preset: the site, the domain, subscribers, region, where it routes,
 Inject), the regions as cards and the sites with a finder.
 
+**A ticket.** A way back to the Incident board, then the head: the priority and the site by name, with
+the ticket number, the status as a pill, the region and county, the site code and the regional office
+under it; M-PESA at risk and a waiting decision on the right. Five figures (open for or took, the restore
+deadline with the time left or how late, subscribers, the owner with the field engineer, the decision).
+Then two columns: on the left what happened (the title, the likely cause, the impact in words, the
+agents' narrative folded, why this priority and why this owner), the agents' run, the customers, the
+ticket fields as label over value, and the timeline on a line; on the right the work note (the vendor
+update folded), reassign and close, the brief, the stop clock, earlier faults at this site and the
+contracts. In one column the work note comes straight after what happened.
+
 **The Wallboard** (always Night, made for a TV across the room). The head: the mark, "NOC wallboard"
 and the operator; on the right the live state as a pill (green dot while live, red words when the wall
 has stopped updating, the escalation count beside it at the same size) and the time in Nairobi, big, in

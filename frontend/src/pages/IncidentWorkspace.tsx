@@ -1,5 +1,6 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
+import { ArrowLeft } from "lucide-react";
 import { api } from "../api";
 import AgentRail from "../components/AgentRail";
 import { RunState } from "../components/LiveRunPanel";
@@ -16,8 +17,10 @@ import {
   humanEnum,
   humanStatus,
   nodeLabel,
+  ownerName,
   pickCreatingRun,
   priorityTitle,
+  regionName,
   sumDurations,
 } from "../lib/agents";
 import { detailOf } from "../lib/apiError";
@@ -27,10 +30,52 @@ import EarlierAtThisSite from "../components/EarlierAtThisSite";
 import ContractsDrawer from "../components/ContractsDrawer";
 import RegulatoryCountdown from "../components/RegulatoryCountdown";
 import StopClockPanel from "../components/StopClockPanel";
-import { fmtDateTime } from "../lib/time";
+import { fmtDateTime, fmtHM, parseInstant } from "../lib/time";
+import { useMinute } from "../lib/useMinute";
+import "./IncidentWorkspace.css";
 import { useIncidentRevision } from "../realtime/RealtimeContext";
 import IncidentCustomersPanel, { useIncidentCustomers } from "../components/support/IncidentCustomers";
 import { noticeWaitsForPerson } from "../lib/support";
+
+/** "45 min", "2 h 10 min", "3 d 4 h": a stretch of time at a glance. */
+function spanWords(ms: number): string {
+  const m = Math.max(0, Math.round(ms / 60_000));
+  if (m < 60) return `${m} min`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return m % 60 ? `${h} h ${m % 60} min` : `${h} h`;
+  const d = Math.floor(h / 24);
+  return h % 24 ? `${d} d ${h % 24} h` : `${d} d`;
+}
+
+/**
+ * The stored impact line as a sentence: "Est. 180,000 users; region Rift Valley; class CRITICAL;
+ * children_down=0" reads "Est. 180,000 users, region Rift Valley, critical site". A count of child
+ * sites down is said only when it is not zero. The stored text is untouched.
+ */
+function impactWords(text: string): string {
+  const parts = String(text)
+    .split(";")
+    .map((p) => p.trim())
+    .filter(Boolean)
+    .map((p) => {
+      const cls = /^class\s+([A-Z_]+)$/i.exec(p);
+      if (cls) return `${humanEnum(cls[1].toUpperCase())} site`;
+      const kids = /^children_down\s*=\s*(\d+)$/i.exec(p);
+      if (kids) return Number(kids[1]) ? `${kids[1]} child ${kids[1] === "1" ? "site" : "sites"} down` : "";
+      return arrowsToWords(p);
+    })
+    .filter(Boolean);
+  return capFirst(parts.join(", "));
+}
+
+/** A status's tone on this page: open work, restored, closed. */
+function statusTone(status: unknown): "open" | "vendor" | "restored" | "closed" {
+  const s = String(status ?? "").toUpperCase();
+  if (s === "CLOSED") return "closed";
+  if (s === "RESTORED") return "restored";
+  if (s === "AWAITING_VENDOR") return "vendor";
+  return "open";
+}
 
 /** Non-breaking space: a fact in the head ("RNIO RNIO-RFT") wraps as a whole, never inside. */
 const NB = " ";
@@ -198,6 +243,8 @@ function Workspace({ id, session, profile }: { id: string | undefined; session: 
   // Defect #26: this page reloads when an event names *this* incident (or when
   // an unrecognised event forces a full resync), not on every WS frame.
   const rev = useIncidentRevision(id);
+  // The age and the time to the restore deadline move with the clock.
+  const nowMs = useMinute().getTime();
   // The customers whose complaints are linked to this ticket (docs/CLOSE_THE_LOOP.md §4).
   const customers = useIncidentCustomers(id, rev);
   const [inc, setInc] = useState<any>(null);
@@ -453,257 +500,268 @@ function Workspace({ id, session, profile }: { id: string | undefined; session: 
     ["Vendor action", inc.msp_action_taken || dash],
   ];
 
+  // The five figures under the head.
+  const opened = parseInstant(inc.outage_start_at) || parseInstant(inc.created_at);
+  const ended = parseInstant(inc.restored_at) || parseInstant(inc.closed_at);
+  const due = parseInstant(inc.sla_restore_due);
+  const late = !isRestored && !!due && due.getTime() < nowMs;
+  const ownerWord = ownerName(inc.responsible_msp || inc.assignee_name || inc.msp_name) || dash;
+  const tone = statusTone(inc.status);
+  const place = [regionName(inc.region_code, profile), inc.county].filter(Boolean).join(", ");
+  const decisionWord = waiting ? "Waiting" : decided ? capFirst(humanStatus(hitlState)) : inc.requires_hitl ? capFirst(humanStatus(hitlState)) || "Needed" : "Not needed";
+
   return (
-    <div className="stack">
-      <div className="page-head">
-        <div>
-          <h1>
+    <div className="iw">
+      <div className="iw-back">
+        <Link to="/incidents">
+          <ArrowLeft size={15} strokeWidth={1.75} aria-hidden="true" />
+          Incident board
+        </Link>
+      </div>
+
+      <header className="iw-head">
+        <div className="iw-head-main">
+          <h1 className="iw-title">
             <span className={`pill ${inc.priority}`} title={priorityTitle(inc.priority)}>
               {inc.priority}
-            </span>{" "}
-            {inc.incident_number}
+            </span>
+            <span>{inc.site_name || inc.site_id}</span>
           </h1>
-          <p className="lead facts">
-            <span>{capFirst(humanStatus(inc.status))}</span>
-            <span>{inc.site_name}</span>
-            <span>
-              <span className="mono">{inc.region_code}</span>
-              {inc.county ? `,${NB}${inc.county}` : ""}
+          <p className="iw-sub">
+            <span className="iw-num">{inc.incident_number}</span>
+            <span className={`iw-status ${tone}`}>
+              <span className="iw-status-dot" aria-hidden="true" />
+              {capFirst(humanStatus(inc.status))}
             </span>
+            {place && <span>{place}</span>}
             {showClass && <span>{`${capFirst(humanEnum(siteClass))}${NB}site`}</span>}
-            <span>{`${inc.users_affected?.toLocaleString() ?? dash}${NB}subscribers${NB}(est.)`}</span>
-            <span>
-              {`owner${NB}`}
-              {inc.assignee_name}
-            </span>
-            {inc.rnio_name && (
-              <span>
-                {`RNIO${NB}`}
-                <span className="mono">{inc.rnio_name}</span>
-              </span>
-            )}
-            {decided && <span>{`decision${NB}${humanStatus(hitlState)}`}</span>}
+            <span className="mono iw-code">{inc.site_id}</span>
+            {inc.rnio_name && <span className="mono iw-code">{inc.rnio_name}</span>}
           </p>
         </div>
-        <div className="page-actions">
+        <div className="iw-flags">
           {inc.mpesa_risk && (
-            <span className="attn danger" title={MPESA_TITLE}>
+            <span className="iw-flag danger" title={MPESA_TITLE}>
               <IconDot /> M‑PESA at risk
             </span>
           )}
           {waiting && <span className="chip hitl">{WAITING_WORD}</span>}
+          {decided && <span className="chip">{`Decision${NB}${humanStatus(hitlState)}`}</span>}
         </div>
-      </div>
+      </header>
+
+      <dl className="iw-figures">
+        <div className={late ? "bad" : undefined}>
+          <dt>{ended ? "Took" : "Open for"}</dt>
+          <dd>{opened ? spanWords((ended ? ended.getTime() : nowMs) - opened.getTime()) : dash}</dd>
+          <dd className="iw-fig-note">{opened ? `since ${shortTime(opened.toISOString())}` : " "}</dd>
+        </div>
+        <div className={late ? "bad" : undefined}>
+          <dt>{isRestored ? "Restored" : "Restore due"}</dt>
+          <dd>{isRestored ? (inc.restored_at ? fmtHM(inc.restored_at) : "Yes") : due ? fmtHM(due) : dash}</dd>
+          <dd className="iw-fig-note">
+            {isRestored
+              ? inc.restored_at
+                ? shortTime(inc.restored_at)
+                : " "
+              : due
+                ? late
+                  ? `late by ${spanWords(nowMs - due.getTime())}`
+                  : `in ${spanWords(due.getTime() - nowMs)}`
+                : "no restore SLA recorded"}
+          </dd>
+        </div>
+        <div>
+          <dt>Subscribers</dt>
+          <dd>{inc.users_affected != null ? Number(inc.users_affected).toLocaleString("en-KE") : dash}</dd>
+          <dd className="iw-fig-note">estimated</dd>
+        </div>
+        <div>
+          <dt>Owner</dt>
+          <dd className="iw-fig-word">{ownerWord}</dd>
+          <dd className="iw-fig-note">{inc.fe_name ? `Field engineer ${inc.fe_name}` : " "}</dd>
+        </div>
+        <div className={waiting ? "hitl" : undefined}>
+          <dt>Decision</dt>
+          <dd className="iw-fig-word">{decisionWord}</dd>
+          <dd className="iw-fig-note">
+            {approvalHop && typeof approvalHop.waited_ms === "number"
+              ? `${stillWaiting ? "waiting" : "waited"} ${fmtWait(approvalHop.waited_ms)}`
+              : waiting
+                ? "on Approvals"
+                : " "}
+          </dd>
+        </div>
+      </dl>
+
       {/* Regulatory countdown (§5.3.20, §7.10) — at the top, because a SEND_FAILED regulator
           notice must be impossible to miss. Self-contained; renders nothing while
           REGULATORY_ENABLED is off or on any failure, so it cannot affect the page. */}
       <RegulatoryCountdown incidentId={inc.id} />
 
-      <div className="panel stack">
-        <div className="panel-head">
-          <h2 className="panel-title">NOC ticket fields</h2>
-          <span className="muted">Filled by the agents. Times in EAT.</span>
-        </div>
-        <dl className="rail-dl two-up">
-          {fields.map(([label, value]) => (
-            <Fragment key={label}>
-              <dt>{label}</dt>
-              <dd>{value}</dd>
-            </Fragment>
-          ))}
-        </dl>
-        <div className="detail-grid">
-          <Why title="Why this priority" text={inc.severity_rationale} />
-          <Why title="Why this owner" text={inc.assignment_rationale} />
-        </div>
-      </div>
-
-      <div className="panel">
-        <div className="panel-head">
-          <h2 className="panel-title">How the agents handled this alarm</h2>
-          {!noRuns && runs !== null && (
-            <div className="facts">
-              {railSteps.length > 0 && (
-                <span>
-                  agents took <span className="mono">{fmtMs(worked)}</span>
-                </span>
-              )}
-              {/* Still parked on a person: one state, with how long ("waiting 4 h 31 m for a
-                  decision"). Decided: the wait as a plain fact beside the run's outcome. */}
-              {approvalHop && stillWaiting ? (
-                <span className="state hitl">
-                  <IconPause />
-                  waiting <span className="mono">{fmtWait(approvalHop.waited_ms)}</span> for a decision
-                </span>
-              ) : (
-                <>
-                  {approvalHop && (
-                    <span>
-                      waited <span className="mono">{fmtWait(approvalHop.waited_ms)}</span> for a decision
-                    </span>
-                  )}
-                  {/* Success is the normal outcome: a plain word. Failed: the state colour and icon. */}
-                  {creating?.status && <RunState status={creating.status} />}
-                </>
-              )}
-              {absorbed > 0 && (
-                <span title="Later alarms the correlation step folded into this ticket instead of opening a duplicate">
-                  {absorbed} later alarm{absorbed === 1 ? "" : "s"} folded in
-                </span>
-              )}
-            </div>
-          )}
-        </div>
-        {runs === null && runsFailed ? (
-          <div className="empty" role="alert">
-            Couldn't load this ticket's agent run.{" "}
-            <button className="btn sm" onClick={load}>
-              Retry
-            </button>
-          </div>
-        ) : noRuns ? (
-          <p className="muted">
-            No agent run is recorded for this ticket, so there are no steps to show. It was opened outside the
-            alarm pipeline.
-          </p>
-        ) : (
-          <>
-            <p className="muted">Select a step for the agent's reasoning, what it produced and the tools it called.</p>
-            <AgentRail steps={railSteps} nodes={wf?.nodes} caption="This ticket's run" loading={runs === null} runStatus={creating?.status} />
-          </>
-        )}
-      </div>
-
-      <div className="detail-grid">
-        <div className="panel stack">
-          <h2 className="panel-title">Ticket narrative</h2>
-          <p>
-            <strong>{inc.title}</strong>
-          </p>
-          <div className="pre">{inc.narrative}</div>
-          {/* A wrapper, because `.rail-dl { margin: 0 }` would cancel the stack's spacing. */}
-          <div>
-            <dl className="rail-dl">
-              <dt>Hypothesis</dt>
-              <dd>{inc.root_cause_hypothesis || dash}</dd>
-              <dt>Impact</dt>
-              <dd>{inc.impact_summary || dash}</dd>
+      <div className="iw-grid">
+        <div className="iw-main">
+          <section className="panel iw-story" aria-labelledby="iw-story-title">
+            <h2 id="iw-story-title" className="panel-title">
+              What happened
+            </h2>
+            <p className="iw-story-title">{inc.title}</p>
+            <dl className="iw-story-facts">
+              <div>
+                <dt>Likely cause</dt>
+                <dd>{inc.root_cause_hypothesis || dash}</dd>
+              </div>
+              <div>
+                <dt>Impact</dt>
+                <dd>{inc.impact_summary ? impactWords(inc.impact_summary) : dash}</dd>
+              </div>
               {inc.access_notes && (
-                <>
+                <div>
                   <dt>Access</dt>
                   <dd>{inc.access_notes}</dd>
-                </>
+                </div>
               )}
             </dl>
-          </div>
-          <div className="note-form-actions">
-            <button
-              className="btn danger"
-              disabled={closeBusy}
-              aria-busy={closeBusy || undefined}
-              onClick={closeTicket}
-            >
-              {closeBusy ? "Closing…" : "Close ticket"}
-            </button>
-            {!reassigning && (
-              <button
-                className="btn"
-                onClick={() => {
-                  setReassignMsp(inc.msp_name || "Camusat");
-                  setReassignReason("");
-                  setActionMsg(null);
-                  setReassigning(true);
-                }}
-              >
-                Reassign vendor
-              </button>
+            <details className="iw-narrative">
+              <summary>The ticket narrative, as the agents wrote it</summary>
+              <div className="pre">{inc.narrative}</div>
+            </details>
+            <div className="iw-whys">
+              <Why title="Why this priority" text={inc.severity_rationale} />
+              <Why title="Why this owner" text={inc.assignment_rationale} />
+            </div>
+          </section>
+
+          <section className="panel" aria-labelledby="iw-run-title">
+            <div className="panel-head">
+              <h2 id="iw-run-title" className="panel-title">
+                How the agents handled this alarm
+              </h2>
+              {!noRuns && runs !== null && (
+                <div className="facts">
+                  {railSteps.length > 0 && (
+                    <span>
+                      agents took <span className="mono">{fmtMs(worked)}</span>
+                    </span>
+                  )}
+                  {/* Still parked on a person: one state, with how long ("waiting 4 h 31 m for a
+                      decision"). Decided: the wait as a plain fact beside the run's outcome. */}
+                  {approvalHop && stillWaiting ? (
+                    <span className="state hitl">
+                      <IconPause />
+                      waiting <span className="mono">{fmtWait(approvalHop.waited_ms)}</span> for a decision
+                    </span>
+                  ) : (
+                    <>
+                      {approvalHop && (
+                        <span>
+                          waited <span className="mono">{fmtWait(approvalHop.waited_ms)}</span> for a decision
+                        </span>
+                      )}
+                      {/* Success is the normal outcome: a plain word. Failed: the state colour and icon. */}
+                      {creating?.status && <RunState status={creating.status} />}
+                    </>
+                  )}
+                  {absorbed > 0 && (
+                    <span title="Later alarms the correlation step folded into this ticket instead of opening a duplicate">
+                      {absorbed} later alarm{absorbed === 1 ? "" : "s"} folded in
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
+            {runs === null && runsFailed ? (
+              <div className="empty" role="alert">
+                Couldn't load this ticket's agent run.{" "}
+                <button className="btn sm" onClick={load}>
+                  Retry
+                </button>
+              </div>
+            ) : noRuns ? (
+              <p className="muted">
+                No agent run is recorded for this ticket, so there are no steps to show. It was opened outside the alarm
+                pipeline.
+              </p>
+            ) : (
+              <>
+                <p className="muted">Select a step for the agent's reasoning, what it produced and the tools it called.</p>
+                <AgentRail steps={railSteps} nodes={wf?.nodes} caption="This ticket's run" loading={runs === null} runStatus={creating?.status} />
+              </>
             )}
-          </div>
-          {closeTells && !reassigning && <p className={"ic-consequence" + (tellWaits ? " hitl" : "")}>{closeTells}</p>}
-          {reassigning && (
-            <div className="note-form" role="group" aria-label="Reassign to another vendor">
-              <div className="note-form-row">
-                <label>
-                  Vendor to reassign to
-                  <input
-                    autoFocus
-                    aria-label="Vendor to reassign to"
-                    placeholder="e.g. Camusat"
-                    value={reassignMsp}
-                    disabled={reassignBusy}
-                    onChange={(e) => setReassignMsp(e.target.value)}
-                  />
-                </label>
-                <label>
-                  Reason
-                  <input
-                    aria-label="Reason for reassigning"
-                    placeholder="Default: wrong vendor pool"
-                    value={reassignReason}
-                    disabled={reassignBusy}
-                    onChange={(e) => setReassignReason(e.target.value)}
-                    onKeyDown={(e) => e.key === "Enter" && reassign()}
-                  />
-                </label>
-              </div>
-              <div className="note-form-actions">
-                <button className="btn" disabled={reassignBusy || !reassignMsp.trim()} onClick={reassign}>
-                  {reassignBusy ? "Reassigning…" : "Reassign"}
-                </button>
-                <button className="btn" disabled={reassignBusy} onClick={() => setReassigning(false)}>
-                  Cancel
-                </button>
-              </div>
+          </section>
+
+          {/* Customers on this outage: absent when nothing is linked or the Support desk is off. */}
+          {id && <IncidentCustomersPanel incidentId={id} s={customers} restored={isRestored} />}
+
+          <section className="panel" aria-labelledby="iw-fields-title">
+            <div className="panel-head">
+              <h2 id="iw-fields-title" className="panel-title">
+                Ticket fields
+              </h2>
+              <span className="muted">Filled by the agents. Times in EAT.</span>
             </div>
-          )}
-          {actionMsg && (
-            <div>
-              <Outcome msg={actionMsg} />
+            <dl className="iw-fields">
+              {fields.map(([label, value]) => (
+                <div key={label}>
+                  <dt>{label}</dt>
+                  <dd>{value}</dd>
+                </div>
+              ))}
+            </dl>
+          </section>
+
+          <section className="panel" aria-labelledby="iw-timeline-title">
+            <div className="panel-head">
+              <h2 id="iw-timeline-title" className="panel-title">
+                Timeline
+              </h2>
+              <span className="muted">Times in EAT</span>
             </div>
-          )}
+            <ol className="iw-timeline" aria-busy={timeline === null || undefined}>
+              {timeline === null && timelineFailed && (
+                <li className="empty" role="alert">
+                  Couldn't load the timeline.{" "}
+                  <button className="btn sm" onClick={load}>
+                    Retry
+                  </button>
+                </li>
+              )}
+              {timeline === null && !timelineFailed && (
+                <li>
+                  <Skeleton rows={6} label="Loading the timeline" />
+                </li>
+              )}
+              {timeline !== null && timeline.length === 0 && <li className="empty">Nothing on this ticket's timeline yet.</li>}
+              {(timeline || []).map((t, i) => {
+                const head = timelineHead(t);
+                const kind = String(t.kind || "");
+                return (
+                  <li key={i} className={`iw-tl ${kind === "note" ? "note" : kind === "broadcast" ? "broadcast" : kind === "agent_step" ? "step" : "other"}`}>
+                    <span className="iw-tl-time">{shortTime(t.ts)}</span>
+                    <span className="iw-tl-dot" aria-hidden="true" />
+                    <div className="iw-tl-main">
+                      <div className="head-row">
+                        <strong>{head.title}</strong>
+                        {head.sub && <span>{head.sub}</span>}
+                        {head.state}
+                      </div>
+                      <TimelineDetail text={t.detail} />
+                    </div>
+                  </li>
+                );
+              })}
+            </ol>
+          </section>
         </div>
-        <div className="panel stack">
-          <h2 className="panel-title">Exec brief</h2>
-          <div className="pre">{brief || "No brief yet."}</div>
-          <div>
-            <h2 className="panel-title">Work note</h2>
+
+        <aside className="iw-side" aria-label="Act on this ticket">
+          <section className="panel iw-act" aria-labelledby="iw-note-title">
+            <h2 id="iw-note-title" className="panel-title">
+              Work note
+            </h2>
             <div className="note-form">
-              <div className="note-form-row">
-                <label>
-                  Vendor TT ref
-                  <input
-                    aria-label="Vendor TT ref"
-                    value={vendorRef}
-                    onChange={(e) => setVendorRef(e.target.value)}
-                  />
-                </label>
-                <label>
-                  Percent complete
-                  <input
-                    aria-label="Percent complete, 0 to 100"
-                    inputMode="numeric"
-                    placeholder="0 to 100"
-                    value={mspPct}
-                    onChange={(e) => setMspPct(e.target.value)}
-                  />
-                </label>
-              </div>
-              <div className="note-form-row">
-                <label>
-                  Vendor root cause
-                  <input aria-label="Vendor root cause" value={mspRoot} onChange={(e) => setMspRoot(e.target.value)} />
-                </label>
-                <label>
-                  Vendor action taken
-                  <input
-                    aria-label="Vendor action taken"
-                    value={mspAction}
-                    onChange={(e) => setMspAction(e.target.value)}
-                  />
-                </label>
-              </div>
               <label>
-                Work note
+                What happened, what's next
                 <textarea
                   aria-label="Work note"
                   value={note}
@@ -711,6 +769,33 @@ function Workspace({ id, session, profile }: { id: string | undefined; session: 
                   placeholder="Work note until closure…"
                 />
               </label>
+              <details className="iw-vendor-fields">
+                <summary>Vendor update (optional)</summary>
+                <div className="iw-vendor-grid">
+                  <label>
+                    Vendor TT ref
+                    <input aria-label="Vendor TT ref" value={vendorRef} onChange={(e) => setVendorRef(e.target.value)} />
+                  </label>
+                  <label>
+                    Percent complete
+                    <input
+                      aria-label="Percent complete, 0 to 100"
+                      inputMode="numeric"
+                      placeholder="0 to 100"
+                      value={mspPct}
+                      onChange={(e) => setMspPct(e.target.value)}
+                    />
+                  </label>
+                  <label>
+                    Vendor root cause
+                    <input aria-label="Vendor root cause" value={mspRoot} onChange={(e) => setMspRoot(e.target.value)} />
+                  </label>
+                  <label>
+                    Vendor action taken
+                    <input aria-label="Vendor action taken" value={mspAction} onChange={(e) => setMspAction(e.target.value)} />
+                  </label>
+                </div>
+              </details>
               <label className="check">
                 <input
                   type="checkbox"
@@ -733,63 +818,88 @@ function Workspace({ id, session, profile }: { id: string | undefined; session: 
                 <Outcome msg={noteMsg} />
               </div>
             </div>
-          </div>
-        </div>
-      </div>
 
-      {/* Customers on this outage: absent when nothing is linked or the Support desk is off. */}
-      {id && <IncidentCustomersPanel incidentId={id} s={customers} restored={isRestored} />}
-
-      {/* Agent memory M0 (spec §7.11): what has happened at this mast before, read from the
-          incidents already in the database. Self-contained — it owns its fetch and swallows its
-          own failures — so it cannot affect anything above it, and removing it is deleting this
-          line and the import. Advisory only (MEM1): it sets no field on this ticket. */}
-      <EarlierAtThisSite siteId={inc.site_id} />
-      {/* Contract clause lookup (spec 7.8), scoped to THIS incident: the drawer passes
-          incidentId so the allow-set is derived from the incident's vendor and the
-          asker's role. It cannot widen that scope -- the route ignores any allow-set in
-          the request body. Self-contained and advisory, like the panel above it. */}
-      <ContractsDrawer incidentId={inc.id} />
-      {/* Stop clock / SCC (§7.6.3, §7.10): reason mandatory before open. Renders nothing while
-          SCORECARDS_ENABLED is off; owns its fetch and swallows its own failures. */}
-      <StopClockPanel incidentId={inc.id} />
-
-      <div className="panel">
-        <div className="panel-head">
-          <h2 className="panel-title">Timeline</h2>
-          <span className="muted">Times in EAT</span>
-        </div>
-        <div className="list" aria-busy={timeline === null || undefined}>
-          {timeline === null && timelineFailed && (
-            <div className="empty" role="alert">
-              Couldn't load the timeline.{" "}
-              <button className="btn sm" onClick={load}>
-                Retry
-              </button>
-            </div>
-          )}
-          {timeline === null && !timelineFailed && <Skeleton rows={6} label="Loading the timeline" />}
-          {timeline !== null && timeline.length === 0 && (
-            <div className="empty">Nothing on this ticket's timeline yet.</div>
-          )}
-          {(timeline || []).map((t, i) => {
-            const head = timelineHead(t);
-            return (
-              // The clock is "02 Oct, 05:16" in mono on every row, so the titles start at one x.
-              <div key={i} className="row static">
-                <span className="muted dim mono">{shortTime(t.ts)}</span>
-                <div className="row-main">
-                  <div className="head-row">
-                    <strong>{head.title}</strong>
-                    {head.sub && <span>{head.sub}</span>}
-                    {head.state}
-                  </div>
-                  <TimelineDetail text={t.detail} />
-                </div>
+            <div className="iw-act-more">
+              <div className="note-form-actions">
+                {!reassigning && (
+                  <button
+                    className="btn"
+                    onClick={() => {
+                      setReassignMsp(inc.msp_name || "Camusat");
+                      setReassignReason("");
+                      setActionMsg(null);
+                      setReassigning(true);
+                    }}
+                  >
+                    Reassign vendor
+                  </button>
+                )}
+                <button className="btn danger" disabled={closeBusy} aria-busy={closeBusy || undefined} onClick={closeTicket}>
+                  {closeBusy ? "Closing…" : "Close ticket"}
+                </button>
               </div>
-            );
-          })}
-        </div>
+              {closeTells && !reassigning && <p className={"ic-consequence" + (tellWaits ? " hitl" : "")}>{closeTells}</p>}
+              {reassigning && (
+                <div className="note-form" role="group" aria-label="Reassign to another vendor">
+                  <label>
+                    Vendor to reassign to
+                    <input
+                      autoFocus
+                      aria-label="Vendor to reassign to"
+                      placeholder="e.g. Camusat"
+                      value={reassignMsp}
+                      disabled={reassignBusy}
+                      onChange={(e) => setReassignMsp(e.target.value)}
+                    />
+                  </label>
+                  <label>
+                    Reason
+                    <input
+                      aria-label="Reason for reassigning"
+                      placeholder="Default: wrong vendor pool"
+                      value={reassignReason}
+                      disabled={reassignBusy}
+                      onChange={(e) => setReassignReason(e.target.value)}
+                      onKeyDown={(e) => e.key === "Enter" && reassign()}
+                    />
+                  </label>
+                  <div className="note-form-actions">
+                    <button className="btn" disabled={reassignBusy || !reassignMsp.trim()} onClick={reassign}>
+                      {reassignBusy ? "Reassigning…" : "Reassign"}
+                    </button>
+                    <button className="btn" disabled={reassignBusy} onClick={() => setReassigning(false)}>
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
+              {actionMsg && (
+                <div>
+                  <Outcome msg={actionMsg} />
+                </div>
+              )}
+            </div>
+          </section>
+
+          <section className="panel" aria-labelledby="iw-brief-title">
+            <h2 id="iw-brief-title" className="panel-title">
+              Exec brief
+            </h2>
+            {brief ? <div className="pre iw-brief">{brief}</div> : <p className="muted">No brief yet. The briefing agent writes one for P1 and P2 tickets.</p>}
+          </section>
+
+          {/* Stop clock / SCC (§7.6.3, §7.10): reason mandatory before open. Renders nothing while
+              SCORECARDS_ENABLED is off; owns its fetch and swallows its own failures. */}
+          <StopClockPanel incidentId={inc.id} />
+          {/* Agent memory M0 (spec §7.11): what has happened at this mast before, read from the
+              incidents already in the database. Self-contained — it owns its fetch and swallows its
+              own failures — so it cannot affect anything above it. Advisory only (MEM1). */}
+          <EarlierAtThisSite siteId={inc.site_id} />
+          {/* Contract clause lookup (spec 7.8), scoped to THIS incident: the drawer passes
+              incidentId so the allow-set is derived from the incident's vendor and the
+              asker's role. It cannot widen that scope. Self-contained and advisory. */}
+          <ContractsDrawer incidentId={inc.id} flush />
+        </aside>
       </div>
     </div>
   );

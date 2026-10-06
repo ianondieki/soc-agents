@@ -1943,8 +1943,14 @@ textarea { width: 100%; min-height: 90px; line-height: 1.5; resize: vertical; }
 .rail:not(.rail-compact):not(.rail-grid) .rail-track { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: var(--s3) 0; align-items: stretch; }
 .rail:not(.rail-compact):not(.rail-grid) .rail-hop { min-width: 0; }
 .rail:not(.rail-compact):not(.rail-grid) .rail-btn { flex: 1 1 auto; min-width: 0; }
-@media (max-width: 899px) { .rail:not(.rail-compact):not(.rail-grid) .rail-track { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
-@media (max-width: 599px) { .rail:not(.rail-compact):not(.rail-grid) .rail-track { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+/* The rail's own width decides (a container query), so a ticket's run in a narrower column
+   steps down to four a row, then three, instead of squeezing six. */
+.rail:not(.rail-compact):not(.rail-grid) { container-type: inline-size; }
+@container (max-width: 760px) { .rail:not(.rail-compact):not(.rail-grid) .rail-track { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+@container (max-width: 500px) { .rail:not(.rail-compact):not(.rail-grid) .rail-track { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+/* A long agent name never spills out of its box: it is cut with an ellipsis (the full name is in
+   the detail below the rail). */
+.rail:not(.rail-compact):not(.rail-grid) .rail-btn > span { max-width: 100%; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 /* Compact (Mission control): the twelve hops share the panel's whole width as one even row, six a
    row on a narrower panel and four on a phone (a container query: the panel's width decides, not
    the window's). */
