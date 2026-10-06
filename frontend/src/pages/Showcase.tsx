@@ -1,8 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
+import { LockKeyhole } from "lucide-react";
 import { api } from "../api";
 import LiveRunPanel from "../components/LiveRunPanel";
 import { LIFECYCLE_NODES, fmtInt, fmtMinutes, fmtMs, humanAutonomy, nodeDoes, nodeLabel } from "../lib/agents";
+import { FIBRES, fibreColour, fibreOf } from "../lib/fibre";
 import { fmtEAT } from "../lib/time";
 import "./Showcase.css";
 
@@ -173,12 +175,15 @@ export default function Showcase({
     <div className="showcase">
       <section className="sc-hero" aria-labelledby="sc-title">
         <div className="sc-hero-text">
-          <h1 id="sc-title">Alarm to filled-in ticket in under a second.</h1>
+          <h1 id="sc-title">
+            {/* "filled-in" never breaks at its hyphen. */}
+            Alarm to <span className="sc-nowrap">filled-in</span> ticket in under a second.
+          </h1>
           <p className="sc-lead">
             <span>Agents fill every field, choose the vendor, draft the SMS and email, and chase the reply.</span>{" "}
             <span>P1 and P2 messages wait for a named person, and every step is on record.</span>
           </p>
-          <button type="button" className="btn primary" onClick={() => nav("/mission")}>
+          <button type="button" className="btn primary sc-cta" onClick={() => nav("/mission")}>
             Watch it live on Mission control
           </button>
         </div>
@@ -224,8 +229,13 @@ export default function Showcase({
       </div>
 
       <section className="sc-section" aria-labelledby="sc-steps-title">
-        <h2 id="sc-steps-title">What changed for the floor</h2>
-        <p className="sc-lead">The twelve steps of every service-affecting alarm, before and now.</p>
+        <div className="sc-section-head">
+          <div>
+            <h2 id="sc-steps-title">What changed for the floor</h2>
+            <p className="sc-lead">The twelve steps of every service-affecting alarm, before and now.</p>
+          </div>
+          <Versus p={p} fresh={fresh} />
+        </div>
         <Steps p={p} fresh={fresh} failed={!!err && !p} windowHours={windowHours} />
       </section>
 
@@ -235,61 +245,79 @@ export default function Showcase({
         <Architecture mcp={mcp} />
       </section>
 
-      <section className="sc-section sc-two">
+      <section className="sc-section sc-two" aria-labelledby="sc-decide-title">
         <div>
-          <h2>Where people decide</h2>
+          <h2 id="sc-decide-title">Where people decide</h2>
           <p className="sc-lead">This deployment runs at {humanAutonomy(autonomy)}; the level is one setting.</p>
+          {/* Three rungs on one track, lit up to the rung in force. */}
           <ol className="sc-ladder">
-            {LADDER.map((l) => (
-              <li
-                key={l.level}
-                className={"sc-rung" + (l.level === autonomy ? " current" : "")}
-                aria-current={l.level === autonomy ? "true" : undefined}
-              >
-                <strong>{l.label}</strong>
-                <span>{l.text}</span>
-              </li>
-            ))}
+            {LADDER.map((l, i) => {
+              const at = LADDER.findIndex((x) => x.level === autonomy);
+              const state = l.level === autonomy ? "current" : at >= 0 && i < at ? "below" : "above";
+              return (
+                <li key={l.level} className={`sc-rung ${state}`} aria-current={state === "current" ? "true" : undefined}>
+                  <span className="sc-rung-dot" aria-hidden="true" />
+                  <strong>{l.label}</strong>
+                  <span className="sc-rung-text">{l.text}</span>
+                  {state === "current" && <span className="sc-rung-now">This deployment</span>}
+                </li>
+              );
+            })}
           </ol>
         </div>
-        <div>
-          <h2>What is never automated</h2>
+        <div className="sc-never-panel">
+          <h2>Never automated, at any level</h2>
           <ul className="sc-never">
-            <li>Wording that reaches management or leaves the building on a P1 or P2.</li>
-            <li>Overriding a priority or disputing an assignment.</li>
-            <li>Sending the shift handover.</li>
-            <li>Any change to a live network element. There is no such tool to call.</li>
-            <li>
-              {mcp && mcp.writeGated > 0
+            {[
+              "Wording that reaches management or leaves the building on a P1 or P2.",
+              "Overriding a priority or disputing an assignment.",
+              "Sending the shift handover.",
+              "Any change to a live network element. There is no such tool to call.",
+              mcp && mcp.writeGated > 0
                 ? `Any write into another system: ${plural(mcp.writeGated, "write type")}, each behind a named approval.`
-                : "Any write into another system; each one waits for a named approval."}
-            </li>
+                : "Any write into another system; each one waits for a named approval.",
+            ].map((t) => (
+              <li key={t}>
+                <LockKeyhole size={16} strokeWidth={1.75} aria-hidden="true" />
+                <span>{t}</span>
+              </li>
+            ))}
           </ul>
         </div>
       </section>
 
       <div className="sc-try">
         <p>Try it yourself: launch the storm on Mission control, then approve or reject the held broadcasts.</p>
-        <button type="button" className="btn" onClick={() => nav("/hitl")}>
-          Open Approvals
-        </button>
+        <div className="sc-try-actions">
+          <button type="button" className="btn" onClick={() => nav("/mission")}>
+            Open Mission control
+          </button>
+          <button type="button" className="btn" onClick={() => nav("/hitl")}>
+            Open Approvals
+          </button>
+        </div>
       </div>
     </div>
   );
 }
 
-/** The three figures, in the sans, each a value and one line that says what it counts. */
+/** The three figures: what each counts above it, the figure in the display face, one line under
+ *  it that says what it is made of. */
 function Figures({ p, windowHours, waitingNow }: { p: any | null; windowHours: Window; waitingNow: number | null }) {
   if (!p) {
     return (
-      <ul className="sc-fig-list" aria-busy="true" aria-label="Loading the numbers">
+      <dl className="sc-fig-list" aria-busy="true" aria-label="Loading the numbers">
         {[0, 1, 2].map((i) => (
-          <li key={i} className="sc-fig">
-            <span className="skeleton sc-skel-value" />
-            <span className="skeleton sc-skel-label" />
-          </li>
+          <div key={i} className="sc-fig">
+            <dt>
+              <span className="skeleton sc-skel-label" />
+            </dt>
+            <dd>
+              <span className="skeleton sc-skel-value" />
+            </dd>
+          </div>
         ))}
-      </ul>
+      </dl>
     );
   }
 
@@ -301,47 +329,83 @@ function Figures({ p, windowHours, waitingNow }: { p: any | null; windowHours: W
   const absorbed = Math.max(0, Math.round(Number(alarms.absorbed) || 0));
   const made = Number(hitl.approved || 0) + Number(hitl.rejected || 0);
   const span = windowHours ? "in the last 24 hours" : "on record";
+  const spent = Number(toil.human_minutes_spent) || 0;
 
   const minutesTitle =
     `${fmtMinutes(toil.minutes_saved)} of steps taken over, less ${fmtMinutes(toil.human_minutes_spent)} people spent deciding. ` +
     "Minutes by hand are the floor's own estimates, not a stopwatch study.";
 
-  // Always both numbers: decided by a person, and waiting now (0 is a real answer).
-  const decisionsLabel = "by a person" + (waitingNow == null ? "" : `; ${fmtInt(waitingNow)} waiting now`);
-
   return (
-    <ul className="sc-fig-list" aria-live="polite">
-      <li className="sc-fig" title={minutesTitle}>
-        <span className="sc-fig-value">{fmtMinutes(Math.max(0, Number(toil.net_minutes_saved) || 0))}</span>{" "}
-        <span className="sc-fig-label">of analyst work saved (estimate, after approval time)</span>
-      </li>
-      <li className="sc-fig">
+    <dl className="sc-fig-list" aria-live="polite">
+      <div className="sc-fig" title={minutesTitle}>
+        <dt>Analyst work taken over</dt>
+        <dd className="sc-fig-value">{fmtMinutes(Math.max(0, Number(toil.net_minutes_saved) || 0))}</dd>
+        <dd className="sc-fig-note">
+          {spent > 0 ? `after the ${fmtMinutes(spent)} people spent deciding; ` : ""}an estimate from the floor's minutes by hand
+        </dd>
+      </div>
+      <div className="sc-fig">
+        <dt>Tickets opened</dt>
         {processed > 0 ? (
           <>
-            <span className="sc-fig-value">{plural(created, "ticket")}</span>{" "}
+            <dd className="sc-fig-value">{fmtInt(created)}</dd>
             {/* Whole numbers a manager can say aloud: "6 of 11 alarms", never "54.5 %". */}
-            <span className="sc-fig-label">
+            <dd className="sc-fig-note">
               {absorbed > 0
                 ? `from ${plural(processed, "alarm")}; ${fmtInt(absorbed)} folded into a ticket already open`
                 : `from ${plural(processed, "alarm")}`}
-            </span>
+            </dd>
           </>
         ) : (
           <>
-            <span className="sc-fig-value">No alarms yet</span>{" "}
-            <span className="sc-fig-label">{windowHours ? span : "launch the storm on Mission control"}</span>
+            <dd className="sc-fig-value">0</dd>
+            <dd className="sc-fig-note">{windowHours ? `no alarms ${span}` : "no alarms yet; launch the storm on Mission control"}</dd>
           </>
         )}
-      </li>
-      <li className="sc-fig" title={hitl.median_decision_minutes != null ? `A decision takes ${hitl.median_decision_minutes} min on median.` : undefined}>
-        <span className="sc-fig-value">{fmtInt(made)} decided</span>{" "}
-        <span className="sc-fig-label">{decisionsLabel}</span>
-      </li>
-    </ul>
+      </div>
+      <div className="sc-fig" title={hitl.median_decision_minutes != null ? `A decision takes ${hitl.median_decision_minutes} min on median.` : undefined}>
+        <dt>Decided by a person</dt>
+        <dd className="sc-fig-value">{fmtInt(made)}</dd>
+        {/* Always both numbers: decided, and waiting now (0 is a real answer). */}
+        <dd className={"sc-fig-note" + (waitingNow ? " hitl" : "")}>
+          {waitingNow == null ? (made === 1 ? "decision on record" : "decisions on record") : `${fmtInt(waitingNow)} waiting for a decision now`}
+        </dd>
+      </div>
+    </dl>
   );
 }
 
-/** The twelve steps, before and now, with the minutes by hand as a column and a total. */
+/** By hand against the agents, per alarm: two bars on one scale, so the agents' bar is a sliver. */
+function Versus({ p, fresh }: { p: any | null; fresh: any | null }) {
+  const byNode: any[] = Array.isArray(p?.steps?.by_node) ? p.steps.by_node : [];
+  const handMin = byNode.reduce((sum, n) => sum + Number(n.toil_minutes_each || 0), 0);
+  const freshNodes: any[] = Array.isArray(fresh?.steps?.by_node) ? fresh.steps.by_node : [];
+  const agentMs = freshNodes.length ? freshNodes.reduce((sum, n) => sum + (Number(n.avg_ms) || 0), 0) : null;
+  if (!handMin || agentMs == null) return <div className="sc-versus" aria-hidden="true" />;
+  const share = Math.max(0, Math.min(1, agentMs / (handMin * 60_000)));
+  return (
+    <figure className="sc-versus" aria-label={`Per alarm: ${fmtMinutes(handMin)} by hand, ${fmtMs(agentMs)} by the agents`}>
+      <div className="sc-vs-row">
+        <span className="sc-vs-name">By hand</span>
+        <span className="sc-vs-track" aria-hidden="true">
+          <span className="sc-vs-bar hand" style={{ width: "100%" }} />
+        </span>
+        <span className="sc-vs-val">{fmtMinutes(handMin)}</span>
+      </div>
+      <div className="sc-vs-row">
+        <span className="sc-vs-name">The agents</span>
+        <span className="sc-vs-track" aria-hidden="true">
+          <span className="sc-vs-bar agents" style={{ width: `${share * 100}%` }} />
+        </span>
+        <span className="sc-vs-val">{fmtMs(agentMs)}</span>
+      </div>
+      <figcaption>Per alarm, on one scale. Minutes by hand are the floor's own estimates.</figcaption>
+    </figure>
+  );
+}
+
+/** The twelve steps, before and now: the minutes each takes by hand as a bar on one scale, the
+ *  agents' own time beside it, and the totals for one alarm underneath. */
 function Steps({ p, fresh, failed, windowHours }: { p: any | null; fresh: any | null; failed: boolean; windowHours: Window }) {
   // The live node list wins; until it answers, the registry order keeps the copy on screen and
   // only the minutes wait.
@@ -349,6 +413,7 @@ function Steps({ p, fresh, failed, windowHours }: { p: any | null; fresh: any | 
   const live = new Map<string, any>(byNode.map((n) => [String(n.node), n]));
   const ids: string[] = byNode.length ? byNode.map((n) => String(n.node)) : LIFECYCLE_NODES.map((n) => n.id);
   const totalByHand = byNode.reduce((sum, n) => sum + Number(n.toil_minutes_each || 0), 0);
+  const most = byNode.reduce((m, n) => Math.max(m, Number(n.toil_minutes_each || 0)), 0);
   // One time for one run (the rule the rail and the ticket follow): what the agents worked, the
   // sum of their step times, never started-to-finished, which grows by hours when a person
   // approves later. Per ticket: each step's average time, added up.
@@ -356,7 +421,7 @@ function Steps({ p, fresh, failed, windowHours }: { p: any | null; fresh: any | 
   const agentMs = freshNodes.length ? freshNodes.reduce((sum, n) => sum + (Number(n.avg_ms) || 0), 0) : null;
   const span = windowHours ? "in the last 24 hours" : "on record";
 
-  const minutes = (content: string) => (p ? content : failed ? "—" : <span className="skeleton sc-skel-min" aria-hidden="true" />);
+  const wait = (content: ReactNode) => (p ? content : failed ? "—" : <span className="skeleton sc-skel-min" aria-hidden="true" />);
 
   return (
     <table className="sc-steps">
@@ -365,8 +430,11 @@ function Steps({ p, fresh, failed, windowHours }: { p: any | null; fresh: any | 
           <th scope="col">Step</th>
           <th scope="col">Before</th>
           <th scope="col">Now</th>
+          <th scope="col" className="sc-hand">
+            By hand
+          </th>
           <th scope="col" className="sc-num">
-            Minutes by hand
+            Agents
           </th>
         </tr>
       </thead>
@@ -377,21 +445,42 @@ function Steps({ p, fresh, failed, windowHours }: { p: any | null; fresh: any | 
           const each = Number(n?.toil_minutes_each || 0);
           const fn = fresh ? (fresh.steps?.by_node || []).find((x: any) => x.node === id) : null;
           const done = fn ? Number(fn.succeeded || 0) + Number(fn.waiting_hitl || 0) : null;
+          const f = fibreOf(id);
           return (
             <tr key={id} className={human ? "human" : undefined}>
               <th scope="row">
-                <span className="sc-step-no">{i + 1}</span>
-                {nodeLabel(id)}
+                <span className="sc-step-name">
+                  <span className="sc-step-no">{i + 1}</span>
+                  {f && <span className={"sc-strand" + (f.outlined ? " outlined" : "")} style={{ ["--fibre" as string]: fibreColour(f) }} aria-hidden="true" />}
+                  {nodeLabel(id)}
+                </span>
               </th>
               <td className="sc-before" data-label="Before">
                 {BEFORE[id] || ""}
               </td>
-              <td data-label="Now">{nodeDoes(id)}</td>
+              <td className="sc-now" data-label="Now">
+                {nodeDoes(id)}
+              </td>
               <td
-                className="sc-num"
+                className="sc-hand"
+                data-label="By hand"
                 title={done != null && !human ? `${fmtInt(done)} × ${fmtMinutes(each)} = ${fmtMinutes(fn.minutes_saved)} taken over ${span}` : undefined}
               >
-                {minutes(human ? "stays human" : fmtMinutes(each))}
+                {wait(
+                  human ? (
+                    <span className="sc-hand-human">stays human</span>
+                  ) : (
+                    <span className="sc-hand-cell">
+                      <span className="sc-hand-track" aria-hidden="true">
+                        <span className="sc-hand-bar" style={{ width: `${most ? (each / most) * 100 : 0}%` }} />
+                      </span>
+                      <span className="sc-hand-val">{fmtMinutes(each)}</span>
+                    </span>
+                  )
+                )}
+              </td>
+              <td className="sc-num sc-agent-ms" data-label="Agents">
+                {human ? "" : fn && Number.isFinite(Number(fn.avg_ms)) && Number(fn.steps || 0) > 0 ? fmtMs(Number(fn.avg_ms)) : p ? "—" : ""}
               </td>
             </tr>
           );
@@ -401,10 +490,14 @@ function Steps({ p, fresh, failed, windowHours }: { p: any | null; fresh: any | 
         <tr>
           <th scope="row">Per alarm</th>
           <td colSpan={2} className="sc-total-note">
-            Minutes by hand are the floor's own estimates, not a stopwatch study.
-            {agentMs != null && agentMs > 0 ? ` The agents' own steps take ${fmtMs(agentMs)} per ticket, on average.` : ""}
+            Minutes by hand are the floor's own estimates, not a stopwatch study; the agents' time is each step's average, added up.
           </td>
-          <td className="sc-num">{minutes(fmtMinutes(totalByHand))}</td>
+          <td className="sc-hand sc-total" data-label="By hand">
+            {wait(fmtMinutes(totalByHand))}
+          </td>
+          <td className="sc-num sc-total" data-label="Agents">
+            {agentMs != null && agentMs > 0 ? fmtMs(agentMs) : ""}
+          </td>
         </tr>
       </tfoot>
     </table>
@@ -418,12 +511,52 @@ function Architecture({ mcp }: { mcp: { agents: number; cards: number; servers: 
   const right = ["Approvals: read and decide", "Wallboard and Mission control", "Exec brief readers", "Regional office, engineer, vendor"];
   const rightY = [34, 103, 173, 242];
   return (
+    <>
+    {/* A phone gets the same platform as a stack read top to bottom, in words, instead of a
+        drawing that would scroll sideways. */}
+    <ol className="sc-arch-stack" aria-label="How the agents sit on the existing platform">
+      <li>
+        <h3>Existing systems</h3>
+        <ul>
+          {left.map((t) => (
+            <li key={t}>{t}</li>
+          ))}
+        </ul>
+      </li>
+      <li className="adapt">
+        <h3>Adapters</h3>
+        <p>Mock today, real later.</p>
+      </li>
+      <li className="agents">
+        <h3>{mcp && mcp.agents > 0 ? `${mcp.agents} agents` : "The agents"}</h3>
+        <span className="sc-stack-fibres" aria-hidden="true">
+          {FIBRES.map((f) => (
+            <i key={f.node} className={f.outlined ? "outlined" : undefined} style={{ background: fibreColour(f) }} />
+          ))}
+        </span>
+        <p className="gate">Approval gate</p>
+        <p>Every step logs its reason, tools and timing in the audit trail.</p>
+        {mcp && mcp.cards > 0 && (
+          <p>{`${fmtInt(mcp.cards)} tool connections to ${fmtInt(mcp.servers)} systems, read-only or behind an approval; none switched on in this demo.`}</p>
+        )}
+      </li>
+      <li>
+        <h3>People</h3>
+        <ul>
+          {right.map((t, i) => (
+            <li key={t} className={i === 0 ? "human" : undefined}>
+              {t}
+            </li>
+          ))}
+        </ul>
+      </li>
+    </ol>
     <figure className="sc-arch" tabIndex={0} aria-label="Platform diagram">
       <svg viewBox="0 0 980 292" role="img" aria-labelledby="sc-arch-svg-title sc-arch-svg-desc">
         <title id="sc-arch-svg-title">How the agents sit on the existing platform</title>
         <desc id="sc-arch-svg-desc">
-          Existing systems on the left connect through adapters, mock today and real later, to the agents and their
-          approval gate, which hand decisions and messages to people on the right.
+          Existing systems on the left connect through adapters, mock today and real later, to the twelve agents and
+          their approval gate, which hand decisions and messages to people on the right.
         </desc>
         <defs>
           <marker id="sc-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
@@ -460,34 +593,47 @@ function Architecture({ mcp }: { mcp: { agents: number; cards: number; servers: 
         <line x1="353" y1="158" x2="391" y2="158" className="sc-arch-line" markerStart="url(#sc-arr)" markerEnd="url(#sc-arr)" />
 
         <rect x="392" y="34" width="310" height="248" rx="12" className="sc-arch-agents" />
-        <text x="547" y="66" textAnchor="middle" className="sc-arch-h">
+        <text x="547" y="62" textAnchor="middle" className="sc-arch-h">
           {mcp && mcp.agents > 0 ? `${mcp.agents} agents` : "The agents"}
         </text>
-        <rect x="420" y="86" width="254" height="38" rx="8" className="sc-arch-gate" />
-        <text x="547" y="110" textAnchor="middle" className="sc-arch-t">
+        {/* The twelve agents in their fibre colours, in pipeline order: identity marks only. */}
+        <g aria-hidden="true">
+          {FIBRES.map((f, i) => (
+            <circle
+              key={f.node}
+              cx={547 - 5.5 * 17 + i * 17}
+              cy={80}
+              r={5}
+              fill={fibreColour(f)}
+              className={"sc-arch-fibre" + (f.outlined ? " outlined" : "")}
+            />
+          ))}
+        </g>
+        <rect x="420" y="98" width="254" height="38" rx="8" className="sc-arch-gate" />
+        <text x="547" y="122" textAnchor="middle" className="sc-arch-t">
           Approval gate
         </text>
-        <text x="547" y="156" textAnchor="middle" className="sc-arch-s">
+        <text x="547" y="166" textAnchor="middle" className="sc-arch-s">
           Every step logs its reason, tools
         </text>
-        <text x="547" y="173" textAnchor="middle" className="sc-arch-s">
+        <text x="547" y="183" textAnchor="middle" className="sc-arch-s">
           and timing in the audit trail
         </text>
         {mcp &&
           (mcp.cards > 0 ? (
             <>
-              <text x="547" y="207" textAnchor="middle" className="sc-arch-s">
+              <text x="547" y="215" textAnchor="middle" className="sc-arch-s">
                 {`${fmtInt(mcp.cards)} tool connections to ${fmtInt(mcp.servers)} systems,`}
               </text>
-              <text x="547" y="224" textAnchor="middle" className="sc-arch-s">
+              <text x="547" y="232" textAnchor="middle" className="sc-arch-s">
                 read-only or behind an approval;
               </text>
-              <text x="547" y="241" textAnchor="middle" className="sc-arch-s">
+              <text x="547" y="249" textAnchor="middle" className="sc-arch-s">
                 none switched on in this demo
               </text>
             </>
           ) : (
-            <text x="547" y="215" textAnchor="middle" className="sc-arch-s">
+            <text x="547" y="225" textAnchor="middle" className="sc-arch-s">
               No external tool connections declared
             </text>
           ))}
@@ -509,5 +655,6 @@ function Architecture({ mcp }: { mcp: { agents: number; cards: number; servers: 
         })}
       </svg>
     </figure>
+    </>
   );
 }

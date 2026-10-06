@@ -2,31 +2,36 @@
    (main.tsx imports styles.css first); overrides are still scoped under a
    Showcase class to win on specificity, never on source order.
 
-   One authored page, about three screens at 1280 x 650. The loud part is the hero: a balanced
-   headline, three live figures and the newest alarm on the rail. Everything under it is set
-   quietly on hairlines: one table, one diagram, two short lists, one closing row. */
+   One authored page for the people who decide. The loud part is the hero: a poster headline in
+   Archivo, three live figures in the display face, then the newest alarm on the rail. Under it,
+   set on hairlines: by hand against the agents on one scale, the twelve steps with their minutes
+   as bars, the platform with the twelve agents in their fibre colours, the ladder lit to the
+   rung in force, the never-automated list, one closing row. */
 
-.showcase { max-width: 1120px; }
+.showcase { max-width: 1160px; }
 
 /* ---------------------------------------------------------------- hero */
 .sc-hero {
   display: grid;
-  grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
-  gap: var(--s5) var(--s6);
+  grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
+  gap: var(--s5) var(--s7);
   align-items: start;
 }
-.sc-hero h1 {
-  margin: 0 0 var(--s3);
+/* A poster line, as on the front page: Archivo heavy and a touch narrow, sized for a console
+   page rather than a landing (it ends on its fourth line at most). */
+.showcase .sc-hero h1 {
+  max-width: 13ch;
+  margin: 4px 0 var(--s4);
+  color: var(--text-strong);
   font-family: var(--font-display);
-  font-stretch: var(--title-stretch);
-  max-width: 600px;
-  font-size: var(--fs-display);
-  font-weight: 600;
-  line-height: 1.15;
-  letter-spacing: -0.02em;
-  color: var(--text-bright);
+  font-size: clamp(2.5rem, 4.4vw, 4rem);
+  font-stretch: 94%;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: -0.018em;
   text-wrap: balance;
 }
+.sc-nowrap { white-space: nowrap; }
 .sc-lead {
   margin: 0 0 var(--s3);
   max-width: 70ch;
@@ -36,10 +41,13 @@
   text-wrap: pretty;
 }
 /* Two sentences, two lines: each sentence balances on its own, so neither ends on one word. */
-.sc-hero .sc-lead { margin-bottom: var(--s5); font-size: var(--fs-base); }
+.sc-hero .sc-lead { max-width: 52ch; margin-bottom: var(--s5); color: var(--text); font-size: var(--fs-base); line-height: 1.55; }
 .sc-hero .sc-lead > span { display: block; text-wrap: balance; }
+.sc-hero .sc-lead > span + span { margin-top: 4px; color: var(--muted); }
+.showcase .sc-cta { height: 44px; padding: 0 20px; font-size: var(--fs-md); }
 
-/* The figures: the window control sits directly above the numbers it changes. */
+/* The figures: the window control sits directly above the numbers it changes. Each figure is
+   what it counts, then the figure in the display face, then what it is made of. */
 .sc-figures { min-width: 0; }
 .sc-figures > .seg { margin-bottom: var(--s3); }
 /* When everything on record is from the last 24 hours the toggle would change nothing: the
@@ -54,20 +62,24 @@
   font-size: var(--fs-sm);
 }
 @media (max-width: 700px) { .sc-window { min-height: 42px; } }
-.sc-fig-list { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line); }
-.sc-fig { padding: var(--s2) 0 var(--s3); border-bottom: 1px solid var(--line); }
-.sc-fig-value {
-  display: block;
-  font-size: var(--fs-display);
-  font-weight: 500;
-  line-height: 1.15;
-  letter-spacing: -0.02em;
-  color: var(--text-bright);
+.sc-fig-list { margin: 0; border-top: 1px solid var(--line-strong); }
+.sc-fig { padding: 14px 0 16px; border-bottom: 1px solid var(--line); }
+.sc-fig dt { color: var(--muted); font-size: var(--fs-sm); font-weight: 500; }
+.sc-fig dd { margin: 0; }
+.sc-fig .sc-fig-value {
+  margin-top: 6px;
+  color: var(--text-strong);
+  font-family: var(--font-display);
+  font-size: clamp(2.25rem, 3.4vw, 3rem);
+  font-weight: 750;
+  line-height: 1;
+  letter-spacing: -0.015em;
   font-variant-numeric: tabular-nums;
 }
-.sc-fig-label { display: block; margin-top: 2px; color: var(--muted); font-size: var(--fs-sm); line-height: 1.45; text-wrap: pretty; }
-.sc-fig .skeleton.sc-skel-value { height: 28px; width: 7rem; margin: 5px 0 7px; }
-.sc-fig .skeleton.sc-skel-label { width: 16rem; max-width: 100%; margin: 5px 0 2px; }
+.sc-fig .sc-fig-note { margin-top: 6px; color: var(--muted); font-size: var(--fs-sm); line-height: 1.45; text-wrap: pretty; }
+.sc-fig .sc-fig-note.hitl { color: var(--hitl-text); font-weight: 600; }
+.sc-fig .skeleton.sc-skel-value { height: 40px; width: 7rem; margin: 8px 0 26px; }
+.sc-fig .skeleton.sc-skel-label { display: inline-block; width: 10rem; max-width: 100%; height: 12px; }
 .sc-figures .empty.sc-alert {
   display: flex;
   flex-wrap: wrap;
@@ -80,90 +92,168 @@
 
 /* The hero rail: compact tiles, no agent subtitle, no confidence figure (it lives in the
    hop detail). `compact` already hides both; the rule keeps it so if the rail changes. */
-.sc-hero-rail { margin-top: var(--s5); }
+.sc-hero-rail { margin-top: var(--s6); }
 .sc-hero-rail .rail-agent,
 .sc-hero-rail .rail-conf { display: none; }
 
 /* ---------------------------------------------------------------- sections */
-.sc-section { margin-top: var(--s6); padding-top: var(--s4); border-top: 1px solid var(--line); }
-.sc-section h2 {
+.sc-section { margin-top: var(--s7); padding-top: var(--s5); border-top: 1px solid var(--line); }
+.showcase .sc-section h2 {
   margin: 0 0 var(--s1);
+  color: var(--text-strong);
   font-family: var(--font-display);
-  font-size: var(--fs-lg);
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  color: var(--text-bright);
+  font-size: var(--fs-xl);
+  font-stretch: var(--title-stretch);
+  font-weight: 700;
+  letter-spacing: -0.012em;
+  line-height: 1.2;
 }
-.sc-two { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s5) var(--s6); }
+.sc-section-head { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 420px); gap: var(--s4) var(--s6); align-items: start; }
+.sc-two { display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); gap: var(--s5) var(--s6); align-items: start; }
 
-/* The twelve steps: one header row, Before muted, Now in the text colour, minutes by hand as
-   plain text on the right, a total underneath. */
-.sc-steps { margin-top: var(--s2); }
+/* By hand against the agents, per alarm, on one scale: the agents' bar is a sliver, and that is
+   the point. */
+.sc-versus { margin: 2px 0 0; }
+.sc-vs-row { display: grid; grid-template-columns: 6.5rem minmax(0, 1fr) 4.5rem; align-items: center; gap: var(--s3); min-height: 30px; }
+.sc-vs-name { color: var(--muted); font-size: var(--fs-sm); font-weight: 500; }
+.sc-vs-track { position: relative; height: 10px; border-radius: 5px; background: var(--surface-sunk); }
+.sc-vs-bar { position: absolute; left: 0; top: 0; bottom: 0; min-width: 3px; border-radius: 5px; }
+.sc-vs-bar.hand { background: var(--line-strong); }
+.sc-vs-bar.agents { background: var(--accent); }
+.sc-vs-val { color: var(--text-strong); font-family: var(--font-display); font-size: var(--fs-lg); font-weight: 700; text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.sc-versus figcaption { margin-top: 4px; color: var(--muted-dim); font-size: var(--fs-xs); }
+
+/* The twelve steps: one header row, Before muted, Now in the text colour, the minutes by hand
+   as a bar on one scale with the figure beside it, the agents' time in mono, a total underneath. */
+.sc-steps { margin-top: var(--s4); }
 .sc-steps th,
-.sc-steps td { padding: 6px var(--s4) 6px 0; line-height: 1.45; }
-.sc-steps thead th { padding-top: 0; padding-bottom: 6px; border-bottom-color: var(--line-strong); }
+.sc-steps td { padding: 9px var(--s4) 9px 0; line-height: 1.45; vertical-align: top; }
+.sc-steps tbody tr { height: auto; }
+.sc-steps thead th { padding-top: 0; padding-bottom: 8px; border-bottom-color: var(--line-strong); }
 .sc-steps tbody th,
-.sc-steps tfoot th { white-space: nowrap; color: var(--text-bright); font-size: var(--fs-sm); font-weight: 600; }
-.sc-step-no { display: inline-block; min-width: 1.75em; color: var(--muted-dim); font-weight: 400; font-variant-numeric: tabular-nums; }
+.sc-steps tfoot th { white-space: nowrap; color: var(--text-strong); font-weight: 600; }
+.sc-step-name { display: inline-flex; align-items: center; gap: 8px; font-family: var(--font-display); font-size: var(--fs-md); font-weight: 620; }
+.sc-step-no { display: inline-block; min-width: 1.4em; color: var(--muted-dim); font-family: var(--font); font-size: var(--fs-xs); font-weight: 500; font-variant-numeric: tabular-nums; }
+.sc-strand { flex: none; width: 3px; height: 16px; border-radius: 2px; background: var(--fibre); }
+.sc-strand.outlined { box-shadow: 0 0 0 1px var(--fibre-outline); }
 .sc-steps td { font-size: var(--fs-sm); color: var(--text); text-wrap: pretty; }
 .sc-steps td.sc-before { color: var(--muted); }
+.sc-steps td.sc-now { color: var(--text-strong); }
 .sc-steps .sc-num { padding-right: 0; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
-.sc-steps tr.human .sc-num { color: var(--hitl); }
+.sc-steps .sc-hand { width: 170px; }
+.sc-steps th.sc-num, .sc-steps td.sc-agent-ms { width: 76px; }
+.sc-steps td.sc-agent-ms { color: var(--muted); font-family: var(--mono); font-size: var(--fs-xs); padding-top: 11px; }
+.sc-hand-cell { display: grid; grid-template-columns: minmax(0, 1fr) 3.4rem; align-items: center; gap: 10px; min-height: 20px; }
+.sc-hand-track { height: 6px; border-radius: 3px; background: var(--surface-sunk); overflow: hidden; }
+.sc-hand-bar { display: block; height: 100%; border-radius: 3px; background: var(--line-strong); }
+.sc-hand-val { color: var(--text-strong); font-weight: 600; text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.sc-hand-human { color: var(--hitl-text); font-weight: 600; }
+.sc-steps tr.human th, .sc-steps tr.human td.sc-now { color: var(--hitl-text); }
 .sc-steps tfoot th,
-.sc-steps tfoot td { border-top: 1px solid var(--line-strong); border-bottom: 0; padding-top: var(--s2); }
-.sc-steps tfoot td.sc-num { color: var(--text-bright); font-weight: 600; }
+.sc-steps tfoot td { border-top: 1px solid var(--line-strong); border-bottom: 0; padding-top: var(--s3); }
+.sc-steps tfoot .sc-total { color: var(--text-strong); font-family: var(--font-display); font-size: var(--fs-lg); font-weight: 700; text-align: right; }
+.sc-steps tfoot td.sc-num.sc-total { font-family: var(--font-display); }
 .sc-steps td.sc-total-note { color: var(--muted); }
-.sc-steps .skeleton.sc-skel-min { display: inline-block; width: 3rem; vertical-align: middle; }
+.sc-steps .skeleton.sc-skel-min { display: inline-block; width: 100%; vertical-align: middle; }
+
+/* The platform as a stack, for a phone: four blocks read top to bottom, a line joining them. */
+.sc-arch-stack { display: none; margin: var(--s4) 0 0; padding: 0; list-style: none; }
+.sc-arch-stack > li { position: relative; padding: 12px 14px; border: 1px solid var(--line-strong); border-radius: var(--r-md); background: var(--surface-raised); }
+.sc-arch-stack > li + li { margin-top: 22px; }
+.sc-arch-stack > li + li::before { content: ""; position: absolute; left: 50%; top: -22px; width: 2px; height: 22px; background: var(--line-strong); }
+.sc-arch-stack > li.adapt { border-style: dashed; background: var(--accent-faint); }
+.sc-arch-stack > li.agents { border-color: var(--accent); background: var(--accent-soft); }
+.sc-arch-stack h3 { margin: 0; color: var(--text-strong); font-family: var(--font-display); font-size: var(--fs-base); font-weight: 650; }
+.sc-arch-stack p { margin: 4px 0 0; color: var(--muted); font-size: var(--fs-sm); line-height: 1.45; }
+.sc-arch-stack p.gate { display: inline-block; margin-top: 8px; padding: 3px 10px; border: 1px solid var(--hitl); border-radius: var(--r-sm); background: var(--hitl-soft); color: var(--text-strong); font-weight: 600; }
+.sc-arch-stack ul { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 0; padding: 0; list-style: none; }
+.sc-arch-stack ul li { padding: 3px 9px; border: 1px solid var(--line-strong); border-radius: var(--r-sm); background: var(--surface); color: var(--text); font-size: var(--fs-sm); }
+.sc-arch-stack ul li.human { border-color: var(--hitl); }
+.sc-stack-fibres { display: flex; gap: 6px; margin-top: 8px; }
+.sc-stack-fibres i { width: 10px; height: 10px; border-radius: 50%; }
+.sc-stack-fibres i.outlined { box-shadow: 0 0 0 1px var(--fibre-outline); }
+@media (max-width: 700px) {
+  .sc-arch-stack { display: block; }
+  .showcase .sc-arch { display: none; }
+}
 
 /* The platform diagram. Under 880 px of room it scrolls sideways inside its figure. */
-.sc-arch { margin: var(--s3) 0 0; overflow-x: auto; }
+.sc-arch { margin: var(--s4) 0 0; overflow-x: auto; }
 .sc-arch svg { display: block; width: 100%; min-width: 880px; height: auto; }
 .sc-arch-box { fill: var(--surface-raised); stroke: var(--line-strong); }
 .sc-arch-box.human { stroke: var(--hitl); }
-.sc-arch-adapt { fill: var(--accent-soft); stroke: var(--line); stroke-dasharray: 4 4; }
+.sc-arch-adapt { fill: var(--accent-faint); stroke: var(--line-strong); stroke-dasharray: 4 4; }
 .sc-arch-agents { fill: var(--accent-soft); stroke: var(--accent); }
 .sc-arch-gate { fill: var(--hitl-soft); stroke: var(--hitl); }
+.sc-arch-fibre { stroke: none; }
+.sc-arch-fibre.outlined { stroke: var(--fibre-outline); stroke-width: 1; }
 .sc-arch-line { stroke: var(--muted-dim); stroke-width: 1.5; }
 .sc-arch-head { fill: var(--muted-dim); }
-.sc-arch-h { fill: var(--text-bright); font-family: var(--font); font-size: var(--fs-base); font-weight: 600; }
+.sc-arch-h { fill: var(--text-strong); font-family: var(--font-display); font-size: var(--fs-base); font-weight: 650; }
 .sc-arch-t { fill: var(--text); font-family: var(--font); font-size: var(--fs-sm); }
 .sc-arch-t.strong { font-weight: 600; }
 .sc-arch-s { fill: var(--muted); font-family: var(--font); font-size: var(--fs-xs); }
 
-/* The ladder: the rung in force is lit, the others are muted text (not faded). */
-.sc-ladder { list-style: none; margin: var(--s2) 0 0; padding: 0; display: grid; gap: var(--s1); }
-.sc-rung { display: grid; gap: 2px; padding: var(--s2) var(--s3); border: 1px solid transparent; border-radius: var(--r-md); }
-.sc-rung strong { color: var(--muted); font-size: var(--fs-sm); }
-.sc-rung span { color: var(--muted); font-size: var(--fs-sm); line-height: 1.45; }
-.sc-rung.current { border-color: var(--accent-line); background: var(--accent-soft); }
-.sc-rung.current strong { color: var(--text-bright); }
-.sc-rung.current span { color: var(--text); }
+/* The ladder: three rungs on one track, lit in the action colour up to the rung in force, whose
+   dot is ringed and named. */
+.sc-ladder { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin: var(--s5) 0 0; padding: 0; list-style: none; }
+.sc-rung { position: relative; padding: 26px 18px 0 0; color: var(--muted); font-size: var(--fs-sm); line-height: 1.5; text-wrap: pretty; }
+.sc-rung::before { content: ""; position: absolute; left: 0; right: 0; top: 7px; height: 2px; background: var(--line-strong); }
+.sc-rung:last-child::before { right: auto; width: 16px; }
+.sc-rung.below::before { background: var(--accent); }
+.sc-rung.current::before { background: linear-gradient(90deg, var(--accent) 16px, var(--line-strong) 16px); }
+.sc-rung:last-child.current::before { background: var(--accent); }
+.sc-rung-dot { position: absolute; left: 0; top: 0; width: 16px; height: 16px; border: 2px solid var(--line-strong); border-radius: 50%; background: var(--bg); }
+.sc-rung.below .sc-rung-dot { border-color: var(--accent); background: var(--accent); }
+.sc-rung.current .sc-rung-dot { border-color: var(--accent); background: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft); }
+.sc-rung strong { display: block; margin-bottom: 4px; color: var(--muted); font-family: var(--font-display); font-size: var(--fs-base); font-weight: 620; }
+.sc-rung.current { color: var(--text); }
+.sc-rung.current strong { color: var(--text-strong); }
+.sc-rung-text { display: block; }
+.sc-rung-now { display: inline-block; margin-top: 8px; padding: 2px 10px; border: 1px solid var(--accent-line); border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-size: var(--fs-xs); font-weight: 600; }
 
-.sc-never { margin: var(--s2) 0 0; padding-left: 1.2rem; display: grid; gap: var(--s2); }
-.sc-never li { font-size: var(--fs-md); line-height: 1.45; }
+/* What a person always does: a panel in the violet that means a person decides, each line locked. */
+.sc-never-panel { padding: 18px 20px 20px; border: 1px solid var(--hitl-line); border-radius: var(--r-lg); background: color-mix(in oklab, var(--hitl) 6%, var(--surface)); }
+.showcase .sc-never-panel h2 { color: var(--hitl-text); font-size: var(--fs-lg); font-stretch: 100%; }
+.sc-never { display: grid; gap: 10px; margin: var(--s3) 0 0; padding: 0; list-style: none; }
+.sc-never li { display: grid; grid-template-columns: 16px minmax(0, 1fr); gap: 12px; color: var(--text); font-size: var(--fs-md); line-height: 1.45; }
+.sc-never svg { margin-top: 2px; color: var(--hitl); }
 
-/* One closing row: one sentence, one button. */
+/* One closing row: one sentence, the two ways in. */
 .sc-try {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: var(--s3) var(--s5);
-  margin-top: var(--s6);
+  margin-top: var(--s7);
   padding-top: var(--s4);
   border-top: 1px solid var(--line);
 }
 .sc-try p { margin: 0; color: var(--text); font-size: var(--fs-md); line-height: 1.5; }
+.sc-try-actions { display: flex; flex-wrap: wrap; gap: var(--s2); }
 
 /* ---------------------------------------------------------------- narrow */
+@media (max-width: 1099px) {
+  .sc-section-head { grid-template-columns: minmax(0, 1fr); }
+  .sc-versus { max-width: 520px; }
+}
 @media (max-width: 900px) {
   .sc-hero,
   .sc-two { grid-template-columns: minmax(0, 1fr); }
+  .showcase .sc-hero h1 { max-width: 15ch; }
+  /* The ladder stands up: the track runs down the left, a rung under each other. */
+  .sc-ladder { grid-template-columns: minmax(0, 1fr); }
+  .sc-rung { padding: 0 0 20px 30px; }
+  .sc-rung::before, .sc-rung:last-child::before { left: 7px; right: auto; top: 0; bottom: 0; width: 2px; height: auto; }
+  .sc-rung:last-child::before { bottom: auto; height: 8px; }
+  .sc-rung.current::before { background: linear-gradient(180deg, var(--accent) 8px, var(--line-strong) 8px); }
+  .sc-rung:last-child { padding-bottom: 0; }
 }
 
-/* Phones: each step is two short lines (name and minutes, then Before and Now), never a table
-   that scrolls sideways. */
-@media (max-width: 700px) {
+/* Tablets and phones: each step is a short block (name, then Before and Now, then its minutes by
+   hand and the agents' time), never a table that scrolls sideways. */
+@media (max-width: 900px) {
   .sc-steps,
   .sc-steps tbody,
   .sc-steps tfoot { display: block; }
@@ -175,24 +265,36 @@
     clip: rect(0 0 0 0);
     white-space: nowrap;
   }
-  .sc-steps tr {
+  .sc-steps tr,
+  .sc-steps tbody tr {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    gap: 2px var(--s3);
-    padding: var(--s2) 0;
+    grid-template-columns: minmax(0, 1fr) 76px;
+    gap: 4px var(--s3);
+    height: auto;
+    padding: 12px 0;
     border-bottom: 1px solid var(--line);
   }
   .sc-steps th,
-  .sc-steps td { display: block; padding: 0; border: 0; }
-  .sc-steps td { grid-column: 1 / -1; }
-  .sc-steps td.sc-num { grid-column: 2; grid-row: 1; }
-  .sc-steps td[data-label]::before {
+  .sc-steps td { display: block; width: auto !important; padding: 0 !important; border: 0; }
+  .sc-steps tbody th { grid-column: 1 / -1; }
+  .sc-steps td.sc-before, .sc-steps td.sc-now, .sc-steps td.sc-total-note { grid-column: 1 / -1; }
+  .sc-steps td.sc-before[data-label]::before, .sc-steps td.sc-now[data-label]::before {
     content: attr(data-label);
     margin-right: var(--s2);
     color: var(--muted-dim);
     font-weight: 600;
   }
-  .sc-steps tfoot tr { border-bottom: 0; border-top: 1px solid var(--line-strong); }
+  .sc-steps td.sc-hand { grid-column: 1; margin-top: 4px; }
+  .sc-steps td.sc-agent-ms { grid-column: 2; margin-top: 4px; }
+  .sc-hand-cell { max-width: 22rem; }
+  .sc-steps tfoot tr { grid-template-columns: minmax(0, 1fr) auto auto; align-items: baseline; column-gap: var(--s4); border-bottom: 0; border-top: 1px solid var(--line-strong); }
+  .sc-steps tfoot th { grid-column: 1; grid-row: 1; }
+  .sc-steps tfoot td.sc-hand.sc-total { grid-column: 2; grid-row: 1; margin-top: 0; }
+  .sc-steps tfoot td.sc-num.sc-total { grid-column: 3; grid-row: 1; margin-top: 0; }
+  .sc-steps tfoot td.sc-total-note { grid-column: 1 / -1; grid-row: 2; font-size: var(--fs-xs); }
   .sc-steps tfoot th,
-  .sc-steps tfoot td { border: 0; padding: 0; }
+  .sc-steps tfoot td { border: 0; }
+}
+@media (max-width: 480px) {
+  .sc-vs-row { grid-template-columns: 5.5rem minmax(0, 1fr) 4rem; gap: var(--s2); }
 }

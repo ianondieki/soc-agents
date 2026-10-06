@@ -250,6 +250,19 @@ on one track, lit to this deployment's rung; "Never automated, at any level" is 
 line locked. The closing line echoes the hero in Archivo 800. Every figure comes from the API; a call
 that fails says so in a sentence with Retry, and a lane that is off says so once.
 
+**The Showcase** (for the people who decide). A poster headline in Archivo 800 at 94 percent ("filled-in"
+never breaks at its hyphen) and two sentences, beside three figures (analyst work taken over, tickets
+opened, decided by a person), each named above, set in the display face and explained in one line under
+it, with the window switch over them only when it would change something. Then the newest alarm on the
+compact rail. "What changed for the floor" opens with by hand against the agents per alarm, two bars on
+one scale (47 min and a sliver for 11 ms), then the twelve steps: number, fibre strand and name, before
+(quiet), now, the minutes by hand as a bar on one scale with the figure, and the agents' own time in mono
+(a step under a millisecond reads "<1 ms" here and everywhere, never "0 ms"), with the totals for one
+alarm underneath; below 900 px each step is a short block. The platform diagram carries the twelve agents
+as their fibre colours in a row; on a phone it becomes a stack read top to bottom. The ladder is lit to
+the rung in force and the never-automated list is the violet panel with each line locked, as on the
+front page. One closing row with the two ways in.
+
 **Mission control.** The page head, the seven-figure strip, then the latest alarm's twelve agent steps as
 one even row across the panel's width (six a row on a narrow panel, four on a phone: a container query),
 with a line under it that says what selecting a step does. Then the two lists a shift acts on, side by

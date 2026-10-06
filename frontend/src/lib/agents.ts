@@ -341,6 +341,8 @@ export function sumDurations(steps: RailStep[] | undefined | null): number {
 
 export function fmtMs(ms: number | null | undefined): string {
   if (ms == null || !Number.isFinite(ms)) return "—";
+  // A measured step faster than the clock's millisecond says so: "0 ms" reads as "did nothing".
+  if (ms >= 0 && ms < 1) return "<1 ms";
   if (ms < 1000) return `${Math.round(ms)} ms`;
   return `${(ms / 1000).toFixed(ms < 10000 ? 2 : 1)} s`;
 }
