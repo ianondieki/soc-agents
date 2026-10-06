@@ -10,6 +10,8 @@ import { useNarrow } from "./lib/layout";
 import { Sidebar } from "./components/shell/Sidebar";
 import { PhoneMenu } from "./components/shell/PhoneMenu";
 import { DisplayMenu, type DisplayState } from "./components/shell/DisplayMenu";
+import AlertSignal from "./components/shell/AlertSignal";
+import { installAlertUnlock } from "./lib/feedback";
 import { BrandMark } from "./components/shell/BrandMark";
 import TopbarStatus, { type LiveTone } from "./components/shell/TopbarStatus";
 import GoTo, { useGoToShortcut } from "./components/shell/GoTo";
@@ -255,6 +257,8 @@ export default function App() {
   // components that show them), so App re-renders for a debounced flush, never for a frame.
   const realtime = useRealtime();
   const { connected, link, revisions, quietMode, setQuietMode, feed } = realtime;
+  // The first press or key on the page lets a later alarm sound, when sound is on.
+  useEffect(() => installAlertUnlock(), []);
   const connectedRef = useRef(connected);
   connectedRef.current = connected;
 
@@ -591,6 +595,9 @@ export default function App() {
                   <span className="sr-only">{liveText}</span>
                 </span>
               )}
+              {/* The alarm signal (a new P1 or P2, a decision, a failure): over this side of the
+                  bar on a desktop, so it hides no page content; under the bar on a phone. */}
+              <AlertSignal />
             </div>
             <div className="topbar-right">
               <button

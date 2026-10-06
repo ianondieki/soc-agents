@@ -360,7 +360,7 @@
 .loop-excerpts { display: grid; gap: var(--s3); margin: 0 0 var(--s4); padding: 0; list-style: none; }
 /* One quote per customer: the words, then its reference and time, on one 1px rule. */
 .loop-excerpts > li { min-width: 0; max-width: 72ch; padding: 2px 0 2px var(--s3); border-left: 1px solid var(--line-strong); }
-.loop-excerpt { margin: 0; color: var(--text-bright); font-size: var(--fs-md); line-height: 1.5; overflow-wrap: anywhere; }
+.loop-excerpt { margin: 0; color: var(--text-bright); font-family: var(--font-human); font-size: var(--fs-base); font-weight: 420; line-height: 1.55; overflow-wrap: anywhere; text-wrap: pretty; }
 .loop-excerpt-meta { display: flex; flex-wrap: wrap; gap: var(--s1) var(--s3); margin-top: 2px; color: var(--muted); font-size: var(--fs-xs); }
 
 /* ---------------------------------------------------------------- raw payload */
@@ -596,6 +596,7 @@
 .hitl-figure dt { overflow: hidden; color: var(--muted); font-size: var(--fs-sm); font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
 .hitl-figure dd {
   margin: 4px 0 0;
+  font-family: var(--font-display);
   color: var(--text-strong);
   font-size: var(--fs-xl);
   font-weight: 700;
@@ -609,8 +610,15 @@
 .hitl-figure.p2 dd { color: var(--p2); }
 .hitl-figure.hitl dd { color: var(--hitl); }
 .hitl-figure.late dd { color: var(--warn); }
+/* Five figures on a narrower screen: three over two, so the longest wait keeps its room. */
+@media (max-width: 1099px) {
+  .hitl-figures { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+  .hitl-figure { grid-column: span 2; }
+  .hitl-figure:nth-child(n+4) { grid-column: span 3; }
+}
 @media (max-width: 760px) {
   .hitl-figures { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .hitl-figure:nth-child(n) { grid-column: auto; }
   .hitl-figure:last-child:nth-child(odd) { grid-column: 1 / -1; }
   .hitl-figure { padding: 10px 14px 12px; }
 }

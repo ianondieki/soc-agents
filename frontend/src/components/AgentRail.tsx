@@ -15,6 +15,20 @@ import {
 } from "../lib/agents";
 import { parseRationale } from "../lib/audit";
 import { IconAlert, IconCheck, IconPause } from "../lib/icons";
+import { cue } from "../lib/feedback";
+
+/** States a hop can light into: it pops, rings once in its own colour and ticks (feedback.ts). */
+const LIT_STATES: ReadonlySet<NodeStatus> = new Set<NodeStatus>(["succeeded", "failed", "waiting_hitl", "decided"]);
+const NOT_LIT: ReadonlySet<string> = new Set();
+/** How long a hop keeps its "just lit" marking: the length of its pop and ring. */
+const LIT_MS = 900;
+
+/** On screen and in a visible tab: a rail nobody can see does not tick. */
+function inView(el: Element | null): boolean {
+  if (!el || typeof document === "undefined" || document.visibilityState === "hidden") return false;
+  const r = el.getBoundingClientRect();
+  return r.bottom > 0 && r.top < (window.innerHeight || 0) && r.width > 0;
+}
 
 /**
  * The agent rail: one alarm's path through the twelve agents, drawn as a signal route —
@@ -104,6 +118,52 @@ export default function AgentRail({
   }, [order, byNode, live]);
   const statusKey = statuses.join(",");
 
+  // A hop that has just lit while a person watches (pending or running a moment ago, done,
+  // waiting or failed now) pops and rings once, and the step ticks under the finger on a device
+  // that can vibrate. The first paint and a run already finished light nothing: only change does.
+  // When the watched run ends with every hop done, a double tick says so.
+  const rootRef = useRef<HTMLDivElement>(null);
+  const prevStatuses = useRef<Map<string, NodeStatus> | null>(null);
+  const wasLive = useRef(false);
+  const litTimer = useRef<number | null>(null);
+  const [lit, setLit] = useState<ReadonlySet<string>>(NOT_LIT);
+  useEffect(() => {
+    // While the skeleton shows there is nothing to compare: the first real answer seeds the map.
+    if (loading) {
+      prevStatuses.current = null;
+      return;
+    }
+    const prev = prevStatuses.current;
+    const next = new Map(order.map((n, i) => [n.id, statuses[i]] as const));
+    prevStatuses.current = next;
+    const watched = live || wasLive.current;
+    const ended = wasLive.current && !live;
+    wasLive.current = live;
+    if (!prev || !watched) return;
+    const fresh: string[] = [];
+    for (const [id, st] of next) {
+      const was = prev.get(id);
+      if ((was === "pending" || was === "running") && LIT_STATES.has(st)) fresh.push(id);
+    }
+    const seen = inView(rootRef.current);
+    if (fresh.length > 0) {
+      setLit(new Set(fresh));
+      if (litTimer.current != null) window.clearTimeout(litTimer.current);
+      litTimer.current = window.setTimeout(() => {
+        litTimer.current = null;
+        setLit(NOT_LIT);
+      }, LIT_MS);
+      if (seen) cue("step");
+    }
+    if (ended && seen && !statuses.some((st) => st === "running" || st === "pending" || st === "failed")) cue("run-done");
+  }, [statusKey, live, loading]);
+  useEffect(
+    () => () => {
+      if (litTimer.current != null) window.clearTimeout(litTimer.current);
+    },
+    []
+  );
+
   useEffect(() => {
     if (selectedNode !== undefined) setInternal(null);
   }, [selectedNode]);
@@ -137,7 +197,7 @@ export default function AgentRail({
   const iconSize = compact ? 10 : 12;
 
   return (
-    <div className={"rail" + (compact ? " rail-compact" : "") + (layout === "grid" ? " rail-grid" : "") + (loading ? " rail-loading" : "")}>
+    <div ref={rootRef} className={"rail" + (compact ? " rail-compact" : "") + (layout === "grid" ? " rail-grid" : "") + (loading ? " rail-loading" : "")}>
       <ol className="rail-track" aria-label={caption || "Agent workflow"} aria-hidden={loading || undefined} ref={trackRef}>
         {order.map((n, i) => {
           const st = statuses[i];
@@ -159,7 +219,16 @@ export default function AgentRail({
           const comma = compact ? null : <span className="sr-punct">,</span>;
           const showConf = !compact && conf != null && st === "succeeded";
           return (
-            <li key={n.id} className={`rail-hop ${st}` + (st === "decided" && step?.decision === "rejected" ? " rejected" : "") + (isSel ? " selected" : "")} data-node={n.id}>
+            <li
+              key={n.id}
+              className={
+                `rail-hop ${st}` +
+                (st === "decided" && step?.decision === "rejected" ? " rejected" : "") +
+                (isSel ? " selected" : "") +
+                (lit.has(n.id) ? " lit" : "")
+              }
+              data-node={n.id}
+            >
               <button
                 type="button"
                 className="rail-btn"
@@ -237,7 +306,9 @@ export default function AgentRail({
                   </>
                 )}
               </button>
-              {layout === "route" && i < order.length - 1 && <span className={`rail-link ${statuses[i + 1]}`} aria-hidden="true" />}
+              {layout === "route" && i < order.length - 1 && (
+                <span className={`rail-link ${statuses[i + 1]}` + (lit.has(order[i + 1].id) ? " lit" : "")} aria-hidden="true" />
+              )}
             </li>
           );
         })}

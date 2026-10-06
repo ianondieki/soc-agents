@@ -9,8 +9,10 @@
  * the primary action, the current selection and focus. The twelve      *
  * agents wear the twelve fibre colours as identity marks only.         *
  *                                                                      *
- * Type is Atkinson Hyperlegible Next, with its Mono for identifiers    *
- * and measurements, on a fixed rem scale (--fs-*). Radii by hierarchy  *
+ * Type has three voices on a fixed rem scale (--fs-*): Archivo for    *
+ * titles and figures (the console's own voice), Atkinson Hyperlegible  *
+ * Next for everything read (its Mono for identifiers and measurements) *
+ * and Newsreader for words a person wrote. Radii by hierarchy          *
  * (14 panels, 10 inner blocks and inputs, 8 buttons, 999 chips). No    *
  * shadow at rest; --shadow-float only on things that float. Motion     *
  * answers a person, 160-220 ms on --ease; quiet mode and reduced       *
@@ -26,11 +28,15 @@
  * Owned by the performance pass; the rest of this file is the design system's. Keep    *
  * these rules together, here at the top.                                               *
  *                                                                                       *
- * Fonts: two variable Latin faces are served from /fonts (frontend/public/fonts), no CDN, *
- * and index.html preloads both so they are usually in hand before the first paint.      *
- * font-display: swap paints at once in the metric-adjusted fallbacks below (Arial and   *
- * Courier New with size-adjust and ascent/descent overrides fitted to the Atkinson       *
- * metrics), so the swap moves almost nothing when the real face lands.                  *
+ * Fonts: four variable Latin faces are served from /fonts (frontend/public/fonts), no   *
+ * CDN. Atkinson Hyperlegible Next reads (body, controls); its Mono carries identifiers  *
+ * and measurements; Archivo, with its width axis, sets the page titles and the figures  *
+ * (wide for a title, narrow for a long site name on the Wallboard); Newsreader sets only *
+ * words a person wrote (a customer's complaint, a reply, a work note). index.html        *
+ * preloads Atkinson and Archivo; Newsreader loads on the pages that quote people.        *
+ * font-display: swap paints at once in the metric-adjusted fallbacks below (Arial,       *
+ * Courier New and Georgia with size-adjust and ascent/descent overrides fitted to each    *
+ * face), so the swap moves almost nothing when the real face lands.                      *
  * Reservations: content that arrives after the first paint lands in space already held. */
 @font-face {
   font-family: "Atkinson Hyperlegible Next";
@@ -51,6 +57,26 @@
   unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
 }
 
+@font-face {
+  font-family: "Archivo";
+  font-style: normal;
+  font-weight: 100 900;
+  font-stretch: 62% 125%;
+  font-display: swap;
+  src: url(/fonts/archivo-latin-wdth-normal.woff2) format("woff2-variations"),
+       url(/fonts/archivo-latin-wdth-normal.woff2) format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Newsreader";
+  font-style: normal;
+  font-weight: 200 800;
+  font-display: swap;
+  src: url(/fonts/newsreader-latin-opsz-normal.woff2) format("woff2-variations"),
+       url(/fonts/newsreader-latin-opsz-normal.woff2) format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
 /* Fallbacks shaped like the real faces, so a late swap does not reflow the page. */
 @font-face {
   font-family: "Atkinson Next Fallback";
@@ -58,6 +84,22 @@
   size-adjust: 101%;
   ascent-override: 95%;
   descent-override: 24%;
+  line-gap-override: 0%;
+}
+@font-face {
+  font-family: "Archivo Fallback";
+  src: local("Arial"), local("Liberation Sans"), local("Helvetica");
+  size-adjust: 104%;
+  ascent-override: 84%;
+  descent-override: 20%;
+  line-gap-override: 0%;
+}
+@font-face {
+  font-family: "Newsreader Fallback";
+  src: local("Georgia"), local("Times New Roman"), local("Liberation Serif");
+  size-adjust: 94%;
+  ascent-override: 78%;
+  descent-override: 28%;
   line-gap-override: 0%;
 }
 @font-face {
@@ -116,6 +158,15 @@
   --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
   --font: "Atkinson Hyperlegible Next", "Atkinson Next Fallback", "Atkinson Hyperlegible", system-ui, -apple-system, "Segoe UI", sans-serif;
   --mono: "Atkinson Hyperlegible Mono", "Atkinson Mono Fallback", ui-monospace, "Cascadia Mono", Menlo, monospace;
+  /* Archivo: page titles, panel titles and the figures. Its width axis does the work: a title
+     sets a little wide (--title-stretch), a figure at its normal width, a long site name on the
+     Wallboard narrow (--narrow-stretch). Never running text. */
+  --font-display: "Archivo", "Archivo Fallback", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --title-stretch: 108%;
+  --narrow-stretch: 82%;
+  /* Newsreader: only words a person wrote (a customer's complaint, a reply, a work note), so a
+     quote never reads as the system talking. */
+  --font-human: "Newsreader", "Newsreader Fallback", Georgia, "Times New Roman", serif;
   font-family: var(--font);
   font-size: 16px;
   line-height: 1.5;
@@ -133,10 +184,13 @@
   --surface-sunk: #0C0F13;
   --line: #272D37;
   --line-strong: #363E4B;
-  --text: #E8ECF1;
-  --text-strong: #FFFFFF;
-  --muted: #A0A9B8;
-  --muted-dim: #8A93A3;
+  /* Four steps of text, each one clearly below the last: strong (titles, figures, names), text
+     (what is read), muted (labels, leads), dim (times, hints). Never pure white: it blooms on
+     graphite in a dark room. */
+  --text: #D9E0E9;
+  --text-strong: #F3F6FA;
+  --muted: #A6B0BF;
+  --muted-dim: #8C97A8;
   --accent: #7C9CFF;
   --accent-ink: #0A1440;
   --accent-hover: #96B0FF;
@@ -173,10 +227,12 @@
   --surface-sunk: #E6EAEF;
   --line: #DDE2E8;
   --line-strong: #C5CCD6;
-  --text: #161B22;
-  --text-strong: #0A0D12;
-  --muted: #4F5968;
-  --muted-dim: #5F6977;
+  /* The same four steps in ink: strong for titles and figures, a softer ink for what is read,
+     so a title stands above its paragraph by colour as well as size. */
+  --text: #2A323D;
+  --text-strong: #0B1118;
+  --muted: #4E5867;
+  --muted-dim: #5E6876;
   --accent: #2D52D6;
   --accent-ink: #FFFFFF;
   --accent-hover: #2443B8;
@@ -608,7 +664,7 @@ kbd {
   transition: box-shadow 200ms var(--ease);
 }
 .topbar.is-scrolled { box-shadow: 0 12px 26px -24px rgba(0, 0, 0, 0.55); }
-.topbar-left { display: flex; flex: 1 1 auto; align-items: center; gap: 14px; min-width: 0; }
+.topbar-left { position: relative; display: flex; flex: 1 1 auto; align-items: center; gap: 14px; min-width: 0; height: 100%; }
 .topbar-id { color: var(--text-strong); font-size: var(--fs-md); font-weight: 650; letter-spacing: -0.01em; white-space: nowrap; }
 
 .tb-status {
@@ -719,6 +775,10 @@ kbd {
   animation: menuIn 160ms var(--ease);
 }
 .menu-section { display: grid; gap: 1px; }
+/* The Display panel scrolls inside itself on a short screen rather than running off it. */
+.display-menu { max-height: calc(100dvh - var(--topbar-h) - 24px); overflow-y: auto; overscroll-behavior: contain; }
+/* Alerts: the test press, with what it does beside it. */
+.menu-test { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding: 8px 10px 6px 38px; }
 .menu-label { padding: 8px 10px 4px; color: var(--muted-dim); font-size: var(--fs-xs); font-weight: 600; }
 .menu-sep { height: 1px; margin: 6px 4px; background: var(--line); }
 .menu-item {
@@ -812,8 +872,13 @@ kbd {
 .chip.ok { color: var(--ok); border-color: var(--ok-line); background: var(--ok-soft); }
 .chip.warn { color: var(--warn); border-color: var(--warn-line); background: var(--warn-soft); }
 .chip.danger, .chip.bad { color: var(--danger-text); border-color: var(--danger-line); background: var(--danger-soft); }
-/* Only the Wallboard, read from across the room, lets an escalation chip pulse. */
-.wallboard .chip.bad { animation: pulse 2s ease-in-out infinite; }
+/* Only the Wallboard, read from across the room, lets an escalation chip ring: a beacon grows out
+   of it and fades; its words never dim. */
+.wallboard .chip.bad { animation: chipBeacon 2.4s ease-out infinite; }
+@keyframes chipBeacon {
+  0% { box-shadow: 0 0 0 0 color-mix(in oklab, var(--danger) 55%, transparent); }
+  70%, 100% { box-shadow: 0 0 0 10px transparent; }
+}
 button.chip { cursor: pointer; font-family: var(--font); transition: background-color 160ms var(--ease), border-color 160ms var(--ease), color 160ms var(--ease); }
 button.chip:hover { border-color: var(--accent); background: var(--surface-raised); color: var(--text-strong); }
 button.chip:active { background: var(--surface-sunk); }
@@ -840,10 +905,12 @@ button.chip:active { background: var(--surface-sunk); }
 .page-head > div:first-child { flex: 1 1 24rem; min-width: 0; }
 .page-head h1, .page-title {
   margin: 0 0 var(--s1);
+  font-family: var(--font-display);
   font-size: var(--fs-xl);
+  font-stretch: var(--title-stretch);
   font-weight: 700;
   color: var(--text-strong);
-  letter-spacing: -0.015em;
+  letter-spacing: -0.012em;
   line-height: 1.2;
   text-wrap: balance;
 }
@@ -877,9 +944,9 @@ button.chip:active { background: var(--surface-sunk); }
 .kpi .label { color: var(--muted); font-size: var(--fs-sm); font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .kpi .value {
   margin-top: 6px;
-  font-family: var(--font);
+  font-family: var(--font-display);
   font-size: var(--fs-2xl);
-  font-weight: 700;
+  font-weight: 680;
   line-height: 1.1;
   letter-spacing: -0.02em;
   color: var(--text-strong);
@@ -948,10 +1015,11 @@ button.chip:active { background: var(--surface-sunk); }
    deliberately no `.panel h3` rule. */
 .panel h2, .panel-head h2, .panel-title, .panel-kicker {
   margin: 0 0 var(--s3);
+  font-family: var(--font-display);
   font-size: var(--fs-lg);
-  font-weight: 600;
+  font-weight: 620;
   color: var(--text-strong);
-  letter-spacing: -0.01em;
+  letter-spacing: -0.006em;
   line-height: 1.3;
 }
 .panel-head { display: flex; justify-content: space-between; align-items: center; gap: var(--s2) var(--s3); margin-bottom: var(--s4); flex-wrap: wrap; }
@@ -1085,11 +1153,6 @@ a.row-id { display: inline-block; padding: 6px 0; margin: -6px 0; }
 .row-site:hover { color: var(--text-strong); text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--line-strong); }
 .row-num { color: var(--muted); font-family: var(--mono); font-size: var(--fs-xs); font-weight: 500; }
 .row .facts { font-size: var(--fs-xs); gap: 0 var(--s4); margin-top: 2px; }
-.row.flash { animation: rowFlash 1.6s ease-out; }
-@keyframes rowFlash {
-  0% { background-color: var(--accent-soft); }
-  100% { background-color: transparent; }
-}
 
 /* Priority pills: filled, with the ink that reads on each fill. */
 .pill {
@@ -1275,7 +1338,7 @@ td .muted { font-size: var(--fs-xs); }
 /* Wallboard: the one surface where big and bright is the job (always Night). The page's own
    rules (head, figures, tile lines, flags) are in pages/Wallboard.escalation.css. */
 .wallboard { --mark-cut: var(--bg-wall); min-height: 100vh; background: var(--bg-wall); padding: 28px 40px 20px; color: var(--text-strong); }
-.wallboard h1 { font-size: clamp(1.75rem, 2.5vw, 2.6rem); margin: 0; letter-spacing: -0.02em; font-weight: 700; line-height: 1.1; }
+.wallboard h1 { font-family: var(--font-display); font-size: clamp(1.75rem, 2.5vw, 2.6rem); font-stretch: var(--title-stretch); margin: 0; letter-spacing: -0.015em; font-weight: 700; line-height: 1.1; }
 .wb-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(min(100%, calc(var(--fs-wall) * 17)), 1fr));
@@ -1921,7 +1984,6 @@ textarea { width: 100%; min-height: 90px; line-height: 1.5; resize: vertical; }
 .rail-hop.not_needed .rail-dot { background: var(--muted-dim); border-color: var(--muted-dim); }
 .rail-hop.failed .rail-dot { background: var(--p1); border-color: var(--p1); color: var(--p1-ink); }
 .rail-hop.failed .rail-btn { border-color: var(--p1); }
-.rail-hop.running .rail-dot { border-color: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft); animation: pulse 1.6s ease-in-out infinite; }
 .rail-hop.running .rail-btn { border-color: var(--accent); }
 .rail-hop.running .rail-meta { color: var(--accent); }
 .rail-hop.pending .rail-btn { opacity: 0.5; }
@@ -2055,6 +2117,121 @@ textarea { width: 100%; min-height: 90px; line-height: 1.5; resize: vertical; }
 .skeleton-rows { display: grid; gap: var(--s3); padding: var(--s3) var(--s2); }
 /* The rail while its first answer is on the way: twelve hop-sized blocks, so nothing jumps. */
 @keyframes skeletonPulse { 0%, 100% { opacity: 0.5; } 50% { opacity: 1; } }
+
+/* ==== Alerts and agent activity: the signal, the rail's motion, the alarm rings ============== *
+ * The motion that tells a person something happened, one vocabulary everywhere (lib/feedback.ts *
+ * holds the felt and heard half). A ring that grows out and fades is an alarm; a pop and a ring  *
+ * in the hop's own colour is an agent step landing; an arc going round is an agent working. Text *
+ * never blinks: an opacity pulse leaves the words unreadable half the time, so nothing here      *
+ * fades a word. Quiet mode and reduced motion keep every state and drop every movement.         */
+
+/* The signal: in the colour of what happened, with its icon and its words
+   (components/shell/AlertSignal.tsx). On a desktop it lies over the left of the top bar (the
+   organisation and the status track) for its nine seconds, so it never covers the page; on a
+   phone it hangs under the bar. */
+.signal {
+  --sig: var(--danger);
+  --sig-text: var(--danger-text);
+  position: absolute;
+  top: 7px;
+  bottom: 7px;
+  left: -10px;
+  right: 0;
+  z-index: 2;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  max-width: 640px;
+  padding: 0 4px 0 12px;
+  overflow: hidden;
+  border: 1px solid color-mix(in oklab, var(--sig) 50%, var(--line));
+  border-radius: var(--r-md);
+  background: color-mix(in oklab, var(--sig) 12%, var(--surface-nav));
+  font-size: var(--fs-sm);
+  animation: signalWipe 300ms var(--ease) both;
+}
+.signal.p1 { --sig: var(--p1); --sig-text: var(--danger-text); }
+.signal.p2 { --sig: var(--p2); --sig-text: var(--text-strong); }
+.signal.hitl { --sig: var(--hitl); --sig-text: var(--hitl-text); }
+.signal::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: var(--sig); }
+.signal-mark { position: relative; display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; background: color-mix(in oklab, var(--sig) 20%, transparent); color: var(--sig); }
+/* A P1 rings twice as it lands; nothing else rings. */
+.signal.p1 .signal-mark::after { content: ""; position: absolute; inset: 0; border-radius: 50%; box-shadow: 0 0 0 0 var(--sig); animation: alarmRing 1.1s ease-out 2 both; }
+.signal-text { display: flex; align-items: baseline; gap: 10px; min-width: 0; margin: 0; overflow: hidden; color: var(--text-strong); font-size: var(--fs-md); font-weight: 650; line-height: 1.3; white-space: nowrap; }
+/* In a narrow bar the ticket number gives way first, then the words end in an ellipsis. */
+.signal-words { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.signal-ref { flex: 0 1000 auto; }
+.signal-words { display: inline-block; }
+.signal-open { height: 28px; padding: 0 12px; }
+.signal-words.counted { animation: signalCount 260ms var(--ease) both; }
+.signal-ref { min-width: 0; overflow: hidden; color: var(--muted); font-size: var(--fs-xs); font-weight: 500; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
+.signal-open { flex: none; }
+.signal-close { display: grid; place-items: center; width: 30px; height: 30px; border: 0; border-radius: var(--r-sm); background: transparent; color: var(--muted); cursor: pointer; }
+.signal-close:hover { background: var(--muted-soft); color: var(--text-strong); }
+.signal-close:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* How long is left: a hairline along the foot that drains in nine seconds, held with the card. */
+.signal-time { position: absolute; left: 4px; right: 0; bottom: 0; height: 2px; background: color-mix(in oklab, var(--sig) 60%, transparent); transform-origin: left; animation: signalDrain 9s linear both; }
+.signal:hover .signal-time, .signal:focus-within .signal-time { animation-play-state: paused; }
+@media (max-width: 760px) {
+  .signal { position: fixed; top: calc(var(--topbar-h) + 8px); bottom: auto; left: var(--s4); right: var(--s4); z-index: 35; max-width: none; min-height: 48px; padding: 6px 4px 6px 12px; background: color-mix(in oklab, var(--sig) 12%, var(--surface)); box-shadow: var(--shadow-float); animation-name: signalIn; }
+  .signal-text { flex-wrap: wrap; row-gap: 0; white-space: normal; }
+}
+/* Across the bar from the left, like a light coming on along it; under the bar on a phone. */
+@keyframes signalWipe { from { clip-path: inset(0 100% 0 0 round var(--r-md)); } to { clip-path: inset(0 0 0 0 round var(--r-md)); } }
+@keyframes signalIn { from { opacity: 0; transform: translateY(-8px) scale(0.98); } to { opacity: 1; transform: none; } }
+@keyframes signalCount { 0% { transform: scale(1.06); } 100% { transform: none; } }
+@keyframes signalDrain { from { transform: scaleX(1); } to { transform: scaleX(0); } }
+@keyframes alarmRing { 0% { box-shadow: 0 0 0 0 color-mix(in oklab, var(--sig) 70%, transparent); } 100% { box-shadow: 0 0 0 14px transparent; } }
+
+/* The agent rail. Working: an arc goes round the hop's ring, a point at its centre. */
+.rail-dot { position: relative; }
+.rail-hop.running .rail-dot { border-color: var(--accent-line); box-shadow: none; animation: none; }
+.rail-hop.running .rail-dot::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+.rail-hop.running .rail-dot::after { content: ""; position: absolute; inset: -2px; border: 2px solid transparent; border-top-color: var(--accent); border-right-color: var(--accent); border-radius: 50%; animation: railSpin 0.9s linear infinite; }
+/* Landed: the dot pops, its mark draws in and a ring in its own colour goes out once; the button
+   glows the same colour and fades; the line into it fills from the left. */
+.rail-hop { --ring: var(--ok); }
+.rail-hop.failed { --ring: var(--p1); }
+.rail-hop.waiting_hitl { --ring: var(--hitl); }
+.rail-hop.decided.rejected { --ring: var(--danger); }
+.rail-hop.lit .rail-dot { animation: railPop 460ms var(--ease) both; }
+.rail-hop.lit .rail-dot svg { animation: railMark 300ms 120ms var(--ease) both; }
+.rail-hop.lit .rail-dot::after { content: ""; position: absolute; inset: -2px; border-radius: 50%; animation: railRing 700ms ease-out both; }
+.rail-hop.lit .rail-btn { animation: railGlow 900ms ease-out both; }
+.rail-link.lit::before { content: ""; position: absolute; inset: 0; background: var(--ok); transform-origin: left; animation: railFill 420ms var(--ease) both; }
+@keyframes railSpin { to { transform: rotate(360deg); } }
+@keyframes railPop { 0% { transform: scale(0.7); } 55% { transform: scale(1.18); } 100% { transform: none; } }
+@keyframes railMark { from { opacity: 0; transform: scale(0.4) rotate(-12deg); } to { opacity: 1; transform: none; } }
+@keyframes railRing { 0% { box-shadow: 0 0 0 0 color-mix(in oklab, var(--ring) 65%, transparent); } 100% { box-shadow: 0 0 0 12px transparent; } }
+@keyframes railGlow { 0% { box-shadow: 0 0 0 3px color-mix(in oklab, var(--ring) 35%, transparent); } 100% { box-shadow: 0 0 0 3px transparent; } }
+@keyframes railFill { 0% { transform: scaleX(0); opacity: 1; } 70% { transform: scaleX(1); opacity: 1; } 100% { transform: scaleX(1); opacity: 0; } }
+
+/* A new ticket on a list: the row lights in its priority's tint with a bar at its left edge, then
+   settles (Mission control's live tickets). */
+.row.flash { animation: rowFlash 1.6s ease-out; }
+.row.flash-p1 { --flash: var(--p1); }
+.row.flash-p2 { --flash: var(--p2); }
+@keyframes rowFlash {
+  0% { background-color: color-mix(in oklab, var(--flash, var(--accent)) 16%, transparent); box-shadow: inset 3px 0 0 var(--flash, var(--accent)); }
+  100% { background-color: transparent; box-shadow: inset 3px 0 0 transparent; }
+}
+
+/* Motion stops; every state stays. A working hop keeps a whole accent ring and its point. */
+:root[data-quiet="on"] .signal, :root[data-quiet="on"] .signal *, :root[data-quiet="on"] .signal::before,
+:root[data-quiet="on"] .signal-mark::after, :root[data-quiet="on"] .rail-hop .rail-dot::after,
+:root[data-quiet="on"] .rail-hop.lit .rail-dot, :root[data-quiet="on"] .rail-hop.lit .rail-dot svg,
+:root[data-quiet="on"] .rail-hop.lit .rail-btn, :root[data-quiet="on"] .rail-link.lit::before { animation: none !important; }
+:root[data-quiet="on"] .rail-hop.running .rail-dot { border-color: var(--accent); }
+:root[data-quiet="on"] .rail-hop.running .rail-dot::after, :root[data-quiet="on"] .rail-link.lit::before { display: none; }
+:root[data-quiet="on"] .signal-time { display: none; }
+@media (prefers-reduced-motion: reduce) {
+  .signal, .signal *, .signal-mark::after, .rail-hop .rail-dot::after, .rail-hop.lit .rail-dot, .rail-hop.lit .rail-dot svg,
+  .rail-hop.lit .rail-btn, .rail-link.lit::before { animation: none !important; }
+  .rail-hop.running .rail-dot { border-color: var(--accent); }
+  .rail-hop.running .rail-dot::after, .rail-link.lit::before, .signal-time { display: none; }
+}
+/* ==== end alerts ======================================================================== */
 
 /* Motion off: quiet mode and the reduced-motion preference */
 :root[data-quiet="on"] .rail-link.running::after,

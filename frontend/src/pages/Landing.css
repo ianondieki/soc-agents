@@ -268,12 +268,16 @@ html[data-quiet="on"] .ld-live.live .ld-live-dot::after { animation: none; }
 }
 .ld-hero h1 {
   max-width: 14ch;
-  /* Four lines at desktop widths, not five: the display size stops a step below the token's cap. */
+  /* Archivo a touch narrow and heavy: a poster line, five short lines at desktop widths, the
+     display size a step below the token's cap. Its tracking is kept above -0.02em so the word
+     spaces stay open at 72 px. */
+  font-family: var(--font-display);
   font-size: min(var(--fs-display), 4.5rem);
+  font-stretch: 94%;
   color: var(--text-strong);
   font-weight: 800;
   line-height: 1;
-  letter-spacing: -0.035em;
+  letter-spacing: -0.018em;
   text-wrap: balance;
 }
 /* Colour that carries meaning: the agents' sentence in the one action blue, the people's in the
@@ -364,6 +368,8 @@ html[data-quiet="on"] .ld-dial * { animation: none !important; }
 }
 .ld-section h2 {
   max-width: 20ch;
+  font-family: var(--font-display);
+  font-stretch: var(--title-stretch);
   color: var(--text-strong);
   font-size: var(--fs-2xl);
   font-weight: 700;
@@ -546,7 +552,7 @@ html[data-quiet="on"] .ld-dial * { animation: none !important; }
 /* ------------------------------------------------------------------- footer */
 .ld-foot { margin-top: 112px; border-top: 1px solid var(--line); padding: 56px 0 40px; }
 .ld-foot-cta { display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); gap: 24px var(--ld-gap); align-items: center; }
-.ld-foot h2 { max-width: 22ch; color: var(--text-strong); font-size: var(--fs-2xl); font-weight: 700; line-height: 1.15; letter-spacing: -0.02em; text-wrap: balance; }
+.ld-foot h2 { max-width: 22ch; font-family: var(--font-display); font-stretch: var(--title-stretch); color: var(--text-strong); font-size: var(--fs-2xl); font-weight: 700; line-height: 1.15; letter-spacing: -0.02em; text-wrap: balance; }
 .ld-foot-cta p { max-width: 50ch; margin-top: 12px; color: var(--muted); font-size: var(--fs-base); line-height: 1.5; text-wrap: pretty; }
 .ld-foot-cta .ld-actions { margin-top: 0; justify-content: flex-end; }
 .ld-foot-legal {

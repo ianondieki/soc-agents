@@ -24,6 +24,7 @@ import {
   type ToolCall,
 } from "../../lib/support";
 import { fmtEAT, fmtTime } from "../../lib/time";
+import { confirmCue } from "../../lib/feedback";
 import AgentTrace from "./AgentTrace";
 import { ROUTE_ICON, StatusWord } from "./marks";
 
@@ -166,6 +167,7 @@ export default function CasePane({ id, who, tick, stacked, onBack, onChanged, ti
     setError(null);
     try {
       const d = await fn();
+      confirmCue();
       focusAfter.current = then;
       apply(d);
       setAnnounce(said);

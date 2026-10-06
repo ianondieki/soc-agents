@@ -253,78 +253,81 @@ export default function Pirs({ tick }: { tick: number }) {
       </div>
 
       <div className="panel pir-panel">
-        <table className="pir-table">
-          <thead>
-            <tr>
-              <th>Ticket</th>
-              <th>Status</th>
-              <th>Why it opened</th>
-              <th className="num">Subscribers</th>
-              <th title="Minutes from the alarm to restore; the adjusted figure leaves out time stopped on the clock">
-                Time to restore
-              </th>
-              <th>Signed by</th>
-              <th>Updated (EAT)</th>
-            </tr>
-          </thead>
-          <tbody aria-busy={!loaded || undefined}>
-            {!loaded &&
-              !failed &&
-              Array.from({ length: 5 }, (_, i) => (
-                <tr key={"sk-" + i}>
-                  <td colSpan={7}>
-                    <div className="skeleton" />
-                  </td>
-                </tr>
-              ))}
-            {shown.map((r) => {
-              const inc = byId[r.incident_id];
-              const st = pirStatus(r.status);
-              const adjusted = r.adjusted_mttr_minutes != null && r.adjusted_mttr_minutes !== r.mttr_minutes;
-              return (
-                <tr
-                  key={r.id}
-                  onClick={() => setSelected(r.id)}
-                  className={"pir-row" + (selected === r.id ? " pir-row-selected" : "")}
-                >
-                  <td>
-                    {/* The keyboard's way in; the row click stays for the mouse. */}
-                    <button
-                      type="button"
-                      className="pir-open"
-                      aria-expanded={selected === r.id}
-                      aria-controls={selected === r.id ? "pir-editor" : undefined}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setSelected(r.id);
-                      }}
-                    >
-                      {inc?.site_name || inc?.site_id || label(r.incident_id)}
-                    </button>
-                    <div className="pir-sub">
-                      <span className="mono">{label(r.incident_id)}</span>
-                      {inc?.priority && <span className={`pill ${inc.priority}`}>{inc.priority}</span>}
-                    </div>
-                  </td>
-                  <td>
-                    <span className={`pir-status ${String(r.status).toLowerCase()}`}>{st.word}</span>
-                    {r.ai_assisted ? <div className="muted">AI-assisted</div> : null}
-                  </td>
-                  <td className="muted pir-c-why">{PIR_REASON_WORDS[r.opened_reason] || humanEnum(r.opened_reason)}</td>
-                  <td className="num" data-label="Subscribers">
-                    {(r.impact?.users_affected ?? 0).toLocaleString()}
-                  </td>
-                  <td data-label="Restored in">
-                    {r.mttr_minutes != null ? `${Math.round(r.mttr_minutes)} min` : "—"}
-                    {adjusted && <div className="muted">adjusted {Math.round(r.adjusted_mttr_minutes as number)} min</div>}
-                  </td>
-                  <td data-label="Signed by">{r.reviewer ? r.reviewer : <span className="pir-unsigned">Not signed yet</span>}</td>
-                  <td className="muted pir-c-updated">{fmtDateTime(r.updated_at)}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+        {/* On a tablet the table scrolls inside its panel rather than widening the page. */}
+        <div className="pir-scroll">
+          <table className="pir-table">
+            <thead>
+              <tr>
+                <th>Ticket</th>
+                <th>Status</th>
+                <th>Why it opened</th>
+                <th className="num">Subscribers</th>
+                <th title="Minutes from the alarm to restore; the adjusted figure leaves out time stopped on the clock">
+                  Time to restore
+                </th>
+                <th>Signed by</th>
+                <th>Updated (EAT)</th>
+              </tr>
+            </thead>
+            <tbody aria-busy={!loaded || undefined}>
+              {!loaded &&
+                !failed &&
+                Array.from({ length: 5 }, (_, i) => (
+                  <tr key={"sk-" + i}>
+                    <td colSpan={7}>
+                      <div className="skeleton" />
+                    </td>
+                  </tr>
+                ))}
+              {shown.map((r) => {
+                const inc = byId[r.incident_id];
+                const st = pirStatus(r.status);
+                const adjusted = r.adjusted_mttr_minutes != null && r.adjusted_mttr_minutes !== r.mttr_minutes;
+                return (
+                  <tr
+                    key={r.id}
+                    onClick={() => setSelected(r.id)}
+                    className={"pir-row" + (selected === r.id ? " pir-row-selected" : "")}
+                  >
+                    <td>
+                      {/* The keyboard's way in; the row click stays for the mouse. */}
+                      <button
+                        type="button"
+                        className="pir-open"
+                        aria-expanded={selected === r.id}
+                        aria-controls={selected === r.id ? "pir-editor" : undefined}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSelected(r.id);
+                        }}
+                      >
+                        {inc?.site_name || inc?.site_id || label(r.incident_id)}
+                      </button>
+                      <div className="pir-sub">
+                        <span className="mono">{label(r.incident_id)}</span>
+                        {inc?.priority && <span className={`pill ${inc.priority}`}>{inc.priority}</span>}
+                      </div>
+                    </td>
+                    <td>
+                      <span className={`pir-status ${String(r.status).toLowerCase()}`}>{st.word}</span>
+                      {r.ai_assisted ? <div className="muted">AI-assisted</div> : null}
+                    </td>
+                    <td className="muted pir-c-why">{PIR_REASON_WORDS[r.opened_reason] || humanEnum(r.opened_reason)}</td>
+                    <td className="num" data-label="Subscribers">
+                      {(r.impact?.users_affected ?? 0).toLocaleString()}
+                    </td>
+                    <td data-label="Restored in">
+                      {r.mttr_minutes != null ? `${Math.round(r.mttr_minutes)} min` : "—"}
+                      {adjusted && <div className="muted">adjusted {Math.round(r.adjusted_mttr_minutes as number)} min</div>}
+                    </td>
+                    <td data-label="Signed by">{r.reviewer ? r.reviewer : <span className="pir-unsigned">Not signed yet</span>}</td>
+                    <td className="muted pir-c-updated">{fmtDateTime(r.updated_at)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
         {!loaded && failed && (
           <div className="empty" role="alert">
             Couldn't load the reviews.{" "}

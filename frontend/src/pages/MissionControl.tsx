@@ -445,7 +445,7 @@ function MissionControl({
             {open.slice(0, PEEK).map((i) => (
               <div
                 key={i.id}
-                className={"row" + (fresh.has(i.id) ? " flash" : "")}
+                className={"row" + (fresh.has(i.id) ? ` flash${i.priority === "P1" ? " flash-p1" : i.priority === "P2" ? " flash-p2" : ""}` : "")}
                 onClick={(e) => !fromLink(e) && onOpen(i.id)}
               >
                 <span className={`pill ${i.priority}`} title={priorityTitle(i.priority)}>

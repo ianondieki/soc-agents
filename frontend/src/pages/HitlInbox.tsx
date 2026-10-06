@@ -28,6 +28,7 @@ import { hitlSubject, hitlSubjectIsIncident } from "../lib/hitlSubject";
 import { IconDot } from "../lib/icons";
 import { useNarrow } from "../lib/layout";
 import { fmtHM } from "../lib/time";
+import { confirmCue } from "../lib/feedback";
 import { useRealtimeState } from "../realtime/RealtimeContext";
 import type { NocEvent } from "../realtime/renderers";
 import "./HitlInbox.css";
@@ -458,6 +459,8 @@ export default function HitlInbox({ session, tick, profile }: { session: any; ti
         if (action === "claim") await api.claim(id, who);
         else if (action === "approve") await api.approve(id, who, reason);
         else await api.reject(id, who, reason);
+        // A tick under the finger: it went through (lib/feedback.ts).
+        confirmCue();
         // Every list answer already on its way was asked before this decision: retire them.
         shown.current = asked.current + 1;
         if (action === "claim") {

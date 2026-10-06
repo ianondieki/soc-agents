@@ -1,12 +1,23 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type FocusEvent, type KeyboardEvent } from "react";
-import { Check, ChevronDown, SunMoon } from "lucide-react";
+import { Check, ChevronDown, Siren, SunMoon } from "lucide-react";
 import { PROJECTOR_MEANING, QUIET_MEANING } from "../../lib/display";
+import {
+  ALERT_LEVEL_LABEL,
+  ALERT_LEVEL_MEANING,
+  ALERT_SOUND_MEANING,
+  setAlertLevel,
+  setAlertSound,
+  testAlarm,
+  useAlerts,
+  type AlertLevel,
+} from "../../lib/feedback";
 import { THEME_LABEL, type ThemePref } from "../../lib/theme";
 import { useSuppressedCount } from "../../realtime/RealtimeContext";
 import { roveFocus } from "./nav";
 
 /**
- * The Display controls: the theme (Auto, Day, Night), Quiet mode and Projector. In the top bar
+ * The Display controls: the theme (Auto, Day, Night), Quiet mode, Projector and Alerts (how
+ * the console buzzes, sounds and signals: lib/feedback.ts). In the top bar
  * they sit behind one "Display" button, in a fixed-position disclosure panel that Escape, an
  * outside press or Tab-out closes (focus goes back to the button). On a phone the same controls
  * render inline in the menu sheet (`DisplayControls`).
@@ -134,7 +145,76 @@ export function DisplayControls({ d, idPrefix = "display" }: { d: DisplayState; 
         />
         <Switch id={`${idPrefix}-projector`} on={d.projector} onToggle={d.onProjector} title="Projector" meaning={PROJECTOR_MEANING} />
       </div>
+      <div className="menu-sep" role="separator" />
+      <AlertControls idPrefix={idPrefix} />
     </>
+  );
+}
+
+const LEVELS: AlertLevel[] = ["all", "alarms", "off"];
+
+/** Alerts: how much the console buzzes and signals, whether it sounds, and a test press. */
+function AlertControls({ idPrefix }: { idPrefix: string }) {
+  const { level, sound } = useAlerts();
+  const groupRef = useRef<HTMLDivElement>(null);
+  const onRadioKey = (e: KeyboardEvent<HTMLDivElement>) => {
+    const radios = Array.from(groupRef.current?.querySelectorAll<HTMLButtonElement>('[role="radio"]') ?? []);
+    const before = document.activeElement;
+    if (roveFocus(radios, e, before)) {
+      const now = document.activeElement as HTMLButtonElement | null;
+      const v = now?.dataset.level as AlertLevel | undefined;
+      if (v) setAlertLevel(v);
+    }
+  };
+  return (
+    <div className="menu-section">
+      <div className="menu-label" id={`${idPrefix}-alerts-label`}>
+        Alerts
+      </div>
+      <div role="radiogroup" aria-labelledby={`${idPrefix}-alerts-label`} ref={groupRef} onKeyDown={onRadioKey}>
+        {LEVELS.map((v) => {
+          const checked = level === v;
+          return (
+            <button
+              key={v}
+              type="button"
+              role="radio"
+              aria-checked={checked}
+              aria-labelledby={`${idPrefix}-alerts-${v}-title`}
+              aria-describedby={`${idPrefix}-alerts-${v}-desc`}
+              data-level={v}
+              tabIndex={checked ? 0 : -1}
+              className="menu-item menu-radio"
+              onClick={() => setAlertLevel(v)}
+            >
+              <span className="menu-check" aria-hidden="true">
+                {checked && <Check size={14} strokeWidth={2.25} />}
+              </span>
+              <span className="menu-item-text">
+                <span className="menu-item-title" id={`${idPrefix}-alerts-${v}-title`}>
+                  {ALERT_LEVEL_LABEL[v]}
+                </span>
+                <span className="menu-item-desc" id={`${idPrefix}-alerts-${v}-desc`}>
+                  {ALERT_LEVEL_MEANING[v]}
+                </span>
+              </span>
+            </button>
+          );
+        })}
+      </div>
+      {level !== "off" && (
+        <>
+          <Switch id={`${idPrefix}-sound`} on={sound} onToggle={() => setAlertSound(!sound)} title="Sound" meaning={ALERT_SOUND_MEANING} />
+          <div className="menu-test">
+            <button type="button" className="btn sm" onClick={testAlarm}>
+              <Siren size={15} strokeWidth={1.75} aria-hidden="true" />
+              Test the P1 alarm
+            </button>
+            <span className="menu-item-desc">Buzzes on a phone or tablet that can.</span>
+          </div>
+        </>
+      )}
+    </div>
   );
 }
 

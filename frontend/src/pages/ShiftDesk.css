@@ -21,7 +21,7 @@
 .sd-figures { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; margin: 0; overflow: hidden; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--line); }
 .sd-figures > div { min-width: 0; padding: 10px 14px 12px; background: var(--surface); }
 .sd-figures dt { overflow: hidden; color: var(--muted); font-size: var(--fs-xs); font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
-.sd-figures dd { margin: 4px 0 0; color: var(--text-strong); font-size: var(--fs-xl); font-weight: 700; line-height: 1.15; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.sd-figures dd { margin: 4px 0 0; font-family: var(--font-display); color: var(--text-strong); font-size: var(--fs-xl); font-weight: 700; line-height: 1.15; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
 .sd-figures > .p2 dd { color: var(--p2); }
 .sd-figures > .hitl dd { color: var(--hitl); }
 

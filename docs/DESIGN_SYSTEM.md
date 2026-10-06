@@ -41,12 +41,24 @@ hard-codes them; the CSS variables are `--fibre-1` .. `--fibre-12`.
 
 ## Type
 
-One family, two widths, chosen for the job: **Atkinson Hyperlegible Next** (variable, 200 to 800) for all
-text, and **Atkinson Hyperlegible Mono** for ticket numbers, site ids, times and measurements. Atkinson was
-drawn by the Braille Institute so that confusable glyphs stay distinct: `INC000001`, `SFC-RFT-HUB-NKR`,
-`0O`, `1lI` read correctly from a wallboard at four metres and on a tired night shift. Self-hosted from
-`frontend/public/fonts` (latin subset, `font-display: swap` with metric-adjusted fallbacks), OFL licences
-alongside.
+Three voices, each with one job, self-hosted from `frontend/public/fonts` (latin subset, variable,
+`font-display: swap` with metric-adjusted fallbacks, OFL licences alongside):
+
+- **Archivo** (weight 100 to 900, width 62 to 125 percent): the console's own voice, for page titles, panel
+  titles and figures. Its width axis does the work: a title sets a little wide (`--title-stretch`, 108
+  percent), a figure at its normal width, a site name on the Wallboard narrow (`--narrow-stretch`, 82
+  percent) so a long name like "Westlands Aggregation HUB" fits a tile at a size read from four metres.
+  The landing hero is Archivo at 94 percent and 800. Never running text. Token `--font-display`.
+- **Atkinson Hyperlegible Next** (200 to 800) for everything read: body, controls, labels, the ticker; and
+  **Atkinson Hyperlegible Mono** for ticket numbers, site ids, times and measurements. Atkinson was drawn
+  by the Braille Institute so that confusable glyphs stay distinct: `INC000001`, `SFC-RFT-HUB-NKR`, `0O`,
+  `1lI` read correctly on a tired night shift. Tokens `--font` and `--mono`.
+- **Newsreader** (200 to 800, optical size 6 to 72) only for words a person wrote: the customer's
+  complaint on the Support desk (with a hanging opening quote), a member of staff's reply, the
+  customers' words on an Approvals card, a person's work note on a ticket's timeline, and what the
+  customer wrote on the tracking page. A quote never reads as the system talking. Token `--font-human`.
+
+Archivo and Atkinson are preloaded by `index.html`; Newsreader loads only on the pages that quote people.
 
 Root size 16px. Product scale (fixed rem, ratio about 1.2):
 
@@ -55,16 +67,17 @@ Root size 16px. Product scale (fixed rem, ratio about 1.2):
 | `--fs-xs` | 12px | meta, table captions |
 | `--fs-sm` | 13px | dense UI, chips, sidebar items |
 | `--fs-md` | 14px | body in panels, table cells |
-| `--fs-base` | 16px | reading text, form fields |
-| `--fs-lg` | 18px | panel titles |
-| `--fs-xl` | 24px | page titles (weight 700, tracking -0.015em) |
-| `--fs-2xl` | 32px | big figures |
-| `--fs-display` | clamp(2.75rem, 5.6vw, 5.25rem) | landing hero only (weight 800, tracking -0.035em) |
+| `--fs-base` | 16px | reading text, form fields, a person's note |
+| `--fs-lg` | 18px | panel titles (Archivo 620) |
+| `--fs-xl` | 24px | page titles (Archivo 700 at 108 percent, tracking -0.012em), strip figures |
+| `--fs-2xl` | 32px | big figures (Archivo 680) |
+| `--fs-display` | clamp(2.75rem, 5.6vw, 5.25rem) | landing hero only (Archivo 800 at 94 percent, tracking -0.018em) |
 
-Weights: 400 body, 500 UI labels, 600 emphasis and panel titles, 700 page titles, 800 landing display.
-On Night, body text gets +0.005em tracking. Numerals in tables and figures are `tabular-nums`. Sentence
-case everywhere. No all-caps labels, no eyebrow kickers above headings, no middle-dot meta strings
-(use commas or separate elements), no arrows appended to button text.
+Weights: 400 body, 500 UI labels, 600 emphasis, 620 panel titles, 700 page titles and figures, 800 landing
+display; Newsreader quotes at 420. Archivo keeps its tracking above -0.02em at display sizes so word
+spaces stay open. Numerals in tables and figures are `tabular-nums`. Sentence case everywhere. No all-caps
+labels, no eyebrow kickers above headings, no middle-dot meta strings (use commas or separate elements),
+no arrows appended to button text.
 
 ## Colour tokens
 
@@ -79,10 +92,10 @@ Semantic names only; a page never uses a raw hex. Both themes define every token
 | `--surface-sunk` | `#E6EAEF` | `#0C0F13` | wells, code, skeletons |
 | `--line` | `#DDE2E8` | `#272D37` | hairlines |
 | `--line-strong` | `#C5CCD6` | `#363E4B` | control borders |
-| `--text` | `#161B22` | `#E8ECF1` | body |
-| `--text-strong` | `#0A0D12` | `#FFFFFF` | titles, figures |
-| `--muted` | `#4F5968` | `#A0A9B8` | secondary text |
-| `--muted-dim` | `#5F6977` | `#8A93A3` | tertiary text (still AA) |
+| `--text-strong` | `#0B1118` | `#F3F6FA` | titles, figures, names |
+| `--text` | `#2A323D` | `#D9E0E9` | what is read |
+| `--muted` | `#4E5867` | `#A6B0BF` | labels, leads |
+| `--muted-dim` | `#5E6876` | `#8C97A8` | times, hints (still AA) |
 | `--accent` | `#2D52D6` | `#7C9CFF` | primary action, selection, focus |
 | `--accent-ink` | `#FFFFFF` | `#0A1440` | text on an accent fill |
 | `--hitl` | `#6E35C4` | `#C9A2FF` | a person decides |
@@ -93,6 +106,11 @@ Semantic names only; a page never uses a raw hex. Both themes define every token
 | `--p2` / `--p2-ink` | `#E07000` / `#1A0F00` | `#FF9F1A` / `#1A0F00` | |
 | `--p3` / `--p3-ink` | `#E8C200` / `#1A1500` | `#F0D000` / `#1A1500` | |
 | `--p4` / `--p4-ink` | `#7A889C` / `#0A1220` | `#8FA0B8` / `#0A1220` | |
+
+Text is four clear steps, each one below the last, so a title stands above its paragraph by colour as
+well as size: in Day a softer ink for reading under a near-black for titles; in Night nothing is pure
+white (it blooms on graphite in a dark room). The lowest step is still 4.98:1 on every Day surface and
+5.27:1 on every Night one.
 
 Each state colour also has `-soft` (tinted fill, about 10 to 14 percent), `-line` (tinted hairline) and
 `-text` (text on its soft fill) variants, derived per theme with `color-mix(in oklab, ...)`. Every pair
@@ -114,8 +132,49 @@ scrollbars match.
 - Motion answers a person: 160 to 220ms, `cubic-bezier(0.2, 0.8, 0.2, 1)`. Disclosure opens animate
   `grid-template-rows: 0fr to 1fr`. The landing hero has the one authored moment (the pulse along the
   fibres). `prefers-reduced-motion` and Quiet mode stop all of it.
+- Motion that tells a person something happened has one vocabulary (see Alerts below): a ring that grows
+  out and fades is an alarm; a pop and a ring in a hop's own colour is an agent step landing; an arc going
+  round is an agent working. Words never blink: an opacity pulse left them unreadable half the time, so
+  nothing fades text.
 - Browser surfaces are themed: `::selection`, caret, scrollbars, focus ring (2px accent, 2px offset),
   link underline offset.
+
+## Alerts: felt, heard and seen
+
+What the console does, beyond updating its lists, when something happens a person must notice
+(`frontend/src/lib/feedback.ts`). Each cue is felt as a vibration on a phone or tablet that has one,
+optionally heard as a short synthesised tone (off until a person turns Sound on), and, for the alarms, seen
+as the signal in the top bar.
+
+| Cue | When | Felt (ms on, off, on) | Seen |
+|---|---|---|---|
+| P1 alarm | a new P1 ticket | 220, 90, 220, 90, 420 | red signal, the icon rings twice |
+| P2 alarm | a new P2 ticket | 140, 90, 140 | amber signal |
+| Decision | a run stops for a person | five taps of 70 | violet signal |
+| Escalation | a case needs a person, a customer says still down, a send failed, a deadline is close | 320, 140, 320 | red signal |
+| Failure | an agent run or a scheduled job failed | 260 | red signal |
+| Step | a hop lights on the rail you are watching | 8 | the hop pops and rings once in its colour |
+| Run done | the run you are watching finished | 18, 50, 18 | none |
+| Confirm | your own approve, reject, claim, reply or note went through | 14 | none |
+
+The signal lies over the left of the top bar (the organisation and the status track) for nine seconds, so
+it never covers the page; on a phone it hangs under the bar. It names its kind in words and an icon as
+well as its colour, counts repeats ("4 new P2 tickets"), offers one place to go, holds while a pointer or
+focus is on it (its drain line pauses), and is read by a polite live region that is always in the page.
+
+The rules that keep it from becoming noise: live frames only, never the replay on connect. A cue repeats
+at most every 2.5 s and each repeat inside a run of them doubles the gap, so a minute-long storm of P1s
+buzzes six times, not a hundred and twenty, while the signal counts every one. A weaker cue never cuts a
+stronger one off. Steps and the end of a run cue only from a rail that is on screen. Display, Alerts sets
+the level: Alarms and agent work (the default), Alarms only, or Off; Sound and a Test the P1 alarm press
+sit beside it. Quiet mode keeps only what the ticker keeps (P1 and P2 tickets, decisions, failures) plus
+the tick under a person's own finger, and the signal does not animate. The public pages never cue.
+Browsers allow vibration and sound only after a first press on the page; vibration works in Chrome and
+Edge on Android, while iPhones and desktops show the signal and, if asked, sound.
+
+On the Wallboard a new tile rings out twice in its priority's colour as it lands, and an escalated tile
+(and the escalation strip and chip) carries a slow beacon, a ring that grows out of it every 2.4 s; its
+words never dim. Quiet mode and reduced motion keep the red ring and stop the beacon.
 
 ## The shell
 

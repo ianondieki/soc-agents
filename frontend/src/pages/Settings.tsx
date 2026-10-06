@@ -446,8 +446,16 @@ function Settings({
                 <dt>Projector</dt>
                 <dd>{PROJECTOR_MEANING}</dd>
               </div>
+              <div>
+                <dt>Alerts</dt>
+                <dd>
+                  A new P1 or P2 ticket, a decision, an escalation or a failure buzzes a phone or tablet that can, sounds a tone
+                  if you turn sound on, and shows in the top bar for nine seconds. On the run you are watching, each agent step
+                  ticks as it lands.
+                </dd>
+              </div>
             </dl>
-            <p className="settings-note">Quiet mode and the projector are switched from Display in the top bar.</p>
+            <p className="settings-note">Quiet mode, the projector and alerts are switched from Display in the top bar.</p>
           </section>
 
           <section className="panel settings-section" id="settings-email" aria-labelledby="settings-email-title">

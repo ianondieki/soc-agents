@@ -530,80 +530,83 @@ export default function Maintenance({ tick, profile }: { tick: number; profile?:
           </div>
         )}
         {sortedTasks.length > 0 && (
-          <table className="mt-table">
-            <thead>
-              <tr>
-                <th>Work</th>
-                <th>Site</th>
-                <th>Due (EAT)</th>
-                <th>Status</th>
-                <th>Assigned to</th>
-                <th>Standard</th>
-              </tr>
-            </thead>
-            <tbody>
-              {shownTasks.map((t) => {
-                const Icon = WORK_ICONS[String(t.task_type || "").toUpperCase()] || Wrench;
-                const due = parseInstant(t.due_at);
-                const late = due && LIVE_TASKS.has(t.status) && due.getTime() < now;
-                return (
-                  <tr key={t.id} className="mt-task">
-                    <td className="mt-work">
-                      <span className="mt-work-icon" aria-hidden="true">
-                        <Icon size={16} strokeWidth={1.75} />
-                      </span>
-                      {t.task_type ? WORK_WORDS[String(t.task_type).toUpperCase()] || sentence(humanEnum(t.task_type)) : "—"}
-                    </td>
-                    <td className="mt-site">
-                      <span className="mt-site-name">{t.site_name || siteNames[t.site_id] || t.site_id}</span>
-                      <span className="mt-site-sub">
-                        {(t.site_name || siteNames[t.site_id]) && <span className="mono">{t.site_id}</span>}
-                        {t.region_code && <span>{regionName(t.region_code, profile)}</span>}
-                      </span>
-                    </td>
-                    <td className="mt-due" data-label="Due">
-                      <span>{due ? fmtDate(t.due_at) : t.due_at_eat}</span>
-                      {due && <span className={"mt-due-rel" + (late ? " late" : "")}>{relDays(due.getTime(), now)}</span>}
-                    </td>
-                    <td data-label="Status">
-                      {t.status === "MISSED" ? (
-                        <span className="chip danger">Missed</span>
-                      ) : t.status === "DONE" ? (
-                        <span className="chip ok">Done</span>
-                      ) : t.status === "SCHEDULED" || t.status === "INVITED" ? (
-                        <span className="chip accent">{sentence(humanEnum(t.status))}</span>
-                      ) : (
-                        <span className="mt-status-word">
-                          {sentence(humanEnum(t.status))}
-                          {t.status === "PROPOSED" && t.hitl_task_id && <span className="muted">sign-off asked</span>}
+          // On a tablet the table scrolls inside its panel rather than widening the page.
+          <div className="mt-scroll">
+            <table className="mt-table">
+              <thead>
+                <tr>
+                  <th>Work</th>
+                  <th>Site</th>
+                  <th>Due (EAT)</th>
+                  <th>Status</th>
+                  <th>Assigned to</th>
+                  <th>Standard</th>
+                </tr>
+              </thead>
+              <tbody>
+                {shownTasks.map((t) => {
+                  const Icon = WORK_ICONS[String(t.task_type || "").toUpperCase()] || Wrench;
+                  const due = parseInstant(t.due_at);
+                  const late = due && LIVE_TASKS.has(t.status) && due.getTime() < now;
+                  return (
+                    <tr key={t.id} className="mt-task">
+                      <td className="mt-work">
+                        <span className="mt-work-icon" aria-hidden="true">
+                          <Icon size={16} strokeWidth={1.75} />
                         </span>
-                      )}
-                    </td>
-                    {/* A role token, never a person's name (§7.11.8). The proposal is shown
-                        beside the approved value, so "the system suggested X, a human chose Y"
-                        stays visible instead of being overwritten in place. */}
-                    <td data-label="Assigned to">
-                      {t.assignee_token ? (
-                        <span className="mono">{t.assignee_token}</span>
-                      ) : t.proposed_assignee_token ? (
-                        <span>
-                          <span className="mono">{t.proposed_assignee_token}</span> <span className="muted">proposed</span>
+                        {t.task_type ? WORK_WORDS[String(t.task_type).toUpperCase()] || sentence(humanEnum(t.task_type)) : "—"}
+                      </td>
+                      <td className="mt-site">
+                        <span className="mt-site-name">{t.site_name || siteNames[t.site_id] || t.site_id}</span>
+                        <span className="mt-site-sub">
+                          {(t.site_name || siteNames[t.site_id]) && <span className="mono">{t.site_id}</span>}
+                          {t.region_code && <span>{regionName(t.region_code, profile)}</span>}
                         </span>
-                      ) : (
-                        <span className="muted">—</span>
-                      )}
-                      {t.assignee_token && t.proposed_assignee_token && t.assignee_token !== t.proposed_assignee_token && (
-                        <span className="muted"> (proposed {t.proposed_assignee_token})</span>
-                      )}
-                    </td>
-                    <td className="mt-std" data-label="Standard">
-                      {t.standard_ref || "—"}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                      </td>
+                      <td className="mt-due" data-label="Due">
+                        <span>{due ? fmtDate(t.due_at) : t.due_at_eat}</span>
+                        {due && <span className={"mt-due-rel" + (late ? " late" : "")}>{relDays(due.getTime(), now)}</span>}
+                      </td>
+                      <td data-label="Status">
+                        {t.status === "MISSED" ? (
+                          <span className="chip danger">Missed</span>
+                        ) : t.status === "DONE" ? (
+                          <span className="chip ok">Done</span>
+                        ) : t.status === "SCHEDULED" || t.status === "INVITED" ? (
+                          <span className="chip accent">{sentence(humanEnum(t.status))}</span>
+                        ) : (
+                          <span className="mt-status-word">
+                            {sentence(humanEnum(t.status))}
+                            {t.status === "PROPOSED" && t.hitl_task_id && <span className="muted">sign-off asked</span>}
+                          </span>
+                        )}
+                      </td>
+                      {/* A role token, never a person's name (§7.11.8). The proposal is shown
+                          beside the approved value, so "the system suggested X, a human chose Y"
+                          stays visible instead of being overwritten in place. */}
+                      <td data-label="Assigned to">
+                        {t.assignee_token ? (
+                          <span className="mono">{t.assignee_token}</span>
+                        ) : t.proposed_assignee_token ? (
+                          <span>
+                            <span className="mono">{t.proposed_assignee_token}</span> <span className="muted">proposed</span>
+                          </span>
+                        ) : (
+                          <span className="muted">—</span>
+                        )}
+                        {t.assignee_token && t.proposed_assignee_token && t.assignee_token !== t.proposed_assignee_token && (
+                          <span className="muted"> (proposed {t.proposed_assignee_token})</span>
+                        )}
+                      </td>
+                      <td className="mt-std" data-label="Standard">
+                        {t.standard_ref || "—"}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         )}
         {sortedTasks.length > TASKS_SHOWN && (
           <div className="mt-more">

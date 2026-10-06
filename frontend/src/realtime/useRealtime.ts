@@ -5,6 +5,7 @@ import { EventFeed } from "./feed";
 import { zeroRevisions, type Revisions, type Slice } from "./renderers";
 import { firstAnswerServerMs, onFirstAnswer, serverNow } from "./apiHealth";
 import { parseInstant } from "../lib/time";
+import { cueForEvent } from "../lib/feedback";
 
 const INCIDENT_REV_CAP = 500; // prune the per-incident map on a long shift
 const QUIET_KEY = "noc_quiet_mode_v1";
@@ -152,6 +153,9 @@ export function useRealtime(): RealtimeState {
         },
         onFrame(ev) {
           feed.push(ev);
+          // A live frame worth a person's attention buzzes, sounds (if asked) and signals; the
+          // replay on connect never reaches here (lib/feedback.ts).
+          cueForEvent(ev);
         },
       },
       { quiet: quietRef.current }

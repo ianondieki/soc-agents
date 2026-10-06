@@ -7,7 +7,7 @@
 .ct-figures { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; margin: 0 0 10px; overflow: hidden; border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--line); }
 .ct-figures > div { min-width: 0; padding: 12px 18px 14px; background: var(--surface); }
 .ct-figures dt { overflow: hidden; color: var(--muted); font-size: var(--fs-sm); font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
-.ct-figures dd { margin: 4px 0 0; color: var(--text-strong); font-size: var(--fs-xl); font-weight: 700; line-height: 1.15; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.ct-figures dd { margin: 4px 0 0; font-family: var(--font-display); color: var(--text-strong); font-size: var(--fs-xl); font-weight: 700; line-height: 1.15; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .ct-figures dd.ct-figure-word { overflow: hidden; font-size: var(--fs-lg); line-height: 1.6; text-overflow: ellipsis; }
 .ct-figures > .ok dd { color: var(--ok); }
 .ct-figures > .bad dd { color: var(--danger); }

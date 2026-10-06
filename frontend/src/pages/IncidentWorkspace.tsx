@@ -31,6 +31,7 @@ import ContractsDrawer from "../components/ContractsDrawer";
 import RegulatoryCountdown from "../components/RegulatoryCountdown";
 import StopClockPanel from "../components/StopClockPanel";
 import { fmtDateTime, fmtHM, parseInstant } from "../lib/time";
+import { confirmCue } from "../lib/feedback";
 import { useMinute } from "../lib/useMinute";
 import "./IncidentWorkspace.css";
 import { useIncidentRevision } from "../realtime/RealtimeContext";
@@ -156,7 +157,7 @@ function Outcome({ msg }: { msg: Msg }) {
 }
 
 /** One timeline entry's title, second word and state, from the stored `kind`/`title`/`status`. */
-function timelineHead(t: any): { title: string; sub: string; state: ReactNode } {
+function timelineHead(t: any): { title: string; sub: string; state: ReactNode; human?: boolean } {
   const kind = String(t.kind || "");
   const raw = String(t.title || "");
   if (kind === "agent_step") {
@@ -178,6 +179,7 @@ function timelineHead(t: any): { title: string; sub: string; state: ReactNode } 
       title: isAgent ? agentDisplayName(author) || author : author,
       sub: isAgent || !role ? "note" : `${humanEnum(role)} note`,
       state: null,
+      human: !isAgent,
     };
   }
   if (kind === "broadcast") {
@@ -199,9 +201,12 @@ function timelineHead(t: any): { title: string; sub: string; state: ReactNode } 
 }
 
 /** A timeline detail: a stored rationale reads as its sentence and facts; anything else as written. */
-function TimelineDetail({ text }: { text: unknown }) {
+function TimelineDetail({ text, human = false }: { text: unknown; human?: boolean }) {
   const s = typeof text === "string" ? eatTimes(text.trim()) : "";
   if (!s) return null;
+  // A person's work note is their words as written: set in the serif that marks people, never
+  // parsed into facts or rewritten.
+  if (human) return <p className="iw-tl-words">{s}</p>;
   const { sentence, facts } = parseRationale(s);
   if (facts.length === 0) return <div className="muted">{arrowsToWords(s)}</div>;
   return (
@@ -367,6 +372,7 @@ function Workspace({ id, session, profile }: { id: string | undefined; session: 
         msp_action_taken: mspAction || null,
         msp_percent_complete: mspPct ? Number(mspPct) : null,
       });
+      confirmCue();
       setNote("");
       setMspRoot("");
       setMspAction("");
@@ -736,7 +742,10 @@ function Workspace({ id, session, profile }: { id: string | undefined; session: 
                 const head = timelineHead(t);
                 const kind = String(t.kind || "");
                 return (
-                  <li key={i} className={`iw-tl ${kind === "note" ? "note" : kind === "broadcast" ? "broadcast" : kind === "agent_step" ? "step" : "other"}`}>
+                  <li
+                    key={i}
+                    className={`iw-tl ${kind === "note" ? "note" : kind === "broadcast" ? "broadcast" : kind === "agent_step" ? "step" : "other"}${head.human ? " human" : ""}`}
+                  >
                     <span className="iw-tl-time">{shortTime(t.ts)}</span>
                     <span className="iw-tl-dot" aria-hidden="true" />
                     <div className="iw-tl-main">
@@ -745,7 +754,7 @@ function Workspace({ id, session, profile }: { id: string | undefined; session: 
                         {head.sub && <span>{head.sub}</span>}
                         {head.state}
                       </div>
-                      <TimelineDetail text={t.detail} />
+                      <TimelineDetail text={t.detail} human={head.human} />
                     </div>
                   </li>
                 );

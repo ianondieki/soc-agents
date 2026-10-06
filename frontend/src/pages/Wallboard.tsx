@@ -221,6 +221,38 @@ export default function Wallboard({
   }, [rev, retry]);
 
   const list = rows || [];
+
+  // A tile new on the wall rings out twice in its priority's colour as it lands. The tiles on the
+  // first good answer are the wall as found, not news: they seed the set and nothing rings.
+  const seenIds = useRef<Set<string> | null>(null);
+  const arrivedTimer = useRef<number | null>(null);
+  const [arrived, setArrived] = useState<ReadonlySet<string>>(() => new Set());
+  useEffect(
+    () => () => {
+      if (arrivedTimer.current != null) window.clearTimeout(arrivedTimer.current);
+    },
+    []
+  );
+  useEffect(() => {
+    if (rows === null) return;
+    const ids = rows.map((i) => String(i.id));
+    if (seenIds.current === null) {
+      seenIds.current = new Set(ids);
+      return;
+    }
+    const seen = seenIds.current;
+    const added = ids.filter((id) => !seen.has(id));
+    if (added.length === 0) return;
+    for (const id of added) seen.add(id);
+    setArrived(new Set(added));
+    // Its own timer, not the effect's cleanup: the next poll must not leave the marking on.
+    if (arrivedTimer.current != null) window.clearTimeout(arrivedTimer.current);
+    arrivedTimer.current = window.setTimeout(() => {
+      arrivedTimer.current = null;
+      setArrived(new Set());
+    }, 2600);
+  }, [rows]);
+
   const redByIncident = new Map<string, RedCard>();
   for (const c of red) if (c.incident_id && !redByIncident.has(c.incident_id)) redByIncident.set(c.incident_id, c);
   const onGrid = new Set(list.map((i) => String(i.id)));
@@ -462,7 +494,7 @@ export default function Wallboard({
           return (
             <article
               key={i.id}
-              className={`wb-card ${i.priority}${esc ? " escalated" : ""}${restored ? " restored" : ""}`}
+              className={`wb-card ${i.priority}${esc ? " escalated" : ""}${restored ? " restored" : ""}${arrived.has(String(i.id)) ? " arrived" : ""}`}
               aria-label={`${i.priority} ${i.site_name || i.incident_number}${restored ? ", restored" : late ? ", past the restore deadline" : ""}`}
             >
               <div className="wb-card-top">

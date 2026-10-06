@@ -91,6 +91,8 @@
 .tk-msg-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s1) var(--s3); color: var(--muted); font-size: var(--fs-sm); }
 .tk-msg-who { color: var(--text-strong); font-weight: 600; }
 .cp .tk-msg-body { margin: var(--s1) 0 0; color: var(--text); font-size: var(--fs-base); line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+/* What the customer wrote, in the serif that marks a person's words. */
+.cp .tk-msg.you .tk-msg-body { color: var(--text-strong); font-family: var(--font-human); font-size: 1.0625rem; font-weight: 420; line-height: 1.6; }
 
 /* Still down: one sentence and one secondary button; the note and the confirm open under it. */
 .tk-section.tk-still { margin-top: var(--s5); padding-bottom: var(--s5); border-bottom: 1px solid var(--line); }

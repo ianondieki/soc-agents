@@ -20,7 +20,7 @@
 .pir-figures { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; margin: 0 0 var(--s4); overflow: hidden; border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--line); }
 .pir-figures > div { min-width: 0; padding: 12px 18px 14px; background: var(--surface); }
 .pir-figures dt { overflow: hidden; color: var(--muted); font-size: var(--fs-sm); font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
-.pir-figures dd { margin: 4px 0 0; color: var(--text-strong); font-size: var(--fs-xl); font-weight: 700; line-height: 1.15; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.pir-figures dd { margin: 4px 0 0; font-family: var(--font-display); color: var(--text-strong); font-size: var(--fs-xl); font-weight: 700; line-height: 1.15; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .pir-figures > .warn dd { color: var(--warn); }
 .pir-figures > .ok dd { color: var(--ok); }
 .pir-filter { margin-bottom: var(--s3); }
@@ -71,3 +71,6 @@
   .pir-table tr:not(.pir-row) { display: block; }
   .pir-table tr:not(.pir-row) > td { display: block; }
 }
+/* Tablets: the table scrolls inside its panel instead of widening the page. */
+.pir-scroll { overflow-x: auto; }
+@media (max-width: 700px) { .pir-scroll { overflow: visible; } }
