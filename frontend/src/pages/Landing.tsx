@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
+import { Headset, LockKeyhole, Radar, ScrollText, UserRoundCheck, type LucideIcon } from "lucide-react";
 import { api } from "../api";
 import AgentDial, { type DialRun } from "../components/landing/AgentDial";
 import SupportFlow from "../components/landing/SupportFlow";
@@ -57,7 +58,7 @@ async function getJson<T>(path: string): Promise<T> {
 const support = {
   evals: () => getJson<any>("/api/v1/support/evals/latest"),
   metrics: () => getJson<any>("/api/v1/support/metrics?hours=0"),
-  latest: () => getJson<any>("/api/v1/support/complaints?limit=1"),
+  latest: () => getJson<any>("/api/v1/support/complaints?limit=3"),
 };
 
 /**
@@ -370,24 +371,31 @@ export default function Landing({ profile, metrics, runsRev }: { profile: any; m
             <div className="ld-decide-grid">
               <div>
                 <h3>The autonomy ladder</h3>
+                {/* Three rungs on one track: the line is lit up to this deployment's rung. */}
                 <ol className="ld-ladder">
-                  {LADDER.map((l) => (
-                    <li key={l.level} className={"ld-rung" + (l.level === autonomy ? " current" : "")} aria-current={l.level === autonomy ? "true" : undefined}>
-                      <strong>{l.label}</strong>
-                      {l.text}
-                      {l.level === autonomy && <span className="ld-rung-now">This deployment</span>}
-                    </li>
-                  ))}
+                  {LADDER.map((l, i) => {
+                    const at = LADDER.findIndex((x) => x.level === autonomy);
+                    const state = l.level === autonomy ? "current" : at >= 0 && i < at ? "below" : "above";
+                    return (
+                      <li key={l.level} className={`ld-rung ${state}`} aria-current={state === "current" ? "true" : undefined}>
+                        <span className="ld-rung-dot" aria-hidden="true" />
+                        <strong>{l.label}</strong>
+                        <span className="ld-rung-text">{l.text}</span>
+                        {state === "current" && <span className="ld-rung-now">This deployment</span>}
+                      </li>
+                    );
+                  })}
                 </ol>
               </div>
-              <div>
-                <h3>Never automated</h3>
+              <div className="ld-never-panel">
+                <h3>Never automated, at any level</h3>
                 <ul className="ld-never">
-                  <li>Wording that reaches management or leaves the building on a P1 or P2.</li>
-                  <li>Overriding a priority or disputing an assignment.</li>
-                  <li>Sending the shift handover.</li>
-                  <li>Any change to a live network element. There is no such tool to call.</li>
-                  <li>Any write into another system; each one waits for a named approval.</li>
+                  {NEVER.map((t) => (
+                    <li key={t}>
+                      <LockKeyhole size={16} strokeWidth={1.75} aria-hidden="true" />
+                      <span>{t}</span>
+                    </li>
+                  ))}
                 </ul>
               </div>
             </div>
@@ -399,7 +407,9 @@ export default function Landing({ profile, metrics, runsRev }: { profile: any; m
         <div className="ld-wrap">
           <div className="ld-foot-cta">
             <div>
-              <h2>Watch the agents work an alarm</h2>
+              <h2>
+                Watch the agents work an alarm. <span className="people">Then make the call.</span>
+              </h2>
               <p>Launch the heavy-rain storm on Mission control, watch the dial fill, then approve or reject the held broadcasts.</p>
             </div>
             <div className="ld-actions">
@@ -435,51 +445,84 @@ function Dial({ run, dialRun, counts, load }: { run: any | null; dialRun: DialRu
   if (run && dialRun) {
     const site = alarmSite(run.steps);
     const held = normaliseStatus(stepsByNode(dialRun.steps).HITL?.status) === "waiting_hitl";
+    // The latest alarm as four facts on one line, then its state in a sentence with the way in.
     caption = (
       <>
-        <span>
-          {site ? <span className="ld-mono">{site}</span> : "The latest alarm"} opened {ticket ? <span className="ld-mono">{ticket}</span> : "a ticket"} at{" "}
-          <span className="ld-mono">{fmtEAT(run.started_at)}</span>; the agents took <span className="ld-mono">{fmtMs(took)}</span>
-          {held ? (
-            <>
-              ; its broadcast is <span className="hitl">waiting for a person</span>.
-            </>
-          ) : (
-            "."
+        <dl className="ld-fig-facts">
+          <div>
+            <dt>Latest alarm</dt>
+            <dd className="ld-mono">{site || "an alarm"}</dd>
+          </div>
+          <div>
+            <dt>Ticket</dt>
+            <dd className="ld-mono">{ticket || "opened"}</dd>
+          </div>
+          <div>
+            <dt>Opened</dt>
+            <dd className="ld-mono">{fmtEAT(run.started_at)}</dd>
+          </div>
+          <div>
+            <dt>The agents took</dt>
+            <dd className="ld-mono">{fmtMs(took)}</dd>
+          </div>
+        </dl>
+        <p className="ld-fig-state" aria-live="polite">
+          {held ? <span className="hitl">Its broadcast is waiting for a person.</span> : <span>Every step is done and on record.</span>}
+          {run.incident_id && (
+            <Link className="ld-btn text" to={`/incidents/${run.incident_id}`}>
+              Open the ticket
+            </Link>
           )}
-        </span>
-        {run.incident_id && (
-          <Link className="ld-btn text" to={`/incidents/${run.incident_id}`}>
-            Open the ticket
-          </Link>
-        )}
+        </p>
       </>
     );
   } else if (load.state === "error") {
     caption = (
-      <span className="ld-note" role="alert">
+      <p className="ld-note" role="alert">
         Couldn't load the latest run.
         <button type="button" className="ld-btn text" onClick={load.retry}>
           Retry
         </button>
-      </span>
+      </p>
     );
   } else if (load.state === "ok" || load.state === "missing") {
-    caption = <span>No alarm has been through the agents yet. Launch the storm on Mission control and watch the dial fill.</span>;
+    caption = <p className="ld-fig-state">No alarm has been through the agents yet. Launch the storm on Mission control and watch the dial fill.</p>;
   }
   return (
     <figure className="ld-hero-figure">
       <AgentDial run={dialRun} counts={counts} ticket={ticket} tookMs={took} empty={!run && (load.state === "ok" || load.state === "missing")} />
-      <figcaption className="ld-fig-caption" aria-live="polite">
-        {caption}
-      </figcaption>
+      {/* How to read the dial, in the dial's own marks. */}
+      <ul className="ld-dial-key" aria-label="How to read the dial">
+        <li>
+          <svg viewBox="0 0 22 10" aria-hidden="true">
+            <path d="M1 8 Q 11 0 21 8" className="k-arc" />
+          </svg>
+          This alarm's path
+        </li>
+        {counts && (
+          <li className="ld-key-bars">
+            <svg viewBox="0 0 22 10" aria-hidden="true">
+              <line x1="4" y1="5" x2="18" y2="5" className="k-bar" />
+            </svg>
+            Alarms each agent has worked
+          </li>
+        )}
+        <li>
+          <svg viewBox="0 0 22 10" aria-hidden="true">
+            <circle cx="11" cy="5" r="3.6" className="k-hitl" />
+          </svg>
+          Waits for a person
+        </li>
+      </ul>
+      <figcaption className="ld-fig-caption">{caption}</figcaption>
     </figure>
   );
 }
 
 // ----------------------------------------------------- what changes for the floor --
 
-/** Four moments, before and now. The "now" figure is drawn from the productivity rollup. */
+/** Four moments, before and now, each with what is on record for it. The figures are drawn from
+ *  the productivity rollup; a figure not yet earned holds its room empty. */
 function Moments({ p, waiting }: { p: any | null; waiting: number | null }) {
   const alarms = p?.alarms || {};
   const fields = p?.ticket_fields || {};
@@ -493,24 +536,25 @@ function Moments({ p, waiting }: { p: any | null; waiting: number | null }) {
   const held = Number(broadcasts.held_for_approval || 0);
   const pending = waiting ?? (typeof p?.hitl?.pending === "number" ? p.hitl.pending : null);
 
-  const rows: { node: string; before: string; now: string; fig: ReactNode; tone?: "hitl" }[] = [
+  type Fig = { value: string; words: string; also?: string } | null;
+  const rows: { node: string; before: string; now: string; fig: Fig; tone?: "hitl" }[] = [
     {
       node: "CORRELATE",
       before: "Search the ticket queue before raising a duplicate.",
       now: "A repeat alarm, or a site behind a failed HUB, folds into the ticket already open.",
-      fig: p && processed > 0 ? `${fmtInt(absorbed)} of ${plural(processed, "alarm")} folded into an open ticket` : null,
+      fig: p && processed > 0 ? { value: fmtInt(absorbed), words: `of ${plural(processed, "alarm")} folded into an open ticket` } : null,
     },
     {
       node: "TICKET",
       before: "Type the ticket into the UI, field by field.",
       now: "The INC number, every TT field, the narrative and the SLA clocks are filled before anyone opens the ticket.",
-      fig: p && filled > 0 ? `${fmtInt(perTicket)} fields a ticket, ${fmtInt(filled)} filled so far` : null,
+      fig: p && filled > 0 ? { value: fmtInt(filled), words: `fields filled, ${fmtInt(perTicket)} on every ticket` } : null,
     },
     {
       node: "EXEC_BRIEF",
       before: "Answer the phone, again.",
       now: "Management reads a brief written the moment the ticket opens, instead of phoning the NOC.",
-      fig: p && briefs > 0 ? plural(briefs, "brief written", "briefs written") : null,
+      fig: p && briefs > 0 ? { value: fmtInt(briefs), words: briefs === 1 ? "brief written" : "briefs written" } : null,
     },
     {
       node: "HITL",
@@ -518,7 +562,11 @@ function Moments({ p, waiting }: { p: any | null; waiting: number | null }) {
       now: "Decide. The SMS and email are drafted, addressed and held until a named person approves them.",
       fig:
         p && held > 0
-          ? `${plural(held, "message")} held for approval${pending != null ? `, ${plural(pending, "decision")} waiting now` : ""}`
+          ? {
+              value: fmtInt(held),
+              words: held === 1 ? "message held for approval" : "messages held for approval",
+              also: pending != null ? `${plural(pending, "decision")} waiting now` : undefined,
+            }
           : null,
       tone: "hitl",
     },
@@ -532,9 +580,14 @@ function Moments({ p, waiting }: { p: any | null; waiting: number | null }) {
             <span className="ld-sr">Step</span>
           </th>
           <th scope="col" className="ld-m-before">
-            Before
+            By hand, before
           </th>
-          <th scope="col">Now</th>
+          <th scope="col" className="ld-m-now">
+            With the agents
+          </th>
+          <th scope="col" className="ld-m-fig">
+            On record here
+          </th>
         </tr>
       </thead>
       <tbody>
@@ -548,12 +601,22 @@ function Moments({ p, waiting }: { p: any | null; waiting: number | null }) {
                   {f?.label}
                 </span>
               </th>
-              <td className="ld-m-before" data-label="Before">
+              <td className="ld-m-before" data-label="By hand, before">
                 {r.before}
               </td>
-              <td className="ld-m-now" data-label="Now">
+              <td className="ld-m-now" data-label="With the agents">
                 {r.now}
-                <span className={"ld-m-fig" + (r.tone ? ` ${r.tone}` : "")}>{r.fig}</span>
+              </td>
+              <td className={"ld-m-fig" + (r.tone ? ` ${r.tone}` : "")} data-label="On record here">
+                {r.fig ? (
+                  <>
+                    <span className="ld-m-value">{r.fig.value}</span>
+                    <span className="ld-m-words">{r.fig.words}</span>
+                    {r.fig.also && <span className="ld-m-also">{r.fig.also}</span>}
+                  </>
+                ) : (
+                  <span className="ld-m-words none">{p ? "Nothing yet" : ""}</span>
+                )}
               </td>
             </tr>
           );
@@ -565,16 +628,58 @@ function Moments({ p, waiting }: { p: any | null; waiting: number | null }) {
 
 // --------------------------------------------------------------- the desks --
 
-function Desk({ cls, title, to, isNew, sub, children }: { cls: string; title: string; to: string; isNew?: boolean; sub: string; children: ReactNode }) {
+/**
+ * A desk as a window onto it: its mark, its name and what it is for, the one figure it holds right
+ * now (set in the display face), what it holds in the product's own marks, and the way in.
+ */
+function Desk({
+  cls,
+  title,
+  icon: Icon,
+  to,
+  open,
+  isNew,
+  sub,
+  figure,
+  children,
+}: {
+  cls: string;
+  title: string;
+  icon: LucideIcon;
+  to: string;
+  open: string;
+  isNew?: boolean;
+  sub: string;
+  figure: ReactNode;
+  children?: ReactNode;
+}) {
   return (
-    <article className={`ld-desk ${cls}`}>
-      <h3>
-        <Link to={to}>{title}</Link>
-        {isNew && <span className="ld-new">new</span>}
-      </h3>
+    <article className={`ld-desk ${cls}`} aria-labelledby={`ld-desk-${cls}`}>
+      <header className="ld-desk-head">
+        <span className="ld-desk-icon" aria-hidden="true">
+          <Icon size={18} strokeWidth={1.75} />
+        </span>
+        <h3 id={`ld-desk-${cls}`}>{title}</h3>
+        {isNew && <span className="ld-new">New</span>}
+      </header>
       <p className="ld-desk-sub">{sub}</p>
+      <div className="ld-desk-figure">{figure}</div>
       <div className="ld-desk-live">{children}</div>
+      <footer className="ld-desk-foot">
+        <Link className="ld-btn text" to={to}>
+          {open}
+        </Link>
+      </footer>
     </article>
+  );
+}
+
+/** A figure and its words: "<b>33</b> tickets open". */
+function Fig({ n, words, tone }: { n: ReactNode; words: ReactNode; tone?: "hitl" }) {
+  return (
+    <p className={"ld-fig" + (tone ? ` ${tone}` : "")}>
+      <b>{n}</b> <span>{words}</span>
+    </p>
   );
 }
 
@@ -601,14 +706,30 @@ function MissionDesk({ metrics, incidents, profile }: { metrics: any; incidents:
         )
       : null;
   const total = counts ? counts.P1 + counts.P2 + counts.P3 + counts.P4 : null;
-  const newest = open[0];
   const legend = counts ? (["P1", "P2", "P3", "P4"] as const).filter((k) => counts[k] > 0) : [];
   const label = total != null ? (total > 0 ? `${plural(total, "ticket")} open: ${legend.map((k) => `${counts![k]} ${k}`).join(", ")}` : "Nothing open") : "";
+  // The newest tickets as the board lists them: priority, site, region and when.
+  const newest = open.slice(0, 3);
   return (
-    <Desk cls="mission" title="Mission control" to="/mission" sub="The live board: open tickets by priority, the newest alarm through the agents, and the storm.">
-      <div className="ld-desk-count">
-        {total != null ? (total > 0 ? `${plural(total, "ticket")} open` : "Nothing open") : incidents.state === "error" ? <span className="ld-note">Couldn't load the board.</span> : ""}
-      </div>
+    <Desk
+      cls="mission"
+      title="Mission control"
+      icon={Radar}
+      to="/mission"
+      open="Open Mission control"
+      sub="The live board: open tickets by priority, the newest alarm through the agents, and the storm."
+      figure={
+        total != null ? (
+          total > 0 ? (
+            <Fig n={fmtInt(total)} words={total === 1 ? "ticket open" : "tickets open"} />
+          ) : (
+            <Fig n="0" words="tickets open" />
+          )
+        ) : incidents.state === "error" ? (
+          <span className="ld-note">Couldn't load the board.</span>
+        ) : null
+      }
+    >
       {counts && total! > 0 && (
         <>
           <div className="ld-prio" role="img" aria-label={label}>
@@ -619,24 +740,27 @@ function MissionDesk({ metrics, incidents, profile }: { metrics: any; incidents:
           <div className="ld-prio-legend" aria-hidden="true">
             {legend.map((k) => (
               <span key={k}>
-                <i className={k.toLowerCase()} style={{ background: `var(--${k.toLowerCase()})` }} />
+                <i style={{ background: `var(--${k.toLowerCase()})` }} />
                 {counts[k]} {k}
               </span>
             ))}
           </div>
         </>
       )}
-      <p className="ld-latest">
-        {newest ? (
-          <>
-            Newest: <span className="ld-mono">{newest.incident_number}</span>, {newest.site_name || newest.site_id}, {regionName(newest.region_code, profile)},{" "}
-            {humanEnum(newest.status)}
-            {newest.assignee_name ? <>, owner <span className="who">{vendorName(newest.assignee_name)}</span></> : null}.
-          </>
-        ) : incidents.state === "ok" && total === 0 ? (
-          "Launch the storm to put the first alarm through."
-        ) : null}
-      </p>
+      {newest.length > 0 ? (
+        <ul className="ld-rows" aria-label="Newest tickets">
+          {newest.map((i) => (
+            <li key={i.id}>
+              <span className={`ld-pill ${String(i.priority || "").toUpperCase()}`}>{i.priority}</span>
+              <span className="site">{i.site_name || i.site_id}</span>
+              <span className="where">{regionName(i.region_code, profile)}</span>
+              <span className="since ld-mono">{fmtEAT(i.created_at)}</span>
+            </li>
+          ))}
+        </ul>
+      ) : incidents.state === "ok" && total === 0 ? (
+        <p className="ld-latest">Launch the storm to put the first alarm through.</p>
+      ) : null}
     </Desk>
   );
 }
@@ -651,19 +775,32 @@ function ApprovalsDesk({ metrics, hitl }: { metrics: any; hitl: Load<any[]> }) {
   );
   const count: number | null = typeof metrics?.hitl_pending === "number" ? metrics.hitl_pending : hitl.state === "ok" ? queue.length : null;
   return (
-    <Desk cls="approvals" title="Approvals" to="/hitl" sub="Every P1 and P2 message, with its facts and reason, waiting for a named person to approve or reject it.">
-      <div className={"ld-desk-count" + (count ? " hitl" : "")}>
-        {count == null ? (hitl.state === "error" ? <span className="ld-note">Couldn't load the queue.</span> : "") : count > 0 ? `${count} waiting for a decision` : "No decisions waiting"}
-      </div>
+    <Desk
+      cls="approvals"
+      title="Approvals"
+      icon={UserRoundCheck}
+      to="/hitl"
+      open="Open Approvals"
+      sub="Every P1 and P2 message, with its facts and reason, waiting for a named person to approve or reject it."
+      figure={
+        count == null ? (
+          hitl.state === "error" ? <span className="ld-note">Couldn't load the queue.</span> : null
+        ) : count > 0 ? (
+          <Fig n={fmtInt(count)} words="waiting for a decision" tone="hitl" />
+        ) : (
+          <Fig n="0" words="decisions waiting" />
+        )
+      }
+    >
       {queue.length > 0 ? (
-        <ul className="ld-queue" aria-label="Waiting longest first">
+        <ul className="ld-queue" aria-label="Newest first">
           {queue.slice(0, 3).map((h) => {
             const site = h.proposed_payload?.envelope?.area?.site_name || h.site_id;
             const audiences: string[] = Array.isArray(h.proposed_payload?.audiences) ? h.proposed_payload.audiences.map(audienceWord) : [];
             return (
               <li key={h.id} title={audiences.length ? `To the ${audiences.join(", ")}` : undefined}>
-                <span className="ld-mono">{h.incident_number}</span>
-                <span>{h.priority} {humanEnum(h.task_type).replace(/^approve /, "")}</span>
+                <span className={`ld-pill ${String(h.priority || "").toUpperCase()}`}>{h.priority}</span>
+                <span className="what">{humanEnum(h.task_type).replace(/^approve /, "")}</span>
                 <span className="site">{site}</span>
                 <span className="since ld-mono">{fmtEAT(h.created_at)}</span>
               </li>
@@ -683,14 +820,30 @@ function SupportDesk({ metrics, latest }: { metrics: Load<any>; latest: Load<any
   // The counts appear only from a real answer; a lane that is off is said once, under the tree.
   const live = (text: ReactNode) => (m ? text : "");
   const c = (n: unknown) => fmtInt(Number(n || 0));
-  const item = Array.isArray(latest.data?.items) ? latest.data.items[0] : null;
+  const items: any[] = Array.isArray(latest.data?.items) ? latest.data.items.slice(0, 3) : [];
+  const total = m ? Number(m.total) || 0 : 0;
+  const routeWords = (r: unknown) => (r === "human" ? "with a person" : r === "action" ? "fixed by the action agent" : "answered by the resolver");
   return (
     <Desk
       cls="support"
       title="Support desk"
+      icon={Headset}
       to="/support"
+      open="Open the Support desk"
       isNew
       sub="A customer's complaint, read and routed by agents: answered from the knowledge base, fixed through tools, or handed to a person with the reason."
+      figure={
+        m && total > 0 ? (
+          <Fig n={pct(m.resolution_rate)} words={`resolved without a person, of ${plural(total, "complaint")}`} />
+        ) : metrics.state === "error" ? (
+          <span className="ld-note" role="alert">
+            Couldn't reach the Support desk.
+            <button type="button" className="ld-btn text" onClick={metrics.retry}>
+              Retry
+            </button>
+          </span>
+        ) : null
+      }
     >
       <SupportFlow
         columns={[
@@ -707,34 +860,38 @@ function SupportDesk({ metrics, latest }: { metrics: Load<any>; latest: Load<any
           },
         ]}
       />
-      <p className="ld-support-foot">
-        {m && Number(m.total) > 0 ? (
-          <>
-            {plural(Number(m.total), "complaint")} so far, {pct(m.resolution_rate)} resolved without a person.
-            {item ? (
-              <>
-                {" "}
-                Latest: <span className="ld-mono">{item.ref}</span>, {item.subject}, {item.route === "human" ? "with a person" : item.route === "action" ? "fixed by the action agent" : "answered by the resolver"}.
-              </>
-            ) : null}
-          </>
-        ) : m ? (
-          <>
-            No complaints yet. <Link className="ld-btn text" to="/complain">Register the first one</Link>
-          </>
-        ) : off ? (
-          <>
-            The desk is being wired up beside the NOC and is not switched on in this build; the form at <Link className="ld-btn text" to="/complain">/complain</Link> shows what a customer will see.
-          </>
-        ) : metrics.state === "error" ? (
-          <span className="ld-note" role="alert">
-            Couldn't reach the Support desk.
-            <button type="button" className="ld-btn text" onClick={metrics.retry}>
-              Retry
-            </button>
-          </span>
-        ) : null}
-      </p>
+      {/* The newest complaints, in the customers' own words (the serif that marks a person), each
+          with where it went. */}
+      {items.length > 0 ? (
+        <div className="ld-said">
+          <h4 className="ld-said-title">Newest complaints</h4>
+          <ul>
+            {items.map((it) => (
+              <li key={it.ref || it.id}>
+                <blockquote>{it.subject}</blockquote>
+                <p className={"ld-said-meta" + (it.route === "human" ? " hitl" : "")}>
+                  <span className="ld-mono">{it.ref}</span> {routeWords(it.route)}
+                </p>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : m && total === 0 ? (
+        <p className="ld-support-foot">
+          No complaints yet.{" "}
+          <Link className="ld-btn text" to="/complain">
+            Register the first one
+          </Link>
+        </p>
+      ) : off ? (
+        <p className="ld-support-foot">
+          The desk is being wired up beside the NOC and is not switched on in this build; the form at{" "}
+          <Link className="ld-btn text" to="/complain">
+            /complain
+          </Link>{" "}
+          shows what a customer will see.
+        </p>
+      ) : null}
     </Desk>
   );
 }
@@ -749,10 +906,21 @@ function ShiftDesk({ ledger, profile }: { ledger: Load<any[]>; profile: any }) {
   const siteCode = newest ? String(newest.site || "").split(" ")[0] : "";
   const siteName = newest ? String(newest.site || "").slice(siteCode.length).trim() : "";
   return (
-    <Desk cls="shift" title="Shift desk" to="/shift" sub="The ledger every ticket writes its own row to, and the handover a person sends at the end of the shift.">
-      <div className="ld-desk-count">
-        {ledger.state === "ok" ? `${plural(rows.length, "row")} in the ledger${shift ? `, ${shift} shift` : ""}` : ledger.state === "error" ? <span className="ld-note">Couldn't load the ledger.</span> : ""}
-      </div>
+    <Desk
+      cls="shift"
+      title="Shift desk"
+      icon={ScrollText}
+      to="/shift"
+      open="Open the Shift desk"
+      sub="The ledger every ticket writes its own row to, and the handover a person sends at the end of the shift."
+      figure={
+        ledger.state === "ok" ? (
+          <Fig n={fmtInt(rows.length)} words={`${rows.length === 1 ? "row" : "rows"} in the ledger${shift ? `, ${shift} shift` : ""}`} />
+        ) : ledger.state === "error" ? (
+          <span className="ld-note">Couldn't load the ledger.</span>
+        ) : null
+      }
+    >
       {newest ? (
         <div className="ld-ledger-scroll">
           <table className="ld-ledger">
@@ -980,6 +1148,15 @@ function Saved({ p }: { p: Load<any> }) {
 }
 
 // ------------------------------------------------------ where people decide --
+
+/** What no autonomy level hands to the agents: a person always does these. */
+const NEVER = [
+  "Wording that reaches management or leaves the building on a P1 or P2.",
+  "Overriding a priority or disputing an assignment.",
+  "Sending the shift handover.",
+  "Any change to a live network element. There is no such tool to call.",
+  "Any write into another system; each one waits for a named approval.",
+];
 
 const LADDER = [
   { level: "L1_COPILOT", label: "L1 co-pilot", text: "Agents draft everything; a person approves every send." },

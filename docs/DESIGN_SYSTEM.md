@@ -235,6 +235,21 @@ hairlines, colour only when a figure means something. Tables: 44px rows, sticky 
 hover row in `--surface-raised`. Empty states say what will fill the space and offer the action that does.
 Skeletons, not spinners, while loading.
 
+**The front page** (/, outside the console shell). The hero keeps its one idea: the two-colour
+headline (the agents' sentence in the action blue, the people's in violet) beside the twelve agents on a
+dial, whose sweep is the page's one motion. Under the dial, a key in the dial's own marks (this alarm's
+path, the alarms each agent has worked, what waits for a person), then the latest alarm as four facts on a
+hairline (where, the ticket, when, how long the agents took) and its state in a sentence with the way to
+the ticket. "What changes for the floor" is a four-column table: the step with its fibre strand, the work
+by hand (quiet), the work with the agents, and what is on record here, its figure in Archivo with its
+words under it. The four desks are windows onto the product: the console's own panel, the desk's mark
+and name, one live figure, what it holds in the product's own marks (the newest tickets with their
+priority pills, the waiting messages on a violet rule, the newest ledger row, the newest complaints in
+the customers' own words in Newsreader), and "Open ..." at the foot. The autonomy ladder is three rungs
+on one track, lit to this deployment's rung; "Never automated, at any level" is a violet panel with each
+line locked. The closing line echoes the hero in Archivo 800. Every figure comes from the API; a call
+that fails says so in a sentence with Retry, and a lane that is off says so once.
+
 **Mission control.** The page head, the seven-figure strip, then the latest alarm's twelve agent steps as
 one even row across the panel's width (six a row on a narrow panel, four on a phone: a container query),
 with a line under it that says what selecting a step does. Then the two lists a shift acts on, side by

@@ -36,6 +36,8 @@ export default function SupportFlow({ columns }: { columns: [FlowColumn, FlowCol
 
   return (
     <div className="ld-flow">
+      {/* On a phone the drawing gives way to this line and the three routes stack. */}
+      <p className="ld-flow-short">A complaint arrives, triage reads it, and it goes to one of three places.</p>
       <div ref={ref} className="ld-flow-stage" style={{ minHeight: H }}>
         {measured > 0 && (
           <svg width="100%" height={H} viewBox={`0 0 ${W} ${H}`} role="img" aria-labelledby={titleId}>
