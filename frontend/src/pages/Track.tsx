@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { Link, useSearchParams } from "react-router-dom";
+import { TrackNext } from "../components/support/PublicAside";
 import PublicFrame from "../components/support/PublicFrame";
 import {
   errorDetail,
@@ -163,6 +164,7 @@ export default function Track() {
   return (
     <PublicFrame>
       {!result ? (
+        <div className="cp-split">
         <form className="cp-form" onSubmit={submit} noValidate>
           <h1 ref={headingRef} tabIndex={-1}>
             Track your complaint
@@ -249,6 +251,8 @@ export default function Track() {
             </p>
           </div>
         </form>
+        <TrackNext />
+        </div>
       ) : (
         <Status
           t={result}

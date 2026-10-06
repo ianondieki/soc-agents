@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
+import { ComplainNext } from "../components/support/PublicAside";
 import PublicFrame from "../components/support/PublicFrame";
 import {
   BODY_MAX,
@@ -167,6 +168,7 @@ export default function Complain() {
   return (
     <PublicFrame>
       {!sent ? (
+        <div className="cp-split">
         <form className="cp-form" onSubmit={submit} noValidate>
           <h1 ref={headingRef} tabIndex={-1}>
             Tell us what went wrong
@@ -280,6 +282,8 @@ export default function Complain() {
             <p className="cp-hint">Sending runs your complaint through our agents now. You get a reference and a first reply on this page.</p>
           </div>
         </form>
+        <ComplainNext />
+        </div>
       ) : (
         <Result sent={sent} onAgain={again} headingRef={headingRef} />
       )}

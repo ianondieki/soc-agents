@@ -295,6 +295,12 @@ ticket fields as label over value, and the timeline on a line; on the right the 
 update folded), reassign and close, the brief, the stop clock, earlier faults at this site and the
 contracts. In one column the work note comes straight after what happened.
 
+**The public forms** (/complain, /track). Beside the form on a wide screen, under it on a phone, one
+side note in a customer's words: what happens after you send (we read it at once; an answer, or a person
+by a stated time; follow it with your reference; never share your M-PESA PIN), or where a complaint can
+be (received, with a person, part of a known outage, answered or fixed). The page widens only while the
+note is there, header and footer with it.
+
 **The Wallboard** (always Night, made for a TV across the room). The head: the mark, "NOC wallboard"
 and the operator; on the right the live state as a pill (green dot while live, red words when the wall
 has stopped updating, the escalation count beside it at the same size) and the time in Nairobi, big, in

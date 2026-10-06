@@ -217,3 +217,26 @@
   .cp-brand span { font-size: var(--fs-md); }
   .cp-submit .cp-btn, .cp-result-actions .cp-btn { width: 100%; }
 }
+
+/* ------------------------------------------------------------------ the side note
+   Beside the form on a wide screen (what happens next, or where a complaint can be); under it on
+   a phone. The page widens only when the note is there. */
+.cp:has(.cp-split) .cp-wrap { max-width: calc(1040px + 2 * var(--cp-gutter)); }
+.cp-split { display: grid; grid-template-columns: minmax(0, 640px) minmax(260px, 320px); justify-content: space-between; gap: var(--s7) var(--s6); align-items: start; }
+.cp-aside { position: sticky; top: calc(56px + var(--s6)); padding: 20px 22px 22px; border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--surface); }
+.cp .cp-aside h2 { color: var(--text-strong); font-size: var(--fs-base); font-weight: 700; }
+.cp-next, .cp-where { display: grid; gap: 16px; margin: 16px 0 0; padding: 0; list-style: none; }
+.cp-next > li, .cp-where > li { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 12px; }
+.cp-next-n { display: grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; background: var(--accent-soft); color: var(--accent); font-size: var(--fs-sm); font-weight: 700; }
+.cp-aside p { color: var(--muted); font-size: var(--fs-sm); line-height: 1.5; }
+.cp-aside .cp-next-head { margin-bottom: 2px; color: var(--text-strong); font-weight: 600; }
+.cp-aside a { color: var(--accent); text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--accent-line); }
+.cp-where-dot { width: 10px; height: 10px; margin: 6px 8px 0; border-radius: 50%; background: var(--accent); }
+.cp-where-dot.hitl { background: var(--hitl); }
+.cp-where-dot.warn { background: var(--warn); }
+.cp-where-dot.ok { background: var(--ok); }
+.cp-aside-note { margin-top: 18px !important; padding-top: 14px; border-top: 1px solid var(--line); }
+@media (max-width: 1000px) {
+  .cp-split { grid-template-columns: minmax(0, 1fr); }
+  .cp-aside { position: static; max-width: 36rem; }
+}
