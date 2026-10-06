@@ -1,10 +1,11 @@
-import { memo, useCallback, useEffect, useId, useState } from "react";
+import { memo, useCallback, useEffect, useId, useMemo, useState } from "react";
+import { CloudLightning, Search, Server, Wifi, Zap, RadioTower, type LucideIcon } from "lucide-react";
 import { Link } from "react-router-dom";
 import { api } from "../api";
-import { autonomyMeaning, humanEnum, priorityTitle } from "../lib/agents";
+import { autonomyMeaning, humanEnum, priorityTitle, regionName } from "../lib/agents";
 import { PROJECTOR_MEANING, QUIET_MEANING } from "../lib/display";
 import { detailOf, statusOf } from "../lib/apiError";
-import { IconAlert, IconDot } from "../lib/icons";
+import { IconAlert } from "../lib/icons";
 import { MOCK_EMAIL_LINE } from "../realtime/renderers";
 import "./Settings.css";
 
@@ -202,6 +203,29 @@ function testMailWords(r: any): { ok: boolean; text: string } {
   return { ok: false, text: "Couldn't send the test email" };
 }
 
+/** A preset's failure domain: its icon and the floor's word. */
+const DOMAIN_ICON: Record<string, LucideIcon> = { POWER: Zap, RADIO: Wifi, TRANSMISSION: RadioTower, CORE: Server };
+const DOMAIN_WORD: Record<string, string> = { POWER: "Power", RADIO: "Radio", TRANSMISSION: "Transmission", CORE: "Core" };
+
+/** 450000 -> "450k", 2500000 -> "2.5M": subscribers at a glance. */
+function compact(n: unknown): string {
+  const v = Number(n);
+  if (!Number.isFinite(v)) return "—";
+  if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(v % 1_000_000 ? 1 : 0)}M`;
+  if (v >= 1_000) return `${Math.round(v / 1_000)}k`;
+  return String(v);
+}
+
+/** The page's sections, for the "On this page" list. */
+const SECTIONS = [
+  { id: "settings-you", label: "You in this demo" },
+  { id: "settings-display", label: "Autonomy and display" },
+  { id: "settings-email", label: "Email" },
+  { id: "settings-alarms", label: "Demo alarms" },
+  { id: "settings-regions", label: "Regions and vendors" },
+  { id: "settings-sites", label: "Sites" },
+];
+
 function Settings({
   session,
   onSession,
@@ -226,18 +250,18 @@ function Settings({
   onLaunchStorm: () => void;
   onResumeStorm: () => void;
 }) {
-  const sessionId = useId();
-  const autonomyId = useId();
-  const emailId = useId();
-  const regionsId = useId();
   const stormId = useId();
-  const injectId = useId();
-  const sitesId = useId();
+  const [siteQ, setSiteQ] = useState("");
   const [name, setName] = useState(session?.display_name || "NOC Analyst");
   const [role, setRole] = useState(session?.role || DEFAULT_ROLE);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [saveFail, setSaveFail] = useState<Fail>(null);
+  // The session often answers after this page has mounted: the fields follow it when it does.
+  useEffect(() => {
+    if (session?.display_name) setName(session.display_name);
+    if (session?.role) setRole(session.role);
+  }, [session?.display_name, session?.role]);
 
   // `undefined` until the first answer: loading shows skeleton rows, never an empty table.
   const [sites, setSites] = useState<any[] | undefined>(undefined);
@@ -319,290 +343,380 @@ function Settings({
   const mailReady = emailSt?.configured === true;
   const recipients: string[] = Array.isArray(emailSt?.recipients) ? emailSt.recipients : [];
 
+  const roleNow = session?.role || DEFAULT_ROLE;
+  const roleMeaning = ROLES.find((r) => r.value === role)?.label;
+  const shownSites = useMemo(() => {
+    const n = siteQ.trim().toLowerCase();
+    if (!sites) return [];
+    if (!n) return sites;
+    return sites.filter((x) =>
+      [x.site_id, x.site_name, x.site_type, x.region_code, regionName(x.region_code, profile)]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase()
+        .includes(n),
+    );
+  }, [sites, siteQ, profile]);
+
   return (
-    <div className="content-narrow">
+    <div className="settings">
       <div className="page-head">
         <div>
           <h1>Settings</h1>
-          <p className="lead">Who the demo records as the actor, the email channel, and alarms to inject.</p>
+          <p className="lead">Who the demo records as you, how the floor is set up, and the alarms you can send through the agents.</p>
         </div>
       </div>
 
-      <div className="stack">
-        {/* What the top bar's tooltips say, in words a tablet can read (a finger never sees a title). */}
-        <section className="panel" aria-labelledby={autonomyId}>
-          <h2 id={autonomyId} className="panel-title">
-            Autonomy and display
-          </h2>
-          <dl className="rail-dl settings-note">
-            <dt>Autonomy</dt>
-            <dd>{autonomyMeaning(profile?.autonomy_level).replace(/^Autonomy\s+/, "")}</dd>
-            <dt>Quiet mode</dt>
-            <dd>{QUIET_MEANING}</dd>
-            <dt>Projector</dt>
-            <dd>{PROJECTOR_MEANING}</dd>
-          </dl>
-        </section>
-
-        <section className="panel" aria-labelledby={sessionId}>
-          <h2 id={sessionId} className="panel-title">
-            Session role (team demo)
-          </h2>
-          <div className="form-row">
-            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Display name" aria-label="Display name" />
-            <select value={role} onChange={(e) => setRole(e.target.value)} aria-label="Session role">
-              {ROLES.map((r) => (
-                <option key={r.value} value={r.value}>
-                  {roleWords(r.value)} — {r.label}
-                </option>
-              ))}
-              {/* A role stored before this list was corrected would otherwise leave the select
-                  blank, with no way to see what it is set to. */}
-              {role && !ROLES.some((r) => r.value === role) && (
-                <option value={role}>{role} — not a role this backend knows</option>
-              )}
-            </select>
-            {/* The one primary action on the page. */}
-            <button className="btn primary" onClick={saveSession} disabled={saving}>
-              {saving ? "Saving…" : "Save session"}
-            </button>
-            <span role="status" className="muted">
-              {saved && !saving ? "Saved" : ""}
-            </span>
-            {saveFail && <Failed text={`Couldn't save: ${saveFail.text}`} detail={saveFail.detail} />}
-          </div>
-          <p
-            className="muted settings-note"
-            title="With AUTH_DISABLED=true the switcher grants nothing. With sign-in on, the signed-in user decides instead."
-          >
-            The nine roles the API defines. A demo switch, not a sign-in: it sets the name recorded as the actor and
-            what the role-aware screens say.
-          </p>
-        </section>
-
-        <section className="panel" aria-labelledby={emailId}>
-          <h2 id={emailId} className="panel-title">
-            Gmail demo email
-          </h2>
-          {emailFail ? (
-            <div className="empty" role="alert" title={emailFail.detail}>
-              Couldn't load the email status: {emailFail.text}.
-              <button className="btn sm" onClick={loadEmail}>
-                Retry
-              </button>
-            </div>
-          ) : emailSt === undefined ? (
-            <div className="skeleton-rows" aria-busy="true" aria-label="Loading the email status">
-              <span className="skeleton" style={{ width: "30%" }} />
-              <span className="skeleton" style={{ width: "45%" }} />
-              <span className="skeleton" style={{ width: "40%" }} />
-            </div>
-          ) : (
-            <div className="stack tight">
-              <dl className="rail-dl">
-                <dt>Status</dt>
-                <dd>
-                  {mailReady ? (
-                    "SMTP ready (Gmail)"
-                  ) : (
-                    <span className="attn warn">
-                      <IconDot /> Email sending is off in this demo: messages are kept, not delivered
-                    </span>
-                  )}
-                </dd>
-                <dt>From</dt>
-                <dd>{emailSt.from || "—"}</dd>
-                <dt>To</dt>
-                <dd>{recipients.join(", ") || "—"}</dd>
-              </dl>
-              {/* The setup sentence, once; the variable names are in its title. */}
-              {!mailReady && (
-                <p
-                  className="muted settings-note"
-                  title="Set GMAIL_ADDRESS and GMAIL_APP_PASSWORD (a Google app password), optionally DEMO_EMAIL_TO, then restart the API. See docs/GMAIL_SETUP.md."
-                >
-                  To send real mail, give the API a Gmail address and app password, then restart it.
-                </p>
-              )}
-              <div className="settings-actions">
-                <button className="btn" onClick={sendTest} disabled={testing}>
-                  {testing ? "Sending…" : "Send test email now"}
-                </button>
-                <span role="status">
-                  {testResult && testResult.ok && (
-                    <span className="muted" title={testResult.detail}>
-                      {testResult.text}
-                    </span>
-                  )}
-                </span>
-                {testResult && !testResult.ok && <Failed text={testResult.text} detail={testResult.detail} />}
-              </div>
-            </div>
-          )}
-        </section>
-
-        <section className="panel" aria-labelledby={regionsId}>
-          <h2 id={regionsId} className="panel-title">
-            Regions and vendor map
-          </h2>
-          <p className="muted settings-note">
-            About 7,000 sites and 50M+ subscribers in six Safaricom regions. Power: Nairobi East and Mt Kenya to
-            Egypro, Rift Valley and Western-Nyanza to Tetranet. Radio: Nairobi West and Coast to Huawei. Fibre: Egypro
-            Fibre, Soliton (Mt Kenya), Camusat, Ecta, Adrian, Alan Dick.
-          </p>
-          {profile?.regions && typeof profile.regions === "object" ? (
-            <ul className="settings-regions">
-              {Object.entries(profile.regions).map(([code, r]: [string, any]) => (
-                <li key={code} className="row static">
-                  <span className="mono">{code}</span>
-                  <div className="row-main">
-                    <div className="head-row">
-                      <span className="settings-region-name">{r?.label}</span>
-                      {/* The RNIO and FE codes name themselves ("RNIO-NBI-E"); no label before them. */}
-                      {r?.rnio && <span className="mono">{r.rnio}</span>}
-                      {r?.fe_oncall && <span className="mono">{r.fe_oncall}</span>}
-                    </div>
-                    {r?.description && <div className="muted">{r.description}</div>}
-                  </div>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <div className="skeleton-rows" aria-busy="true" aria-label="Loading the regions">
-              <span className="skeleton" />
-              <span className="skeleton" style={{ width: "70%" }} />
-            </div>
-          )}
-        </section>
-
-        <section className="panel" aria-labelledby={stormId}>
-          <h2 id={stormId} className="panel-title">
-            Heavy-rain microwave storm
-          </h2>
-          <p className="muted settings-note">
-            Best launched from <Link to="/mission">Mission control</Link>, so the agent steps stream live. It also runs from
-            here.
-          </p>
-          <div className="settings-actions">
-            <button className="btn" onClick={onLaunchStorm} disabled={storming}>
-              {storming ? "Storm running…" : "Launch the storm"}
-            </button>
-            {stormErr && !storming && (
-              <button className="btn sm" onClick={onResumeStorm}>
-                Resume storm
-              </button>
-            )}
-            <span role="status" className="muted">
-              {stormProg}
-            </span>
-            {stormErr && !storming && <Failed text={stormErr} detail={stormErr} />}
-          </div>
-        </section>
-
-        <section className="panel" aria-labelledby={injectId}>
-          <div className="panel-head">
-            <h2 id={injectId} className="panel-title">
-              Single-event inject
-            </h2>
-            <span className="muted">Each one sends one alarm through the agents</span>
-          </div>
-          <ul className="settings-inject">
-            {PRESETS.map((p) => (
-              <li key={p.label} className="row static">
-                <div className="head-row">
-                  <span className="settings-inject-label">{p.label}</span>
-                  {p.route && <span>routes to {p.route}</span>}
-                </div>
-                <div className="settings-inject-act">
-                  {injectFail?.label === p.label && injectFail.fail && (
-                    <Failed text={`Couldn't inject: ${injectFail.fail.text}`} detail={injectFail.fail.detail} />
-                  )}
-                  <button
-                    className="btn sm"
-                    onClick={() => inject(p.label, p.body)}
-                    disabled={injecting !== null}
-                    aria-label={`Inject: ${p.label}`}
-                  >
-                    {injecting === p.label ? "Injecting…" : "Inject"}
-                  </button>
-                </div>
+      <div className="settings-layout">
+        <nav className="settings-nav" aria-label="On this page">
+          <p className="settings-nav-title">On this page</p>
+          <ol>
+            {SECTIONS.map((x) => (
+              <li key={x.id}>
+                <a href={`#${x.id}`}>{x.label}</a>
               </li>
             ))}
-          </ul>
-          <p className="facts settings-last" role="status">
-            {last && (
+          </ol>
+        </nav>
+
+        <div className="settings-main">
+          <section className="panel settings-section" id="settings-you" aria-labelledby="settings-you-title">
+            <div className="settings-section-head">
+              <h2 id="settings-you-title" className="panel-title">
+                You in this demo
+              </h2>
+              <span className="settings-chip">Viewing as {lcFirst(roleWords(roleNow))}</span>
+            </div>
+            <p
+              className="settings-note"
+              title="With AUTH_DISABLED=true the switcher grants nothing. With sign-in on, the signed-in user decides instead."
+            >
+              A demo switch, not a sign-in. It sets the name recorded as the person who acted, and what the role-aware
+              screens show you.
+            </p>
+            <div className="settings-you">
+              <label className="settings-field">
+                <span>Your name</span>
+                <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Display name" aria-label="Display name" />
+              </label>
+              <label className="settings-field">
+                <span>Role</span>
+                <select value={role} onChange={(e) => setRole(e.target.value)} aria-label="Session role">
+                  {ROLES.map((r) => (
+                    <option key={r.value} value={r.value}>
+                      {roleWords(r.value)}
+                    </option>
+                  ))}
+                  {/* A role stored before this list was corrected would otherwise leave the select
+                      blank, with no way to see what it is set to. */}
+                  {role && !ROLES.some((r) => r.value === role) && (
+                    <option value={role}>{role}: not a role this backend knows</option>
+                  )}
+                </select>
+                <small>{roleMeaning ? sentence(roleMeaning) + "." : "Not one of the nine roles the API defines."}</small>
+              </label>
+              {/* The one primary action on the page. */}
+              <div className="settings-you-act">
+                <button className="btn primary" onClick={saveSession} disabled={saving}>
+                  {saving ? "Saving…" : "Save"}
+                </button>
+                <span role="status" className="settings-saved">
+                  {saved && !saving ? "Saved" : ""}
+                </span>
+              </div>
+            </div>
+            {saveFail && <Failed text={`Couldn't save: ${saveFail.text}`} detail={saveFail.detail} />}
+          </section>
+
+          {/* What the top bar's tooltips say, in words a tablet can read (a finger never sees a title). */}
+          <section className="panel settings-section" id="settings-display" aria-labelledby="settings-display-title">
+            <h2 id="settings-display-title" className="panel-title">
+              Autonomy and display
+            </h2>
+            <dl className="settings-cards">
+              <div>
+                <dt>Autonomy</dt>
+                <dd>{autonomyMeaning(profile?.autonomy_level).replace(/^Autonomy\s+/, "")}</dd>
+              </div>
+              <div>
+                <dt>Quiet mode</dt>
+                <dd>{QUIET_MEANING}</dd>
+              </div>
+              <div>
+                <dt>Projector</dt>
+                <dd>{PROJECTOR_MEANING}</dd>
+              </div>
+            </dl>
+            <p className="settings-note">Quiet mode and the projector are switched from Display in the top bar.</p>
+          </section>
+
+          <section className="panel settings-section" id="settings-email" aria-labelledby="settings-email-title">
+            <h2 id="settings-email-title" className="panel-title">
+              Email
+            </h2>
+            {emailFail ? (
+              <div className="empty" role="alert" title={emailFail.detail}>
+                Couldn't load the email status: {emailFail.text}.
+                <button className="btn sm" onClick={loadEmail}>
+                  Retry
+                </button>
+              </div>
+            ) : emailSt === undefined ? (
+              <div className="skeleton-rows" aria-busy="true" aria-label="Loading the email status">
+                <span className="skeleton" style={{ width: "30%" }} />
+                <span className="skeleton" style={{ width: "45%" }} />
+              </div>
+            ) : (
               <>
-                <span>Last inject</span>
-                {typeof last.id === "string" && last.incident_number ? (
-                  <Link className="mono" to={`/incidents/${last.id}`}>
-                    {last.incident_number}
-                  </Link>
-                ) : (
-                  last.incident_number && <span className="mono">{last.incident_number}</span>
+                <p className={"settings-status" + (mailReady ? " ok" : " warn")}>
+                  <span className="settings-status-dot" aria-hidden="true" />
+                  {mailReady ? "Sending through Gmail" : "Sending is off in this demo: messages are kept, not delivered"}
+                </p>
+                <dl className="settings-pairs">
+                  <div>
+                    <dt>From</dt>
+                    <dd>{emailSt.from || "Not set"}</dd>
+                  </div>
+                  <div>
+                    <dt>To</dt>
+                    <dd>{recipients.join(", ") || "Not set"}</dd>
+                  </div>
+                </dl>
+                {/* The setup sentence, once; the variable names are in its title. */}
+                {!mailReady && (
+                  <p
+                    className="settings-note"
+                    title="Set GMAIL_ADDRESS and GMAIL_APP_PASSWORD (a Google app password), optionally DEMO_EMAIL_TO, then restart the API. See docs/GMAIL_SETUP.md."
+                  >
+                    To send real mail, give the API a Gmail address and an app password, then restart it.
+                  </p>
                 )}
-                {last.priority && <span className={`pill ${last.priority}`} title={priorityTitle(last.priority)}>{last.priority}</span>}
-                {(last.responsible_msp || last.msp_name) && <span>Vendor {last.responsible_msp || last.msp_name}</span>}
-                {last.fe_name && (
-                  <span>
-                    Field engineer <span className="mono">{last.fe_name}</span>
+                <div className="settings-actions">
+                  <button className="btn" onClick={sendTest} disabled={testing}>
+                    {testing ? "Sending…" : "Send a test email"}
+                  </button>
+                  <span role="status">
+                    {testResult && testResult.ok && (
+                      <span className="muted" title={testResult.detail}>
+                        {testResult.text}
+                      </span>
+                    )}
                   </span>
-                )}
+                  {testResult && !testResult.ok && <Failed text={testResult.text} detail={testResult.detail} />}
+                </div>
               </>
             )}
-          </p>
-        </section>
+          </section>
 
-        <section className="panel" aria-labelledby={sitesId}>
-          <div className="panel-head">
-            <h2 id={sitesId} className="panel-title">
-              Seed sites
+          <section className="panel settings-section" id="settings-alarms" aria-labelledby="settings-alarms-title">
+            <div className="settings-section-head">
+              <h2 id="settings-alarms-title" className="panel-title">
+                Demo alarms
+              </h2>
+              <span className="muted">Each one goes through all twelve agent steps</span>
+            </div>
+
+            <div className="settings-storm" aria-labelledby={stormId}>
+              <span className="settings-storm-icon" aria-hidden="true">
+                <CloudLightning size={22} strokeWidth={1.75} />
+              </span>
+              <div className="settings-storm-text">
+                <h3 id={stormId}>Heavy-rain microwave storm</h3>
+                <p>
+                  A burst of linked alarms across the microwave ring. Best launched from{" "}
+                  <Link to="/mission">Mission control</Link>, where the agent steps stream live.
+                </p>
+                <p role="status" className="settings-storm-prog">
+                  {stormProg}
+                </p>
+                {stormErr && !storming && <Failed text={stormErr} detail={stormErr} />}
+              </div>
+              <div className="settings-storm-act">
+                <button className="btn" onClick={onLaunchStorm} disabled={storming}>
+                  {storming ? "Storm running…" : "Launch the storm"}
+                </button>
+                {stormErr && !storming && (
+                  <button className="btn sm" onClick={onResumeStorm}>
+                    Resume storm
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <h3 className="settings-sub">One alarm at a time</h3>
+            <ul className="settings-presets">
+              {PRESETS.map((p) => {
+                const b = p.body as Record<string, any>;
+                const domain = String(b.failure_domain || "").toUpperCase();
+                const Icon = DOMAIN_ICON[domain] || Zap;
+                return (
+                  <li key={p.label} className="settings-preset">
+                    <div className="settings-preset-head">
+                      <span className="settings-preset-icon" aria-hidden="true">
+                        <Icon size={16} strokeWidth={1.75} />
+                      </span>
+                      <span className="settings-preset-label">{p.label}</span>
+                    </div>
+                    <p className="settings-preset-site">{b.site_name}</p>
+                    <p className="settings-preset-facts">
+                      <span>{DOMAIN_WORD[domain] || humanEnum(domain)}</span>
+                      <span>{compact(b.users_affected)} subscribers</span>
+                      <span>{regionName(b.region_code, profile)}</span>
+                    </p>
+                    <div className="settings-preset-foot">
+                      <span className="settings-preset-route">
+                        {p.route ? `Routes to ${p.route}` : b.parent_hub_id ? "Folds into its HUB's ticket" : "Routed by the matrix"}
+                      </span>
+                      <button
+                        className="btn sm"
+                        onClick={() => inject(p.label, p.body)}
+                        disabled={injecting !== null}
+                        aria-label={`Inject: ${p.label}`}
+                      >
+                        {injecting === p.label ? "Injecting…" : "Inject"}
+                      </button>
+                    </div>
+                    {injectFail?.label === p.label && injectFail.fail && (
+                      <Failed text={`Couldn't inject: ${injectFail.fail.text}`} detail={injectFail.fail.detail} />
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+            <p className="settings-last" role="status">
+              {last && (
+                <>
+                  <span className="settings-last-label">Last alarm opened</span>
+                  {typeof last.id === "string" && last.incident_number ? (
+                    <Link className="mono" to={`/incidents/${last.id}`}>
+                      {last.incident_number}
+                    </Link>
+                  ) : (
+                    last.incident_number && <span className="mono">{last.incident_number}</span>
+                  )}
+                  {last.priority && (
+                    <span className={`pill ${last.priority}`} title={priorityTitle(last.priority)}>
+                      {last.priority}
+                    </span>
+                  )}
+                  {(last.responsible_msp || last.msp_name) && <span>Vendor {last.responsible_msp || last.msp_name}</span>}
+                  {last.fe_name && (
+                    <span>
+                      Field engineer <span className="mono">{last.fe_name}</span>
+                    </span>
+                  )}
+                </>
+              )}
+            </p>
+          </section>
+
+          <section className="panel settings-section" id="settings-regions" aria-labelledby="settings-regions-title">
+            <h2 id="settings-regions-title" className="panel-title">
+              Regions and vendors
             </h2>
-            {sites && <span className="muted">{sites.length} sites</span>}
-          </div>
-          {sitesFail ? (
-            <div className="empty" role="alert" title={sitesFail.detail}>
-              Couldn't load the sites: {sitesFail.text}.
-              <button className="btn sm" onClick={loadSites}>
-                Retry
-              </button>
+            <p className="settings-note">
+              About 7,000 sites and 50M+ subscribers in six regions. Power: Nairobi East and Mt Kenya go to Egypro, Rift
+              Valley and Western-Nyanza to Tetranet. Radio: Nairobi West and Coast to Huawei. Fibre: Egypro Fibre, Soliton
+              (Mt Kenya), Camusat, Ecta, Adrian and Alan Dick.
+            </p>
+            {profile?.regions && typeof profile.regions === "object" ? (
+              <ul className="settings-regions">
+                {Object.entries(profile.regions).map(([code, r]: [string, any]) => (
+                  <li key={code} className="settings-region">
+                    <div className="settings-region-head">
+                      <span className="settings-region-name">{r?.label || code}</span>
+                      <span className="settings-code">{code}</span>
+                    </div>
+                    {r?.description && <p className="settings-region-desc">{r.description}</p>}
+                    {/* The RNIO and FE codes name themselves ("RNIO-NBI-E"); no label before them. */}
+                    <p className="settings-region-codes">
+                      {r?.rnio && <span className="mono" title="Regional network operations office">{r.rnio}</span>}
+                      {r?.fe_oncall && <span className="mono" title="Field engineer on call">{r.fe_oncall}</span>}
+                    </p>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <div className="skeleton-rows" aria-busy="true" aria-label="Loading the regions">
+                <span className="skeleton" />
+                <span className="skeleton" style={{ width: "70%" }} />
+              </div>
+            )}
+          </section>
+
+          <section className="panel settings-section" id="settings-sites" aria-labelledby="settings-sites-title">
+            <div className="settings-section-head">
+              <h2 id="settings-sites-title" className="panel-title">
+                Sites
+              </h2>
+              {sites && <span className="muted">{siteQ.trim() ? `${shownSites.length} of ${sites.length}` : `${sites.length} seeded`}</span>}
             </div>
-          ) : sites === undefined ? (
-            <div className="skeleton-rows" aria-busy="true" aria-label="Loading the sites">
-              {Array.from({ length: 6 }, (_, i) => (
-                <span key={i} className="skeleton" style={{ width: `${60 + ((i * 7) % 30)}%` }} />
-              ))}
-            </div>
-          ) : sites.length === 0 ? (
-            <div className="empty">No sites are seeded on this operator.</div>
-          ) : (
-            <div className="table-scroll">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Site ID</th>
-                    <th>Name</th>
-                    <th>Type</th>
-                    <th>Region</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {sites.map((s, i) => (
-                    <tr key={s.site_id || i}>
-                      <td className="mono">{s.site_id}</td>
-                      <td>{s.site_name}</td>
-                      <td>{siteType(s.site_type)}</td>
-                      <td className="mono">{s.region_code}</td>
+            {sites && sites.length > 0 && (
+              <span className="settings-search">
+                <Search size={16} strokeWidth={1.75} aria-hidden="true" />
+                <input
+                  type="search"
+                  value={siteQ}
+                  onChange={(e) => setSiteQ(e.target.value)}
+                  placeholder="Find a site by name, code, type or region"
+                  aria-label="Find a site"
+                />
+              </span>
+            )}
+            {sitesFail ? (
+              <div className="empty" role="alert" title={sitesFail.detail}>
+                Couldn't load the sites: {sitesFail.text}.
+                <button className="btn sm" onClick={loadSites}>
+                  Retry
+                </button>
+              </div>
+            ) : sites === undefined ? (
+              <div className="skeleton-rows" aria-busy="true" aria-label="Loading the sites">
+                {Array.from({ length: 6 }, (_, i) => (
+                  <span key={i} className="skeleton" style={{ width: `${60 + ((i * 7) % 30)}%` }} />
+                ))}
+              </div>
+            ) : sites.length === 0 ? (
+              <div className="empty">No sites are seeded on this operator.</div>
+            ) : shownSites.length === 0 ? (
+              <div className="empty">No site matches “{siteQ.trim()}”.</div>
+            ) : (
+              <div className="table-scroll settings-sites">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Site</th>
+                      <th>Type</th>
+                      <th>Region</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </section>
+                  </thead>
+                  <tbody>
+                    {shownSites.map((x, i) => (
+                      <tr key={x.site_id || i}>
+                        <td>
+                          <span className="settings-site-name">{x.site_name}</span>
+                          <span className="settings-site-code">{x.site_id}</span>
+                        </td>
+                        <td>
+                          <span className="settings-type">{siteType(x.site_type)}</span>
+                        </td>
+                        <td>{regionName(x.region_code, profile)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+        </div>
       </div>
     </div>
   );
 }
+
+const sentence = (t: string) => (t ? t[0].toUpperCase() + t.slice(1) : t);
+/** "Duty manager" -> "duty manager", but "MSP coordinator" stays as written. */
+const lcFirst = (t: string) => (t && /^[A-Z][a-z]/.test(t) ? t[0].toLowerCase() + t.slice(1) : t);
 
 /** Memoised: App's flushes and metrics answers do not re-render a page whose props held still. */
 export default memo(Settings);

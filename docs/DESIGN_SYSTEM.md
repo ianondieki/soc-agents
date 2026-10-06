@@ -274,6 +274,17 @@ verdict, the Authority approval and the customer notice, and its actions. The ta
 the work behind its icon, the site by name, the due date with how far off, the status and the proposed
 crew; the first ten until asked.
 
+**Audit trail.** Five figures (entries read, tickets, decisions by people, exceptions, the days they
+cover), one filter bar (a search, who acted: everyone, agents and jobs, people; which rows: decisions
+and exceptions, or every step), then the trail by day ("Today", "Yesterday", "Sat 4 Oct"), one block per
+ticket or record. A record whose rows name one site carries the site's name and code. Each actor has a
+small icon (an agent, a job, a person) and a person's name is violet. Stored text is never rewritten.
+
+**Settings.** An "On this page" list beside six sections: you in this demo (name and role, with what
+the role is for, and Save), autonomy and display as three cards, email with its state as a dot, the demo
+alarms (the storm, then one card per preset: the site, the domain, subscribers, region, where it routes,
+Inject), the regions as cards and the sites with a finder.
+
 **The Wallboard** (always Night, made for a TV across the room). The head: the mark, "NOC wallboard"
 and the operator; on the right the live state as a pill (green dot while live, red words when the wall
 has stopped updating, the escalation count beside it at the same size) and the time in Nairobi, big, in

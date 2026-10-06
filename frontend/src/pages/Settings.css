@@ -1,28 +1,95 @@
-/* Settings (route /settings). Owned by pages/Settings.tsx; loaded after styles.css and built
-   only from its tokens and primitives (.panel, .stack, .rail-dl, .row.static, .facts, .state). */
+/* Settings (route /settings). Owned by pages/Settings.tsx; loaded after styles.css.
+   An "On this page" list beside six sections: you in this demo (name and role), autonomy and
+   display (what the top bar's words mean), email, the demo alarms (the storm, then one card per
+   preset alarm), the regions as cards, and the sites with a finder. */
 
-.settings-note { margin: var(--s2) 0 0; max-width: 75ch; line-height: 1.5; }
-.panel-title + .settings-note { margin-top: 0; }
+.settings-layout { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: var(--s5, 24px); align-items: start; }
+.settings-nav { position: sticky; top: calc(var(--topbar-h) + var(--s4)); }
+.settings-nav-title { margin: 0 0 8px; color: var(--muted); font-size: var(--fs-xs); font-weight: 700; }
+.settings-nav ol { display: grid; gap: 2px; margin: 0; padding: 0 0 0 10px; border-left: 2px solid var(--line); list-style: none; }
+.settings-nav a { display: block; padding: 5px 10px; border-radius: 6px; color: var(--muted); font-size: var(--fs-sm); text-decoration: none; }
+.settings-nav a:hover { background: var(--surface-raised); color: var(--text-strong); }
+.settings-main { display: grid; gap: var(--s4); min-width: 0; }
+.settings-section { scroll-margin-top: calc(var(--topbar-h) + var(--s4)); padding: 20px 22px 22px; }
+.settings-section-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px 14px; }
+.settings-section-head .panel-title { margin-bottom: 0; }
+.settings-note { max-width: 75ch; margin: 6px 0 0; color: var(--muted); font-size: var(--fs-sm); line-height: 1.5; }
+.settings-chip { padding: 3px 10px; border: 1px solid var(--accent-line); border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-size: var(--fs-xs); font-weight: 600; }
 
-/* A button with its outcome beside it (sent, stored, failed). */
-.settings-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2) var(--s3); margin-top: var(--s3); }
-.stack > .settings-actions { margin-top: var(--s2); }
+/* You: name, role (with what it is for), Save. */
+.settings-you { display: grid; grid-template-columns: minmax(0, 14rem) minmax(0, 20rem) auto; align-items: start; gap: 12px 14px; margin-top: 16px; }
+.settings-field { display: grid; gap: 5px; min-width: 0; color: var(--muted); font-size: var(--fs-xs); font-weight: 500; }
+.settings-field input, .settings-field select { width: 100%; min-width: 0; }
+.settings-field small { color: var(--muted); font-size: var(--fs-xs); font-weight: 400; line-height: 1.4; }
+.settings-you-act { display: flex; align-items: center; gap: 10px; margin-top: 21px; }
+.settings-saved { color: var(--ok); font-size: var(--fs-sm); font-weight: 600; }
 
-/* Region map: the code in a fixed first column so every name starts at one x. */
-.settings-regions { list-style: none; margin: var(--s3) 0 0; padding: 0; }
-.settings-regions > .row { grid-template-columns: 4.5rem minmax(0, 1fr); align-items: baseline; padding-left: 0; padding-right: 0; }
-.settings-regions > .row > .mono { font-size: var(--fs-sm); color: var(--text-bright); }
-.head-row > .settings-region-name,
-.head-row > .settings-inject-label { color: var(--text); font-size: var(--fs-md); }
-.settings-regions .row-main .muted { font-size: var(--fs-xs); }
+/* Autonomy and display: three small cards. */
+.settings-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 14px 0 0; }
+.settings-cards > div { padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface-raised); }
+.settings-cards dt { color: var(--text-strong); font-size: var(--fs-sm); font-weight: 700; }
+.settings-cards dd { margin: 4px 0 0; color: var(--text); font-size: var(--fs-xs); line-height: 1.5; }
 
-/* Inject rows: the label takes the width, the small button (and a failure beside it) the end. */
-.settings-inject { list-style: none; margin: 0; padding: 0; }
-.settings-inject > .row { grid-template-columns: minmax(0, 1fr) auto; padding-left: 0; padding-right: 0; }
-.settings-inject-act { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--s2) var(--s3); }
-.settings-last { margin: var(--s3) 0 0; }
+/* Email. */
+.settings-status { display: flex; align-items: center; gap: 9px; margin: 12px 0 0; color: var(--text); font-size: var(--fs-sm); font-weight: 600; }
+.settings-status-dot { flex: none; width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
+.settings-status.ok .settings-status-dot { background: var(--ok); box-shadow: 0 0 0 3px var(--ok-soft); }
+.settings-status.warn .settings-status-dot { background: var(--warn); box-shadow: 0 0 0 3px var(--warn-soft); }
+.settings-pairs { display: flex; flex-wrap: wrap; gap: 6px 28px; margin: 10px 0 0; font-size: var(--fs-sm); }
+.settings-pairs > div { display: flex; gap: 8px; }
+.settings-pairs dt { color: var(--muted); }
+.settings-pairs dd { margin: 0; color: var(--text); overflow-wrap: anywhere; }
+.settings-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2) var(--s3); margin-top: 14px; }
+
+/* Demo alarms: the storm first, then a card per preset. */
+.settings-storm { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: start; gap: 6px 14px; margin-top: 14px; padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface-raised); }
+.settings-storm-icon { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 10px; background: var(--accent-soft); color: var(--accent); }
+.settings .settings-storm-text h3 { margin: 0; color: var(--text-strong); font-size: var(--fs-base); font-weight: 700; }
+.settings-storm-text p { margin: 3px 0 0; color: var(--muted); font-size: var(--fs-sm); line-height: 1.5; }
+.settings-storm-text .settings-storm-prog { color: var(--text); }
+.settings-storm-text .settings-storm-prog:empty { display: none; }
+.settings-storm-act { display: flex; flex-wrap: wrap; gap: 8px; }
+.settings .settings-sub { margin: 20px 0 10px; color: var(--text-strong); font-size: var(--fs-sm); font-weight: 700; }
+.settings-presets { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 230px), 1fr)); gap: 12px; margin: 0; padding: 0; list-style: none; }
+.settings-preset { display: flex; flex-direction: column; gap: 4px; min-width: 0; padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface); }
+.settings-preset-head { display: flex; align-items: center; gap: 9px; }
+.settings-preset-icon { display: grid; flex: none; place-items: center; width: 28px; height: 28px; border-radius: 8px; background: var(--surface-raised); color: var(--muted); }
+.settings-preset-label { color: var(--text-strong); font-size: var(--fs-sm); font-weight: 700; line-height: 1.3; }
+.settings-preset-site { margin: 4px 0 0; color: var(--text); font-size: var(--fs-xs); }
+.settings-preset-facts { display: flex; flex-wrap: wrap; gap: 0 10px; margin: 0; color: var(--muted); font-size: var(--fs-xs); }
+.settings-preset-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: auto; padding-top: 10px; }
+.settings-preset-route { color: var(--muted); font-size: var(--fs-xs); }
+.settings-last { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin: 14px 0 0; font-size: var(--fs-sm); }
 .settings-last:empty { margin: 0; }
+.settings-last-label { color: var(--muted); }
 
-@media (max-width: 600px) {
-  .settings-regions > .row { grid-template-columns: 1fr; gap: var(--s1); }
+/* Regions as cards. */
+.settings-regions { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr)); gap: 12px; margin: 14px 0 0; padding: 0; list-style: none; }
+.settings-region { display: flex; flex-direction: column; gap: 6px; padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface-raised); }
+.settings-region-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.settings-region-name { color: var(--text-strong); font-size: var(--fs-sm); font-weight: 700; }
+.settings-code { color: var(--muted); font-family: var(--mono); font-size: var(--fs-xs); }
+.settings-region-desc { margin: 0; color: var(--muted); font-size: var(--fs-xs); line-height: 1.5; }
+.settings-region-codes { display: flex; flex-wrap: wrap; gap: 4px 12px; margin: auto 0 0; padding-top: 6px; color: var(--text); font-size: var(--fs-xs); }
+
+/* Sites: a finder, then the table. */
+.settings-search { position: relative; display: flex; align-items: center; max-width: 26rem; margin: 12px 0; }
+.settings-search > svg { position: absolute; left: 12px; color: var(--muted); pointer-events: none; }
+.settings-search > input { width: 100%; padding-left: 38px; }
+.settings-sites table { min-width: 0; }
+.settings-site-name { display: block; color: var(--text-strong); font-weight: 600; }
+.settings-site-code { display: block; color: var(--muted); font-family: var(--mono); font-size: var(--fs-xs); }
+.settings-type { display: inline-flex; padding: 1px 8px; border: 1px solid var(--line); border-radius: 999px; color: var(--text); font-size: var(--fs-xs); font-weight: 600; }
+
+@media (max-width: 1099px) {
+  .settings-layout { grid-template-columns: minmax(0, 1fr); }
+  .settings-nav { display: none; }
+}
+@media (max-width: 760px) {
+  .settings-section { padding: 16px; }
+  .settings-you { grid-template-columns: minmax(0, 1fr); }
+  .settings-you-act { margin-top: 0; }
+  .settings-cards { grid-template-columns: minmax(0, 1fr); }
+  .settings-storm { grid-template-columns: auto minmax(0, 1fr); }
+  .settings-storm-act { grid-column: 1 / -1; }
 }
