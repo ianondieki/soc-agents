@@ -1,4 +1,5 @@
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useId, useMemo, useRef, useState } from "react";
+import { Bot, Clock, Search, User } from "lucide-react";
 import { priorityTitle } from "../lib/agents";
 import { Link } from "react-router-dom";
 import { api } from "../api";
@@ -88,6 +89,8 @@ function saveView(view: View): void {
 export default function Audit({ tick }: { tick: number }) {
   const [rows, setRows] = useState<AuditEntry[]>([]);
   const [incidents, setIncidents] = useState<Record<string, IncidentLite>>({});
+  // Site names, for a record block (a maintenance task, a window) whose rows name a site code.
+  const [siteNames, setSiteNames] = useState<Record<string, string>>({});
   const [load, setLoad] = useState<Load>("loading");
   const [stale, setStale] = useState(false);
   const [attempt, setAttempt] = useState(0);
@@ -127,8 +130,22 @@ export default function Audit({ tick }: { tick: number }) {
       .then((list: IncidentLite[]) => {
         if (!live) return;
         const byId: Record<string, IncidentLite> = {};
-        for (const i of list || []) byId[i.id] = i;
+        const names: Record<string, string> = {};
+        for (const i of list || []) {
+          byId[i.id] = i;
+          if (i.site_id && i.site_name) names[i.site_id] = i.site_name;
+        }
         setIncidents(byId);
+        setSiteNames((prev) => ({ ...names, ...prev }));
+      })
+      .catch(() => undefined);
+    api
+      .sites()
+      .then((list: any[]) => {
+        if (!live) return;
+        const names: Record<string, string> = {};
+        for (const x of Array.isArray(list) ? list : []) if (x?.site_id && x?.site_name) names[x.site_id] = x.site_name;
+        setSiteNames((prev) => ({ ...prev, ...names }));
       })
       .catch(() => undefined);
     return () => {
@@ -264,14 +281,62 @@ export default function Audit({ tick }: { tick: number }) {
   };
   const more = Math.min(PAGE, olderTickets);
 
+  // The figures describe what this page has read (the newest 500, or a search over every entry).
+  const figures = useMemo(() => {
+    let people = 0;
+    let exceptions = 0;
+    let waiting = 0;
+    for (const r of source) {
+      if (actorKind(r.actor) === "person") people += 1;
+      const o = outcomeOf(r.action);
+      if (o && (o.tone === "danger" || o.tone === "warn")) exceptions += 1;
+      if (o && o.tone === "hitl") waiting += 1;
+    }
+    const tickets = new Set(blocks.filter((b) => b.kind === "ticket").map((b) => b.ticketId)).size;
+    const newest = source.length ? source[0].ts : null;
+    const oldest = source.length ? source[source.length - 1].ts : null;
+    return { people, exceptions, waiting, tickets, newest, oldest };
+  }, [source, blocks]);
+
   return (
     <div className="content-narrow audit-page">
       <div className="page-head">
         <div>
           <h1>Audit trail</h1>
-          <p className="lead">Every agent step and human decision, with its reason. Times in EAT.</p>
+          <p className="lead">Every agent step and every person's decision, with its reason, as it was recorded. Times in EAT.</p>
         </div>
-        <div className="page-actions" role="group" aria-label="Filter the audit trail">
+      </div>
+
+      {load === "ready" && rows.length > 0 && (
+        <dl className="audit-figures">
+          <div>
+            <dt>{searchedAll ? "Entries found" : capped ? `Newest ${cap} entries` : "Entries"}</dt>
+            <dd>{source.length}</dd>
+          </div>
+          <div>
+            <dt>Tickets</dt>
+            <dd>{figures.tickets}</dd>
+          </div>
+          <div>
+            <dt>Decisions by people</dt>
+            <dd>{figures.people}</dd>
+          </div>
+          <div className={figures.exceptions ? "warn" : undefined}>
+            <dt>Exceptions</dt>
+            <dd>{figures.exceptions}</dd>
+          </div>
+          <div>
+            <dt>Covers</dt>
+            <dd className="audit-figure-word" title={`${fmtDateTime(figures.oldest)} to ${fmtDateTime(figures.newest)} EAT`}>
+              {spanWords(figures.oldest, figures.newest)}
+            </dd>
+          </div>
+        </dl>
+      )}
+
+      <div className="panel audit-toolbar" role="group" aria-label="Filter the audit trail">
+        <span className="audit-search-field">
+          <Search size={16} strokeWidth={1.75} aria-hidden="true" />
           <input
             type="search"
             value={q}
@@ -280,23 +345,39 @@ export default function Audit({ tick }: { tick: number }) {
               setShown(PAGE);
               if (searchReq || found) forgetSearchAll();
             }}
-            placeholder="Search ticket, site, actor or reason"
+            placeholder="Search a ticket, site, person or reason"
             aria-label="Search ticket, site, actor or reason"
             className="audit-search"
           />
-          <select
-            value={kind}
-            onChange={(e) => {
-              setKind(e.target.value as Kind);
-              setShown(PAGE);
-            }}
-            aria-label="Who acted"
-            className="audit-kind"
-          >
-            <option value="all">All</option>
-            <option value="automated">Automated</option>
-            <option value="people">People</option>
-          </select>
+        </span>
+        <div className="seg" role="group" aria-label="Who acted">
+          {(
+            [
+              ["all", "Everyone"],
+              ["automated", "Agents and jobs"],
+              ["people", "People"],
+            ] as const
+          ).map(([k, label]) => (
+            <button
+              key={k}
+              type="button"
+              aria-pressed={kind === k}
+              onClick={() => {
+                setKind(k);
+                setShown(PAGE);
+              }}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        <div className="seg" role="group" aria-label="Rows to show">
+          <button type="button" aria-pressed={view === "decisions"} onClick={() => chooseView("decisions")}>
+            Decisions and exceptions
+          </button>
+          <button type="button" aria-pressed={view === "all"} onClick={() => chooseView("all")}>
+            Every step
+          </button>
         </div>
       </div>
 
@@ -305,7 +386,7 @@ export default function Audit({ tick }: { tick: number }) {
           {/* With nothing matching, the panel says so (and how far it looked); no "0 tickets" here. */}
           {load === "ready" && rows.length > 0 && entryCount > 0 && (
             <span>
-              {ticketCount} {ticketCount === 1 ? "ticket" : "tickets"}, {entryCount} {entryCount === 1 ? "entry" : "entries"}
+              Showing {ticketCount} {ticketCount === 1 ? "ticket" : "tickets"}, {entryCount} {entryCount === 1 ? "entry" : "entries"}
             </span>
           )}
           {load === "ready" && searchedAll && (
@@ -321,7 +402,7 @@ export default function Audit({ tick }: { tick: number }) {
           )}
           {load === "ready" && !searchedAll && capped && entryCount > 0 && (
             <span title={`The trail keeps more; this page reads the newest ${FETCH} and leaves out the oldest ticket, which those entries only cover in part.`}>
-              Newest {FETCH} entries
+              from the newest {FETCH} entries
             </span>
           )}
           {/* A search over a capped page may miss older matches: the way to reach them, in reach. */}
@@ -344,14 +425,6 @@ export default function Audit({ tick }: { tick: number }) {
             </span>
           )}
         </p>
-        <div className="seg" role="group" aria-label="Rows to show">
-          <button type="button" aria-pressed={view === "all"} onClick={() => chooseView("all")}>
-            Every step
-          </button>
-          <button type="button" aria-pressed={view === "decisions"} onClick={() => chooseView("decisions")}>
-            Decisions and exceptions
-          </button>
-        </div>
       </div>
 
       <span className="sr-only" role="status">
@@ -403,16 +476,24 @@ export default function Audit({ tick }: { tick: number }) {
             </div>
           )
         ) : (
-          visible.map((f) => (
-            <Block
-              key={f.block.key}
-              block={f.block}
-              rows={f.rows}
-              incident={incidentOf(f.block, incidents)}
-              parent={parentOf(f.block, bySite)}
-              view={view}
-            />
-          ))
+          visible.map((f, i) => {
+            // A day line above the first block of each day (by the block's newest row).
+            const day = dayWords(f.rows[0]?.ts);
+            const prevDay = i > 0 ? dayWords(visible[i - 1].rows[0]?.ts) : "";
+            return (
+              <Fragment key={f.block.key}>
+                {day !== prevDay && <h2 className="audit-day">{day}</h2>}
+                <Block
+                  block={f.block}
+                  rows={f.rows}
+                  incident={incidentOf(f.block, incidents)}
+                  parent={parentOf(f.block, bySite)}
+                  view={view}
+                  siteNames={siteNames}
+                />
+              </Fragment>
+            );
+          })
         )}
       </div>
 
@@ -501,12 +582,14 @@ function Block({
   incident,
   parent,
   view,
+  siteNames,
 }: {
   block: AuditBlock;
   rows: AuditEntry[];
   incident?: IncidentLite;
   parent?: IncidentLite;
   view: View;
+  siteNames: Record<string, string>;
 }) {
   const headId = useId();
   const [showRoutine, setShowRoutine] = useState(false);
@@ -527,9 +610,9 @@ function Block({
   return (
     <section className="audit-block" aria-labelledby={headId}>
       <header className="audit-head">
-        <h2 id={headId} className="audit-head-title" tabIndex={-1}>
-          <BlockTitle block={block} incident={incident} parent={parent} />
-        </h2>
+        <h3 id={headId} className="audit-head-title" tabIndex={-1}>
+          <BlockTitle block={block} incident={incident} parent={parent} site={block.kind === "record" || block.kind === "job" ? siteOf(rows) : null} siteNames={siteNames} />
+        </h3>
         <p className="audit-head-meta">
           <span>{rangeText(rows)}</span>
           {block.kind === "folded" && block.runs > 1 && <span>{block.runs} alarms</span>}
@@ -562,7 +645,26 @@ function Block({
   );
 }
 
-function BlockTitle({ block, incident, parent }: { block: AuditBlock; incident?: IncidentLite; parent?: IncidentLite }) {
+function BlockTitle({
+  block,
+  incident,
+  parent,
+  site,
+  siteNames,
+}: {
+  block: AuditBlock;
+  incident?: IncidentLite;
+  parent?: IncidentLite;
+  site?: string | null;
+  siteNames?: Record<string, string>;
+}) {
+  // A record's rows that name one site: the site's name and code beside the record's kind.
+  const where = site ? (
+    <>
+      {siteNames?.[site] && <span className="audit-site audit-site-name">{siteNames[site]}</span>}
+      <span className="audit-site audit-code">{site}</span>
+    </>
+  ) : null;
   const ticket = (inc: IncidentLite, label?: string) => (
     <>
       {inc.priority && <span className={`pill ${inc.priority}`} title={priorityTitle(inc.priority)}>{inc.priority}</span>}
@@ -599,12 +701,14 @@ function BlockTitle({ block, incident, parent }: { block: AuditBlock; incident?:
         <>
           <span className="audit-inc">{block.jobName || "Scheduled job"}</span>
           {block.jobName && <span className="audit-site">Scheduled job</span>}
+          {where}
         </>
       );
     default:
       return (
         <>
           <span className="audit-inc">{entityLabel(block.entityType)}</span>
+          {where}
           {block.entityId && !isOpaqueId(block.entityId) && <span className="audit-site audit-code">{block.entityId}</span>}
           {incident && <span className="audit-site">{incident.incident_number}</span>}
         </>
@@ -644,8 +748,15 @@ function Row({ d, showTime }: { d: DisplayRow; showTime: boolean }) {
           {showTime ? time : <span className="sr-only">{time}</span>}
         </time>
         <span className={`audit-actor ${who}`}>
-          {actorLabel(r.actor)}
-          {who === "job" && <span className="audit-job"> (job)</span>}
+          {who === "agent" ? (
+            <Bot size={14} strokeWidth={1.75} aria-hidden="true" />
+          ) : who === "job" ? (
+            <Clock size={14} strokeWidth={1.75} aria-hidden="true" />
+          ) : (
+            <User size={14} strokeWidth={1.75} aria-hidden="true" />
+          )}
+          <span className="audit-actor-name">{actorLabel(r.actor)}</span>
+          <span className="sr-only">{who === "agent" ? " (agent)" : who === "job" ? " (job)" : " (person)"}</span>
         </span>
         {/* Expanded, the row keeps only the step name: the sentence and the facts are printed
             once, in full, in the detail below. */}
@@ -772,4 +883,47 @@ function SkeletonRows() {
       ))}
     </div>
   );
+}
+
+/** The one site a record's rows name ("AC_SERVICE at SFC-CST-HUB-VOI due …"), or null. */
+const SITE_CODE = /\b([A-Z]{2,4}-[A-Z0-9]+(?:-[A-Z0-9]+){1,4})\b/g;
+function siteOf(rows: AuditEntry[]): string | null {
+  const seen = new Set<string>();
+  for (const r of rows) for (const m of String(r.rationale || "").matchAll(SITE_CODE)) seen.add(m[1]);
+  const sites = [...seen].filter((x) => !/^(RNIO|FE|INC|PRB|CA)-/.test(x));
+  return sites.length === 1 ? sites[0] : null;
+}
+
+const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+/** An instant's EAT calendar day as a number of days since the epoch (Kenya is UTC+3, no DST). */
+function eatDay(ms: number): number {
+  return Math.floor((ms + 3 * 3_600_000) / 86_400_000);
+}
+/** "Today", "Yesterday" or "Sat 4 Oct": the day line above a day's first block. */
+function dayWords(ts: unknown): string {
+  const d = parseInstant(ts);
+  if (!d) return "";
+  const day = eatDay(d.getTime());
+  const today = eatDay(Date.now());
+  if (day === today) return "Today";
+  if (day === today - 1) return "Yesterday";
+  const t = new Date(d.getTime() + 3 * 3_600_000);
+  return `${WEEKDAYS[t.getUTCDay()]} ${t.getUTCDate()} ${MONTHS[t.getUTCMonth()]}`;
+}
+/** "5 Oct, 12:02 to 6 Oct, 00:08", or one day's "12:02 to 18:40 today". */
+function spanWords(oldest: unknown, newest: unknown): string {
+  const a = parseInstant(oldest);
+  const b = parseInstant(newest);
+  if (!a || !b) return "—";
+  const hm = (d: Date) => {
+    const t = new Date(d.getTime() + 3 * 3_600_000);
+    return `${String(t.getUTCHours()).padStart(2, "0")}:${String(t.getUTCMinutes()).padStart(2, "0")}`;
+  };
+  const dm = (d: Date) => {
+    const t = new Date(d.getTime() + 3 * 3_600_000);
+    return `${t.getUTCDate()} ${MONTHS[t.getUTCMonth()]}`;
+  };
+  if (eatDay(a.getTime()) === eatDay(b.getTime())) return `${dm(a)}, ${hm(a)} to ${hm(b)}`;
+  return `${dm(a)} to ${dm(b)}`;
 }

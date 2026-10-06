@@ -4,8 +4,19 @@
 
 .audit-page { --audit-indent: calc(16px + 5.5rem + 16px + 11rem + 16px); }
 
-.audit-search { width: 16rem; font-size: var(--fs-sm); padding: 6px 10px; }
-.audit-kind { flex: none; width: auto; font-size: var(--fs-sm); padding: 6px 8px; }
+/* Five figures: what this page has read. */
+.audit-figures { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 1px; margin: 0 0 var(--s4); overflow: hidden; border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--line); }
+.audit-figures > div { min-width: 0; padding: 12px 18px 14px; background: var(--surface); }
+.audit-figures dt { overflow: hidden; color: var(--muted); font-size: var(--fs-sm); font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.audit-figures dd { margin: 4px 0 0; color: var(--text-strong); font-size: var(--fs-xl); font-weight: 700; line-height: 1.15; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.audit-figures dd.audit-figure-word { overflow: hidden; font-size: var(--fs-lg); line-height: 1.6; text-overflow: ellipsis; }
+.audit-figures > .warn dd { color: var(--warn); }
+
+/* One bar of filters: search, who acted, which rows. */
+.audit-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 12px; margin-bottom: var(--s3); padding: 12px 14px; }
+.audit-search-field { position: relative; display: flex; flex: 1 1 16rem; align-items: center; min-width: 0; }
+.audit-search-field > svg { position: absolute; left: 12px; color: var(--muted); pointer-events: none; }
+.audit-search-field > .audit-search { width: 100%; padding-left: 38px; font-size: var(--fs-sm); }
 
 /* Under the head: the count on the left, the view toggle on the right. */
 .audit-bar {
@@ -14,7 +25,7 @@
   align-items: center;
   justify-content: space-between;
   gap: var(--s2) var(--s4);
-  margin: calc(-1 * var(--s3)) 0 var(--s3);
+  margin: 0 0 var(--s3);
 }
 .audit-count {
   display: flex;
@@ -59,6 +70,10 @@
   background: var(--surface-raised);
   border-top: 1px solid var(--line-strong);
 }
+/* A day line above each day's first block: Today, Yesterday, Sat 4 Oct. */
+.audit-panel .audit-day { margin: 0; padding: 14px 16px 8px; border-top: 1px solid var(--line-strong); color: var(--muted); font-size: var(--fs-xs); font-weight: 700; letter-spacing: 0.02em; }
+.audit-panel .audit-day:first-child { border-top: 0; }
+
 .audit-block:first-child .audit-head,
 .audit-skeleton .audit-head {
   border-top: 0;
@@ -128,16 +143,20 @@
   white-space: nowrap;
 }
 .audit-actor {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 7px;
   min-width: 0;
   overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
   font-size: var(--fs-md);
   font-weight: 500;
   color: var(--text);
 }
-.audit-actor.person { color: var(--hitl); }
-.audit-job { color: var(--muted-dim); font-weight: 400; }
+.audit-actor > svg { flex: none; align-self: center; color: var(--muted-dim); }
+.audit-actor-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.audit-actor.person { color: var(--hitl-text); }
+.audit-actor.person > svg { color: var(--hitl); }
 .audit-summary {
   min-width: 0;
   overflow: hidden;
@@ -251,10 +270,18 @@
 
 /* Phone: time and actor share the first line, the summary takes two, the outcome word sits
    under it only for an exception; every row is a 44 px target; nothing scrolls sideways. */
+@media (max-width: 1099px) {
+  .audit-figures { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+  .audit-figures > div { grid-column: span 2; }
+  .audit-figures > div:nth-child(n+4) { grid-column: span 3; }
+}
 @media (max-width: 700px) {
   .audit-page { --audit-indent: 16px; }
-  .page-actions .audit-search { flex: 1 1 12rem; width: auto; min-width: 0; }
-  .audit-bar { margin-top: calc(-1 * var(--s2)); }
+  .audit-figures { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .audit-figures > div:nth-child(n) { grid-column: auto; }
+  .audit-figures > div:last-child:nth-child(odd) { grid-column: 1 / -1; }
+  .audit-figures dt { white-space: normal; }
+  .audit-toolbar .seg { flex-wrap: wrap; }
   .audit-head { padding: 10px 16px; }
   .audit-head-meta { white-space: normal; flex-wrap: wrap; gap: 0 var(--s3); }
   .audit-row {

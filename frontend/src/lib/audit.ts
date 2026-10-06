@@ -32,7 +32,9 @@ const JOB_ACTORS = new Set(["outbox.dispatcher", "housekeeping", "scheduler", "s
 export function actorKind(actor: string | null | undefined): ActorKind {
   const a = String(actor ?? "");
   if (/Agent$/.test(a) || a.startsWith("agent:")) return "agent";
-  if (JOB_ACTORS.has(a) || a.includes(".") || a.startsWith("job:")) return "job";
+  // A job is a known name, "job:…", or a dotted lowercase token ("outbox.dispatcher"). A person's
+  // name may hold a full stop ("Achieng O."), so a dot alone never makes a job.
+  if (JOB_ACTORS.has(a) || a.startsWith("job:") || /^[a-z][a-z0-9_]*(\.[a-z0-9_]+)+$/.test(a)) return "job";
   return "person";
 }
 
