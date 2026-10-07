@@ -44,6 +44,7 @@ from noc_agents.api.deps import HITL_DECIDERS, _operator_scoped, _owned, hitl_de
 from noc_agents.db.models import AgentRunRow, AgentRunStepRow, HitlTaskRow, IncidentRow, utcnow
 from noc_agents.services.clock import iso_z, to_utc
 from noc_agents.services.hitl import GATING_TASK_TYPE
+from noc_agents.services.lifecycle import NOT_OPEN_STATUSES
 
 DEFAULT_WINDOW_HOURS = 24
 MAX_WINDOW_HOURS = 24 * 7
@@ -76,7 +77,7 @@ GROUP_OF: dict[str, str] = {
     "run_failed": "agent",
 }
 
-_NOT_OPEN = ("RESTORED", "CLOSED", "CANCELLED")
+_NOT_OPEN = NOT_OPEN_STATUSES
 _WAITING = ("PENDING", "CLAIMED")
 #: A run's error summary is a sentence for a person, not a traceback; anything longer is cut.
 ERROR_CHARS = 240

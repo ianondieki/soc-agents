@@ -67,6 +67,7 @@ from noc_agents.domain.alerts import INCIDENT_NUMBER_PATTERN, AudienceSpec, Cont
 from noc_agents.domain.enums import HitlTaskType
 from noc_agents.orchestrator import outbox
 from noc_agents.services.clock import fmt_eat
+from noc_agents.services.lifecycle import NOT_OPEN_STATUSES
 from noc_agents.services.alerts import build_alert
 from noc_agents.services.hitl import envelope_payload
 from noc_agents.services.notify import dispatch_handover_email
@@ -98,12 +99,12 @@ def handover_requires_hitl() -> bool:
 
 
 def open_incidents(session: Session, cfg: OperatorConfig) -> list[IncidentRow]:
-    """This operator's open incidents, P1 first then oldest — the package's own ordering."""
+    """This operator's open incidents (``NOT_OPEN_STATUSES`` excluded), P1 first then oldest."""
     rows = session.scalars(
         select(IncidentRow)
         .where(
             IncidentRow.operator_id == cfg.operator_id,
-            IncidentRow.status.not_in(["CLOSED", "CANCELLED"]),
+            IncidentRow.status.not_in(NOT_OPEN_STATUSES),
         )
         .order_by(IncidentRow.priority.asc(), IncidentRow.created_at.asc())
     ).all()

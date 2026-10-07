@@ -330,7 +330,7 @@ def test_handover_and_open_incident_metrics_are_operator_scoped(tenants):
                 s.scalars(
                     select(IncidentRow).where(
                         IncidentRow.operator_id == "safaricom",
-                        IncidentRow.status.not_in(["CLOSED", "CANCELLED"]),
+                        IncidentRow.status.not_in(["RESTORED", "CLOSED", "CANCELLED"]),
                     )
                 )
             )

@@ -105,6 +105,7 @@ from noc_agents.services.hitl import (
 )
 from noc_agents.services.clock import to_utc
 from noc_agents.services.lifecycle import (
+    NOT_OPEN_STATUSES,
     RESTORE_SOURCE_MARK,
     TERMINAL_STATUSES,
     apply_work_note_side_effects,
@@ -1752,7 +1753,7 @@ def metrics() -> MetricsSummary:
     try:
         op = _settings().operator
         open_rows = session.scalars(
-            _owned(IncidentRow).where(IncidentRow.status.not_in(["CLOSED", "CANCELLED"]))
+            _owned(IncidentRow).where(IncidentRow.status.not_in(NOT_OPEN_STATUSES))
         ).all()
         by_p = {"P1": 0, "P2": 0, "P3": 0, "P4": 0}
         by_r: dict[str, int] = {}

@@ -15,6 +15,10 @@ from noc_agents.services.composition import compose_brief
 from noc_agents.services.hitl import sync_incident_hitl_scalars
 
 TERMINAL_STATUSES = (IncidentStatus.CLOSED.value, IncidentStatus.CANCELLED.value)
+#: Not open: the service is back (RESTORED, awaiting close) or the record is done. The one meaning
+#: of "open" for every count a person reads (``/metrics/summary``, the region rollup, the shift
+#: handover, the notification centre), matching the Incident board's Open tab.
+NOT_OPEN_STATUSES = (IncidentStatus.RESTORED.value, *TERMINAL_STATUSES)
 
 # --------------------------------------------------------------------------
 # Restore provenance (spec §7.0.8)

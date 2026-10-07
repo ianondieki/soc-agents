@@ -71,6 +71,7 @@ from noc_agents.api.deps import _operator_scoped, _owned, _settings
 from noc_agents.db.models import ExternalSignalRow, IncidentRow, ProblemRow, utcnow
 from noc_agents.services.backtest import signal_precision_30d
 from noc_agents.services.clock import iso_z
+from noc_agents.services.lifecycle import NOT_OPEN_STATUSES
 from noc_agents.services.signals import cap_feed_health, cap_severe_in_force, flood_region_state
 from noc_agents.pollers.weather import (
     is_stale,
@@ -109,9 +110,9 @@ PROBLEMS_PER_REGION = 5
 #: a wallboard, and a frontend that meets an unexpected value has no safe default.
 REGION_STATUSES: tuple[str, ...] = ("ALERT", "WATCH", "STALE", "CALM")
 
-#: Incident statuses that mean "not our problem any more" — the same pair
-#: ``services.lifecycle.TERMINAL_STATUSES`` and ``/metrics/summary`` use.
-_TERMINAL = ("CLOSED", "CANCELLED")
+#: Incident statuses that are not open: restored (awaiting close), closed or cancelled. The same
+#: set ``/metrics/summary`` and the Incident board's Open tab use (``NOT_OPEN_STATUSES``).
+_NOT_OPEN = NOT_OPEN_STATUSES
 
 _PRIORITIES: tuple[str, ...] = ("P1", "P2", "P3", "P4")
 
@@ -498,7 +499,7 @@ def _incident_rollup(
     open_rows = session.scalars(
         _owned(IncidentRow).where(
             IncidentRow.region_code == region_code,
-            IncidentRow.status.not_in(_TERMINAL),
+            IncidentRow.status.not_in(_NOT_OPEN),
         )
     ).all()
 

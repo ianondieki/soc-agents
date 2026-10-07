@@ -16,6 +16,7 @@ import { describeEvent, isDecisionStep, isKeyEvent, isMock, type NocEvent } from
 import { TICKER_MAX } from "../realtime/feed";
 import { useQuietMode, useSuppressedCount, useTickerEvents } from "../realtime/RealtimeContext";
 import { hitlSubject } from "../lib/hitlSubject";
+import { isOpenTicket } from "../lib/ticket";
 
 /** One figure of the strip. Colour only when the number is worth a look; zero stays quiet. The
  *  figure rolls to a new value and its cell glows once when it changes (calm: it just changes). */
@@ -298,7 +299,7 @@ function MissionControl({
     return () => window.clearTimeout(t);
   }, [runsRev, loadRuns]);
 
-  const open = incidents.filter((i) => !["CLOSED", "CANCELLED"].includes(i.status));
+  const open = incidents.filter((i) => isOpenTicket(i.status));
   // The order Approvals works the queue in: P1 first, then the card that has waited longest.
   const queue = useMemo(() => sortQueue(hitl), [hitl]);
   const regions = Object.entries(metrics?.by_region || {});

@@ -354,7 +354,7 @@ function QosPanel({ baseline }: { baseline: Record<string, any> }) {
   );
 }
 
-export default function Regions({ tick }: { tick: number }) {
+export default function Regions({ tick, metrics }: { tick: number; metrics?: any }) {
   const [data, setData] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -379,8 +379,19 @@ export default function Regions({ tick }: { tick: number }) {
     .map((r) => obj(r.regulatory_baseline))
     .find((b) => Object.keys(b).length > 0 && b.granularity !== "cluster");
   const statusCount = (s: string) => regions.filter((r) => r.status === s).length;
-  const openTotal = regions.reduce((sum, r) => sum + num(r.open_total), 0);
-  const lateTotal = regions.reduce((sum, r) => sum + num(r.sla_breached), 0);
+  // A ticket whose region code is not on the profile has no card. The strip still counts it, from
+  // the console-wide summary, so "Open tickets" here is the Incident board's number, and a line
+  // says which codes those tickets carry.
+  const known = new Set(regions.map((r) => String(r.region_code)));
+  const outside = Object.entries(obj(metrics?.by_region))
+    .filter(([code, n]) => !known.has(code) && num(n) > 0)
+    .sort(([a], [b]) => a.localeCompare(b));
+  const outsideTotal = outside.reduce((sum, [, n]) => sum + num(n), 0);
+  const openTotal = regions.reduce((sum, r) => sum + num(r.open_total), 0) + outsideTotal;
+  const lateTotal =
+    outsideTotal > 0 && typeof metrics?.sla_risk === "number"
+      ? metrics.sla_risk
+      : regions.reduce((sum, r) => sum + num(r.sla_breached), 0);
   const problemsTotal = regions.reduce(
     (sum, r) => sum + Math.max(num(r.problems_open_total), Array.isArray(r.problems_open) ? r.problems_open.length : 0),
     0,
@@ -416,6 +427,19 @@ export default function Regions({ tick }: { tick: number }) {
             {allBlind
               ? "No live feed from weather, flood warnings or Kenya Power notices; counts come from the ticket store."
               : `${blind} of ${regions.length} regions have no live feed; their counts come from the ticket store.`}
+          </span>
+        </p>
+      )}
+
+      {regions.length > 0 && outsideTotal > 0 && (
+        <p className="region-note">
+          <span className="attn warn">
+            <IconDot />
+            <span>
+              {outsideTotal === 1 ? "1 open ticket carries" : `${outsideTotal} open tickets carry`} a region code that is not
+              on the operator profile ({outside.map(([code]) => code).join(", ")}), so no card below shows{" "}
+              {outsideTotal === 1 ? "it" : "them"}. The <Link to="/incidents">Incident board</Link> lists every ticket.
+            </span>
           </span>
         </p>
       )}

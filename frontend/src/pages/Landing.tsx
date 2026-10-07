@@ -26,6 +26,7 @@ import {
   ticketNumberOf,
 } from "../lib/agents";
 import { FIBRES, fibreColour, fibreOf } from "../lib/fibre";
+import { isOpenTicket } from "../lib/ticket";
 import { useRealtimeState } from "../realtime/RealtimeContext";
 import { THEME_KEY, applyTheme, type Theme } from "../lib/theme";
 import { fmtDateTime, fmtEAT } from "../lib/time";
@@ -722,7 +723,7 @@ function Fig({ n, words, tone }: { n: ReactNode; words: ReactNode; tone?: "hitl"
 function openIncidents(rows: any[] | null): any[] {
   if (!Array.isArray(rows)) return [];
   return rows
-    .filter((r) => r && !["CLOSED", "CANCELLED"].includes(String(r.status || "").toUpperCase()))
+    .filter((r) => r && isOpenTicket(r.status))
     .sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")));
 }
 

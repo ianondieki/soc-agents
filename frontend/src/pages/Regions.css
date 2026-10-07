@@ -3,6 +3,8 @@
 
 /* The blind-feed sentence, once, directly under the page head. */
 .region-note { margin: calc(-1 * var(--s2)) 0 var(--s4); font-size: var(--fs-sm); }
+/* A link inside a note sentence is underlined, so it reads as a link without relying on colour. */
+.region-note a { text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--muted); }
 
 /* Five figures across the top: where to look first. */
 .region-figures { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 1px; margin: 0 0 var(--s4); overflow: hidden; border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--line); }

@@ -610,6 +610,23 @@ def test_closed_incidents_leave_the_open_counts_but_stay_in_the_repeat_rate(dash
     assert region["repeat_fault_rate_30d"] == 1.0
 
 
+def test_a_restored_ticket_is_not_open_on_the_card_or_the_summary_and_never_past_its_sla(dash):
+    """Restored and awaiting close is not open: the service is back. Every count a person reads
+    agrees on that, so the region card, ``/metrics/summary`` and the Incident board's Open tab
+    give one number. A restored ticket past its old restore clock is not a breach either."""
+    dash.incident(priority="P2", status="RESTORED", sla_restore_due=NOW - timedelta(hours=1))
+    dash.incident(priority="P2", status="IN_PROGRESS", sla_restore_due=NOW - timedelta(hours=1))
+    region = dash.region()
+    assert region["open_total"] == 1
+    assert region["open_by_priority"]["P2"] == 1
+    assert region["sla_breached"] == 1
+    assert region["incidents_30d"] == 2
+    summary = dash.client.get("/api/v1/metrics/summary").json()
+    assert summary["open_total"] == 1
+    assert summary["by_priority"]["P2"] == 1
+    assert summary["sla_risk"] == 1
+
+
 def test_problems_are_listed_worst_recurring_first_and_the_full_count_is_reported(dash):
     """The PRB that has bitten nine times earns the card, not the one opened most
     recently. ``problems_open_total`` means truncating the list never hides scale."""
