@@ -336,7 +336,7 @@ export default function StopClockPanel({ incidentId }: { incidentId?: string | n
         </select>
         <input
           aria-label="Reason for stopping the clock (required)"
-          placeholder="Reason — required before the clock can be stopped"
+          placeholder="Why the clock stops (required)"
           value={reason}
           disabled={busy}
           onChange={(e) => setReason(e.target.value)}

@@ -136,3 +136,8 @@
   .ib-states { width: 100%; }
   .ib-states > button { flex: 1 1 0; justify-content: center; padding: 0 6px; }
 }
+
+/* The second line (ticket number, site code, domain) wraps under itself rather than clipping a
+   code mid-word: a site code half shown is a site code misread. */
+.ib-sub { flex-wrap: wrap; row-gap: 2px; white-space: normal; }
+.ib-sub > span { overflow: visible; white-space: nowrap; }

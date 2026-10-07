@@ -301,3 +301,6 @@
 .cp .cp-ref::after { content: ""; position: absolute; top: 14px; bottom: 14px; right: 30px; border-right: 2px dashed var(--line-strong); }
 .cp .cp-ref > * { padding-right: 44px; }
 .cp .cp-ref-num { font-family: var(--mono); letter-spacing: 0.02em; }
+
+/* The aurora fades out at its foot and sides instead of ending in a box. */
+.cp-main::before { -webkit-mask-image: radial-gradient(120% 90% at 50% 0%, #000 45%, transparent 100%); mask-image: radial-gradient(120% 90% at 50% 0%, #000 45%, transparent 100%); }

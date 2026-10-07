@@ -36,7 +36,6 @@
    identity), so the eye finds it before reading a word; calm and stale cards carry none. */
 .region-card { position: relative; overflow: hidden; }
 .region-card.region-alert::before, .region-card.region-watch::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; }
-.region-card.region-alert { border-color: var(--danger-line); }
 .region-card.region-alert::before { background: var(--danger); }
 .region-card.region-watch::before { background: var(--warn); }
 

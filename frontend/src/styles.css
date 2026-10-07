@@ -235,7 +235,11 @@
   --band-accent: #7FD1AC;
   --band-hitl: #D9C2FF;
   --band-danger: #FFB4C0;
+  --chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='none' stroke='%23A3B5AD' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2.5 4.5 6 8l3.5-3.5'/%3E%3C/svg%3E");
 }
+
+/* Night: the person-decides tint a step stronger, or violet reads grey on deep forest. */
+:root:not([data-theme="day"]) { --hitl-soft: color-mix(in oklab, var(--hitl) 22%, transparent); }
 
 /* Day: white cards on warm paper, forest-green ink. */
 :root[data-theme="day"] {
@@ -289,6 +293,7 @@
   --band-accent: #7FD1AC;
   --band-hitl: #D9C2FF;
   --band-danger: #FFB4C0;
+  --chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='none' stroke='%23525D59' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2.5 4.5 6 8l3.5-3.5'/%3E%3C/svg%3E");
 }
 
 /* Derived strengths, one recipe for both themes: the colour itself (an icon, a word, a solid
@@ -1063,11 +1068,11 @@ button.chip:active { background: var(--surface-sunk); }
 @media (max-width: 760px) { .grid-2.even { grid-template-columns: minmax(0, 1fr); } }
 .grid-3 { display: grid; grid-template-columns: 1.15fr 1fr 0.9fr; gap: var(--s4); }
 /* Mission control's lower row: three panels of one height, so the row ends on one line. */
-.grid-3.mc-lower { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 0.85fr); align-items: stretch; }
+.grid-3.mc-lower { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 0.85fr); align-items: start; }
 .grid-3.mc-lower > .panel { display: flex; flex-direction: column; }
 .grid-3.mc-lower > .panel > .list-foot { margin-top: auto; }
 @media (max-width: 1100px) {
-  .grid-3 { grid-template-columns: 1fr; }
+  .grid-3, .grid-3.mc-lower { grid-template-columns: minmax(0, 1fr); }
   .grid-2 { grid-template-columns: 1fr; }
 }
 
@@ -1288,6 +1293,7 @@ a.row-id { display: inline-block; padding: 6px 0; margin: -6px 0; }
 .btn[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent-line); color: var(--accent); }
 .btn[aria-pressed="true"]:hover { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
 .btn.primary, .btn.storm { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; box-shadow: 0 1px 2px rgba(16, 42, 29, 0.14), 0 8px 18px -10px color-mix(in oklab, var(--accent) 70%, transparent); }
+.btn.primary:disabled, .btn.storm:disabled, .btn.primary[aria-disabled="true"] { box-shadow: none; transform: none; }
 .btn.primary:hover, .btn.storm:hover { background: var(--accent-hover); border-color: var(--accent-hover); color: var(--accent-ink); transform: translateY(-1px); box-shadow: 0 2px 4px rgba(16, 42, 29, 0.16), 0 12px 24px -10px color-mix(in oklab, var(--accent) 75%, transparent); }
 .btn.good { background: var(--ok); border-color: var(--ok); color: var(--ok-ink); font-weight: 600; }
 .btn.good:hover { background: var(--ok-hover); border-color: var(--ok-hover); color: var(--ok-ink); }
@@ -1448,7 +1454,10 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); backgro
 input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--r-md); }
 input[type="checkbox"], input[type="radio"] { width: 16px; height: 16px; min-height: 0; margin: 0; padding: 0; accent-color: var(--accent); }
 input[type="checkbox"] { border-radius: 4px; }
-select { padding-right: 28px; }
+/* Every select: no native arrow, one drawn chevron in the muted ink of the theme. The rule repeats
+   the image on :focus and :hover because the field rules above reset the whole background. */
+select, select:hover, select:focus { -webkit-appearance: none; appearance: none; padding-right: 34px; background-image: var(--chevron); background-repeat: no-repeat; background-position: right 11px center; background-size: 12px 12px; cursor: pointer; text-overflow: ellipsis; }
+select[multiple] { background-image: none; padding-right: 10px; }
 textarea { width: 100%; min-height: 90px; line-height: 1.5; resize: vertical; }
 .detail-grid { display: grid; grid-template-columns: 1.1fr 1fr; gap: var(--s4); }
 @media (max-width: 960px) { .detail-grid { grid-template-columns: 1fr; } }

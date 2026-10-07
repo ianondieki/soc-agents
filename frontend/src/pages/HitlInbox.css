@@ -692,3 +692,10 @@
 .hitl-queue .hitl-slot .hitl-row.selected { background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); color: var(--text); }
 .hitl-queue .hitl-slot .hitl-row.selected .hitl-row-id { color: var(--accent); }
 .hitl-queue .hitl-slot .hitl-row.decided { border-radius: var(--r-sm); }
+
+/* A capped draft fades at its foot, so it reads as "more below", not as text cut mid-line. */
+.hitl-channel-body:not(.full) { -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 2.5rem), transparent); mask-image: linear-gradient(to bottom, #000 calc(100% - 2.5rem), transparent); }
+
+/* The empty pill column of a card with no priority: a quiet dash where the pill would be. */
+.hitl-pill-slot { display: inline-flex; align-items: center; justify-content: center; flex: none; min-width: 2.25rem; height: 20px; }
+.hitl-pill-slot::before { content: ""; width: 10px; height: 2px; border-radius: 1px; background: var(--line-strong); }

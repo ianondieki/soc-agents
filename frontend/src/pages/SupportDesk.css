@@ -240,7 +240,7 @@
 .sd-hero-name { color: var(--text-strong); font-weight: 600; font-size: var(--fs-md); }
 .sd-hero-body {
   position: relative;
-  margin: var(--s3) 0 0;
+  margin: var(--s3) 0 0 0.55em;
   padding: 0;
   max-width: 60ch;
   color: var(--text-strong);
@@ -326,7 +326,7 @@
   position: relative;
   display: block;
   min-height: 26px;
-  padding: 3px 0 3px 1.1em;
+  padding: 3px 0 3px 1.35em;
   color: var(--text);
   font-size: var(--fs-md);
   line-height: 1.45;

@@ -74,3 +74,7 @@
 /* Tablets: the table scrolls inside its panel instead of widening the page. */
 .pir-scroll { overflow-x: auto; }
 @media (max-width: 700px) { .pir-scroll { overflow: visible; } }
+
+/* The table scrolls inside .pir-scroll, so its sticky header sits at the scroller's top, not under
+   the page's top bar (the base table rule offsets it by the bar's height). */
+.pir-scroll thead th { top: 0; }

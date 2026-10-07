@@ -276,3 +276,7 @@
 }
 /* Projector type is larger: the region counts would wrap the notes, so they give way there too. */
 :root[data-display="projector"] .wb-regions { display: none; }
+
+/* The "+N more" tile says its whole sentence (it wraps); the way back is a full-size target. */
+.wallboard .wb-more-what { white-space: normal; overflow: visible; text-overflow: clip; }
+.wallboard .wb-foot a { display: inline-flex; align-items: center; min-height: 32px; padding: 0 4px; font-size: var(--fs-md); }

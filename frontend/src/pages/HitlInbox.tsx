@@ -833,10 +833,14 @@ const QueueRow = memo(function QueueRow({
 }) {
   const t = task && typeof task === "object" ? task : {};
   const priority = typeof t.priority === "string" && t.priority ? t.priority : "";
-  const pill = priority && (
+  // A card with no priority (a maintenance window, a possible outage) keeps the pill's column, so
+  // every title in the queue starts at the same x.
+  const pill = priority ? (
     <span className={`pill ${priority}`} title={priorityTitle(priority)}>
       {priority}
     </span>
+  ) : (
+    <span className="hitl-pill-slot" aria-hidden="true" />
   );
   const subject = (
     <span className={hitlSubjectIsIncident(t) ? "hitl-row-id" : "hitl-row-subject"}>{hitlSubject(t)}</span>

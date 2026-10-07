@@ -104,3 +104,7 @@
 /* Tablets: the table scrolls inside its panel instead of widening the page. */
 .mt-scroll { overflow-x: auto; }
 @media (max-width: 760px) { .mt-scroll { overflow: visible; } }
+
+/* The table scrolls inside .mt-scroll, so its sticky header sits at the scroller's top, not under
+   the page's top bar (the base table rule offsets it by the bar's height). */
+.mt-scroll thead th { top: 0; }

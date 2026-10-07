@@ -71,7 +71,7 @@
   border-top: 1px solid var(--line-strong);
 }
 /* A day line above each day's first block: Today, Yesterday, Sat 4 Oct. */
-.audit-panel .audit-day { margin: 0; padding: 14px 16px 8px; border-top: 1px solid var(--line-strong); color: var(--muted); font-size: var(--fs-xs); font-weight: 700; letter-spacing: 0.02em; }
+.audit-panel .audit-day { margin: 0; padding: 14px 16px 8px; border-top: 1px solid var(--line-strong); color: var(--muted); font-family: var(--font); font-variation-settings: normal; font-size: var(--fs-xs); font-weight: 600; letter-spacing: 0.02em; }
 .audit-panel .audit-day:first-child { border-top: 0; }
 
 .audit-block:first-child .audit-head,

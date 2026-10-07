@@ -178,9 +178,18 @@ export default function SupportDesk({ session, tick = 0, profile }: { session: a
     check();
     el.addEventListener("scroll", check, { passive: true });
     window.addEventListener("resize", check);
+    // The tabs widen after mount (the web fonts arrive, a count lands in "Needs a person"), so
+    // the row is watched, not measured once.
+    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(check) : null;
+    if (ro) {
+      ro.observe(el);
+      for (const child of Array.from(el.children)) ro.observe(child);
+    }
+    document.fonts?.ready.then(check).catch(() => undefined);
     return () => {
       el.removeEventListener("scroll", check);
       window.removeEventListener("resize", check);
+      ro?.disconnect();
     };
   }, []);
 
