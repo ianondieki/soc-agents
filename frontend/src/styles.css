@@ -2527,3 +2527,48 @@ td.num { text-align: right; font-family: var(--mono); font-variant-numeric: tabu
     text-align: right;
   }
 }
+
+/* ===================================================================== the bell and its inbox */
+/* The bell sits with the Display menu; its badge counts what this person has not read. */
+.topbar-bell { position: relative; width: 36px; min-width: 36px; padding: 0; justify-content: center; }
+.topbar-bell.is-open { border-color: var(--accent-line); background: var(--accent-soft); color: var(--accent); }
+.topbar-bell-icon { display: inline-grid; place-items: center; transform-origin: 50% 2px; }
+.topbar-bell-icon.is-ringing { animation: bellRing 900ms var(--ease) 1; }
+@keyframes bellRing {
+  0%, 100% { transform: rotate(0); }
+  15% { transform: rotate(16deg); }
+  30% { transform: rotate(-14deg); }
+  45% { transform: rotate(10deg); }
+  60% { transform: rotate(-6deg); }
+  75% { transform: rotate(3deg); }
+}
+.topbar-bell-badge { position: absolute; top: -6px; right: -7px; display: grid; place-items: center; min-width: 18px; height: 18px; padding: 0 5px; border: 2px solid var(--surface-nav); border-radius: 999px; background: var(--danger); color: #fff; font-family: var(--mono); font-size: 10px; font-weight: 600; line-height: 1; }
+:root[data-theme="night"] .topbar-bell-badge, :root:not([data-theme]) .topbar-bell-badge { color: #1A0005; }
+
+.inbox { width: min(400px, calc(100vw - 16px)); max-height: calc(100dvh - var(--topbar-h) - 24px); padding: 0; overflow: hidden; display: flex; flex-direction: column; }
+.inbox-head, .inbox-tabs, .inbox-foot { flex: none; }
+.inbox-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 14px 10px 18px; }
+.inbox-head h2 { margin: 0; color: var(--text-strong); font-family: var(--font-display); font-variation-settings: var(--display-soft); font-size: var(--fs-lg); font-weight: 560; }
+.inbox-head .btn { gap: 6px; }
+.inbox-tabs { display: flex; gap: 4px; padding: 0 14px 10px; border-bottom: 1px solid var(--line); overflow-x: auto; scrollbar-width: none; }
+.inbox-tab { display: inline-flex; align-items: center; gap: 6px; min-height: 30px; padding: 0 10px; border: 1px solid transparent; border-radius: 999px; background: transparent; color: var(--muted); font: 600 var(--fs-sm) / 1 var(--font); white-space: nowrap; cursor: pointer; }
+.inbox-tab:hover { background: var(--surface-raised); color: var(--text-strong); }
+.inbox-tab.is-on { border-color: var(--accent-line); background: var(--accent-soft); color: var(--accent); }
+.inbox-tab-n { color: inherit; font-family: var(--mono); font-size: 11px; font-weight: 500; opacity: 0.85; }
+.inbox-list { flex: 1 1 auto; min-height: 0; margin: 0; padding: 6px; overflow-y: auto; overscroll-behavior: contain; list-style: none; }
+.inbox-item { display: grid; grid-template-columns: 32px minmax(0, 1fr) 10px; align-items: start; gap: 12px; width: 100%; padding: 10px 10px 10px 8px; border: 0; border-radius: var(--r-sm); background: transparent; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.inbox-item:hover { background: var(--surface-raised); }
+.inbox-icon { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 10px; background: var(--danger-soft); color: var(--danger-text); }
+.inbox-item.g-person .inbox-icon { background: var(--hitl-soft); color: var(--hitl-text); }
+.inbox-item.g-agent .inbox-icon { background: color-mix(in oklab, var(--warn) 16%, transparent); color: var(--warn); }
+.inbox-text { display: grid; gap: 2px; min-width: 0; }
+.inbox-title { color: var(--text); font-size: var(--fs-md); font-weight: 500; line-height: 1.35; }
+.inbox-item.is-unread .inbox-title { color: var(--text-strong); font-weight: 600; }
+.inbox-meta { overflow: hidden; color: var(--muted); font-size: var(--fs-sm); line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+.inbox-when { color: var(--muted-dim); font-size: var(--fs-xs); }
+.inbox-dot { width: 9px; height: 9px; margin-top: 6px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.inbox-empty { margin: 0; padding: 22px 18px; color: var(--muted); font-size: var(--fs-sm); line-height: 1.5; }
+.inbox-foot { margin: 0; padding: 10px 18px 12px; border-top: 1px solid var(--line); color: var(--muted-dim); font-size: var(--fs-xs); line-height: 1.45; }
+:root[data-quiet="on"] .topbar-bell-icon.is-ringing { animation: none; }
+@media (prefers-reduced-motion: reduce) { .topbar-bell-icon.is-ringing { animation: none; } }
+@media (max-width: 600px) { .inbox { right: 8px !important; left: 8px; width: auto; } }

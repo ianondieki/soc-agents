@@ -101,6 +101,12 @@ export const api = {
    */
   productivity: (windowHours = 24) => req<any>(`/api/v1/metrics/productivity?window_hours=${windowHours}`),
   /**
+   * The notification centre's inbox (`services/notifications.py`): open P1s and restore clocks
+   * run out in the window, every card still waiting for a decision, failed agent runs. Newest
+   * first; shape pinned by tests/unit/test_notifications.py.
+   */
+  notifications: (windowHours = 24, limit = 60) => req<any>(`/api/v1/notifications?window_hours=${windowHours}&limit=${limit}`),
+  /**
    * §7.3.2 Wallboard risk strip: `{regions: {NBI_E: weather_risk, …}, cap: {…}}`.
    *
    * The read endpoint is Phase 3 and does not exist yet — it 404s today, which

@@ -11,6 +11,7 @@ import { Sidebar } from "./components/shell/Sidebar";
 import { PhoneMenu } from "./components/shell/PhoneMenu";
 import { DisplayMenu, type DisplayState } from "./components/shell/DisplayMenu";
 import AlertSignal from "./components/shell/AlertSignal";
+import NotificationCenter, { INBOX_ROLES } from "./components/shell/NotificationCenter";
 import { installAlertUnlock } from "./lib/feedback";
 import { BrandMark } from "./components/shell/BrandMark";
 import TopbarStatus, { type LiveTone } from "./components/shell/TopbarStatus";
@@ -644,12 +645,29 @@ export default function App() {
                     <Presentation size={16} strokeWidth={1.75} aria-hidden="true" />
                     <span className="topbar-guide-label">Guided demo</span>
                   </button>
+                  {INBOX_ROLES.has(String(session?.role || "")) && (
+                    <NotificationCenter
+                      rev={revisions.incidents + revisions.hitl + revisions.runs + manualTick}
+                      profile={profile}
+                      who={String(session?.display_name || "NOC Analyst")}
+                      role={String(session?.role || "")}
+                    />
+                  )}
                   <DisplayMenu d={display} />
                   <span className="topbar-sep" aria-hidden="true" />
                   <span className="avatar" title={userTitle} role="img" aria-label={userTitle}>
                     {initialsOf(userName)}
                   </span>
                 </>
+              )}
+              {phone && INBOX_ROLES.has(String(session?.role || "")) && (
+                <NotificationCenter
+                  rev={revisions.incidents + revisions.hitl + revisions.runs + manualTick}
+                  profile={profile}
+                  who={String(session?.display_name || "NOC Analyst")}
+                  role={String(session?.role || "")}
+                  compact
+                />
               )}
               {phone && (
                 <PhoneMenu

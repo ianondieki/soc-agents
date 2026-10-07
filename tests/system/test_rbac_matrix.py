@@ -308,6 +308,8 @@ ROUTE_MAP: dict[tuple[str, str], str] = {
     (G, "/api/v1/signals/county-map"): "ops.read",
     (G, "/api/v1/signals/precision"): "ops.read",
     (G, "/api/v1/dashboard/regions"): "ops.read",
+    # notifications.py: every item names a ticket, its site and region (row 1's read).
+    (G, "/api/v1/notifications"): "ops.read",
     (G, "/api/v1/memory/sites/{site_id}"): "memory.read",
     # --- clocks.py (row 3; the read is row 1) --------------------------------------------
     (G, "/api/v1/incidents/{incident_id}/clock"): "ops.read",

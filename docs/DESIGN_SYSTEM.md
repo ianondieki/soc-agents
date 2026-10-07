@@ -236,11 +236,21 @@ Desktop >= 1100px                         Tablet 761-1099px          Phone <= 76
   floor: the live link (a green dot while the stream is up; red words only when it is broken), the autonomy
   level (its meaning on hover), the shift, and the time in Nairobi in Mono ("14:05 EAT", hidden below
   1280px; the autonomy level goes below 1100px). Right: the decisions button ("5 waiting for a decision",
-  the count in a violet bubble; the one coloured control, quiet at zero), Guided demo and the **Display**
-  menu (Theme: Auto, Day, Night; Quiet mode; Projector) as quiet buttons with no box until hovered, a
-  hairline, and the user's initials. Once the page scrolls under it, the bar lifts with a soft shadow. On
-  a phone: the mark, the live dot, the decisions count and Menu; the operator and the track open at the
-  top of the sheet.
+  the count in a violet bubble; the one coloured control, quiet at zero), Guided demo, the **bell** and the
+  **Display** menu (Theme: Auto, Day, Night; Quiet mode; Projector) as quiet buttons with no box until
+  hovered, a hairline, and the user's initials. Once the page scrolls under it, the bar lifts with a soft
+  shadow. On a phone: the mark, the live dot, the decisions count, the bell and Menu; the operator and the
+  track open at the top of the sheet.
+- **The bell** (`components/shell/NotificationCenter.tsx`, `GET /api/v1/notifications`): the inbox of what
+  needs a person, rebuilt from durable state so a reload brings it back. Four kinds in three tabs: alarms
+  (an open P1 opened in the last 24 hours, a restore clock run out on a ticket not yet restored),
+  decisions (every card still waiting, whatever its age, filtered to the kinds the signed-in role may
+  decide) and agents (a failed run, with its step and a short error). Each row: an icon in its group's
+  tint (red, violet, amber), the title in words, the ticket and site, how long ago, and a mint dot while
+  unread ("unread" for a screen reader). The badge counts the unread; the bell swings once when a new one
+  arrives (still in quiet mode or reduced motion). What a person has read stays in their own browser:
+  "Mark all as read" remembers the moment, opening an item remembers it. Escape or a click outside
+  closes the panel and focus returns to the bell.
 - **The mark** (`components/shell/BrandMark.tsx`, and `public/favicon.svg` with fixed colours): the agent
   dial. A ring, half of it lit in the accent blue (the work the agents do on their own) ending in the violet
   dot where a person decides, with three ascending ink bars for the network inside. The dot is cut out of

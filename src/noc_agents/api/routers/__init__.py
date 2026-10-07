@@ -26,6 +26,7 @@ from noc_agents.api.routers import (
     dashboards,
     maintenance,
     memory,
+    notifications,
     outbox_admin,
     pir,
     productivity,
@@ -59,6 +60,8 @@ ROUTERS: tuple[APIRouter, ...] = (
     productivity.router,
     # Showcase: the multi-agent customer support desk (docs/SUPPORT_DESK.md)
     support.router,
+    # The notification centre's inbox (the bell in the top bar)
+    notifications.router,
 )
 
 __all__ = ["ROUTERS"]
