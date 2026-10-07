@@ -238,6 +238,7 @@
 :root[data-quiet="on"] .wm-kicker::before,
 :root[data-quiet="on"] .wm-node .wm-dot::after { animation: none; display: none; }
 :root[data-quiet="on"] .wm-node::before, :root[data-quiet="on"] .wm-dot, :root[data-quiet="on"] .wm-tline { transition: none; }
+:root[data-quiet="on"] .wm-step:target { animation: none; }
 @media (prefers-reduced-motion: reduce) {
   .wm-kicker::before, .wm-node .wm-dot::after, .wm-step:target { animation: none; }
   .wm-node .wm-dot::after { display: none; }

@@ -34,9 +34,21 @@ export function shiftWindow(hours: { start: string; end: string }, now: Date): {
   return { start: new Date(startMs), end: new Date(endMs) };
 }
 
+/**
+ * The shift on at `now`, read from the clock, not from a cached name: day while the time in
+ * Nairobi is inside the day shift's hours, night otherwise (services/shifts.py decides the same
+ * way). A page that stays open across a handover moves on to the next shift by itself.
+ */
+export function shiftAt(profile: any, now: Date): "day" | "night" {
+  const day = profile?.shift_hours?.day || DEFAULT_HOURS.day;
+  const eat = new Date(now.getTime() + EAT_MS);
+  const nowMin = eat.getUTCHours() * 60 + eat.getUTCMinutes();
+  return minutesOf(day.start) <= nowMin && nowMin < minutesOf(day.end) ? "day" : "night";
+}
+
 /** The shift on now, the one that takes over, and when the handover is. */
 export function currentShift(profile: any, now: Date): { shift: "day" | "night"; next: "day" | "night"; start: Date; end: Date } {
-  const shift = String(profile?.shift || "day").toLowerCase() === "night" ? "night" : "day";
+  const shift = shiftAt(profile, now);
   const hours = profile?.shift_hours?.[shift] || DEFAULT_HOURS[shift];
   const win = shiftWindow(hours, now);
   return { shift, next: shift === "day" ? "night" : "day", ...win };

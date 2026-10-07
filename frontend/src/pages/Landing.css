@@ -852,7 +852,8 @@ html[data-quiet="on"] .ld-dial * { animation: none !important; }
 .ld-foot-cta .ld-btn.text { min-height: 24px; color: var(--band-accent); }
 
 /* Calm: nothing drifts, bobs or ticks past. */
-:root[data-quiet="on"] .ld-hero::before, :root[data-quiet="on"] .ld-float, :root[data-quiet="on"] .ld-tape-dot { animation: none; }
+:root[data-quiet="on"] .ld-hero::before, :root[data-quiet="on"] .ld-float, :root[data-quiet="on"] .ld-tape-dot, :root[data-quiet="on"] .ld-faq-item[open] .ld-faq-a { animation: none; }
+:root[data-quiet="on"] .ld-faq-mark { transition: none; }
 @media (prefers-reduced-motion: reduce) {
   .ld-hero::before, .ld-float, .ld-tape-dot, .ld-faq-item[open] .ld-faq-a { animation: none; }
   .ld-faq-mark { transition: none; }

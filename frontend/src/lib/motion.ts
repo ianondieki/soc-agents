@@ -45,39 +45,41 @@ export function useCalm(): boolean {
  */
 export function useCountUp(target: number | null | undefined, calm: boolean, ms = 900): number | null {
   const [shown, setShown] = useState<number | null>(calm || target == null ? (target ?? null) : 0);
-  const from = useRef(0);
+  // The number on screen right now, so a new target counts on from there (never a jump).
+  const cur = useRef(0);
   useEffect(() => {
     if (target == null) {
       setShown(null);
       return;
     }
     if (calm) {
-      from.current = target;
+      cur.current = target;
       setShown(target);
       return;
     }
     const start = performance.now();
-    const a = from.current;
+    const a = cur.current;
     let raf = 0;
     const tick = (t: number) => {
       const k = Math.min(1, (t - start) / ms);
       const eased = 1 - Math.pow(1 - k, 3);
       const v = a + (target - a) * eased;
+      cur.current = v;
       setShown(v);
       if (k < 1) raf = requestAnimationFrame(tick);
-      else from.current = target;
     };
     raf = requestAnimationFrame(tick);
-    return () => {
-      cancelAnimationFrame(raf);
-      from.current = target;
-    };
+    return () => cancelAnimationFrame(raf);
   }, [target, calm, ms]);
   return shown;
 }
 
-/** True once the element has come at least `threshold` into view (and stays true). */
-export function useSeenOnce<T extends Element>(threshold = 0.2): [RefObject<T>, boolean] {
+/**
+ * True once the element's top has come into the lower part of the view (and stays true). It is
+ * a margin, not a share of the element: a section four screens tall can never be a quarter in
+ * view on a short phone, but its top always reaches the view.
+ */
+export function useSeenOnce<T extends Element>(rootMargin = "0px 0px -15% 0px"): [RefObject<T>, boolean] {
   const ref = useRef<T>(null);
   const [seen, setSeen] = useState(false);
   useEffect(() => {
@@ -94,10 +96,10 @@ export function useSeenOnce<T extends Element>(threshold = 0.2): [RefObject<T>, 
           io.disconnect();
         }
       },
-      { threshold },
+      { threshold: 0, rootMargin },
     );
     io.observe(el);
     return () => io.disconnect();
-  }, [seen, threshold]);
+  }, [seen, rootMargin]);
   return [ref, seen];
 }

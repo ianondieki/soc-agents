@@ -96,6 +96,30 @@ function toneOf(st: NodeStatus | undefined): Tone {
 
 const TONE_ICON: Record<Tone, LucideIcon | null> = { done: Check, held: User, failed: X, hollow: Minus, pending: null };
 
+/** True at 1100 px and wider, where the reasoning tape scrolls inside itself (WorkflowMap.css). */
+function useWide(): boolean {
+  const query = "(min-width: 1100px)";
+  const [wide, setWide] = useState(() => {
+    try {
+      return window.matchMedia(query).matches;
+    } catch {
+      return true;
+    }
+  });
+  useEffect(() => {
+    let mq: MediaQueryList;
+    try {
+      mq = window.matchMedia(query);
+    } catch {
+      return;
+    }
+    const on = () => setWide(mq.matches);
+    mq.addEventListener?.("change", on);
+    return () => mq.removeEventListener?.("change", on);
+  }, []);
+  return wide;
+}
+
 function startedMs(r: any): number {
   const t = Date.parse(String(r?.started_at ?? ""));
   return Number.isFinite(t) ? t : 0;
@@ -145,7 +169,11 @@ export default function WorkflowMap({ profile }: { profile: any }) {
   useEffect(() => {
     if (!lastStep) return;
     const left = lastStep.at + LIVE_MS - Date.now();
-    if (left <= 0) return;
+    if (left <= 0) {
+      // A throttled background tab can deliver this late: the moment has passed, so clear it.
+      setLiveNode(null);
+      return;
+    }
     setLiveNode(lastStep.node);
     const off = window.setTimeout(() => setLiveNode(null), left);
     const refresh = window.setTimeout(() => loadRuns.current(), 1200);
@@ -200,7 +228,7 @@ export default function WorkflowMap({ profile }: { profile: any }) {
         </div>
       </div>
 
-      <Route run={run} incident={incident} calm={calm} liveNode={liveNode} />
+      <Route run={run} incident={incident} calm={calm} liveNode={liveNode} latest={!!run && run.id === runs?.[0]?.id} />
 
       <Figures byHand={byHand} median={p?.pipeline_ms?.median ?? null} alarms={p?.alarms?.processed ?? null} />
 
@@ -229,7 +257,20 @@ export default function WorkflowMap({ profile }: { profile: any }) {
 /* The route                                                                                  */
 /* ------------------------------------------------------------------------------------------ */
 
-function Route({ run, incident, calm, liveNode }: { run: any | null; incident: any | null; calm: boolean; liveNode: string | null }) {
+function Route({
+  run,
+  incident,
+  calm,
+  liveNode,
+  latest,
+}: {
+  run: any | null;
+  incident: any | null;
+  calm: boolean;
+  liveNode: string | null;
+  /** The run is the newest one (not one picked from the list below). */
+  latest: boolean;
+}) {
   const steps = useMemo(() => displaySteps(run), [run]);
   const byId = useMemo(() => {
     const out: Record<string, RailStep> = {};
@@ -285,7 +326,17 @@ function Route({ run, incident, calm, liveNode }: { run: any | null; incident: a
     <section className="panel wm-route" aria-labelledby="wm-route-title">
       <div className="wm-route-head">
         <div className="wm-route-id">
-          <p className="wm-kicker">{run ? (calm ? "The latest alarm's path" : "Replaying the latest alarm") : "The route"}</p>
+          <p className="wm-kicker">
+            {!run
+              ? "The route"
+              : calm
+                ? latest
+                  ? "The latest alarm's path"
+                  : "An earlier alarm's path"
+                : latest
+                  ? "Replaying the latest alarm"
+                  : "Replaying an earlier alarm"}
+          </p>
           <h2 id="wm-route-title">
             {run ? (
               <>
@@ -546,17 +597,22 @@ function Reasoning({
   onPick: (id: string) => void;
   calm: boolean;
 }) {
-  const [ref, seen] = useSeenOnce<HTMLElement>(0.25);
+  const [ref, seen] = useSeenOnce<HTMLElement>();
+  const wide = useWide();
   const steps = useMemo(() => {
     const byId: Record<string, RailStep> = {};
     for (const s of displaySteps(run)) byId[s.node_name] = s;
     return ORDER.map((id) => byId[id]).filter(Boolean) as RailStep[];
   }, [run]);
-  // The tape types itself out once it is in view; a new alarm types out again.
-  const [shown, setShown] = useState(calm ? steps.length : 0);
+  // The tape types itself out once it is in view, and again for another alarm. Once typed, it
+  // shows every line (Infinity), so a step that lands on a running alarm appears at once instead
+  // of the whole tape typing out again.
+  const [shown, setShown] = useState(calm ? Infinity : 0);
+  const total = useRef(steps.length);
+  total.current = steps.length;
   useEffect(() => {
     if (calm) {
-      setShown(steps.length);
+      setShown(Infinity);
       return;
     }
     if (!seen) return;
@@ -564,11 +620,13 @@ function Reasoning({
     let n = 0;
     const t = window.setInterval(() => {
       n += 1;
-      setShown(n);
-      if (n >= steps.length) window.clearInterval(t);
+      if (n >= total.current) {
+        window.clearInterval(t);
+        setShown(Infinity);
+      } else setShown(n);
     }, 140);
     return () => window.clearInterval(t);
-  }, [calm, seen, steps.length, run?.id]);
+  }, [calm, seen, run?.id]);
 
   const options = (runs || []).slice(0, 30);
   const ticket = incident?.incident_number || ticketNumberOf(run);
@@ -612,7 +670,12 @@ function Reasoning({
         )}
       </div>
 
-      <div className="wm-tape" role="region" aria-label="The steps of this alarm, with each agent's reason" tabIndex={0}>
+      <div
+        className="wm-tape"
+        role="region"
+        aria-label="The steps of this alarm, with each agent's reason"
+        tabIndex={wide ? 0 : undefined}
+      >
         {!run && <p className="wm-tape-empty">{runs == null ? "Loading the latest alarms…" : "No alarm has been through yet."}</p>}
         {run && (
           <ol>

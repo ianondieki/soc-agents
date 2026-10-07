@@ -9,7 +9,7 @@ import { useNarrow } from "../lib/layout";
 import { fmtHM, parseInstant } from "../lib/time";
 import { useMinute } from "../lib/useMinute";
 import "./ShiftDesk.css";
-import { DEFAULT_HOURS, shiftWindow } from "../lib/shift";
+import { DEFAULT_HOURS, shiftAt, shiftWindow } from "../lib/shift";
 
 /** The ledger stores "SFC-RFT-HUB-NKR Nakuru Rift HUB": the site code, a space, the site name. */
 function splitSite(site: unknown): { code: string; name: string } {
@@ -79,8 +79,9 @@ export default function ShiftDesk({ tick, profile, metrics }: { tick: number; pr
     }
   };
 
-  // The shift: its name from the profile (the backend's clock), its hours from the operator config.
-  const shift = String(profile?.shift || "day").toLowerCase() === "night" ? "night" : "day";
+  // The shift: read from the clock and the operator's hours (the backend's rule), so a desk left
+  // open across a handover moves on by itself; never the name cached when the profile loaded.
+  const shift = shiftAt(profile, now);
   const hours = profile?.shift_hours?.[shift] || DEFAULT_HOURS[shift];
   const nextShift = shift === "day" ? "night" : "day";
   const nextHours = profile?.shift_hours?.[nextShift] || DEFAULT_HOURS[nextShift];
