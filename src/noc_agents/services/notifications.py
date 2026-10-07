@@ -166,6 +166,85 @@ def _incident_of(session: Session, cache: dict[str, IncidentRow | None], inciden
     return cache[incident_id]
 
 
+def _p1_items(session: Session, since: datetime, now: datetime) -> tuple[int, list[dict[str, Any]]]:
+    """Open P1 tickets that became P1 in the window. A ticket raised to P1 later was updated then,
+    so "opened or updated in the window" finds every candidate; the moment it became P1 decides."""
+    items = []
+    for inc in session.scalars(
+        _owned(IncidentRow).where(
+            IncidentRow.priority == "P1",
+            IncidentRow.status.not_in(_NOT_OPEN),
+            or_(IncidentRow.created_at >= since, IncidentRow.updated_at >= since),
+        )
+    ):
+        became = _became_p1_at(session, inc)
+        if since <= became <= now:
+            items.append(_item("p1_open", became, f"p1:{inc.id}", **_incident_facts(inc)))
+    return len(items), items
+
+
+def _breach_items(session: Session, since: datetime, now: datetime, limit: int) -> tuple[int, list[dict[str, Any]]]:
+    """Restore clocks that ran out in the window on tickets still open."""
+    breached = _owned(IncidentRow).where(
+        IncidentRow.sla_restore_due.is_not(None),
+        IncidentRow.sla_restore_due >= since,
+        IncidentRow.sla_restore_due <= now,
+        IncidentRow.status.not_in(_NOT_OPEN),
+    )
+    rows = session.scalars(breached.order_by(IncidentRow.sla_restore_due.desc()).limit(limit))
+    items = [_item("restore_breached", inc.sla_restore_due, f"sla:{inc.id}", **_incident_facts(inc)) for inc in rows]
+    return _count(session, breached), items
+
+
+def _card_items(
+    session: Session, incidents: dict[str, IncidentRow | None], role: str | None, authenticated: bool, limit: int
+) -> tuple[int, list[dict[str, Any]]]:
+    """Every card still waiting for a decision, whatever its age; a signed-in role sees its own kinds."""
+    waiting = _owned(HitlTaskRow).where(HitlTaskRow.status.in_(_WAITING))
+    if authenticated:
+        waiting = waiting.where(_decidable_by(role))
+    items = [
+        _item(
+            "approval_waiting",
+            task.created_at,
+            f"hitl:{task.id}",
+            task_id=task.id,
+            task_type=task.task_type,
+            **_incident_facts(_incident_of(session, incidents, task.incident_id)),
+        )
+        for task in session.scalars(waiting.order_by(HitlTaskRow.created_at.desc()).limit(limit))
+    ]
+    return _count(session, waiting), items
+
+
+def _short_error(summary: str | None) -> str | None:
+    error = (summary or "").strip() or None
+    if error and len(error) > ERROR_CHARS:
+        error = error[: ERROR_CHARS - 1].rstrip() + "…"
+    return error
+
+
+def _failed_run_items(
+    session: Session, incidents: dict[str, IncidentRow | None], since: datetime, limit: int
+) -> tuple[int, list[dict[str, Any]]]:
+    """Agent runs that failed in the window, newest first."""
+    failed = _owned(AgentRunRow).where(AgentRunRow.status == "FAILED", AgentRunRow.started_at >= since)
+    stamp = func.coalesce(AgentRunRow.finished_at, AgentRunRow.started_at)
+    items = [
+        _item(
+            "run_failed",
+            run.finished_at or run.started_at,
+            f"run:{run.id}",
+            graph=run.graph_name,
+            node=run.current_node,
+            error=_short_error(run.error_summary),
+            **_incident_facts(_incident_of(session, incidents, run.incident_id)),
+        )
+        for run in session.scalars(failed.order_by(stamp.desc()).limit(limit))
+    ]
+    return _count(session, failed), items
+
+
 def notifications(
     session: Session,
     *,
@@ -178,76 +257,16 @@ def notifications(
     """The inbox for the active operator: ``counts`` per group (before the limit) and ``items``."""
     now = _naive_utc(now) if now is not None else _naive_utc(utcnow())
     since = now - timedelta(hours=window_hours)
-    items: list[dict[str, Any]] = []
-    counts = {"alarm": 0, "person": 0, "agent": 0}
     incidents: dict[str, IncidentRow | None] = {}
 
-    # Open P1 tickets that became P1 in the window. A ticket raised to P1 later was updated then,
-    # so "opened or updated in the window" finds every candidate; the moment it became P1 decides.
-    for inc in session.scalars(
-        _owned(IncidentRow).where(
-            IncidentRow.priority == "P1",
-            IncidentRow.status.not_in(_NOT_OPEN),
-            or_(IncidentRow.created_at >= since, IncidentRow.updated_at >= since),
-        )
-    ):
-        became = _became_p1_at(session, inc)
-        if since <= became <= now:
-            counts["alarm"] += 1
-            items.append(_item("p1_open", became, f"p1:{inc.id}", **_incident_facts(inc)))
+    p1_count, p1 = _p1_items(session, since, now)
+    breach_count, breaches = _breach_items(session, since, now, limit)
+    card_count, cards = _card_items(session, incidents, role, authenticated, limit)
+    run_count, runs = _failed_run_items(session, incidents, since, limit)
 
-    # Restore clocks that ran out in the window on tickets still open.
-    breached = _owned(IncidentRow).where(
-        IncidentRow.sla_restore_due.is_not(None),
-        IncidentRow.sla_restore_due >= since,
-        IncidentRow.sla_restore_due <= now,
-        IncidentRow.status.not_in(_NOT_OPEN),
-    )
-    counts["alarm"] += _count(session, breached)
-    for inc in session.scalars(breached.order_by(IncidentRow.sla_restore_due.desc()).limit(limit)):
-        items.append(_item("restore_breached", inc.sla_restore_due, f"sla:{inc.id}", **_incident_facts(inc)))
-
-    # Every card still waiting for a decision, whatever its age; a signed-in role sees its own kinds.
-    waiting = _owned(HitlTaskRow).where(HitlTaskRow.status.in_(_WAITING))
-    if authenticated:
-        waiting = waiting.where(_decidable_by(role))
-    counts["person"] = _count(session, waiting)
-    for task in session.scalars(waiting.order_by(HitlTaskRow.created_at.desc()).limit(limit)):
-        inc = _incident_of(session, incidents, task.incident_id)
-        items.append(
-            _item(
-                "approval_waiting",
-                task.created_at,
-                f"hitl:{task.id}",
-                task_id=task.id,
-                task_type=task.task_type,
-                **_incident_facts(inc),
-            )
-        )
-
-    # Agent runs that failed in the window.
-    failed = _owned(AgentRunRow).where(AgentRunRow.status == "FAILED", AgentRunRow.started_at >= since)
-    counts["agent"] = _count(session, failed)
-    stamp = func.coalesce(AgentRunRow.finished_at, AgentRunRow.started_at)
-    for run in session.scalars(failed.order_by(stamp.desc()).limit(limit)):
-        inc = _incident_of(session, incidents, run.incident_id)
-        error = (run.error_summary or "").strip() or None
-        if error and len(error) > ERROR_CHARS:
-            error = error[: ERROR_CHARS - 1].rstrip() + "…"
-        items.append(
-            _item(
-                "run_failed",
-                run.finished_at or run.started_at,
-                f"run:{run.id}",
-                graph=run.graph_name,
-                node=run.current_node,
-                error=error,
-                **_incident_facts(inc),
-            )
-        )
-
+    counts = {"alarm": p1_count + breach_count, "person": card_count, "agent": run_count}
     # Newest first; the id breaks a tie so the order is stable between two reads.
-    items.sort(key=lambda it: (it["at"] or "", it["id"]), reverse=True)
+    items = sorted([*p1, *breaches, *cards, *runs], key=lambda it: (it["at"] or "", it["id"]), reverse=True)
     return {
         "generated_at": iso_z(now),
         "window_hours": window_hours,

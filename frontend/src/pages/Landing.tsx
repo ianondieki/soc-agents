@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { Headset, LockKeyhole, Pause, Play, Plus, Radar, ScrollText, UserRoundCheck, type LucideIcon } from "lucide-react";
+import { Headset, LockKeyhole, Radar, ScrollText, UserRoundCheck, type LucideIcon } from "lucide-react";
 import { api } from "../api";
-import CountUp from "../components/CountUp";
 import AgentDial, { type DialRun } from "../components/landing/AgentDial";
 import SupportFlow from "../components/landing/SupportFlow";
+import Handover from "../components/landing/Handover";
+import HeroFigures from "../components/landing/HeroFigures";
+import OpenTape from "../components/landing/OpenTape";
+import Questions from "../components/landing/Questions";
 import { BrandMark } from "../components/shell/BrandMark";
 import {
   alarmSite,
@@ -15,7 +18,6 @@ import {
   fmtMs,
   humanAutonomy,
   humanEnum,
-  humanStatus,
   normaliseStatus,
   opensTicket,
   regionName,
@@ -26,9 +28,7 @@ import {
 import { FIBRES, fibreColour, fibreOf } from "../lib/fibre";
 import { useRealtimeState } from "../realtime/RealtimeContext";
 import { THEME_KEY, applyTheme, type Theme } from "../lib/theme";
-import { fmtDateTime, fmtEAT, fmtHM } from "../lib/time";
-import { useCalm } from "../lib/motion";
-import { currentShift } from "../lib/shift";
+import { fmtDateTime, fmtEAT } from "../lib/time";
 import "./Landing.css";
 
 /**
@@ -223,6 +223,7 @@ export default function Landing({ profile, metrics, runsRev }: { profile: any; m
   const supportLatest = useLoad(support.latest, []);
 
   const run = useMemo(() => latestTicketRun(runs.data), [runs.data]);
+  const openTickets = useMemo(() => openIncidents(incidents.data).slice(0, 12), [incidents.data]);
   const dialRun: DialRun | null = useMemo(
     () => (run ? { id: String(run.id), steps: displaySteps(run), status: run.status ?? null } : null),
     [run]
@@ -336,7 +337,7 @@ export default function Landing({ profile, metrics, runsRev }: { profile: any; m
           </div>
         </section>
 
-        <Tape incidents={incidents} profile={profile} />
+        <OpenTape rows={openTickets} profile={profile} />
 
         <section className="ld-section" id="how" aria-labelledby="ld-how">
           <div className="ld-wrap">
@@ -432,19 +433,7 @@ export default function Landing({ profile, metrics, runsRev }: { profile: any; m
               <h2 id="ld-faq">Questions the floor asks</h2>
               <p className="ld-section-lead">What supervisors and duty managers ask in their first week, answered from how the console works.</p>
             </div>
-            <div className="ld-faq">
-              {FAQ.map((f) => (
-                <details key={f.q} className="ld-faq-item">
-                  <summary>
-                    <span>{f.q}</span>
-                    <Plus className="ld-faq-mark" size={18} strokeWidth={2} aria-hidden="true" />
-                  </summary>
-                  <div className="ld-faq-a">
-                    <p>{f.a}</p>
-                  </div>
-                </details>
-              ))}
-            </div>
+            <Questions />
           </div>
         </section>
       </main>
@@ -1193,187 +1182,6 @@ function Saved({ p }: { p: Load<any> }) {
     </div>
   );
 }
-
-// ------------------------------------------------------------ hero extras --
-
-/** Three figures under the hero's actions, counting up once: the agents' record so far. The
- *  hours are the floor's own estimate (the Saved panel says how it is made). */
-function HeroFigures({ p }: { p: any | null }) {
-  if (!p) return <div className="ld-hero-figs is-empty" />;
-  const whole = (n: number) => fmtInt(Math.round(n));
-  return (
-    <dl className="ld-hero-figs">
-      <div>
-        <dt>alarms through the agents</dt>
-        <dd>
-          <CountUp value={Number(p.alarms?.processed || 0)} format={whole} ms={1100} />
-        </dd>
-      </div>
-      <div>
-        <dt>tickets opened and filled in</dt>
-        <dd>
-          <CountUp value={Number(p.alarms?.incidents_created || 0)} format={whole} ms={1100} />
-        </dd>
-      </div>
-      <div>
-        <dt>hours of analyst work, by the floor's estimate</dt>
-        <dd>
-          <CountUp value={Math.round(Number(p.toil?.hours_saved || 0))} format={whole} ms={1100} />
-        </dd>
-      </div>
-    </dl>
-  );
-}
-
-/**
- * The open tickets as a slow tape under the hero: priority, site, region, state and when. It moves
- * on its own, so it pauses on hover and on its own Pause button (WCAG 2.2.2), and it STOPS (the
- * Pause button's state) the moment keyboard focus enters it: a link inside a moving, clipped
- * track can sit off screen with its focus ring hidden, so focus turns it into the still row.
- * Calm (quiet mode or reduced motion) or paused, it is one row of the tickets that scrolls by
- * hand. Moving, the rows repeat until one copy is wider than a wide screen, then the whole copy
- * repeats once so the loop is seamless; every repeat is hidden from assistive tech and the tab
- * order.
- */
-const TAPE_MIN_ITEMS = 10;
-
-function Tape({ incidents, profile }: { incidents: Load<any[]>; profile: any }) {
-  const calm = useCalm();
-  const [paused, setPaused] = useState(false);
-  const windowRef = useRef<HTMLDivElement>(null);
-  const rows = useMemo(() => openIncidents(incidents.data).slice(0, 12), [incidents.data]);
-  const moving = !calm && !paused;
-  // Back to the start of the row when it moves again, so the clipped track is not left scrolled.
-  useEffect(() => {
-    if (moving && windowRef.current) windowRef.current.scrollLeft = 0;
-  }, [moving]);
-  if (rows.length < 3) return null;
-  const repeats = moving ? Math.ceil(TAPE_MIN_ITEMS / rows.length) : 1;
-  const copy = Array.from({ length: repeats }, (_, r) => rows.map((row) => ({ row, r }))).flat();
-  const item = ({ row: i, r }: { row: any; r: number }, loop: number) => {
-    const pr = String(i.priority || "").toUpperCase();
-    const hidden = loop > 0 || r > 0;
-    return (
-      <li key={`${loop}-${r}-${i.id}`} aria-hidden={hidden || undefined}>
-        <span className={`ld-pill ${pr}`}>{pr}</span>
-        <Link to={`/incidents/${i.id}`} tabIndex={hidden ? -1 : undefined}>
-          {i.site_name || i.site_id}
-        </Link>
-        <span className="where">{regionName(i.region_code, profile)}</span>
-        <span className="state">{humanStatus(i.status)}</span>
-        <span className="when ld-mono">{fmtHM(i.created_at)}</span>
-      </li>
-    );
-  };
-  return (
-    <section className={"ld-tape" + (moving ? " is-moving" : "")} aria-labelledby="ld-tape-title">
-      <div className="ld-wrap ld-tape-head">
-        <h2 id="ld-tape-title" className="ld-tape-title">
-          <span className="ld-tape-dot" aria-hidden="true" />
-          Open on the board now
-        </h2>
-        {!calm && (
-          <button type="button" className="ld-tape-btn" onClick={() => setPaused((x) => !x)}>
-            {paused ? <Play size={14} aria-hidden="true" /> : <Pause size={14} aria-hidden="true" />}
-            {paused ? "Play" : "Pause"}
-          </button>
-        )}
-      </div>
-      <div
-        ref={windowRef}
-        className="ld-tape-window"
-        role="region"
-        aria-label="Open tickets"
-        tabIndex={moving ? undefined : 0}
-        onFocusCapture={() => setPaused(true)}
-      >
-        <ul className="ld-tape-track" style={{ ["--tape-s" as any]: `${Math.max(36, copy.length * 6)}s` }}>
-          {copy.map((c) => item(c, 0))}
-          {moving && copy.map((c) => item(c, 1))}
-        </ul>
-      </div>
-    </section>
-  );
-}
-
-// ------------------------------------------------------------------ footer --
-
-const pad2 = (n: number) => String(n).padStart(2, "0");
-
-/** The next shift handover as a countdown, from the operator's shift hours. It ticks each second;
- *  calm, it shows hours and minutes only and moves on the half minute. */
-function Handover({ profile }: { profile: any }) {
-  const calm = useCalm();
-  const [now, setNow] = useState(() => new Date());
-  useEffect(() => {
-    const id = window.setInterval(() => setNow(new Date()), calm ? 30_000 : 1000);
-    return () => window.clearInterval(id);
-  }, [calm]);
-  const { shift, next, end } = currentShift(profile, now);
-  const left = Math.max(0, end.getTime() - now.getTime());
-  const h = Math.floor(left / 3_600_000);
-  const m = Math.floor(left / 60_000) % 60;
-  const sec = Math.floor(left / 1000) % 60;
-  return (
-    <div className="ld-handover">
-      <p className="ld-handover-label">
-        The {shift} shift hands over to {next} at {fmtHM(end)} EAT
-      </p>
-      <p className="ld-handover-clock" role="timer" aria-label={`Handover in ${h} hours and ${m} minutes`}>
-        <span>
-          <b>{pad2(h)}</b>
-          <i>hours</i>
-        </span>
-        <span>
-          <b>{pad2(m)}</b>
-          <i>minutes</i>
-        </span>
-        {!calm && (
-          <span>
-            <b>{pad2(sec)}</b>
-            <i>seconds</i>
-          </span>
-        )}
-      </p>
-      <p className="ld-handover-note">
-        The ledger fills itself all shift; the handover is the one thing a person sends.{" "}
-        <Link className="ld-btn text" to="/shift">
-          Open the Shift desk
-        </Link>
-      </p>
-    </div>
-  );
-}
-
-// --------------------------------------------------------------- questions --
-
-/** What the floor asks in its first week, answered from how the console works. */
-const FAQ: { q: string; a: string }[] = [
-  {
-    q: "Does an agent ever send a message on its own?",
-    a: "Only where the autonomy level allows it. At L2 guarded, P3 and P4 broadcasts go on their own; every P1 and P2 message waits at Approval until a named person approves or rejects it. Wording that reaches management or leaves the building on a P1 or P2 is never automated, at any level.",
-  },
-  {
-    q: "Where is the record kept?",
-    a: "Every step an agent takes is written to the audit trail with the agent, the time and its reason. A person's decision stays on the approval with their name and the time, and as a note on the ticket's timeline. Each ticket's row also goes into the Excel shift ledger, in EAT, and the Workflow map reads any recent alarm back step by step.",
-  },
-  {
-    q: "How are the minutes saved worked out?",
-    a: "From the floor's own estimate of a person's minutes per step, set in the operator profile, multiplied by the steps the agents completed. It is a model to be corrected with the floor, not a stopwatch study, and the Showcase shows the sum step by step.",
-  },
-  {
-    q: "How is the Support desk scored?",
-    a: "On a labelled set of complaints in English, Kiswahili and Sheng, against fixed gates for resolution, wrong escalations and missed escalations on safety cases. The headline is a blind holdout written by someone who never saw the code.",
-  },
-  {
-    q: "Can the floor turn the noise down at night?",
-    a: "Yes. Quiet mode, in the Display menu, stops animations and routine ticker lines while P1 and P2 tickets and decisions stay live. Alerts can buzz and sound for every event, for alarms only, or not at all.",
-  },
-  {
-    q: "Is this a live operator system?",
-    a: "No. It is a demo and training product. It is not an official Safaricom or Airtel system, and its sites, tickets and complaints are test data.",
-  },
-];
 
 // ------------------------------------------------------ where people decide --
 
