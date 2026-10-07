@@ -144,3 +144,22 @@ export function fmtEAT(value: unknown, fallback = "—"): string {
   const out = fmtHM(value, "");
   return out ? `${out} ${EAT_LABEL}` : fallback;
 }
+
+const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+/**
+ * An EAT wall-clock time in the console's words: "2026-10-12 23:49 EAT" (services/clock.fmt_eat,
+ * the backend's `*_at_eat` fields) reads "Mon 12 Oct, 23:49", as Maintenance and the rest of the
+ * console write it. The string is already EAT, so its parts are read as written, not converted.
+ * Anything else is shown as given, with the zone suffix exactly once.
+ */
+export function eatWords(when: unknown, sep = ", "): string {
+  const s = typeof when === "string" ? when.trim() : "";
+  if (!s) return "";
+  const m = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/.exec(s);
+  if (!m) return /\bEAT$/.test(s) ? s : `${s} EAT`;
+  const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  if (mo < 1 || mo > 12 || d < 1 || d > 31) return s;
+  const wd = WEEKDAYS[new Date(Date.UTC(y, mo - 1, d)).getUTCDay()];
+  return `${wd} ${d} ${MONTHS[mo - 1]}${sep}${m[4]}:${m[5]}`;
+}

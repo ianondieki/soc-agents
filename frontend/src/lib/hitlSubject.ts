@@ -1,5 +1,6 @@
 import { humanEnum } from "./agents";
 import { humanizeType, isPlainObject } from "./hitl";
+import { eatWords } from "./time";
 
 /**
  * What a HITL card is ABOUT, as one heading line. Shared by the approval card and the
@@ -58,12 +59,6 @@ export function hitlSubject(task: unknown): string {
 }
 
 /**
- * The zone suffix, exactly once. The backend's `*_at_eat` fields are services/clock.fmt_eat
- * output, which already ends in " EAT" ("2026-11-12 00:00 EAT"); appending another printed
- * "… 00:00 EAT EAT" on every maintenance card. A bare time (an older payload, a hand-written
- * one) still gets the suffix, so the heading never shows a wall-clock time with no zone.
- */
-/**
  * True when the heading is an incident number or id, an identifier the card sets in the
  * mono face; false for a maintenance or other incident-less card, whose heading is prose.
  */
@@ -73,8 +68,7 @@ export function hitlSubjectIsIncident(task: unknown): boolean {
 }
 
 function eat(when: string): string {
-  if (!when) return "";
-  return /\bEAT$/.test(when) ? when : `${when} EAT`;
+  return eatWords(when, " ");
 }
 
 function text(v: unknown): string {

@@ -241,7 +241,9 @@ export default function Maintenance({ tick, profile }: { tick: number; profile?:
   const ahead = sorted.filter(
     (w) => (w.status === "PROPOSED" || w.status === "SCHEDULED") && (parseInstant(w.ends_at)?.getTime() ?? 0) > now,
   );
-  const waiting = sorted.filter((w) => w.status === "PROPOSED").length;
+  // Waiting for sign-off means a card is on Approvals, so this figure and that queue agree. A proposed
+  // window nobody has asked about yet is counted under "Windows ahead" and has its own button.
+  const waiting = sorted.filter((w) => w.status === "PROPOSED" && w.hitl_task_id && !w.approved_by).length;
   const scheduled = sorted.filter((w) => w.status === "SCHEDULED").length;
   const sortedTasks = useMemo(
     () => [...tasks].sort((a, b) => (parseInstant(a.due_at)?.getTime() ?? 0) - (parseInstant(b.due_at)?.getTime() ?? 0)),

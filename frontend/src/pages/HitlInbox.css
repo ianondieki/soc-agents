@@ -569,6 +569,11 @@
   .hitl-row-wait { grid-column: 3; grid-row: 1; }
   .hitl-row-subject ~ .hitl-row-wait { grid-row: 2; }
   .hitl-row-type { grid-column: 1 / span 2; grid-row: 2; }
+  /* An incident-less card: where and when on up to two lines, then its type beside the wait. The
+     subject already names the site, so the site code is not repeated. */
+  .hitl-row-subject { display: -webkit-box; white-space: normal; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+  .hitl-row-subject + .hitl-row-type { display: block; grid-column: 2; }
+  .hitl-row-subject ~ .hitl-row-site { display: none; }
   .hitl-row-site { grid-column: 3; grid-row: 2; justify-self: end; }
   .hitl-row-name { display: none; }
   .hitl-row-claim { grid-column: 1 / -1; grid-row: 3; }

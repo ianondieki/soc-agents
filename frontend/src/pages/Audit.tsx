@@ -318,7 +318,7 @@ export default function Audit({ tick }: { tick: number }) {
             <dd>{figures.tickets}</dd>
           </div>
           <div>
-            <dt>Decisions by people</dt>
+            <dt>Entries by people</dt>
             <dd>{figures.people}</dd>
           </div>
           <div className={figures.exceptions ? "warn" : undefined}>

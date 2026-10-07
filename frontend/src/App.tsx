@@ -16,6 +16,7 @@ import { installAlertUnlock } from "./lib/feedback";
 import { BrandMark } from "./components/shell/BrandMark";
 import TopbarStatus, { type LiveTone } from "./components/shell/TopbarStatus";
 import GoTo, { useGoToShortcut } from "./components/shell/GoTo";
+import NotFound from "./components/shell/NotFound";
 import { useSupportCount } from "./components/shell/useSupportCount";
 import { readRailPref, writeRailPref, type NavCounts } from "./components/shell/nav";
 import {
@@ -30,6 +31,7 @@ import {
   type StormState,
 } from "./lib/demo";
 import { detailOf } from "./lib/apiError";
+import { isOpenTicket } from "./lib/ticket";
 import { WAITING_WORD, autonomyMeaning, humanAutonomy, humanEnum, regionName } from "./lib/agents";
 import {
   applyDisplay,
@@ -482,7 +484,7 @@ export default function App() {
       .incidents()
       .then((rows) => {
         if (cancelled || !Array.isArray(rows)) return;
-        const open = rows.filter((r) => r && !["CLOSED", "CANCELLED"].includes(r.status));
+        const open = rows.filter((r) => r && isOpenTicket(r.status));
         const newest = open.sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")))[0];
         if (newest?.id) setLatestIncidentId(newest.id);
       })
@@ -766,6 +768,7 @@ export default function App() {
                 element={
                   <Regions
                     tick={revisions.incidents + revisions.problems + revisions.signals + revisions.hitl + manualTick}
+                    metrics={metrics}
                   />
                 }
               />
@@ -792,6 +795,7 @@ export default function App() {
                   />
                 }
               />
+              <Route path="*" element={<NotFound />} />
             </Routes>
             </Suspense>
           </main>

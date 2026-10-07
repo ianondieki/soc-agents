@@ -125,6 +125,8 @@
   .ag-figures { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .ag-figures > div:nth-child(n) { grid-column: auto; }
   .ag-figures > div:last-child:nth-child(odd) { grid-column: 1 / -1; }
+  /* Two to a row: a label wraps to a second line rather than losing its last words. */
+  .ag-figures dt { white-space: normal; }
   .ag-roster-head { display: none; }
   .ag-row { grid-template-columns: minmax(0, 1fr); padding: 16px 0 12px; }
   .ag-desc { grid-row: 2; margin-left: 44px; }

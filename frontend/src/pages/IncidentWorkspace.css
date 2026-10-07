@@ -98,7 +98,7 @@
   .iw-figures > div:nth-child(n+4) { grid-column: span 3; }
   .iw-grid { grid-template-columns: minmax(0, 1fr); }
   /* One column: the work note comes right after the story. */
-  .iw-grid { display: flex; flex-direction: column; }
+  .iw-grid { display: flex; flex-direction: column; align-items: stretch; }
   .iw-main { display: contents; }
   .iw-side { display: contents; }
   .iw-story { order: 1; }
@@ -112,6 +112,7 @@
   .iw-figures > div:nth-child(n) { grid-column: auto; }
   .iw-figures > div:last-child:nth-child(odd) { grid-column: 1 / -1; }
   .iw-figures dt { white-space: normal; }
+  .iw-figures dd.iw-fig-note { white-space: normal; overflow-wrap: anywhere; }
   .iw-whys { grid-template-columns: minmax(0, 1fr); }
   .iw-story-facts > div { grid-template-columns: minmax(0, 1fr); gap: 2px; }
   .iw-tl { grid-template-columns: 4.5rem 14px minmax(0, 1fr); gap: 0 8px; }

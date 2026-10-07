@@ -988,6 +988,8 @@ button.chip:active { background: var(--surface-sunk); }
 }
 .page-title + .muted { margin-bottom: var(--s5); }
 .page-actions { flex: 0 0 auto; max-width: 66%; display: flex; flex-wrap: wrap; gap: var(--s2); align-items: center; justify-content: flex-end; }
+/* The two ways back from an address that matches no page. */
+.nf-actions { display: flex; flex-wrap: wrap; gap: var(--s2); }
 @media (max-width: 960px) {
   .page-head { flex-wrap: wrap; }
   .page-head > div:first-child { flex-basis: 100%; }

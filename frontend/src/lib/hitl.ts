@@ -45,7 +45,7 @@
 
 import { audienceWord, humanEnum } from "./agents";
 import { detailOf, statusOf } from "./apiError";
-import { parseInstant } from "./time";
+import { eatWords, parseInstant } from "./time";
 
 /* ------------------------------------------------------------------ *
  * Small, boring coercions. Used everywhere below; each one is total.  *
@@ -990,7 +990,7 @@ function maintenanceFacts(facts: Fact[], payload: Record<string, unknown>): void
   if (job) {
     pushFact(facts, "Work", job.task_type ? humanizeType(job.task_type) : "");
     if (!facts.some((f) => f.label === "Site code")) pushFact(facts, "Site code", firstString(job.site_id), { mono: true });
-    pushFact(facts, "Due", firstString(job.due_at_eat));
+    pushFact(facts, "Due", eatWords(firstString(job.due_at_eat)));
     pushFact(facts, "Standard", firstString(own(payload, "standard_ref"), job.standard_ref), { mono: true });
     const who = firstString(own(payload, "assignee_token"), job.assignee_token, job.proposed_assignee_token);
     pushFact(facts, "Assignee", who || "not named yet", who ? undefined : { attention: "warn" });
@@ -999,8 +999,8 @@ function maintenanceFacts(facts: Fact[], payload: Record<string, unknown>): void
     const scope = firstString(win.scope);
     pushFact(facts, "Scope", scope ? humanEnum(scope).replace(/^./, (c) => c.toUpperCase()) : "");
     pushFact(facts, scope === "SITE" ? "Site code" : "Scope ref", firstString(win.scope_ref), { mono: true });
-    pushFact(facts, "Starts", firstString(win.starts_at_eat));
-    pushFact(facts, "Ends", firstString(win.ends_at_eat));
+    pushFact(facts, "Starts", eatWords(firstString(win.starts_at_eat)));
+    pushFact(facts, "Ends", eatWords(firstString(win.ends_at_eat)));
     const guard = isPlainObject(own(payload, "rain_guard")) ? (own(payload, "rain_guard") as Record<string, unknown>) : null;
     if (guard) {
       const verdict = firstString(guard.verdict);

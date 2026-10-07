@@ -83,9 +83,11 @@ function usePrefersReducedMotion(): boolean {
   return reduced;
 }
 
-/** The fibre colour of a node's ring on a phone; white and black take the theme's outline. */
+/** The fibre colour of a node's ring on a phone; white and black take the theme's outline.
+ *  Approval has no fibre: it wears violet only while it waits (the key's "Waits for a person"),
+ *  so a skipped or decided Approval keeps the plain ring of its state, never a violet one. */
 function fibreRing(node: string): string | undefined {
-  if (node === "HITL") return "var(--hitl)"; // Approval wears the violet that means a person decides
+  if (node === "HITL") return undefined;
   const f = fibreOf(node);
   if (!f) return undefined;
   return f.outlined ? "var(--fibre-outline)" : fibreColour(f);
