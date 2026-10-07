@@ -634,7 +634,15 @@ function Workspace({ id, session, profile }: { id: string | undefined; session: 
         <div>
           <dt>Owner</dt>
           <dd className="iw-fig-word">{ownerWord}</dd>
-          <dd className="iw-fig-note">{inc.fe_name ? `Field engineer ${inc.fe_name}` : " "}</dd>
+          <dd className="iw-fig-note">
+            {inc.fe_name ? (
+              <>
+                Field engineer <span className="iw-nobreak">{inc.fe_name}</span>
+              </>
+            ) : (
+              " "
+            )}
+          </dd>
         </div>
         <div className={waiting ? "hitl" : undefined}>
           <dt>Decision</dt>

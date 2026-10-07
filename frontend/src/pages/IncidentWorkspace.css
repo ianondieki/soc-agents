@@ -32,6 +32,8 @@
 .iw-figures dd { margin: 4px 0 0; font-family: var(--font-display); font-variation-settings: var(--display-soft); overflow: hidden; color: var(--text-strong); font-size: var(--fs-xl); font-weight: 600; line-height: 1.15; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
 .iw-figures dd.iw-fig-word { font-size: var(--fs-lg); line-height: 1.38; }
 .iw-figures dd.iw-fig-note { margin-top: 3px; font-family: var(--font); color: var(--muted); font-size: var(--fs-xs); font-weight: 400; letter-spacing: 0; white-space: normal; overflow-wrap: anywhere; }
+/* An engineer's id stays whole ("FE-RFT-01"): the note breaks at the space before it. */
+.iw-nobreak { white-space: nowrap; }
 /* A ticket id in the not-found line is long and unbroken: it may wrap anywhere on a phone. */
 .iw-missing-id { white-space: normal; overflow-wrap: anywhere; }
 .iw-figures > .bad dd:not(.iw-fig-note) { color: var(--danger); }
