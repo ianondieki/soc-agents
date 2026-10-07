@@ -53,6 +53,22 @@ export function isLifecycleNode(id: unknown): boolean {
  * "EXEC_BRIEF" → "Exec brief", "HITL" → "Approval". Unknown ids (a scheduler job's node) are
  * humanised, so a new node still reads as words.
  */
+/** The longer step names with soft hyphens, so a narrow tile breaks one tidily ("Recur-rence")
+ *  instead of running past its border. Two-word names break at their space. */
+const SHY_LABEL: Record<string, string> = {
+  CORRELATE: "Corre\u00ADlate",
+  SEVERITY: "Sever\u00ADity",
+  HITL: "Approv\u00ADal",
+  BROADCAST: "Broad\u00ADcast",
+  RECURRENCE: "Recur\u00ADrence",
+  MONITOR: "Moni\u00ADtor",
+};
+
+/** A step's name for a narrow tile: `nodeLabel` with soft hyphens where a long name needs them. */
+export function shyLabel(id: unknown): string {
+  return (typeof id === "string" && SHY_LABEL[id]) || nodeLabel(id);
+}
+
 export function nodeLabel(id: unknown): string {
   const hit = LIFECYCLE_NODES.find((n) => n.id === id);
   if (hit) return hit.label;

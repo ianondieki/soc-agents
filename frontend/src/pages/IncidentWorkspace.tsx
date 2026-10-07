@@ -23,7 +23,7 @@ import {
   regionName,
   sumDurations,
 } from "../lib/agents";
-import { detailOf } from "../lib/apiError";
+import { detailOf, isStatus } from "../lib/apiError";
 import { parseRationale } from "../lib/audit";
 import { IconAlert, IconCheck, IconDot, IconPause } from "../lib/icons";
 import EarlierAtThisSite from "../components/EarlierAtThisSite";
@@ -297,7 +297,8 @@ function Workspace({ id, session, profile }: { id: string | undefined; session: 
   const [markRestored, setMarkRestored] = useState(false);
   const [noteBusy, setNoteBusy] = useState(false);
   const [noteMsg, setNoteMsg] = useState<Msg>(null);
-  const [loadFailed, setLoadFailed] = useState(false);
+  // Why the ticket did not load: a 404 is an address with no ticket behind it, which Retry cannot fix.
+  const [loadFailed, setLoadFailed] = useState<false | "error" | "missing">(false);
   // The narrative panel's actions (close, reassign) report under themselves, not in the note form.
   const [actionMsg, setActionMsg] = useState<Msg>(null);
   const [closeBusy, setCloseBusy] = useState(false);
@@ -331,7 +332,7 @@ function Workspace({ id, session, profile }: { id: string | undefined; session: 
           setLoadFailed(false);
         })
       )
-      .catch(mine(() => setLoadFailed(true)));
+      .catch(mine((e: unknown) => setLoadFailed(isStatus(e, 404) ? "missing" : "error")));
     api
       .workflow(id)
       .then(mine(setWf))
@@ -457,6 +458,26 @@ function Workspace({ id, session, profile }: { id: string | undefined; session: 
       setReassignBusy(false);
     }
   };
+
+  if (!inc && loadFailed === "missing") {
+    return (
+      <div className="stack">
+        <div className="page-head">
+          <div>
+            <h1>No ticket at this address</h1>
+            <p className="lead">
+              This operator has no ticket with the id <span className="mono iw-missing-id">{id}</span>. The link may be wrong or out of date.
+            </p>
+          </div>
+        </div>
+        <div className="nf-actions">
+          <Link className="btn primary" to="/incidents">
+            Open the Incident board
+          </Link>
+        </div>
+      </div>
+    );
+  }
 
   if (!inc) {
     return loadFailed ? (

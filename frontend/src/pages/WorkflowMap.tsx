@@ -29,6 +29,7 @@ import {
   humanAutonomy,
   nodeDoes,
   nodeLabel,
+  shyLabel,
   normaliseStatus,
   runStatusWord,
   ticketNumberOf,
@@ -66,16 +67,6 @@ const PHASES: Array<{ title: string; icon: LucideIcon; nodes: string[] }> = [
 ];
 
 const ORDER = LIFECYCLE_NODES.map((n) => n.id);
-
-/** The route's labels with soft hyphens, so the smallest phones break a long name tidily. */
-const SHY_LABEL: Record<string, string> = {
-  CORRELATE: "Corre\u00ADlate",
-  SEVERITY: "Sever\u00ADity",
-  HITL: "Approv\u00ADal",
-  BROADCAST: "Broad\u00ADcast",
-  RECURRENCE: "Recur\u00ADrence",
-  MONITOR: "Moni\u00ADtor",
-};
 
 /** How long the replay dwells on a step, on Approval while it waits, and at the end. */
 const STEP_MS = 650;
@@ -430,7 +421,7 @@ function Route({
                       </a>
                       <span className="wm-node-label" aria-hidden="true">
                         {f && <span className={"wm-fibre" + (f.outlined ? " outlined" : "")} style={{ background: fibreColour(f) }} />}
-                        {SHY_LABEL[id] ?? nodeLabel(id)}
+                        {shyLabel(id)}
                       </span>
                       {id === "HITL" && shownTone === "held" && (
                         <span className="wm-wait-tag" aria-hidden="true">

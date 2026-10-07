@@ -31,7 +31,9 @@
 .iw-figures dt { overflow: hidden; color: var(--muted); font-size: var(--fs-sm); font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
 .iw-figures dd { margin: 4px 0 0; font-family: var(--font-display); font-variation-settings: var(--display-soft); overflow: hidden; color: var(--text-strong); font-size: var(--fs-xl); font-weight: 600; line-height: 1.15; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
 .iw-figures dd.iw-fig-word { font-size: var(--fs-lg); line-height: 1.38; }
-.iw-figures dd.iw-fig-note { margin-top: 3px; font-family: var(--font); color: var(--muted); font-size: var(--fs-xs); font-weight: 400; letter-spacing: 0; }
+.iw-figures dd.iw-fig-note { margin-top: 3px; font-family: var(--font); color: var(--muted); font-size: var(--fs-xs); font-weight: 400; letter-spacing: 0; white-space: normal; overflow-wrap: anywhere; }
+/* A ticket id in the not-found line is long and unbroken: it may wrap anywhere on a phone. */
+.iw-missing-id { white-space: normal; overflow-wrap: anywhere; }
 .iw-figures > .bad dd:not(.iw-fig-note) { color: var(--danger); }
 .iw-figures > .bad dd.iw-fig-note { color: var(--danger-text); font-weight: 600; }
 .iw-figures > .hitl dd:not(.iw-fig-note) { color: var(--hitl-text); }
@@ -112,7 +114,6 @@
   .iw-figures > div:nth-child(n) { grid-column: auto; }
   .iw-figures > div:last-child:nth-child(odd) { grid-column: 1 / -1; }
   .iw-figures dt { white-space: normal; }
-  .iw-figures dd.iw-fig-note { white-space: normal; overflow-wrap: anywhere; }
   .iw-whys { grid-template-columns: minmax(0, 1fr); }
   .iw-story-facts > div { grid-template-columns: minmax(0, 1fr); gap: 2px; }
   .iw-tl { grid-template-columns: 4.5rem 14px minmax(0, 1fr); gap: 0 8px; }

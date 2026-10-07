@@ -2112,6 +2112,11 @@ textarea { width: 100%; min-height: 90px; line-height: 1.5; resize: vertical; }
 @container (max-width: 480px) { .rail-compact .rail-track { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
 .rail-compact .rail-dot { width: 18px; height: 18px; }
 .rail-compact .rail-label { font-weight: 500; }
+/* A compact tile is as narrow as a quarter of a phone: its name and state wrap inside the border
+   (two-word names at the space, long ones at a soft hyphen) rather than running past it. */
+.rail-compact .rail-btn > span { max-width: 100%; min-width: 0; }
+.rail-compact .rail-label { white-space: normal; text-align: center; line-height: 1.2; hyphens: manual; overflow-wrap: break-word; }
+.rail-compact .rail-meta { white-space: normal; flex-wrap: wrap; justify-content: center; text-align: center; }
 .rail-detail {
   margin-top: var(--s3);
   padding: var(--s3) var(--s4);

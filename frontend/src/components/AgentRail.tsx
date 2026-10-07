@@ -9,6 +9,7 @@ import {
   isLifecycleNode,
   nodeLabel,
   normaliseStatus,
+  shyLabel,
   stepsByNode,
   type NodeStatus,
   type RailStep,
@@ -255,7 +256,7 @@ export default function AgentRail({
                 {/* The commas live inside the inline spans, so the name reads "Ingest, done, 1 ms"
                     with no space before them. */}
                 <span className="rail-label">
-                  {label}
+                  {compact && isLifecycleNode(n.id) ? shyLabel(n.id) : label}
                   <span className="sr-punct">,</span>
                 </span>{" "}
                 {/* Words in the sans; only the measurement (ms, %) is mono. */}

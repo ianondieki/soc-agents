@@ -15,7 +15,7 @@ export default function HeroFigures({ p }: { p: any | null }) {
         </dd>
       </div>
       <div>
-        <dt>tickets opened and filled in</dt>
+        <dt>tickets the agents opened and filled in</dt>
         <dd>
           <CountUp value={Number(p.alarms?.incidents_created || 0)} format={whole} ms={1100} />
         </dd>

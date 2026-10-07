@@ -1149,7 +1149,7 @@ function Saved({ p }: { p: Load<any> }) {
             <span className="ld-saved-label">of analyst work taken over, after the time people spent deciding</span>
             <ul className="ld-saved-facts">
               <li>
-                <span className="ld-mono">{fmtInt(processed)}</span> alarms, <span className="ld-mono">{fmtInt(Number(alarms.incidents_created || 0))}</span> tickets opened,{" "}
+                <span className="ld-mono">{fmtInt(processed)}</span> alarms, <span className="ld-mono">{fmtInt(Number(alarms.incidents_created || 0))}</span> tickets opened by the agents,{" "}
                 <span className="ld-mono">{fmtInt(Number(steps.total || 0))}</span> agent steps on record.
               </li>
               {typeof toil.minutes_saved_per_alarm === "number" && (

@@ -308,7 +308,7 @@ export default function Maintenance({ tick, profile }: { tick: number; profile?:
             <dd>{ahead.length}</dd>
           </div>
           <div className={waiting ? "hitl" : undefined}>
-            <dt>Waiting for sign-off</dt>
+            <dt>Windows waiting for sign-off</dt>
             <dd>{waiting}</dd>
           </div>
           <div className={scheduled ? "ok" : undefined}>

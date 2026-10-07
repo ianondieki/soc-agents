@@ -397,9 +397,10 @@ export default function Wallboard({
           whole row when they fire. Each boundary's fallback is null, so a broken alarm component
           can never blank the P1/P2 grid; with nothing to say the row is empty and takes no room. */}
       <div className="wb-notices">
-        {dropDecision && list.length > 0 && (
+        {/* Counted over the tickets still down, the base the figures above use (restored ones are not open). */}
+        {dropDecision && down.length > 0 && (
           <p className="wb-note hitl">
-            Decision waiting on {decisionCount} of {list.length} tickets
+            Decision waiting on {down.filter(decisionOf).length} of {down.length} open tickets
           </p>
         )}
         {dropLate && down.length > 0 && (

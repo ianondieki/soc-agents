@@ -83,14 +83,15 @@ function usePrefersReducedMotion(): boolean {
   return reduced;
 }
 
-/** The fibre colour of a node's ring on a phone; white and black take the theme's outline.
- *  Approval has no fibre: it wears violet only while it waits (the key's "Waits for a person"),
- *  so a skipped or decided Approval keeps the plain ring of its state, never a violet one. */
-function fibreRing(node: string): string | undefined {
+/** A done step on a phone, as a solid dot in its agent's fibre (white and black take the theme's
+ *  outline). Only a done step wears its fibre, and as a fill: the one hollow violet ring left on
+ *  the dial is an Approval that waits (the key's "Waits for a person"), so Shift ledger's violet
+ *  fibre never reads as a step waiting. Approval has no fibre and keeps its state's own look. */
+function fibreDot(node: string): { fill: string; stroke: string } | undefined {
   if (node === "HITL") return undefined;
   const f = fibreOf(node);
   if (!f) return undefined;
-  return f.outlined ? "var(--fibre-outline)" : fibreColour(f);
+  return { fill: fibreColour(f), stroke: f.outlined ? "var(--fibre-outline)" : "var(--bg)" };
 }
 
 export default function AgentDial({ run, counts, ticket, tookMs, empty }: DialProps) {
@@ -263,9 +264,9 @@ export default function AgentDial({ run, counts, ticket, tookMs, empty }: DialPr
                     className={`ld-dial-node ${n.kind}${lights ? " will-light" : ""}`}
                     style={{
                       ...(lights ? { animationDelay: `${delay}ms` } : {}),
-                      // A phone has no room for the bars, so each node wears its agent's fibre as a
-                      // ring instead (Approval keeps its violet while it waits).
-                      ...(compact && n.kind !== "waiting" ? { stroke: fibreRing(n.id) } : {}),
+                      // A phone has no room for the bars, so each done step wears its agent's fibre
+                      // as a solid dot instead (fibreDot); every other state keeps its own look.
+                      ...(compact && n.kind === "done" ? fibreDot(n.id) : {}),
                     }}
                   />
                 </g>
