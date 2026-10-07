@@ -17,6 +17,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { api } from "../api";
+import CountUp from "../components/CountUp";
 import {
   LIFECYCLE_NODES,
   STATUS_WORD,
@@ -35,7 +36,7 @@ import {
   type RailStep,
 } from "../lib/agents";
 import { fibreColour, fibreOf } from "../lib/fibre";
-import { useCalm, useCountUp, useSeenOnce } from "../lib/motion";
+import { useCalm, useSeenOnce } from "../lib/motion";
 import { fmtHM } from "../lib/time";
 import { useRunFrames } from "../realtime/RealtimeContext";
 import "./WorkflowMap.css";
@@ -201,7 +202,7 @@ export default function WorkflowMap({ profile }: { profile: any }) {
 
       <Route run={run} incident={incident} calm={calm} liveNode={liveNode} />
 
-      <Figures byHand={byHand} median={p?.pipeline_ms?.median ?? null} alarms={p?.alarms?.processed ?? null} calm={calm} />
+      <Figures byHand={byHand} median={p?.pipeline_ms?.median ?? null} alarms={p?.alarms?.processed ?? null} />
 
       <section className="wm-phases" aria-labelledby="wm-phases-title">
         <div className="wm-section-head">
@@ -416,19 +417,19 @@ function Route({ run, incident, calm, liveNode }: { run: any | null; incident: a
 /* Figures                                                                                    */
 /* ------------------------------------------------------------------------------------------ */
 
-function Figures({ byHand, median, alarms, calm }: { byHand: number | null; median: number | null; alarms: number | null; calm: boolean }) {
-  const steps = useCountUp(12, calm);
-  const hand = useCountUp(byHand == null ? null : Math.round(byHand), calm);
-  const through = useCountUp(alarms, calm);
+function Figures({ byHand, median, alarms }: { byHand: number | null; median: number | null; alarms: number | null }) {
+  const whole = (n: number) => fmtInt(Math.round(n));
   return (
     <dl className="wm-figures">
       <div>
         <dt>Steps per alarm</dt>
-        <dd>{steps == null ? "—" : Math.round(steps)}</dd>
+        <dd>
+          <CountUp value={12} format={whole} />
+        </dd>
       </div>
       <div>
         <dt>By hand, per alarm</dt>
-        <dd>{hand == null ? "—" : `${fmtInt(Math.round(hand))} min`}</dd>
+        <dd>{byHand == null ? "—" : <CountUp value={Math.round(byHand)} format={(n) => `${whole(n)} min`} />}</dd>
       </div>
       <div>
         <dt>Agents, alarm to ticket (median)</dt>
@@ -436,7 +437,7 @@ function Figures({ byHand, median, alarms, calm }: { byHand: number | null; medi
       </div>
       <div>
         <dt>Alarms through so far</dt>
-        <dd>{through == null ? "—" : fmtInt(Math.round(through))}</dd>
+        <dd>{alarms == null ? "—" : <CountUp value={alarms} format={whole} />}</dd>
       </div>
     </dl>
   );

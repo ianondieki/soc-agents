@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { Headset, LockKeyhole, Radar, ScrollText, UserRoundCheck, type LucideIcon } from "lucide-react";
+import { Headset, LockKeyhole, Pause, Play, Plus, Radar, ScrollText, UserRoundCheck, type LucideIcon } from "lucide-react";
 import { api } from "../api";
+import CountUp from "../components/CountUp";
 import AgentDial, { type DialRun } from "../components/landing/AgentDial";
 import SupportFlow from "../components/landing/SupportFlow";
 import { BrandMark } from "../components/shell/BrandMark";
@@ -14,6 +15,7 @@ import {
   fmtMs,
   humanAutonomy,
   humanEnum,
+  humanStatus,
   normaliseStatus,
   opensTicket,
   regionName,
@@ -24,7 +26,9 @@ import {
 import { FIBRES, fibreColour, fibreOf } from "../lib/fibre";
 import { useRealtimeState } from "../realtime/RealtimeContext";
 import { THEME_KEY, applyTheme, type Theme } from "../lib/theme";
-import { fmtDateTime, fmtEAT } from "../lib/time";
+import { fmtDateTime, fmtEAT, fmtHM } from "../lib/time";
+import { useCalm } from "../lib/motion";
+import { currentShift } from "../lib/shift";
 import "./Landing.css";
 
 /**
@@ -144,11 +148,12 @@ function latestTicketRun(rows: any[] | null): any | null {
 }
 
 /** The press of the sun or moon: pin the other theme (the console's Display menu reads the same key). */
-/** The three sections the header links to, in page order. */
+/** The sections the header links to, in page order. */
 const SECTIONS: { id: string; label: string }[] = [
   { id: "how", label: "How it works" },
   { id: "desks", label: "The desks" },
   { id: "evals", label: "Evals" },
+  { id: "faq", label: "Questions" },
 ];
 
 /** Whether the page is hearing from the agents right now, and how many tickets are open. Read
@@ -294,6 +299,7 @@ export default function Landing({ profile, metrics, runsRev }: { profile: any; m
         <section className="ld-hero" aria-labelledby="ld-h1">
           <div className="ld-wrap">
             <div className="ld-hero-copy">
+              <p className="eyebrow">Network operations, Kenya</p>
               <h1 id="ld-h1">
                 <span className="agents">Twelve agents work every alarm.</span> <span className="people">People make the call.</span>
               </h1>
@@ -309,10 +315,29 @@ export default function Landing({ profile, metrics, runsRev }: { profile: any; m
                   Try the complaint desk
                 </Link>
               </div>
+              <HeroFigures p={productivity.data} />
             </div>
-            <Dial run={run} dialRun={dialRun} counts={counts} load={runs} />
+            <div className="ld-preview">
+              <div className="ld-preview-card">
+                <Dial run={run} dialRun={dialRun} counts={counts} load={runs} />
+              </div>
+              {typeof productivity.data?.pipeline_ms?.median === "number" && (
+                <p className="ld-float a">
+                  <span className="ld-float-dot" aria-hidden="true" />
+                  Alarm to ticket: {fmtMs(productivity.data.pipeline_ms.median)}, median
+                </p>
+              )}
+              {typeof metrics?.hitl_pending === "number" && metrics.hitl_pending > 0 && (
+                <p className="ld-float b">
+                  <span className="ld-float-dot hitl" aria-hidden="true" />
+                  {fmtInt(metrics.hitl_pending)} waiting for a person
+                </p>
+              )}
+            </div>
           </div>
         </section>
+
+        <Tape incidents={incidents} profile={profile} />
 
         <section className="ld-section" id="how" aria-labelledby="ld-how">
           <div className="ld-wrap">
@@ -401,6 +426,28 @@ export default function Landing({ profile, metrics, runsRev }: { profile: any; m
             </div>
           </div>
         </section>
+
+        <section className="ld-section" id="faq" aria-labelledby="ld-faq">
+          <div className="ld-wrap ld-faq-grid">
+            <div className="ld-faq-head">
+              <h2 id="ld-faq">Questions the floor asks</h2>
+              <p className="ld-section-lead">What supervisors and duty managers ask in their first week, answered from how the console works.</p>
+            </div>
+            <div className="ld-faq">
+              {FAQ.map((f) => (
+                <details key={f.q} className="ld-faq-item">
+                  <summary>
+                    <span>{f.q}</span>
+                    <Plus className="ld-faq-mark" size={18} strokeWidth={2} aria-hidden="true" />
+                  </summary>
+                  <div className="ld-faq-a">
+                    <p>{f.a}</p>
+                  </div>
+                </details>
+              ))}
+            </div>
+          </div>
+        </section>
       </main>
 
       <footer className="ld-foot">
@@ -411,15 +458,16 @@ export default function Landing({ profile, metrics, runsRev }: { profile: any; m
                 Watch the agents work an alarm. <span className="people">Then make the call.</span>
               </h2>
               <p>Launch the heavy-rain storm on Mission control, watch the dial fill, then approve or reject the held broadcasts.</p>
+              <div className="ld-actions">
+                <Link className="ld-btn primary" to="/mission">
+                  Open mission control
+                </Link>
+                <Link className="ld-btn secondary" to="/hitl">
+                  Open Approvals
+                </Link>
+              </div>
             </div>
-            <div className="ld-actions">
-              <Link className="ld-btn primary" to="/mission">
-                Open mission control
-              </Link>
-              <Link className="ld-btn secondary" to="/hitl">
-                Open Approvals
-              </Link>
-            </div>
+            <Handover profile={profile} />
           </div>
           <div className="ld-foot-legal">
             <span>Demo and training product. Not an official Safaricom or Airtel system.</span>
@@ -1146,6 +1194,166 @@ function Saved({ p }: { p: Load<any> }) {
     </div>
   );
 }
+
+// ------------------------------------------------------------ hero extras --
+
+/** Three figures under the hero's actions, counting up once: the agents' record so far. The
+ *  hours are the floor's own estimate (the Saved panel says how it is made). */
+function HeroFigures({ p }: { p: any | null }) {
+  if (!p) return <div className="ld-hero-figs is-empty" />;
+  const whole = (n: number) => fmtInt(Math.round(n));
+  return (
+    <dl className="ld-hero-figs">
+      <div>
+        <dt>alarms through the agents</dt>
+        <dd>
+          <CountUp value={Number(p.alarms?.processed || 0)} format={whole} ms={1100} />
+        </dd>
+      </div>
+      <div>
+        <dt>tickets opened and filled in</dt>
+        <dd>
+          <CountUp value={Number(p.alarms?.incidents_created || 0)} format={whole} ms={1100} />
+        </dd>
+      </div>
+      <div>
+        <dt>hours of analyst work, by the floor's estimate</dt>
+        <dd>
+          <CountUp value={Math.round(Number(p.toil?.hours_saved || 0))} format={whole} ms={1100} />
+        </dd>
+      </div>
+    </dl>
+  );
+}
+
+/**
+ * The open tickets as a slow tape under the hero: priority, site, region, state and when. It moves
+ * on its own, so it pauses on hover, on focus and on its own Pause button (WCAG 2.2.2); calm (quiet
+ * mode or reduced motion) or paused, it is a row that scrolls sideways by hand. The second copy that
+ * makes the loop seamless is hidden from assistive tech and from the tab order.
+ */
+function Tape({ incidents, profile }: { incidents: Load<any[]>; profile: any }) {
+  const calm = useCalm();
+  const [paused, setPaused] = useState(false);
+  const rows = useMemo(() => openIncidents(incidents.data).slice(0, 12), [incidents.data]);
+  if (rows.length < 3) return null;
+  const moving = !calm && !paused;
+  const item = (i: any, copy: boolean) => {
+    const pr = String(i.priority || "").toUpperCase();
+    return (
+      <li key={(copy ? "b-" : "a-") + i.id} aria-hidden={copy || undefined}>
+        <span className={`ld-pill ${pr}`}>{pr}</span>
+        <Link to={`/incidents/${i.id}`} tabIndex={copy ? -1 : undefined}>
+          {i.site_name || i.site_id}
+        </Link>
+        <span className="where">{regionName(i.region_code, profile)}</span>
+        <span className="state">{humanStatus(i.status)}</span>
+        <span className="when ld-mono">{fmtHM(i.created_at)}</span>
+      </li>
+    );
+  };
+  return (
+    <section className={"ld-tape" + (moving ? " is-moving" : "")} aria-labelledby="ld-tape-title">
+      <div className="ld-wrap ld-tape-head">
+        <h2 id="ld-tape-title" className="ld-tape-title">
+          <span className="ld-tape-dot" aria-hidden="true" />
+          Open on the board now
+        </h2>
+        {!calm && (
+          <button type="button" className="ld-tape-btn" onClick={() => setPaused((x) => !x)}>
+            {paused ? <Play size={14} aria-hidden="true" /> : <Pause size={14} aria-hidden="true" />}
+            {paused ? "Play" : "Pause"}
+          </button>
+        )}
+      </div>
+      <div className="ld-tape-window" role="region" aria-label="Open tickets" tabIndex={moving ? undefined : 0}>
+        <ul className="ld-tape-track" style={{ ["--tape-s" as any]: `${Math.max(36, rows.length * 6)}s` }}>
+          {rows.map((i) => item(i, false))}
+          {moving && rows.map((i) => item(i, true))}
+        </ul>
+      </div>
+    </section>
+  );
+}
+
+// ------------------------------------------------------------------ footer --
+
+const pad2 = (n: number) => String(n).padStart(2, "0");
+
+/** The next shift handover as a countdown, from the operator's shift hours. It ticks each second;
+ *  calm, it shows hours and minutes only and moves on the half minute. */
+function Handover({ profile }: { profile: any }) {
+  const calm = useCalm();
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(new Date()), calm ? 30_000 : 1000);
+    return () => window.clearInterval(id);
+  }, [calm]);
+  const { shift, next, end } = currentShift(profile, now);
+  const left = Math.max(0, end.getTime() - now.getTime());
+  const h = Math.floor(left / 3_600_000);
+  const m = Math.floor(left / 60_000) % 60;
+  const sec = Math.floor(left / 1000) % 60;
+  return (
+    <div className="ld-handover">
+      <p className="ld-handover-label">
+        The {shift} shift hands over to {next} at {fmtHM(end)} EAT
+      </p>
+      <p className="ld-handover-clock" role="timer" aria-label={`Handover in ${h} hours and ${m} minutes`}>
+        <span>
+          <b>{pad2(h)}</b>
+          <i>hours</i>
+        </span>
+        <span>
+          <b>{pad2(m)}</b>
+          <i>minutes</i>
+        </span>
+        {!calm && (
+          <span>
+            <b>{pad2(sec)}</b>
+            <i>seconds</i>
+          </span>
+        )}
+      </p>
+      <p className="ld-handover-note">
+        The ledger fills itself all shift; the handover is the one thing a person sends.{" "}
+        <Link className="ld-btn text" to="/shift">
+          Open the Shift desk
+        </Link>
+      </p>
+    </div>
+  );
+}
+
+// --------------------------------------------------------------- questions --
+
+/** What the floor asks in its first week, answered from how the console works. */
+const FAQ: { q: string; a: string }[] = [
+  {
+    q: "Does an agent ever send a message on its own?",
+    a: "Only where the autonomy level allows it. At L2 guarded, P3 and P4 broadcasts go on their own; every P1 and P2 message waits at Approval until a named person approves or rejects it. Wording that reaches management or leaves the building on a P1 or P2 is never automated, at any level.",
+  },
+  {
+    q: "Where is the record kept?",
+    a: "Every step an agent takes is written to the audit trail with the agent, the time and its reason. A person's decision stays on the approval with their name and the time, and as a note on the ticket's timeline. Each ticket's row also goes into the Excel shift ledger, in EAT, and the Workflow map reads any recent alarm back step by step.",
+  },
+  {
+    q: "How are the minutes saved worked out?",
+    a: "From the floor's own estimate of a person's minutes per step, set in the operator profile, multiplied by the steps the agents completed. It is a model to be corrected with the floor, not a stopwatch study, and the Showcase shows the sum step by step.",
+  },
+  {
+    q: "How is the Support desk scored?",
+    a: "On a labelled set of complaints in English, Kiswahili and Sheng, against fixed gates for resolution, wrong escalations and missed escalations on safety cases. The headline is a blind holdout written by someone who never saw the code.",
+  },
+  {
+    q: "Can the floor turn the noise down at night?",
+    a: "Yes. Quiet mode, in the Display menu, stops animations and routine ticker lines while P1 and P2 tickets and decisions stay live. Alerts can buzz and sound for every event, for alarms only, or not at all.",
+  },
+  {
+    q: "Is this a live operator system?",
+    a: "No. It is a demo and training product. It is not an official Safaricom or Airtel system, and its sites, tickets and complaints are test data.",
+  },
+];
 
 // ------------------------------------------------------ where people decide --
 

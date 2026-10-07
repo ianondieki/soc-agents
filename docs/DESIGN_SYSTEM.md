@@ -256,8 +256,13 @@ hover row in `--surface-raised`. Empty states say what will fill the space and o
 Skeletons, not spinners, while loading.
 
 **The front page** (/, outside the console shell). The hero keeps its one idea: the two-colour
-headline (the agents' sentence in the action blue, the people's in violet) beside the twelve agents on a
-dial, whose sweep is the page's one motion. Under the dial, a key in the dial's own marks (this alarm's
+headline (the agents' sentence in forest or mint, the people's in violet) under the page's one eyebrow,
+beside the twelve agents on a dial set as a product preview (a tinted frame, a white card, two facts
+floating at its edges: the median alarm to ticket and how many wait for a person), all over a slow mint
+aurora. Under the actions, three figures on a hairline count up once (alarms through the agents, tickets
+opened, hours of analyst work by the floor's estimate). Under the hero, a tape of the open tickets drifts
+past (priority, site, region, state, time), pausing on hover, focus or its Pause button; calm, it is a row
+that scrolls by hand. Under the dial, a key in the dial's own marks (this alarm's
 path, the alarms each agent has worked, what waits for a person), then the latest alarm as four facts on a
 hairline (where, the ticket, when, how long the agents took) and its state in a sentence with the way to
 the ticket. "What changes for the floor" is a four-column table: the step with its fibre strand, the work
@@ -267,10 +272,13 @@ and name, one live figure, what it holds in the product's own marks (the newest 
 priority pills, the waiting messages on a violet rule, the newest ledger row, the newest complaints in
 the customers' own words in Fraunces), and "Open ..." at the foot. The autonomy ladder is three rungs
 on one track, lit to this deployment's rung; "Never automated, at any level" is a violet panel with each
-line locked. The closing line echoes the hero in Fraunces. Every figure comes from the API; a call
-that fails says so in a sentence with Retry, and a lane that is off says so once.
+line locked. "Questions the floor asks" is an accordion of six answers taken from how the console works,
+each opened by a plus that turns to a cross. The closing band is the ink band: the line that echoes the
+hero, the two ways in, and the next shift handover as a countdown (hours, minutes, seconds; calm, hours
+and minutes only) with the way to the Shift desk. Every figure comes from the API; a call that fails
+says so in a sentence with Retry, and a lane that is off says so once.
 
-**The Showcase** (for the people who decide). A poster headline in Fraunces ("filled-in"
+**The Showcase** (for the people who decide). The eyebrow, a poster headline in Fraunces ("filled-in"
 never breaks at its hyphen) and two sentences, beside three figures (analyst work taken over, tickets
 opened, decided by a person), each named above, set in the display face and explained in one line under
 it, with the window switch over them only when it would change something. Then the newest alarm on the
@@ -281,7 +289,8 @@ one scale (47 min and a sliver for 11 ms), then the twelve steps: number, fibre 
 alarm underneath; below 900 px each step is a short block. The platform diagram carries the twelve agents
 as their fibre colours in a row; on a phone it becomes a stack read top to bottom. The ladder is lit to
 the rung in force and the never-automated list is the violet panel with each line locked, as on the
-front page. One closing row with the two ways in.
+front page. The figures count up once; the page closes on the ink band ("Try it yourself.") with the
+two ways in.
 
 **Mission control.** The page head, the seven-figure strip, then the latest alarm's twelve agent steps as
 one even row across the panel's width (six a row on a narrow panel, four on a phone: a container query),

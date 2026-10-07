@@ -9,42 +9,13 @@ import { useNarrow } from "../lib/layout";
 import { fmtHM, parseInstant } from "../lib/time";
 import { useMinute } from "../lib/useMinute";
 import "./ShiftDesk.css";
+import { DEFAULT_HOURS, shiftWindow } from "../lib/shift";
 
 /** The ledger stores "SFC-RFT-HUB-NKR Nakuru Rift HUB": the site code, a space, the site name. */
 function splitSite(site: unknown): { code: string; name: string } {
   const s = String(site ?? "").trim();
   const cut = s.indexOf(" ");
   return cut < 0 ? { code: s, name: "" } : { code: s.slice(0, cut), name: s.slice(cut + 1) };
-}
-
-/** EAT is UTC+3 all year: no daylight saving to allow for. */
-const EAT_MS = 3 * 3600_000;
-/** The operator config's shifts when the profile does not say (services/shifts.py reads the same). */
-const DEFAULT_HOURS: Record<string, { start: string; end: string }> = {
-  day: { start: "08:00", end: "20:00" },
-  night: { start: "20:00", end: "08:00" },
-};
-
-const minutesOf = (hhmm: string) => {
-  const [h, m] = hhmm.split(":").map(Number);
-  return (h || 0) * 60 + (m || 0);
-};
-
-/** The current shift's window as instants: a night shift runs across midnight. */
-function shiftWindow(hours: { start: string; end: string }, now: Date): { start: Date; end: Date } {
-  const eat = new Date(now.getTime() + EAT_MS); // read its UTC fields as the time in Nairobi
-  const midnight = Date.UTC(eat.getUTCFullYear(), eat.getUTCMonth(), eat.getUTCDate()) - EAT_MS;
-  const s = minutesOf(hours.start);
-  const e = minutesOf(hours.end);
-  const nowMin = eat.getUTCHours() * 60 + eat.getUTCMinutes();
-  let startMs = midnight + s * 60_000;
-  let endMs = midnight + e * 60_000;
-  if (e <= s) {
-    // Across midnight: before the end, it began yesterday; after the start, it ends tomorrow.
-    if (nowMin < e) startMs -= 86_400_000;
-    else endMs += 86_400_000;
-  }
-  return { start: new Date(startMs), end: new Date(endMs) };
 }
 
 /** "2 h 5 min", "45 min". */

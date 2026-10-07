@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { LockKeyhole } from "lucide-react";
 import { api } from "../api";
+import CountUp from "../components/CountUp";
 import LiveRunPanel from "../components/LiveRunPanel";
 import { LIFECYCLE_NODES, fmtInt, fmtMinutes, fmtMs, humanAutonomy, nodeDoes, nodeLabel } from "../lib/agents";
 import { FIBRES, fibreColour, fibreOf } from "../lib/fibre";
@@ -175,6 +176,7 @@ export default function Showcase({
     <div className="showcase">
       <section className="sc-hero" aria-labelledby="sc-title">
         <div className="sc-hero-text">
+          <p className="eyebrow">For the people who decide</p>
           <h1 id="sc-title">
             {/* "filled-in" never breaks at its hyphen. */}
             Alarm to <span className="sc-nowrap">filled-in</span> ticket in under a second.
@@ -286,17 +288,20 @@ export default function Showcase({
         </div>
       </section>
 
-      <div className="sc-try">
-        <p>Try it yourself: launch the storm on Mission control, then approve or reject the held broadcasts.</p>
+      <section className="sc-try" aria-labelledby="sc-try-title">
+        <div>
+          <h2 id="sc-try-title">Try it yourself.</h2>
+          <p>Launch the storm on Mission control, watch the twelve agents take every alarm, then approve or reject the held broadcasts.</p>
+        </div>
         <div className="sc-try-actions">
-          <button type="button" className="btn" onClick={() => nav("/mission")}>
+          <button type="button" className="btn primary" onClick={() => nav("/mission")}>
             Open Mission control
           </button>
           <button type="button" className="btn" onClick={() => nav("/hitl")}>
             Open Approvals
           </button>
         </div>
-      </div>
+      </section>
     </div>
   );
 }
@@ -339,7 +344,9 @@ function Figures({ p, windowHours, waitingNow }: { p: any | null; windowHours: W
     <dl className="sc-fig-list" aria-live="polite">
       <div className="sc-fig" title={minutesTitle}>
         <dt>Analyst work taken over</dt>
-        <dd className="sc-fig-value">{fmtMinutes(Math.max(0, Number(toil.net_minutes_saved) || 0))}</dd>
+        <dd className="sc-fig-value">
+          <CountUp value={Math.max(0, Number(toil.net_minutes_saved) || 0)} format={fmtMinutes} ms={1200} />
+        </dd>
         <dd className="sc-fig-note">
           {spent > 0 ? `after the ${fmtMinutes(spent)} people spent deciding; ` : ""}an estimate from the floor's minutes by hand
         </dd>
@@ -348,7 +355,9 @@ function Figures({ p, windowHours, waitingNow }: { p: any | null; windowHours: W
         <dt>Tickets opened</dt>
         {processed > 0 ? (
           <>
-            <dd className="sc-fig-value">{fmtInt(created)}</dd>
+            <dd className="sc-fig-value">
+              <CountUp value={created} format={(n) => fmtInt(Math.round(n))} />
+            </dd>
             {/* Whole numbers a manager can say aloud: "6 of 11 alarms", never "54.5 %". */}
             <dd className="sc-fig-note">
               {absorbed > 0
@@ -365,7 +374,9 @@ function Figures({ p, windowHours, waitingNow }: { p: any | null; windowHours: W
       </div>
       <div className="sc-fig" title={hitl.median_decision_minutes != null ? `A decision takes ${hitl.median_decision_minutes} min on median.` : undefined}>
         <dt>Decided by a person</dt>
-        <dd className="sc-fig-value">{fmtInt(made)}</dd>
+        <dd className="sc-fig-value">
+          <CountUp value={made} format={(n) => fmtInt(Math.round(n))} />
+        </dd>
         {/* Always both numbers: decided, and waiting now (0 is a real answer). */}
         <dd className={"sc-fig-note" + (waitingNow ? " hitl" : "")}>
           {waitingNow == null ? (made === 1 ? "decision on record" : "decisions on record") : `${fmtInt(waitingNow)} waiting for a decision now`}

@@ -219,19 +219,33 @@
 .sc-never li { display: grid; grid-template-columns: 16px minmax(0, 1fr); gap: 12px; color: var(--text); font-size: var(--fs-md); line-height: 1.45; }
 .sc-never svg { margin-top: 2px; color: var(--hitl); }
 
-/* One closing row: one sentence, the two ways in. */
+/* The closing band: the ink band, one line in the display face, the two ways in. */
 .sc-try {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: var(--s3) var(--s5);
+  gap: var(--s4) var(--s6);
   margin-top: var(--s7);
-  padding-top: var(--s4);
-  border-top: 1px solid var(--line);
+  padding: 36px 40px;
+  border: 1px solid var(--band-line);
+  border-radius: 24px;
+  background:
+    radial-gradient(50% 120% at 100% 0%, rgba(127, 209, 172, 0.16), transparent 65%),
+    radial-gradient(40% 90% at 0% 100%, rgba(166, 227, 111, 0.08), transparent 65%),
+    var(--band);
+  box-shadow: var(--shadow-lift);
 }
-.sc-try p { margin: 0; color: var(--text); font-size: var(--fs-md); line-height: 1.5; }
+.sc-try > div:first-child { flex: 1 1 26rem; min-width: 0; }
+.showcase .sc-try h2 { margin: 0; color: var(--band-strong); font-family: var(--font-display); font-variation-settings: var(--display-soft); font-size: clamp(1.75rem, 1.3rem + 1.4vw, 2.5rem); font-weight: 540; letter-spacing: -0.02em; line-height: 1.05; }
+.sc-try p { max-width: 56ch; margin: 10px 0 0; color: var(--band-muted); font-size: var(--fs-md); line-height: 1.55; }
 .sc-try-actions { display: flex; flex-wrap: wrap; gap: var(--s2); }
+.sc-try .btn { border-color: var(--band-line); background: transparent; color: var(--band-strong); }
+.sc-try .btn:hover { border-color: var(--band-accent); background: var(--band-raised); color: var(--band-strong); }
+.sc-try .btn.primary { border-color: var(--band-accent); background: var(--band-accent); color: #0B1A14; }
+.sc-try .btn.primary:hover { border-color: #9EDFC2; background: #9EDFC2; color: #0B1A14; }
+.sc-try :focus-visible { outline-color: var(--band-accent); }
+@media (max-width: 600px) { .sc-try { padding: 26px 20px; border-radius: 20px; } }
 
 /* ---------------------------------------------------------------- narrow */
 @media (max-width: 1099px) {
