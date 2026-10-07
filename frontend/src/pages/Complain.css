@@ -265,7 +265,6 @@
   to { transform: translate3d(2%, 1.5%, 0); opacity: 1; }
 }
 .cp-top { background: color-mix(in oklab, var(--bg) 84%, transparent); -webkit-backdrop-filter: saturate(1.4) blur(14px); backdrop-filter: saturate(1.4) blur(14px); }
-.cp .eyebrow { margin-bottom: 14px; }
 .cp h1 { font-size: clamp(2.125rem, 1.5rem + 1.9vw, 3rem); font-weight: 560; line-height: 1.04; letter-spacing: -0.025em; }
 .cp .cp-lead { margin-top: 14px; font-size: var(--fs-lg); line-height: 1.55; }
 
@@ -291,7 +290,6 @@
   max-width: 34rem;
   padding: 20px 24px 18px;
   border: 1px solid var(--line);
-  border-left: 4px solid var(--accent);
   border-radius: 18px;
   background:
     radial-gradient(circle at 100% 50%, var(--bg) 0 11px, transparent 12px),

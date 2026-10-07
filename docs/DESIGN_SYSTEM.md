@@ -84,10 +84,9 @@ Root size 16px. Product scale (fixed rem, ratio about 1.2):
 | `--fs-2xl` | 32px | big figures (Fraunces 560) |
 | `--fs-display` | clamp(2.75rem, 5.6vw, 5.25rem) | landing hero only |
 
-Numerals in tables and figures are `tabular-nums`. Sentence case everywhere. One eyebrow at most per page
-(`.eyebrow`: Plex Mono 11px, tracked, uppercase, forest or mint, with a dot), above the page title of a
-page that teaches (the Workflow map, the landing sections), never above a panel. No middle-dot meta
-strings (use commas or separate elements), no arrows appended to button text.
+Numerals in tables and figures are `tabular-nums`. Sentence case everywhere. No eyebrow or kicker labels
+above headings (a heading carries its own weight), no middle-dot meta strings (use commas or separate
+elements), no arrows appended to button text.
 
 ## Colour tokens
 
@@ -270,7 +269,7 @@ hover row in `--surface-raised`. Empty states say what will fill the space and o
 Skeletons, not spinners, while loading.
 
 **The front page** (/, outside the console shell). The hero keeps its one idea: the two-colour
-headline (the agents' sentence in forest or mint, the people's in violet) under the page's one eyebrow,
+headline (the agents' sentence in forest or mint, the people's in violet),
 beside the twelve agents on a dial set as a product preview (a tinted frame, a white card, two facts
 floating at its edges: the median alarm to ticket and how many wait for a person), all over a slow mint
 aurora. Under the actions, three figures on a hairline count up once (alarms through the agents, tickets
@@ -292,7 +291,7 @@ hero, the two ways in, and the next shift handover as a countdown (hours, minute
 and minutes only) with the way to the Shift desk. Every figure comes from the API; a call that fails
 says so in a sentence with Retry, and a lane that is off says so once.
 
-**The Showcase** (for the people who decide). The eyebrow, a poster headline in Fraunces ("filled-in"
+**The Showcase** (for the people who decide). A poster headline in Fraunces ("filled-in"
 never breaks at its hyphen) and two sentences, beside three figures (analyst work taken over, tickets
 opened, decided by a person), each named above, set in the display face and explained in one line under
 it, with the window switch over them only when it would change something. Then the newest alarm on the
@@ -442,9 +441,9 @@ side note in a customer's words: what happens after you send (we read it at once
 by a stated time; follow it with your reference; never share your M-PESA PIN), or where a complaint can
 be (received, with a person, part of a known outage, answered or fixed). The page widens only while the
 note is there, header and footer with it. They wear the front page's manners: a slow mint aurora behind
-the heading, the "Customer support" eyebrow, the headline in the soft display face at 34 to 48px, a
+the heading, the headline in the soft display face at 34 to 48px, a
 frosted header, and the side note lifted as a card whose steps hang from one line. After sending, the
-reference is a ticket stub (a lifted card with a forest edge, a notch and a dashed tear line, the number
+reference is a ticket stub (a lifted card with a notch and a dashed tear line, the number
 in Mono), because it is the one thing to keep.
 
 **Support desk.** The queue's rows each lead with how the desk handled the case (the resolver, the

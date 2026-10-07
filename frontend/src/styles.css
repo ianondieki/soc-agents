@@ -12,9 +12,9 @@
  * Type has three voices on a fixed rem scale (--fs-*): Fraunces, a     *
  * soft editorial serif, for titles, figures and the words a person     *
  * wrote; IBM Plex Sans for everything read (its condensed widths on    *
- * the Wallboard); IBM Plex Mono for identifiers, measurements and the  *
- * small eyebrow labels. Radii by hierarchy (16 panels, 12 inner        *
- * blocks and inputs, 10 buttons, 999 pills). Cards sit on a soft       *
+ * the Wallboard); IBM Plex Mono for identifiers and measurements.     *
+ * No eyebrow labels over headings. Radii by hierarchy (16 panels, 12   *
+ * inner blocks and inputs, 10 buttons, 999 pills). Cards sit on a soft *
  * green-tinted shadow. Motion shows life and answers a person; quiet   *
  * mode and reduced motion stop it.                                     *
  *                                                                      *
@@ -235,6 +235,8 @@
   --band-accent: #7FD1AC;
   --band-hitl: #D9C2FF;
   --band-danger: #FFB4C0;
+  --band-ink: #0B1A14;
+  --band-accent-hover: #9EDFC2;
   --chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='none' stroke='%23A3B5AD' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2.5 4.5 6 8l3.5-3.5'/%3E%3C/svg%3E");
 }
 
@@ -293,6 +295,8 @@
   --band-accent: #7FD1AC;
   --band-hitl: #D9C2FF;
   --band-danger: #FFB4C0;
+  --band-ink: #0B1A14;
+  --band-accent-hover: #9EDFC2;
   --chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='none' stroke='%23525D59' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2.5 4.5 6 8l3.5-3.5'/%3E%3C/svg%3E");
 }
 
@@ -704,7 +708,7 @@ kbd {
 }
 .topbar.is-scrolled { box-shadow: 0 12px 26px -24px rgba(0, 0, 0, 0.55); }
 .topbar-left { position: relative; display: flex; flex: 1 1 auto; align-items: center; gap: 14px; min-width: 0; height: 100%; }
-.topbar-id { color: var(--text-strong); font-size: var(--fs-md); font-weight: 650; letter-spacing: -0.01em; white-space: nowrap; }
+.topbar-id { flex: 0 1 auto; min-width: 0; overflow: hidden; color: var(--text-strong); font-size: var(--fs-md); font-weight: 650; letter-spacing: -0.01em; text-overflow: ellipsis; white-space: nowrap; }
 
 .tb-status {
   display: inline-flex;
@@ -945,8 +949,6 @@ button.chip:active { background: var(--surface-sunk); }
   100% { transform: translate3d(-2%, 1%, 0) scale(1.02); }
 }
 /* A small mono label over a section, as the references set them: in the action colour, a dot. */
-.eyebrow { display: inline-flex; align-items: center; gap: 8px; margin: 0 0 8px; color: var(--accent); font-family: var(--mono); font-size: 11px; font-weight: 500; letter-spacing: 0.12em; line-height: 1.4; text-transform: uppercase; }
-.eyebrow::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 /* Reading pages (settings, reviews, contracts, the audit trail) keep a calmer measure. */
 .content-narrow { max-width: 1120px; }
 @media (max-width: 1099px) { .content { padding: var(--s5) var(--s5) var(--s7); } }

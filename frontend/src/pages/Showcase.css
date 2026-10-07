@@ -242,8 +242,8 @@
 .sc-try-actions { display: flex; flex-wrap: wrap; gap: var(--s2); }
 .sc-try .btn { border-color: var(--band-line); background: transparent; color: var(--band-strong); }
 .sc-try .btn:hover { border-color: var(--band-accent); background: var(--band-raised); color: var(--band-strong); }
-.sc-try .btn.primary { border-color: var(--band-accent); background: var(--band-accent); color: #0B1A14; }
-.sc-try .btn.primary:hover { border-color: #9EDFC2; background: #9EDFC2; color: #0B1A14; }
+.sc-try .btn.primary { border-color: var(--band-accent); background: var(--band-accent); color: var(--band-ink); }
+.sc-try .btn.primary:hover { border-color: var(--band-accent-hover); background: var(--band-accent-hover); color: var(--band-ink); }
 .sc-try :focus-visible { outline-color: var(--band-accent); }
 @media (max-width: 600px) { .sc-try { padding: 26px 20px; border-radius: 20px; } }
 

@@ -176,7 +176,6 @@ export default function Showcase({
     <div className="showcase">
       <section className="sc-hero" aria-labelledby="sc-title">
         <div className="sc-hero-text">
-          <p className="eyebrow">For the people who decide</p>
           <h1 id="sc-title">
             {/* "filled-in" never breaks at its hyphen. */}
             Alarm to <span className="sc-nowrap">filled-in</span> ticket in under a second.

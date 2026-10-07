@@ -299,7 +299,6 @@ export default function Landing({ profile, metrics, runsRev }: { profile: any; m
         <section className="ld-hero" aria-labelledby="ld-h1">
           <div className="ld-wrap">
             <div className="ld-hero-copy">
-              <p className="eyebrow">Network operations, Kenya</p>
               <h1 id="ld-h1">
                 <span className="agents">Twelve agents work every alarm.</span> <span className="people">People make the call.</span>
               </h1>

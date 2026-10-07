@@ -219,7 +219,6 @@ export default function WorkflowMap({ profile }: { profile: any }) {
     <div className="wm">
       <div className="page-head">
         <div>
-          <p className="eyebrow">The lifecycle</p>
           <h1>Workflow map</h1>
           <p className="lead">
             Every alarm takes the same twelve steps, each run by its own agent. At {autonomy}, P1 and P2 messages wait
@@ -634,7 +633,6 @@ function Reasoning({
   return (
     <section className="wm-reason" aria-labelledby="wm-reason-title" ref={ref}>
       <div className="wm-reason-side">
-        <p className="wm-reason-kicker">The reasoning path</p>
         <h2 id="wm-reason-title">Every step names its agent and its reason.</h2>
         <p className="wm-reason-lead">
           Nothing happens off the record. Pick an alarm to read what each agent saw, what it decided and why, in the

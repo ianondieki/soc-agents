@@ -166,7 +166,6 @@ export default function Track() {
       {!result ? (
         <div className="cp-split">
         <form className="cp-form" onSubmit={submit} noValidate>
-          <p className="eyebrow">Customer support</p>
           <h1 ref={headingRef} tabIndex={-1}>
             Track your complaint
           </h1>

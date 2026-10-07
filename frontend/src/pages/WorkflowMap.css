@@ -199,8 +199,6 @@
   box-shadow: var(--shadow-lift);
 }
 .wm-reason-side { min-width: 0; }
-.wm-reason-kicker { display: inline-flex; align-items: center; gap: 8px; margin: 0 0 10px; color: var(--band-accent); font-size: var(--fs-sm); font-weight: 600; }
-.wm-reason-kicker::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
 .wm .wm-reason h2 { margin: 0; font-family: var(--font-display); font-variation-settings: var(--display-soft); color: var(--band-strong); font-size: clamp(1.625rem, 1.2rem + 1.2vw, 2.25rem); font-weight: 520; letter-spacing: -0.02em; line-height: 1.1; text-wrap: balance; }
 .wm-reason-lead { max-width: 46ch; margin: 14px 0 0; color: var(--band-muted); font-size: var(--fs-md); line-height: 1.6; }
 .wm-reason-pick { display: grid; gap: 6px; max-width: 24rem; margin-top: 22px; }

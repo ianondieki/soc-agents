@@ -170,7 +170,6 @@ export default function Complain() {
       {!sent ? (
         <div className="cp-split">
         <form className="cp-form" onSubmit={submit} noValidate>
-          <p className="eyebrow">Customer support</p>
           <h1 ref={headingRef} tabIndex={-1}>
             Tell us what went wrong
           </h1>
