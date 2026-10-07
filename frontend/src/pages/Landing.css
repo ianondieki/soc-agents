@@ -719,7 +719,8 @@ html[data-quiet="on"] .ld-dial * { animation: none !important; }
 .ld-hero::before {
   content: "";
   position: absolute;
-  inset: -96px 0 -64px;
+  /* Wider than the page by the drift, so the sides never show an edge; .ld-hero clips it. */
+  inset: -96px -5% -64px;
   z-index: -1;
   background:
     radial-gradient(38% 52% at 80% 34%, var(--glow-a), transparent 72%),

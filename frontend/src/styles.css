@@ -923,8 +923,9 @@ button.chip:active { background: var(--surface-sunk); }
   content: "";
   position: absolute;
   z-index: -1;
-  left: 0;
-  right: 0;
+  /* Wider than the page by its drift, so no edge shows at the sides (.main clips it). */
+  left: -5%;
+  right: -5%;
   top: -60px;
   height: 420px;
   pointer-events: none;
@@ -961,14 +962,14 @@ button.chip:active { background: var(--surface-sunk); }
 }
 .page-head > div:first-child { flex: 1 1 24rem; min-width: 0; }
 .page-head h1, .page-title {
-  margin: 0 0 var(--s1);
+  margin: 0 0 var(--s2);
   font-family: var(--font-display); font-variation-settings: var(--display-soft);
-  font-size: var(--fs-xl);
+  font-size: clamp(1.625rem, 1.2rem + 0.9vw, 2.125rem);
   font-stretch: var(--title-stretch);
-  font-weight: 600;
+  font-weight: 560;
   color: var(--text-strong);
-  letter-spacing: -0.012em;
-  line-height: 1.2;
+  letter-spacing: -0.02em;
+  line-height: 1.12;
   text-wrap: balance;
 }
 .lead, .page-title + .muted {
@@ -998,6 +999,18 @@ button.chip:active { background: var(--surface-sunk); }
   overflow: hidden;
 }
 .kpi { min-width: 0; padding: var(--s4) 20px; background: var(--surface); }
+/* A figure that just changed glows once in mint, so a number that moved catches the eye; still in
+   quiet mode and under reduced motion (the figure itself changes either way). */
+.kpi { position: relative; }
+.kpi-bump { position: absolute; inset: 0; z-index: 0; background: var(--accent-soft); pointer-events: none; animation: kpiBump 1400ms var(--ease) forwards; }
+.kpi > :not(.kpi-bump) { position: relative; z-index: 1; }
+@keyframes kpiBump {
+  0% { opacity: 0; }
+  15% { opacity: 1; }
+  100% { opacity: 0; }
+}
+:root[data-quiet="on"] .kpi-bump { display: none; }
+@media (prefers-reduced-motion: reduce) { .kpi-bump { display: none; } }
 .kpi .label { color: var(--muted); font-size: var(--fs-sm); font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .kpi .value {
   margin-top: 6px;

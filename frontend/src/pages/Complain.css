@@ -240,3 +240,64 @@
   .cp-split { grid-template-columns: minmax(0, 1fr); }
   .cp-aside { position: static; max-width: 36rem; }
 }
+
+/* ===================================================================== Savanna */
+/* The public pages share the front page's manners: a slow mint aurora behind the heading, the
+   soft display face a size up, and the side note lifted off the page as a card whose steps hang
+   from one line (they are a sequence: what happens next, or where a complaint can be). */
+.cp-main { position: relative; isolation: isolate; overflow-x: clip; }
+.cp-main::before {
+  content: "";
+  position: absolute;
+  /* Wider than the page by the drift, so the sides never show an edge; .cp-main clips it. */
+  inset: -56px -5% auto;
+  height: 620px;
+  z-index: -1;
+  background:
+    radial-gradient(40% 55% at 82% 22%, var(--glow-a), transparent 72%),
+    radial-gradient(32% 45% at 6% 4%, var(--glow-b), transparent 72%),
+    linear-gradient(118deg, transparent 40%, color-mix(in oklab, var(--mint) 12%, transparent) 54%, transparent 68%);
+  pointer-events: none;
+  animation: cpAurora 26s ease-in-out infinite alternate;
+}
+@keyframes cpAurora {
+  from { transform: translate3d(-2%, 0, 0); opacity: 0.85; }
+  to { transform: translate3d(2%, 1.5%, 0); opacity: 1; }
+}
+.cp-top { background: color-mix(in oklab, var(--bg) 84%, transparent); -webkit-backdrop-filter: saturate(1.4) blur(14px); backdrop-filter: saturate(1.4) blur(14px); }
+.cp .eyebrow { margin-bottom: 14px; }
+.cp h1 { font-size: clamp(2.125rem, 1.5rem + 1.9vw, 3rem); font-weight: 560; line-height: 1.04; letter-spacing: -0.025em; }
+.cp .cp-lead { margin-top: 14px; font-size: var(--fs-lg); line-height: 1.55; }
+
+.cp-aside { padding: 24px 24px 22px; border-radius: 22px; box-shadow: var(--shadow-lift); }
+.cp .cp-aside h2 { font-family: var(--font-display); font-variation-settings: var(--display-soft); font-size: var(--fs-lg); font-weight: 560; letter-spacing: -0.01em; }
+.cp-next > li, .cp-where > li { position: relative; }
+.cp-next > li:not(:last-child)::before { content: ""; position: absolute; left: 13px; top: 30px; bottom: -14px; width: 2px; border-radius: 1px; background: var(--accent-line); }
+.cp-next-n { position: relative; z-index: 1; background: var(--accent); color: var(--accent-ink); box-shadow: 0 0 0 4px var(--accent-soft); font-family: var(--mono); font-weight: 600; }
+.cp-where > li:not(:last-child)::before { content: ""; position: absolute; left: 12px; top: 20px; bottom: -14px; width: 2px; border-radius: 1px; background: var(--line-strong); }
+.cp-where-dot { position: relative; z-index: 1; box-shadow: 0 0 0 4px var(--surface); }
+
+:root[data-quiet="on"] .cp-main::before { animation: none; }
+@media (prefers-reduced-motion: reduce) { .cp-main::before { animation: none; } }
+@media (max-width: 600px) {
+  .cp h1 { font-size: 2rem; }
+  .cp .cp-lead { font-size: var(--fs-base); }
+}
+
+/* The reference is the one thing to keep, so it is set as a stub: a lifted card with a notched
+   edge and a dashed tear line, the number in Mono at the size of a boarding pass. */
+.cp .cp-ref {
+  position: relative;
+  max-width: 34rem;
+  padding: 20px 24px 18px;
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--accent);
+  border-radius: 18px;
+  background:
+    radial-gradient(circle at 100% 50%, var(--bg) 0 11px, transparent 12px),
+    linear-gradient(135deg, color-mix(in oklab, var(--accent) 6%, var(--surface)), var(--surface) 60%);
+  box-shadow: var(--shadow-lift);
+}
+.cp .cp-ref::after { content: ""; position: absolute; top: 14px; bottom: 14px; right: 30px; border-right: 2px dashed var(--line-strong); }
+.cp .cp-ref > * { padding-right: 44px; }
+.cp .cp-ref-num { font-family: var(--mono); letter-spacing: 0.02em; }

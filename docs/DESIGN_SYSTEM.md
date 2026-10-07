@@ -80,7 +80,7 @@ Root size 16px. Product scale (fixed rem, ratio about 1.2):
 | `--fs-md` | 14px | body in panels, table cells |
 | `--fs-base` | 16px | reading text, form fields, a person's note |
 | `--fs-lg` | 18px | panel titles (Fraunces 560) |
-| `--fs-xl` | 24px | page titles (Fraunces 560, tracking -0.015em), strip figures |
+| `--fs-xl` | 24px | strip figures; page titles run 26 to 34px (`clamp`, Fraunces 560, tracking -0.02em) |
 | `--fs-2xl` | 32px | big figures (Fraunces 560) |
 | `--fs-display` | clamp(2.75rem, 5.6vw, 5.25rem) | landing hero only |
 
@@ -152,7 +152,11 @@ native controls, scrollbars and the phone's browser bar match.
 - Motion that teaches, once per page at most: the Workflow map's replay, the landing hero's pulse,
   figures that count up once on arrival (`useCountUp`), a tape of reasons that types itself out when it
   comes into view (`useSeenOnce`). `frontend/src/lib/motion.ts` holds these and `useCalm()`, the one
-  switch (quiet mode or reduced motion) that turns each into its end state.
+  switch (quiet mode or reduced motion) that turns each into its end state. `components/CountUp.tsx`
+  moves the number for the eye only and gives a screen reader the final value once.
+- Live figures roll: a figure on Mission control's strip or the Approvals strip rolls to its new value
+  when it changes, and its cell glows once in mint, so a number that moved is seen without a ring or a
+  sound. Calm, the figure just changes.
 - Motion that tells a person something happened has one vocabulary (see Alerts below): a ring that grows
   out and fades is an alarm; a pop and a ring in a hop's own colour is an agent step landing; an arc going
   round is an agent working. Words never blink: nothing fades text that is meant to be read.
@@ -437,7 +441,11 @@ contracts. In one column the work note comes straight after what happened.
 side note in a customer's words: what happens after you send (we read it at once; an answer, or a person
 by a stated time; follow it with your reference; never share your M-PESA PIN), or where a complaint can
 be (received, with a person, part of a known outage, answered or fixed). The page widens only while the
-note is there, header and footer with it.
+note is there, header and footer with it. They wear the front page's manners: a slow mint aurora behind
+the heading, the "Customer support" eyebrow, the headline in the soft display face at 34 to 48px, a
+frosted header, and the side note lifted as a card whose steps hang from one line. After sending, the
+reference is a ticket stub (a lifted card with a forest edge, a notch and a dashed tear line, the number
+in Mono), because it is the one thing to keep.
 
 **Support desk.** The queue's rows each lead with how the desk handled the case (the resolver, the
 action agent, or a person in violet), then the reference and age, the customer's words on two lines, and

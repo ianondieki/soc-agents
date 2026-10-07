@@ -32,6 +32,7 @@ import { confirmCue } from "../lib/feedback";
 import { useRealtimeState } from "../realtime/RealtimeContext";
 import type { NocEvent } from "../realtime/renderers";
 import "./HitlInbox.css";
+import CountUp from "../components/CountUp";
 
 /**
  * The shared approval queue.
@@ -647,19 +648,27 @@ export default function HitlInbox({ session, tick, profile }: { session: any; ti
         <dl className="hitl-figures">
           <div className="hitl-figure">
             <dt>Waiting</dt>
-            <dd>{summary.waiting}</dd>
+            <dd>
+              <CountUp value={summary.waiting} format={(x) => String(Math.round(x))} ms={700} />
+            </dd>
           </div>
           <div className={"hitl-figure" + (figures.p1 ? " p1" : " zero")}>
             <dt>P1 critical</dt>
-            <dd>{figures.p1}</dd>
+            <dd>
+              <CountUp value={figures.p1} format={(x) => String(Math.round(x))} ms={700} />
+            </dd>
           </div>
           <div className={"hitl-figure" + (figures.p2 ? " p2" : " zero")}>
             <dt>P2 major</dt>
-            <dd>{figures.p2}</dd>
+            <dd>
+              <CountUp value={figures.p2} format={(x) => String(Math.round(x))} ms={700} />
+            </dd>
           </div>
           <div className={"hitl-figure" + (figures.unclaimed ? " hitl" : " zero")}>
             <dt>Nobody has claimed</dt>
-            <dd>{figures.unclaimed}</dd>
+            <dd>
+              <CountUp value={figures.unclaimed} format={(x) => String(Math.round(x))} ms={700} />
+            </dd>
           </div>
           {summary.oldest != null && (
             <div

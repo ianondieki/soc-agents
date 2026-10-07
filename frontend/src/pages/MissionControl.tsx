@@ -1,6 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api } from "../api";
+import CountUp from "../components/CountUp";
 import { isStorming, stormCounts, stormStopLine, type StormState } from "../lib/demo";
 import LiveRunPanel, { RunState } from "../components/LiveRunPanel";
 import { MPESA_TITLE, alarmSite, humanEnum, humanGraph, humanStatus, nodeLabel, ownerName, priorityTitle, regionName, runOutcomeOf, triggerWord } from "../lib/agents";
@@ -16,13 +17,23 @@ import { TICKER_MAX } from "../realtime/feed";
 import { useQuietMode, useSuppressedCount, useTickerEvents } from "../realtime/RealtimeContext";
 import { hitlSubject } from "../lib/hitlSubject";
 
-/** One figure of the strip. Colour only when the number is worth a look; zero stays quiet. */
+/** One figure of the strip. Colour only when the number is worth a look; zero stays quiet. The
+ *  figure rolls to a new value and its cell glows once when it changes (calm: it just changes). */
 function Kpi({ label, value, tone }: { label: string; value: number | undefined; tone?: "p1" | "p2" | "hitl" | "warn" }) {
   const n = typeof value === "number" ? value : null;
+  const prev = useRef<number | null>(n);
+  const [bump, setBump] = useState(0);
+  useEffect(() => {
+    if (n != null && prev.current != null && n !== prev.current) setBump((b) => b + 1);
+    prev.current = n;
+  }, [n]);
   return (
     <div className="kpi">
+      {bump > 0 && <span key={bump} className="kpi-bump" aria-hidden="true" />}
       <div className="label">{label}</div>
-      <div className={"value" + (n === 0 ? " zero" : tone && n ? ` ${tone}` : "")}>{n == null ? "—" : n}</div>
+      <div className={"value" + (n === 0 ? " zero" : tone && n ? ` ${tone}` : "")}>
+        {n == null ? "—" : <CountUp value={n} format={(x) => String(Math.round(x))} ms={700} />}
+      </div>
     </div>
   );
 }
