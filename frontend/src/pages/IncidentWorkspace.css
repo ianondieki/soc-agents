@@ -11,7 +11,7 @@
 /* ---- Head ---------------------------------------------------------------------------------- */
 .iw-head { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 10px 20px; margin-top: -4px; }
 .iw-head-main { min-width: 0; }
-.iw .iw-title { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin: 0; font-family: var(--font-display); font-stretch: var(--title-stretch); color: var(--text-strong); font-size: var(--fs-2xl); font-weight: 700; letter-spacing: -0.02em; line-height: 1.15; }
+.iw .iw-title { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin: 0; font-family: var(--font-display); font-variation-settings: var(--display-soft); font-stretch: var(--title-stretch); color: var(--text-strong); font-size: var(--fs-2xl); font-weight: 600; letter-spacing: -0.02em; line-height: 1.15; }
 .iw-title .pill { font-size: var(--fs-sm); }
 .iw-sub { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; margin: 8px 0 0; color: var(--muted); font-size: var(--fs-sm); }
 .iw-num { color: var(--text); font-family: var(--mono); font-size: var(--fs-sm); font-weight: 600; }
@@ -29,7 +29,7 @@
 .iw-figures { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 1px; margin: 0; overflow: hidden; border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--line); }
 .iw-figures > div { min-width: 0; padding: 12px 18px 13px; background: var(--surface); }
 .iw-figures dt { overflow: hidden; color: var(--muted); font-size: var(--fs-sm); font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
-.iw-figures dd { margin: 4px 0 0; font-family: var(--font-display); overflow: hidden; color: var(--text-strong); font-size: var(--fs-xl); font-weight: 700; line-height: 1.15; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
+.iw-figures dd { margin: 4px 0 0; font-family: var(--font-display); font-variation-settings: var(--display-soft); overflow: hidden; color: var(--text-strong); font-size: var(--fs-xl); font-weight: 600; line-height: 1.15; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
 .iw-figures dd.iw-fig-word { font-size: var(--fs-lg); line-height: 1.38; }
 .iw-figures dd.iw-fig-note { margin-top: 3px; font-family: var(--font); color: var(--muted); font-size: var(--fs-xs); font-weight: 400; letter-spacing: 0; }
 .iw-figures > .bad dd:not(.iw-fig-note) { color: var(--danger); }

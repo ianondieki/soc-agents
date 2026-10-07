@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#13161C" />
+    <meta name="theme-color" content="#10201A" />
     <title>Kenya NOC Mission Control</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <!-- Display mode before the first paint (lib/display.ts): ?display=projector (or =standard)
@@ -49,16 +49,15 @@
         }
         if (mode === "projector" || location.pathname.indexOf("/wallboard") === 0) theme = "night";
         d.setAttribute("data-theme", theme);
-        try { document.querySelector('meta[name="theme-color"]').setAttribute("content", theme === "day" ? "#F7F8FA" : "#13161C"); } catch (e) {}
+        try { document.querySelector('meta[name="theme-color"]').setAttribute("content", theme === "day" ? "#FBF9F5" : "#10201A"); } catch (e) {}
         if (quiet === "1" || (quiet === null && mode === "projector")) d.setAttribute("data-quiet", "on");
       })();
     </script>
-    <!-- Atkinson Hyperlegible Next (every weight, one variable file), its Mono and Archivo (the
-         titles and figures every page opens with): fetched with the stylesheet, not after it.
-         Newsreader, for quoted words only, loads when a page uses it. -->
-    <link rel="preload" href="/fonts/atkinson-hyperlegible-next-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin />
-    <link rel="preload" href="/fonts/atkinson-hyperlegible-mono-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin />
-    <link rel="preload" href="/fonts/archivo-latin-wdth-normal.woff2" as="font" type="font/woff2" crossorigin />
+    <!-- IBM Plex Sans (every weight and width, one variable file) and Fraunces (the titles and
+         figures every page opens with): fetched with the stylesheet, not after it. Plex Mono and
+         the Fraunces italic load when a page uses them. -->
+    <link rel="preload" href="/fonts/ibm-plex-sans-latin-wdth-normal.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="/fonts/fraunces-latin-full-normal.woff2" as="font" type="font/woff2" crossorigin />
     <!-- route-chunk-preload -->
   </head>
   <body>

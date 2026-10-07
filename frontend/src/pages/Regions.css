@@ -8,7 +8,7 @@
 .region-figures { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 1px; margin: 0 0 var(--s4); overflow: hidden; border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--line); }
 .region-figures > div { min-width: 0; padding: 12px 18px 14px; background: var(--surface); }
 .region-figures dt { overflow: hidden; color: var(--muted); font-size: var(--fs-sm); font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
-.region-figures dd { margin: 4px 0 0; font-family: var(--font-display); color: var(--text-strong); font-size: var(--fs-xl); font-weight: 700; line-height: 1.15; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.region-figures dd { margin: 4px 0 0; font-family: var(--font-display); font-variation-settings: var(--display-soft); color: var(--text-strong); font-size: var(--fs-xl); font-weight: 600; line-height: 1.15; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .region-figures dd a { display: inline-block; min-width: 24px; color: inherit; text-decoration: underline; text-decoration-color: var(--line-strong); text-underline-offset: 4px; }
 .region-figures dd a:hover { text-decoration-color: var(--accent); }
 .region-figures > .bad dd { color: var(--danger); }

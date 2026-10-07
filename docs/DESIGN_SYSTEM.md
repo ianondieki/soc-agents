@@ -1,18 +1,28 @@
-# Design system: "Shift light"
+# Design system: "Savanna"
 
 The console for a Kenyan NOC floor. This file is the single source for the look; `frontend/src/styles.css`
 implements it. Where a page stylesheet disagrees with this file, this file wins.
 
 ## The idea
 
-**The console follows the shift.** Day shift works in a lit office: crisp white sheets on a cool mineral
-desk, ink-black text. Night shift turns the lights down: graphite (not navy), the same signals glowing a
-step brighter. `Auto` (the default) picks Day from 06:00 to 18:59 EAT and Night otherwise; a person can pin
-Day or Night from the Display menu. The Wallboard is always Night (it hangs on a TV across the room).
+**Calm forest, warm paper, one place that moves.** The console borrows its manners from the best event
+and venture sites of the moment (sand paper, a forest-green ink, a mint glow, a soft serif for the big
+words, a dark forest band where the reasoning is shown) and keeps its own job: a NOC floor that reads in
+a glance. Day shift works on warm paper with white cards and forest ink. Night shift turns the lights
+down to deep forest, the same signals a step brighter, mint for the action colour. `Auto` (the default)
+picks Day from 06:00 to 18:59 EAT and Night otherwise; a person can pin Day or Night from the Display
+menu. The Wallboard is always Night (it hangs on a TV across the room).
 
-**Colour is a signal, never decoration.** P1 red, P2 orange, P3 yellow, P4 slate. Violet means "a person
-decides". Green done, amber watch, red broken. One action colour, Fibre-1 blue, for the primary action,
-the current selection and focus. Everything else is ink on paper (Day) or ink on graphite (Night).
+**Colour is a signal, never decoration.** P1 red, P2 orange, P3 yellow, P4 sage. Violet means "a person
+decides". Leaf green done, amber watch, red broken. One action colour, forest (Day) or mint (Night), for
+the primary action, the current selection and focus. The leaf green of "done" is a different hue from the
+forest action colour, so a done mark never reads as a button. Colour is never the only sign: a word, an
+icon or a shape always goes with it.
+
+**Life, on purpose.** A page may move on its own in one place, where the movement teaches something:
+the Workflow map replays the latest alarm along its twelve stops; the landing hero pulses along its
+fibres. Everything else moves only to answer a person. Anything that moves on its own has a Pause, and
+quiet mode or reduced motion draws its end state.
 
 **The memorable thing is the fibre ribbon.** A 12-fibre tube is colour-coded (TIA-598): blue, orange,
 green, brown, slate, white, red, black, yellow, violet, rose, aqua. Every field engineer on the floor
@@ -41,24 +51,25 @@ hard-codes them; the CSS variables are `--fibre-1` .. `--fibre-12`.
 
 ## Type
 
-Three voices, each with one job, self-hosted from `frontend/public/fonts` (latin subset, variable,
-`font-display: swap` with metric-adjusted fallbacks, OFL licences alongside):
+Three faces, each with one job, self-hosted from `frontend/public/fonts` (latin subset, variable where the
+face has axes, `font-display: swap` with metric-adjusted fallbacks, OFL licences alongside):
 
-- **Archivo** (weight 100 to 900, width 62 to 125 percent): the console's own voice, for page titles, panel
-  titles and figures. Its width axis does the work: a title sets a little wide (`--title-stretch`, 108
-  percent), a figure at its normal width, a site name on the Wallboard narrow (`--narrow-stretch`, 82
-  percent) so a long name like "Westlands Aggregation HUB" fits a tile at a size read from four metres.
-  The landing hero is Archivo at 94 percent and 800. Never running text. Token `--font-display`.
-- **Atkinson Hyperlegible Next** (200 to 800) for everything read: body, controls, labels, the ticker; and
-  **Atkinson Hyperlegible Mono** for ticket numbers, site ids, times and measurements. Atkinson was drawn
-  by the Braille Institute so that confusable glyphs stay distinct: `INC000001`, `SFC-RFT-HUB-NKR`, `0O`,
-  `1lI` read correctly on a tired night shift. Tokens `--font` and `--mono`.
-- **Newsreader** (200 to 800, optical size 6 to 72) only for words a person wrote: the customer's
-  complaint on the Support desk (with a hanging opening quote), a member of staff's reply, the
-  customers' words on an Approvals card, a person's work note on a ticket's timeline, and what the
-  customer wrote on the tracking page. A quote never reads as the system talking. Token `--font-human`.
+- **Fraunces** (weight 100 to 900, optical size 9 to 144, SOFT and WONK axes) for page titles, panel
+  titles, big figures and a person's own words. It is set soft (`--display-soft`: SOFT 50, WONK 0) so the
+  serifs round off like the references' headlines, and its optical size follows the size, so a 13px
+  quote and a 56px hero are both drawn for their size. Titles at 560, figures at 560 to 600, the landing
+  hero up to 620; never heavier, never running interface text. Its italic is kept for a person's words.
+  Tokens `--font-display` and `--font-human` (one face, two roles: a title, or a quote with its hanging
+  mark).
+- **IBM Plex Sans** (weight 100 to 700, width 85 to 100 percent) for everything read: body, controls,
+  labels, the ticker. Its narrow width (`--narrow-stretch`, 85 percent) sets a long site name on a
+  Wallboard tile and the route labels on a phone. The Wallboard sets its titles in Plex Sans too
+  (`.wallboard { --font-display: var(--font) }`): a serif reads worse from four metres. Token `--font`.
+- **IBM Plex Mono** (400, 500, 600) for ticket numbers, site ids, times, measurements and an agent's raw
+  output. Plex keeps `0O` and `1lI` apart, so `INC000001` and `SFC-RFT-HUB-NKR` read correctly on a tired
+  night shift. Token `--mono`.
 
-Archivo and Atkinson are preloaded by `index.html`; Newsreader loads only on the pages that quote people.
+Plex Sans and Fraunces are preloaded by `index.html`.
 
 Root size 16px. Product scale (fixed rem, ratio about 1.2):
 
@@ -68,16 +79,15 @@ Root size 16px. Product scale (fixed rem, ratio about 1.2):
 | `--fs-sm` | 13px | dense UI, chips, sidebar items |
 | `--fs-md` | 14px | body in panels, table cells |
 | `--fs-base` | 16px | reading text, form fields, a person's note |
-| `--fs-lg` | 18px | panel titles (Archivo 620) |
-| `--fs-xl` | 24px | page titles (Archivo 700 at 108 percent, tracking -0.012em), strip figures |
-| `--fs-2xl` | 32px | big figures (Archivo 680) |
-| `--fs-display` | clamp(2.75rem, 5.6vw, 5.25rem) | landing hero only (Archivo 800 at 94 percent, tracking -0.018em) |
+| `--fs-lg` | 18px | panel titles (Fraunces 560) |
+| `--fs-xl` | 24px | page titles (Fraunces 560, tracking -0.015em), strip figures |
+| `--fs-2xl` | 32px | big figures (Fraunces 560) |
+| `--fs-display` | clamp(2.75rem, 5.6vw, 5.25rem) | landing hero only |
 
-Weights: 400 body, 500 UI labels, 600 emphasis, 620 panel titles, 700 page titles and figures, 800 landing
-display; Newsreader quotes at 420. Archivo keeps its tracking above -0.02em at display sizes so word
-spaces stay open. Numerals in tables and figures are `tabular-nums`. Sentence case everywhere. No all-caps
-labels, no eyebrow kickers above headings, no middle-dot meta strings (use commas or separate elements),
-no arrows appended to button text.
+Numerals in tables and figures are `tabular-nums`. Sentence case everywhere. One eyebrow at most per page
+(`.eyebrow`: Plex Mono 11px, tracked, uppercase, forest or mint, with a dot), above the page title of a
+page that teaches (the Workflow map, the landing sections), never above a panel. No middle-dot meta
+strings (use commas or separate elements), no arrows appended to button text.
 
 ## Colour tokens
 
@@ -85,32 +95,36 @@ Semantic names only; a page never uses a raw hex. Both themes define every token
 
 | Token | Day | Night | Role |
 |---|---|---|---|
-| `--bg` | `#EEF1F4` | `#101318` | page canvas |
-| `--surface` | `#FFFFFF` | `#171B22` | panels, cards, tables |
-| `--surface-nav` | `#F7F8FA` | `#13161C` | sidebar, top bar |
-| `--surface-raised` | `#F2F4F7` | `#1F242D` | hover rows, inputs, segmented controls |
-| `--surface-sunk` | `#E6EAEF` | `#0C0F13` | wells, code, skeletons |
-| `--line` | `#DDE2E8` | `#272D37` | hairlines |
-| `--line-strong` | `#C5CCD6` | `#363E4B` | control borders |
-| `--text-strong` | `#0B1118` | `#F3F6FA` | titles, figures, names |
-| `--text` | `#2A323D` | `#D9E0E9` | what is read |
-| `--muted` | `#4E5867` | `#A6B0BF` | labels, leads |
-| `--muted-dim` | `#5E6876` | `#8C97A8` | times, hints (still AA) |
-| `--accent` | `#2D52D6` | `#7C9CFF` | primary action, selection, focus |
-| `--accent-ink` | `#FFFFFF` | `#0A1440` | text on an accent fill |
+| `--bg` | `#F5F2EB` | `#0E1A16` | page canvas (warm paper / deep forest) |
+| `--surface` | `#FFFFFF` | `#13231E` | panels, cards, tables |
+| `--surface-nav` | `#FBF9F5` | `#10201A` | sidebar, top bar |
+| `--surface-raised` | `#F7F4EE` | `#1A2E27` | hover rows, inputs, segmented controls |
+| `--surface-sunk` | `#ECE7DC` | `#0A1411` | wells, code, skeletons |
+| `--line` | `#E6E0D3` | `#22372F` | hairlines |
+| `--line-strong` | `#CFC8B8` | `#324B41` | control borders |
+| `--text-strong` | `#14191A` | `#F1F5F2` | titles, figures, names |
+| `--text` | `#2B3532` | `#D5DED9` | what is read |
+| `--muted` | `#525D59` | `#A3B5AD` | labels, leads |
+| `--muted-dim` | `#5F6A66` | `#8BA096` | times, hints (still AA) |
+| `--accent` | `#1E5A45` | `#7FD1AC` | primary action, selection, focus |
+| `--accent-ink` | `#FFFFFF` | `#0B1A14` | text on an accent fill |
 | `--hitl` | `#6E35C4` | `#C9A2FF` | a person decides |
-| `--ok` | `#0B7444` | `#45D49A` | done |
+| `--ok` | `#3B7410` | `#A6E36F` | done (leaf, not forest) |
 | `--warn` | `#8A5600` | `#F2BE55` | watch |
 | `--danger` | `#C2223B` | `#FF6B7D` | broken |
 | `--p1` / `--p1-ink` | `#D91E3E` / `#FFFFFF` | `#FF4D6A` / `#1A0005` | priority pills |
 | `--p2` / `--p2-ink` | `#E07000` / `#1A0F00` | `#FF9F1A` / `#1A0F00` | |
 | `--p3` / `--p3-ink` | `#E8C200` / `#1A1500` | `#F0D000` / `#1A1500` | |
-| `--p4` / `--p4-ink` | `#7A889C` / `#0A1220` | `#8FA0B8` / `#0A1220` | |
+| `--p4` / `--p4-ink` | `#7A8B85` / `#0A1612` | `#8FA9A0` / `#0A1612` | |
+
+**The ink band** (`--band`, `--band-raised`, `--band-line`, `--band-text`, `--band-strong`,
+`--band-muted`, `--band-accent`, `--band-hitl`, `--band-danger`): a dark forest panel that reads the same
+in both themes, for the place a page shows its reasoning (the Workflow map's reasoning path). Day sets it
+at `#0F2A21` on the paper; Night sinks it to `#0A1512` below the page and edges it with a mint hairline.
+Every text step on it is at least 6:1.
 
 Text is four clear steps, each one below the last, so a title stands above its paragraph by colour as
-well as size: in Day a softer ink for reading under a near-black for titles; in Night nothing is pure
-white (it blooms on graphite in a dark room). The lowest step is still 4.98:1 on every Day surface and
-5.27:1 on every Night one.
+well as size. The lowest step is still AA on every surface of its theme.
 
 Each state colour also has `-soft` (tinted fill, about 10 to 14 percent), `-line` (tinted hairline) and
 `-text` (text on its soft fill) variants, derived per theme with `color-mix(in oklab, ...)`. Every pair
@@ -120,22 +134,28 @@ stay as aliases of the new ones so nothing breaks; new code uses the new names.
 
 The theme is `data-theme="day" | "night"` on `<html>`, set before first paint by an inline script in
 `index.html` (reads `localStorage["noc.theme"]`: `auto` | `day` | `night`; auto resolves by EAT hour), and
-re-evaluated every minute while on auto. `color-scheme` follows the theme so native controls and
-scrollbars match.
+re-evaluated every minute while on auto. `color-scheme` and the `theme-color` meta follow the theme so
+native controls, scrollbars and the phone's browser bar match.
 
 ## Shape, depth, motion
 
-- Radii by hierarchy, not one radius everywhere: 14px page-level panels, 10px inner blocks and inputs,
-  8px buttons, 999px chips and pills only.
-- Panels are a hairline step above the canvas: no shadow at rest. Shadows only on things that float
-  (menus, flyouts, the phone menu, toasts): `0 12px 32px -12px` with a soft blur, tinted from the theme.
-- Motion answers a person: 160 to 220ms, `cubic-bezier(0.2, 0.8, 0.2, 1)`. Disclosure opens animate
-  `grid-template-rows: 0fr to 1fr`. The landing hero has the one authored moment (the pulse along the
-  fibres). `prefers-reduced-motion` and Quiet mode stop all of it.
+- Radii by hierarchy: 16px page-level panels and cards, 12px inner blocks, 10px buttons and inputs,
+  999px chips and pills only.
+- Depth is soft and tinted: a card rests on `--shadow-card` (a 1px contact shadow and a wide, faint one,
+  tinted forest in Day), a lifted thing on `--shadow-lift`, a menu or toast on `--shadow-float`. The
+  primary button carries a small shadow and rises 1px on hover.
+- The top bar is frosted (the surface at 84 percent with a blur), so the page passes under it.
+- Behind each page a very low mint and leaf glow drifts over 22 seconds (`.content::before`); quiet mode
+  and reduced motion hold it still.
+- Motion that answers a person: 160 to 220ms, `cubic-bezier(0.2, 0.8, 0.2, 1)`; a stop that arrives
+  overshoots a little (`--ease-spring`). Disclosure opens animate `grid-template-rows: 0fr to 1fr`.
+- Motion that teaches, once per page at most: the Workflow map's replay, the landing hero's pulse,
+  figures that count up once on arrival (`useCountUp`), a tape of reasons that types itself out when it
+  comes into view (`useSeenOnce`). `frontend/src/lib/motion.ts` holds these and `useCalm()`, the one
+  switch (quiet mode or reduced motion) that turns each into its end state.
 - Motion that tells a person something happened has one vocabulary (see Alerts below): a ring that grows
   out and fades is an alarm; a pop and a ring in a hop's own colour is an agent step landing; an arc going
-  round is an agent working. Words never blink: an opacity pulse left them unreadable half the time, so
-  nothing fades text.
+  round is an agent working. Words never blink: nothing fades text that is meant to be read.
 - Browser surfaces are themed: `::selection`, caret, scrollbars, focus ring (2px accent, 2px offset),
   link underline offset.
 
@@ -241,16 +261,16 @@ dial, whose sweep is the page's one motion. Under the dial, a key in the dial's 
 path, the alarms each agent has worked, what waits for a person), then the latest alarm as four facts on a
 hairline (where, the ticket, when, how long the agents took) and its state in a sentence with the way to
 the ticket. "What changes for the floor" is a four-column table: the step with its fibre strand, the work
-by hand (quiet), the work with the agents, and what is on record here, its figure in Archivo with its
+by hand (quiet), the work with the agents, and what is on record here, its figure in Fraunces with its
 words under it. The four desks are windows onto the product: the console's own panel, the desk's mark
 and name, one live figure, what it holds in the product's own marks (the newest tickets with their
 priority pills, the waiting messages on a violet rule, the newest ledger row, the newest complaints in
-the customers' own words in Newsreader), and "Open ..." at the foot. The autonomy ladder is three rungs
+the customers' own words in Fraunces), and "Open ..." at the foot. The autonomy ladder is three rungs
 on one track, lit to this deployment's rung; "Never automated, at any level" is a violet panel with each
-line locked. The closing line echoes the hero in Archivo 800. Every figure comes from the API; a call
+line locked. The closing line echoes the hero in Fraunces. Every figure comes from the API; a call
 that fails says so in a sentence with Retry, and a lane that is off says so once.
 
-**The Showcase** (for the people who decide). A poster headline in Archivo 800 at 94 percent ("filled-in"
+**The Showcase** (for the people who decide). A poster headline in Fraunces ("filled-in"
 never breaks at its hyphen) and two sentences, beside three figures (analyst work taken over, tickets
 opened, decided by a person), each named above, set in the display face and explained in one line under
 it, with the window switch over them only when it would change something. Then the newest alarm on the
@@ -300,7 +320,7 @@ ledger" gives this shift's workbook.
 
 **The Agent observatory.** Five figures (agents, steps run, steps failed, waiting for a person, alarm to
 ticket median), then the twelve agents as one roster in pipeline order beside the live and recent runs
-(kept in view as the page scrolls). Each row: the agent's fibre marks, its name in Archivo and where it
+(kept in view as the page scrolls). Each row: the agent's fibre marks, its name in Fraunces and where it
 sits ("Steps 1 and 2: Ingest, Correlate"), then the same four numbers in the same columns so the twelve
 compare at a glance: steps with a bar on one scale, the average time, failures (red when not zero), the
 last step. Under them, across the row: the mission, its guard (a shield: "An error stops the run" or
@@ -311,13 +331,21 @@ popping, when its agent works a live step ("just worked"), and says "working now
 is at its step; quiet mode and reduced motion keep the words and drop the glow. On a phone each agent
 is a block with its four numbers as a labelled strip.
 
-**The Workflow map.** Four figures (steps per alarm, minutes by hand per alarm, the agents' median alarm
-to ticket, alarms through so far), then the twelve steps on one line in six phases (take the alarm in,
-work out what it is, open and assign the ticket, a person decides, tell people and keep the record,
-follow up). Step numbers are neutral rings: nothing is lit, because a lit step would show work that
-never ran. Each step names its agent behind its fibre colour, says what it does, and gives the minutes
-by hand, the runs and the average. The approval step is the one tinted violet, with what the autonomy
-level lets through on its own.
+**The Workflow map.** One page that teaches the lifecycle and shows it alive, in four parts. The route:
+the twelve steps as numbered stops on one line, in six phases with a bracket under each; it replays the
+latest alarm's real path (its ticket, site, priority and status above it), the line filling in up to the
+stop it is at, a halo on that stop, and the agent's own reason in a caption under it. It holds at
+Approval while that alarm waits for a person ("waits for a person" over the stop, the caption violet),
+then goes on; a stop's badge says its status as a shape (check, person, cross, dash), and every status is
+the run's own, so nothing lights that never ran. A live step frame rings its stop with "live". Pause,
+Replay and "Open the ticket" sit beside it; quiet mode and reduced motion draw the end state. On a phone
+the line wraps after Assign, six stops a row, Approval first in the second row. Then four figures on
+hairlines with a short accent rule, counting up once. Then the six phases as cards, two across (an icon,
+the phase in Fraunces, "Steps 3-4"), each step with its number, its agent behind its fibre colour, what it
+does, and its minutes by hand, runs and average; Approval's card is the violet one. Last, the reasoning
+path on the ink band: a picker for any recent alarm, its ticket, priority and agent time, and its steps as
+a tape (status word with its icon, the agent's reason, its raw output in mono after an arrow) that types
+itself out when it comes into view.
 
 **Problems.** Four figures (open problems, sites, faults behind them, the commonest cause), then one
 card per problem: its number and state (open amber, monitoring blue), the site by name with its code

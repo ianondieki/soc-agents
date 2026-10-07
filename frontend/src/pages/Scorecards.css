@@ -11,7 +11,7 @@
 .sc-figures { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 1px; margin: 0 0 var(--s4); overflow: hidden; border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--line); }
 .sc-figures > div { min-width: 0; padding: 12px 18px 14px; background: var(--surface); }
 .sc-figures dt { overflow: hidden; color: var(--muted); font-size: var(--fs-sm); font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
-.sc-figures dd { margin: 4px 0 0; font-family: var(--font-display); color: var(--text-strong); font-size: var(--fs-xl); font-weight: 700; line-height: 1.15; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.sc-figures dd { margin: 4px 0 0; font-family: var(--font-display); font-variation-settings: var(--display-soft); color: var(--text-strong); font-size: var(--fs-xl); font-weight: 600; line-height: 1.15; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .sc-figures dd.sc-figure-word { font-size: var(--fs-lg); line-height: 1.6; }
 .sc-figures > .ok dd { color: var(--ok); }
 .sc-figures > .hitl dd { color: var(--hitl-text); }
@@ -100,7 +100,7 @@
 .scd-panel { padding: 22px 24px 24px; }
 .scd-head { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 10px 18px; }
 .scd-head-main { min-width: 0; }
-.scd .scd-title { margin: 0; font-family: var(--font-display); color: var(--text-strong); font-size: var(--fs-lg); font-weight: 700; letter-spacing: -0.01em; }
+.scd .scd-title { margin: 0; font-family: var(--font-display); font-variation-settings: var(--display-soft); color: var(--text-strong); font-size: var(--fs-lg); font-weight: 600; letter-spacing: -0.01em; }
 .scd-sub { display: flex; flex-wrap: wrap; gap: 0 12px; margin: 3px 0 0; color: var(--muted); font-size: var(--fs-sm); }
 .scd-state { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; color: var(--muted); font-size: var(--fs-sm); }
 .scd-tag { color: var(--muted); font-size: var(--fs-xs); }

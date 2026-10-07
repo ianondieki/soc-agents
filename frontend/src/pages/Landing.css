@@ -271,11 +271,11 @@ html[data-quiet="on"] .ld-live.live .ld-live-dot::after { animation: none; }
   /* Archivo a touch narrow and heavy: a poster line, five short lines at desktop widths, the
      display size a step below the token's cap. Its tracking is kept above -0.02em so the word
      spaces stay open at 72 px. */
-  font-family: var(--font-display);
+  font-family: var(--font-display); font-variation-settings: var(--display-soft);
   font-size: min(var(--fs-display), 4.5rem);
   font-stretch: 94%;
   color: var(--text-strong);
-  font-weight: 800;
+  font-weight: 600;
   line-height: 1;
   letter-spacing: -0.018em;
   text-wrap: balance;
@@ -379,11 +379,11 @@ html[data-quiet="on"] .ld-dial * { animation: none !important; }
 .ld-section-head .ld-section-lead { padding-top: 6px; }
 .ld-section h2 {
   max-width: 20ch;
-  font-family: var(--font-display);
+  font-family: var(--font-display); font-variation-settings: var(--display-soft);
   font-stretch: var(--title-stretch);
   color: var(--text-strong);
   font-size: var(--fs-2xl);
-  font-weight: 700;
+  font-weight: 600;
   line-height: 1.15;
   letter-spacing: -0.02em;
   text-wrap: balance;
@@ -408,7 +408,7 @@ html[data-quiet="on"] .ld-dial * { animation: none !important; }
 .ld-moments .ld-m-step { width: 160px; }
 .ld-moments .ld-m-before { width: 27%; }
 .ld-moments .ld-m-fig { width: 230px; }
-.ld-m-name { display: flex; align-items: flex-start; gap: 12px; color: var(--text-strong); font-family: var(--font-display); font-size: var(--fs-lg); font-weight: 620; line-height: 1.25; }
+.ld-m-name { display: flex; align-items: flex-start; gap: 12px; color: var(--text-strong); font-family: var(--font-display); font-variation-settings: var(--display-soft); font-size: var(--fs-lg); font-weight: 560; line-height: 1.25; }
 .ld-m-strand {
   flex: none;
   width: 3px;
@@ -420,7 +420,7 @@ html[data-quiet="on"] .ld-dial * { animation: none !important; }
 .ld-m-strand.outlined { box-shadow: 0 0 0 1px var(--fibre-outline); }
 .ld-m-before { color: var(--muted); font-size: var(--fs-md); line-height: 1.5; text-wrap: pretty; }
 .ld-m-now { color: var(--text-strong); font-size: var(--fs-base); line-height: 1.5; text-wrap: pretty; }
-.ld-m-value { display: block; color: var(--text-strong); font-family: var(--font-display); font-size: var(--fs-2xl); font-weight: 700; line-height: 1; letter-spacing: -0.015em; font-variant-numeric: tabular-nums; }
+.ld-m-value { display: block; color: var(--text-strong); font-family: var(--font-display); font-variation-settings: var(--display-soft); font-size: var(--fs-2xl); font-weight: 600; line-height: 1; letter-spacing: -0.015em; font-variant-numeric: tabular-nums; }
 .ld-m-words { display: block; margin-top: 6px; color: var(--muted); font-size: var(--fs-sm); line-height: 1.4; text-wrap: pretty; }
 .ld-m-words.none { margin-top: 0; color: var(--muted-dim); }
 .ld-m-also { display: block; margin-top: 4px; color: var(--hitl); font-size: var(--fs-sm); font-weight: 600; }
@@ -444,12 +444,12 @@ html[data-quiet="on"] .ld-dial * { animation: none !important; }
 .ld-desk-head { display: flex; align-items: center; gap: 12px; }
 .ld-desk-icon { display: grid; flex: none; place-items: center; width: 34px; height: 34px; border-radius: 10px; background: var(--surface-raised); color: var(--text-strong); }
 .ld-desk.approvals .ld-desk-icon { background: var(--hitl-soft); color: var(--hitl); }
-.ld-desk h3 { color: var(--text-strong); font-family: var(--font-display); font-size: 20px; font-weight: 650; letter-spacing: -0.01em; line-height: 1.2; }
+.ld-desk h3 { color: var(--text-strong); font-family: var(--font-display); font-variation-settings: var(--display-soft); font-size: 20px; font-weight: 560; letter-spacing: -0.01em; line-height: 1.2; }
 .ld-desk .ld-new { padding: 2px 9px; border: 1px solid var(--accent-line); border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-size: var(--fs-xs); font-weight: 600; line-height: 1.4; }
 .ld-desk-sub { max-width: 56ch; margin-top: 10px; color: var(--muted); font-size: var(--fs-md); line-height: 1.5; text-wrap: pretty; }
 .ld-desk-figure { min-height: 2.6rem; margin-top: 18px; }
 .ld-fig { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; color: var(--text); font-size: var(--fs-md); }
-.ld-fig b { color: var(--text-strong); font-family: var(--font-display); font-size: var(--fs-2xl); font-weight: 700; line-height: 1.1; letter-spacing: -0.015em; font-variant-numeric: tabular-nums; }
+.ld-fig b { color: var(--text-strong); font-family: var(--font-display); font-variation-settings: var(--display-soft); font-size: var(--fs-2xl); font-weight: 600; line-height: 1.1; letter-spacing: -0.015em; font-variant-numeric: tabular-nums; }
 .ld-fig.hitl b { color: var(--hitl); }
 .ld-fig.hitl span { color: var(--hitl); font-weight: 600; }
 .ld-desk-live { flex: 1 1 auto; margin-top: 14px; }
@@ -549,12 +549,12 @@ html[data-quiet="on"] .ld-dial * { animation: none !important; }
 
 /* ---------------------------------------------------------------- the evals */
 .ld-evals-grid { display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); gap: 44px 72px; margin-top: 40px; }
-.ld-evals-col h3 { color: var(--text-strong); font-family: var(--font-display); font-size: 20px; font-weight: 650; letter-spacing: -0.01em; }
+.ld-evals-col h3 { color: var(--text-strong); font-family: var(--font-display); font-variation-settings: var(--display-soft); font-size: 20px; font-weight: 560; letter-spacing: -0.01em; }
 .ld-evals-sub { max-width: 52ch; margin-top: 6px; color: var(--muted); font-size: var(--fs-md); line-height: 1.5; text-wrap: pretty; }
 .ld-gates { list-style: none; margin: 24px 0 0; padding: 0; display: grid; gap: 22px; }
 .ld-gate-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
 .ld-gate-name { color: var(--text-strong); font-weight: 600; }
-.ld-gate-val { margin-left: auto; color: var(--text-strong); font-family: var(--font-display); font-size: var(--fs-xl); font-weight: 700; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }
+.ld-gate-val { margin-left: auto; color: var(--text-strong); font-family: var(--font-display); font-variation-settings: var(--display-soft); font-size: var(--fs-xl); font-weight: 600; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }
 .ld-gate-verdict { font-size: var(--fs-sm); font-weight: 600; }
 .ld-gate-verdict.ok { color: var(--ok); }
 .ld-gate-verdict.bad { color: var(--danger); }
@@ -577,10 +577,10 @@ html[data-quiet="on"] .ld-dial * { animation: none !important; }
 .ld-saved-value {
   display: block;
   color: var(--text-strong);
-  font-family: var(--font-display);
+  font-family: var(--font-display); font-variation-settings: var(--display-soft);
   font-size: clamp(2.5rem, 4.4vw, 4rem);
   font-stretch: 94%;
-  font-weight: 800;
+  font-weight: 600;
   line-height: 1;
   letter-spacing: -0.02em;
   font-variant-numeric: tabular-nums;
@@ -592,7 +592,7 @@ html[data-quiet="on"] .ld-dial * { animation: none !important; }
 
 /* ------------------------------------------------------ where people decide */
 .ld-decide-grid { display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); gap: 44px 56px; margin-top: 40px; align-items: start; }
-.ld-decide-grid h3 { color: var(--text-strong); font-family: var(--font-display); font-size: 20px; font-weight: 650; letter-spacing: -0.01em; }
+.ld-decide-grid h3 { color: var(--text-strong); font-family: var(--font-display); font-variation-settings: var(--display-soft); font-size: 20px; font-weight: 560; letter-spacing: -0.01em; }
 /* The ladder: three rungs on one track, lit in the action colour up to this deployment's rung,
    whose dot is ringed and named. */
 .ld-ladder { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin: 24px 0 0; padding: 0; list-style: none; }
@@ -605,7 +605,7 @@ html[data-quiet="on"] .ld-dial * { animation: none !important; }
 .ld-rung-dot { position: absolute; left: 0; top: 0; width: 16px; height: 16px; border: 2px solid var(--line-strong); border-radius: 50%; background: var(--bg); }
 .ld-rung.below .ld-rung-dot { border-color: var(--accent); background: var(--accent); }
 .ld-rung.current .ld-rung-dot { border-color: var(--accent); background: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft); }
-.ld-rung strong { display: block; margin-bottom: 6px; color: var(--muted); font-family: var(--font-display); font-size: var(--fs-lg); font-weight: 620; }
+.ld-rung strong { display: block; margin-bottom: 6px; color: var(--muted); font-family: var(--font-display); font-variation-settings: var(--display-soft); font-size: var(--fs-lg); font-weight: 560; }
 .ld-rung.current { color: var(--text); }
 .ld-rung.current strong { color: var(--text-strong); }
 .ld-rung-text { display: block; }
@@ -621,7 +621,7 @@ html[data-quiet="on"] .ld-dial * { animation: none !important; }
 .ld-foot { margin-top: 112px; border-top: 1px solid var(--line); padding: 56px 0 40px; }
 .ld-foot-cta { display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); gap: 24px var(--ld-gap); align-items: center; }
 /* The closing line echoes the hero: Archivo heavy and a touch narrow, a step smaller. */
-.ld-foot h2 { max-width: 16ch; font-family: var(--font-display); font-stretch: 94%; color: var(--text-strong); font-size: clamp(2.25rem, 4vw, 3.25rem); font-weight: 800; line-height: 1.02; letter-spacing: -0.018em; text-wrap: balance; }
+.ld-foot h2 { max-width: 16ch; font-family: var(--font-display); font-variation-settings: var(--display-soft); font-stretch: 94%; color: var(--text-strong); font-size: clamp(2.25rem, 4vw, 3.25rem); font-weight: 600; line-height: 1.02; letter-spacing: -0.018em; text-wrap: balance; }
 .ld-foot h2 .people { color: var(--hitl); }
 .ld-foot-cta p { max-width: 50ch; margin-top: 12px; color: var(--muted); font-size: var(--fs-base); line-height: 1.5; text-wrap: pretty; }
 .ld-foot-cta .ld-actions { margin-top: 0; justify-content: flex-end; }

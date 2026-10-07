@@ -1,78 +1,284 @@
-/* The Workflow map (pages/WorkflowMap.tsx): four figures, then the twelve steps on one line in
- * five phases. Step numbers are neutral rings (nothing is lit: a lit step would show work that
- * never ran); the agent's fibre colour is a small identity mark beside its name. The approval
- * step, where a person decides, is the one tinted violet. */
+/* The Workflow map (pages/WorkflowMap.tsx), in four parts:
+ *
+ * 1. The route: twelve numbered stops on one line, in six phases with a bracket under each. The
+ *    line fills in forest (mint at night) up to the stop the replay is at; that stop wears a halo.
+ *    A stop's ring and its small badge say its status (a check, a person, a cross, a dash), so the
+ *    colour is never alone. Approval's column is tinted violet: the one place a person decides.
+ * 2. Four figures on hairlines, each with a short accent rule.
+ * 3. The phases as cards, two across; each card lists its steps.
+ * 4. The reasoning path: a dark forest band with the alarm on the left and its steps as a tape.
+ *
+ * Fibre colours are identity marks only (a small dot beside a name). */
 
-.wm-figures { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; margin: 0 0 var(--s4); overflow: hidden; border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--line); }
-.wm-figures > div { min-width: 0; padding: 12px 18px 14px; background: var(--surface); }
-.wm-figures dt { overflow: hidden; color: var(--muted); font-size: var(--fs-sm); font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
-.wm-figures dd { margin: 4px 0 0; font-family: var(--font-display); color: var(--text-strong); font-size: var(--fs-xl); font-weight: 700; line-height: 1.15; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.wm { --wm-dot: 40px; --wm-tag: 24px; }
 
-.wm-panel { padding: 24px 28px; }
-.wm-phases, .wm-steps { margin: 0; padding: 0; list-style: none; }
-.wm-phase + .wm-phase { margin-top: 18px; }
-/* A phase's name sits on the line, level with the step numbers. */
-/* Scoped under .wm: the panel's own h2 rule (a section title) must not size these. */
-.wm .wm-phase-title { position: relative; margin: 0 0 6px 52px; color: var(--muted); font-size: var(--fs-sm); font-weight: 600; letter-spacing: 0; line-height: 1.4; }
-/* The line carries on past each phase's name (and the gap above it), so it is one line. */
-.wm-phase-title::before { content: ""; position: absolute; left: -35px; top: -18px; bottom: -6px; width: 2px; background: var(--line-strong); }
-.wm-phase:first-child .wm-phase-title::before { display: none; }
+/* ---- 1. The route -------------------------------------------------------------------------- */
 
-/* One step: its number on the line, what it is and does, then three figures. */
-.wm-step { position: relative; display: grid; grid-template-columns: 36px minmax(0, 1fr) auto; align-items: start; column-gap: 16px; padding: 12px 16px 12px 0; }
-/* The line through every number, from the first step to the last. */
-.wm-step::before { content: ""; position: absolute; left: 17px; top: 0; bottom: 0; width: 2px; background: var(--line-strong); }
-.wm-phase:first-child .wm-step:first-child::before { top: 30px; }
-.wm-phase:last-child .wm-step:last-child::before { bottom: auto; height: 30px; }
-.wm-n {
+.wm .wm-route {
+  position: relative;
+  margin: 0 0 var(--s5);
+  padding: 24px 28px 22px;
+  overflow: hidden;
+  background:
+    radial-gradient(70% 120% at 0% 0%, var(--accent-faint), transparent 60%),
+    radial-gradient(60% 100% at 100% 100%, color-mix(in oklab, var(--ok) 7%, transparent), transparent 65%),
+    var(--surface);
+}
+.wm-route-head { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 12px 24px; margin-bottom: 22px; }
+.wm-route-id { min-width: 0; flex: 1 1 22rem; }
+.wm-kicker { display: inline-flex; align-items: center; gap: 8px; margin: 0 0 4px; color: var(--accent); font-size: var(--fs-sm); font-weight: 600; }
+/* A breathing dot while the replay runs: the page is alive, not a diagram. */
+.wm-kicker::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: currentColor; box-shadow: 0 0 0 0 var(--accent-line); animation: wmBreathe 2.4s ease-out infinite; }
+@keyframes wmBreathe {
+  0% { box-shadow: 0 0 0 0 var(--accent-line); }
+  70%, 100% { box-shadow: 0 0 0 8px transparent; }
+}
+.wm .wm-route h2 { margin: 0; font-size: clamp(1.375rem, 1.1rem + 0.8vw, 1.75rem); font-weight: 560; letter-spacing: -0.015em; line-height: 1.15; }
+.wm-route-site { color: var(--muted); font-weight: 420; }
+.wm-route-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin: 10px 0 0; color: var(--muted); font-size: var(--fs-sm); }
+.wm-state { color: var(--text-strong); font-weight: 600; }
+.wm-state.hitl { color: var(--hitl-text); }
+.wm-state.danger { color: var(--danger-text); }
+.wm-route-ctrl { display: flex; flex-wrap: wrap; gap: 8px; }
+.wm-route-ctrl .btn { gap: 6px; }
+
+.wm-line-wrap { position: relative; }
+.wm-line, .wm-seg-nodes { margin: 0; padding: 0; list-style: none; }
+.wm-line { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); row-gap: 18px; }
+.wm-seg { grid-column: span var(--n); min-width: 0; padding-bottom: 2px; border-radius: var(--r-md); }
+/* Approval: the column where a person decides. */
+.wm-seg.human { background: linear-gradient(180deg, transparent 0, var(--hitl-soft) 40%, var(--hitl-soft) 100%); }
+.wm-seg-nodes { display: grid; grid-template-columns: repeat(var(--n), minmax(0, 1fr)); }
+.wm .wm-seg-title { margin: 12px 8px 0; padding-top: 8px; border-top: 1px solid var(--line-strong); color: var(--muted); font-size: var(--fs-xs); font-weight: 600; line-height: 1.3; text-align: center; text-wrap: balance; }
+.wm .wm-seg.human .wm-seg-title { border-top-color: var(--hitl-line); color: var(--hitl-text); }
+
+.wm-node { position: relative; display: flex; flex-direction: column; align-items: center; min-width: 0; padding-top: var(--wm-tag); }
+/* The line through the stops: each stop draws its own stretch, lit up to its centre while the
+   replay is on it and all the way once it has passed. */
+.wm-node::before {
+  content: "";
+  position: absolute;
+  top: calc(var(--wm-tag) + var(--wm-dot) / 2 - 1.5px);
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: linear-gradient(var(--accent), var(--accent)) no-repeat 0 0 / calc(var(--fill, 0) * 100%) 100%, var(--line-strong);
+  transition: background-size 320ms linear;
+}
+.wm-node.first::before { left: 50%; background-size: max(0%, calc((var(--fill, 0) - 0.5) * 200%)) 100%; }
+.wm-node.last::before { right: 50%; background-size: min(100%, calc(var(--fill, 0) * 200%)) 100%; }
+.wm-node.is-here::before { transition-delay: 160ms; }
+.wm-line.is-reset .wm-node::before, .wm-line.is-reset .wm-dot { transition: none; }
+
+.wm-dot {
   position: relative;
   z-index: 1;
   display: grid;
   place-items: center;
-  width: 36px;
-  height: 36px;
+  width: var(--wm-dot);
+  height: var(--wm-dot);
   border: 2px solid var(--line-strong);
   border-radius: 50%;
   background: var(--surface);
-  color: var(--text-strong);
+  color: var(--muted);
   font-family: var(--mono);
   font-size: var(--fs-sm);
   font-weight: 600;
+  text-decoration: none;
+  transition: transform 360ms var(--ease-spring), border-color 240ms var(--ease), background-color 240ms var(--ease), color 240ms var(--ease), box-shadow 240ms var(--ease);
 }
-.wm-main { min-width: 0; padding-top: 3px; }
-.wm-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 14px; }
-.wm-head h3 { margin: 0; color: var(--text-strong); font-size: var(--fs-base); font-weight: 700; letter-spacing: -0.01em; }
-.wm-agent { display: inline-flex; align-items: center; gap: 7px; color: var(--muted); font-size: var(--fs-sm); }
-.wm-fibre { flex: none; width: 10px; height: 10px; border-radius: 50%; }
+.wm-dot:hover { transform: translateY(-2px); border-color: var(--accent); color: var(--text-strong); }
+.wm-node.t-done .wm-dot { border-color: var(--accent); background: color-mix(in oklab, var(--accent) 12%, var(--surface)); color: var(--accent); }
+.wm-node.t-held .wm-dot { border-color: var(--hitl); background: color-mix(in oklab, var(--hitl) 14%, var(--surface)); color: var(--hitl-text); }
+.wm-node.t-failed .wm-dot { border-color: var(--danger); background: color-mix(in oklab, var(--danger) 12%, var(--surface)); color: var(--danger-text); }
+.wm-node.t-hollow .wm-dot { border-style: dashed; color: var(--muted); }
+
+/* The small badge on a stop: its status as a shape. */
+.wm-dot-badge { position: absolute; top: -5px; right: -5px; display: grid; place-items: center; width: 17px; height: 17px; border: 2px solid var(--surface); border-radius: 50%; background: var(--line-strong); color: var(--surface); }
+.wm-node.t-done .wm-dot-badge { background: var(--accent); color: var(--accent-ink); }
+.wm-node.t-held .wm-dot-badge { background: var(--hitl); color: var(--hitl-ink); }
+.wm-node.t-failed .wm-dot-badge { background: var(--danger); color: var(--surface); }
+.wm-node.t-hollow .wm-dot-badge { background: var(--muted-dim); color: var(--surface); }
+
+/* Where the replay is: a halo and a ring that keeps going out. */
+.wm-node.is-here .wm-dot { transform: scale(1.14); box-shadow: 0 0 0 5px var(--accent-soft), 0 6px 22px -4px var(--accent-line); }
+.wm-node.is-here .wm-dot::after { content: ""; position: absolute; inset: -2px; border: 2px solid var(--accent); border-radius: 50%; animation: wmRing 1.3s var(--ease) infinite; }
+.wm-node.is-here.t-held .wm-dot { box-shadow: 0 0 0 5px var(--hitl-soft), 0 6px 22px -4px var(--hitl-line); }
+.wm-node.is-here.t-held .wm-dot::after { border-color: var(--hitl); }
+.wm-node.is-here.t-failed .wm-dot::after { border-color: var(--danger); }
+@keyframes wmRing {
+  from { opacity: 0.8; transform: scale(1); }
+  to { opacity: 0; transform: scale(1.7); }
+}
+/* A live step: the agent just worked it, somewhere on the floor. */
+.wm-node.is-live .wm-dot { box-shadow: 0 0 0 5px var(--accent-soft); }
+.wm-node.is-live .wm-dot::after { content: ""; position: absolute; inset: -2px; border: 2px solid var(--accent); border-radius: 50%; animation: wmRing 0.9s var(--ease) 3; }
+
+.wm-node-label { display: inline-flex; align-items: center; justify-content: center; gap: 5px; max-width: 100%; margin-top: 8px; color: var(--text); font-size: var(--fs-xs); font-weight: 500; line-height: 1.25; text-align: center; }
+.wm-node.is-here .wm-node-label { color: var(--text-strong); font-weight: 600; }
+.wm-wait-tag, .wm-live-tag { position: absolute; top: 0; left: 50%; transform: translateX(-50%); padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; line-height: 1.5; white-space: nowrap; }
+.wm-wait-tag { background: var(--hitl-soft); color: var(--hitl-text); box-shadow: inset 0 0 0 1px var(--hitl-line); }
+.wm-live-tag { background: var(--accent-soft); color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent-line); }
+.wm-node.is-live .wm-wait-tag { display: none; }
+
+.wm-fibre { flex: none; width: 9px; height: 9px; border-radius: 50%; }
 .wm-fibre.outlined { box-shadow: inset 0 0 0 1px var(--fibre-outline, var(--line-strong)); }
-.wm-does { max-width: 70ch; margin: 4px 0 0; color: var(--text); font-size: var(--fs-sm); line-height: 1.5; }
 
-.wm-nums { display: grid; grid-template-columns: repeat(3, 6.5rem); gap: 0; margin: 2px 0 0; }
-.wm-nums > div { padding: 0 12px; border-left: 1px solid var(--line); }
-.wm-nums dt { color: var(--muted); font-size: 11px; font-weight: 500; white-space: nowrap; }
-.wm-nums dd { margin: 2px 0 0; color: var(--text-strong); font-size: var(--fs-sm); font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* What the replay's stop did, in the agent's own words. */
+.wm-caption { display: flex; align-items: baseline; gap: 6px 14px; min-height: 3.75rem; margin: 20px 0 0; padding: 12px 16px; border: 1px solid var(--line); border-radius: var(--r-md); background: color-mix(in oklab, var(--surface-raised) 80%, transparent); color: var(--text); font-size: var(--fs-sm); line-height: 1.5; }
+.wm-caption-lead { flex: none; color: var(--accent); font-family: var(--mono); font-size: var(--fs-xs); font-weight: 600; white-space: nowrap; }
+.wm-caption-body { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.wm-caption.hitl { border-color: var(--hitl-line); background: var(--hitl-soft); }
+.wm-caption.hitl .wm-caption-lead { color: var(--hitl-text); }
 
-/* The approval step: a person decides. */
-.wm .wm-phase.human .wm-phase-title { color: var(--hitl-text); }
-.wm-step.human { margin: 4px 0; padding: 14px 16px 14px 0; border-radius: var(--r-md); background: var(--hitl-soft); }
+/* ---- 2. Figures ---------------------------------------------------------------------------- */
+
+.wm .wm-figures { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px 28px; margin: 0 0 var(--s6); padding: 0; box-shadow: none; }
+.wm-figures > div { position: relative; display: flex; flex-direction: column-reverse; justify-content: flex-end; min-width: 0; padding: 16px 0 0; border-top: 1px solid var(--line-strong); }
+.wm-figures > div::before { content: ""; position: absolute; top: -2px; left: 0; width: 36px; height: 3px; border-radius: 2px; background: var(--accent); }
+.wm-figures dt { margin-top: 6px; color: var(--muted); font-size: var(--fs-sm); font-weight: 500; line-height: 1.35; }
+.wm-figures dd { margin: 0; font-family: var(--font-display); font-variation-settings: var(--display-soft); color: var(--text-strong); font-size: clamp(1.75rem, 1.3rem + 1.4vw, 2.5rem); font-weight: 560; line-height: 1.05; letter-spacing: -0.025em; font-variant-numeric: tabular-nums lining-nums; white-space: nowrap; }
+
+/* ---- 3. Phase cards ------------------------------------------------------------------------ */
+
+.wm-phases { margin: 0 0 var(--s6); }
+.wm-section-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 24px; margin-bottom: 16px; }
+.wm .wm-section-head h2 { margin: 0; font-family: var(--font-display); font-variation-settings: var(--display-soft); color: var(--text-strong); font-size: var(--fs-xl); font-weight: 560; letter-spacing: -0.015em; }
+.wm-section-head p { max-width: 58ch; margin: 0; color: var(--muted); font-size: var(--fs-sm); }
+
+.wm-phase-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin: 0; padding: 0; list-style: none; }
+.wm-card { min-width: 0; padding: 18px 20px 8px; border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--surface); box-shadow: var(--shadow-card); }
+.wm-card.human { border-color: var(--hitl-line); background: linear-gradient(180deg, var(--hitl-soft), transparent 70%), var(--surface); }
+.wm-card-head { display: flex; align-items: center; gap: 12px; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
+.wm-card-icon { display: grid; flex: none; place-items: center; width: 36px; height: 36px; border-radius: 11px; background: var(--accent-soft); color: var(--accent); }
+.wm-card.human .wm-card-icon { background: var(--hitl); color: var(--hitl-ink); }
+.wm .wm-card-head h3 { flex: 1; min-width: 0; margin: 0; font-family: var(--font-display); font-variation-settings: var(--display-soft); color: var(--text-strong); font-size: var(--fs-lg); font-weight: 560; letter-spacing: -0.01em; line-height: 1.25; }
+.wm-card-range { flex: none; color: var(--muted); font-family: var(--mono); font-size: var(--fs-xs); white-space: nowrap; }
+
+.wm-steps { margin: 0; padding: 0; list-style: none; }
+.wm-step { display: grid; grid-template-columns: 30px minmax(0, 1fr); column-gap: 14px; padding: 14px 0; border-radius: var(--r-sm); scroll-margin-top: calc(var(--topbar-h) + 16px); }
+.wm-step + .wm-step { border-top: 1px dashed var(--line); }
+.wm-step:focus { outline: none; }
+.wm-step:target { animation: wmFound 1.8s var(--ease) 1; }
+@keyframes wmFound {
+  0%, 30% { background: var(--accent-soft); box-shadow: 0 0 0 8px var(--accent-soft); }
+  100% { background: transparent; box-shadow: 0 0 0 8px transparent; }
+}
+.wm-n { display: grid; place-items: center; width: 30px; height: 30px; border: 2px solid var(--line-strong); border-radius: 50%; background: var(--surface); color: var(--text-strong); font-family: var(--mono); font-size: var(--fs-xs); font-weight: 600; }
 .wm-step.human .wm-n { border-color: var(--hitl); background: var(--hitl); color: var(--hitl-ink); }
-.wm-step.human .wm-nums dd:first-child, .wm-step.human .wm-nums > div:first-child dd { color: var(--hitl-text); }
+.wm-main { min-width: 0; padding-top: 3px; }
+.wm-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 12px; }
+.wm .wm-head h4 { margin: 0; color: var(--text-strong); font-size: var(--fs-base); font-weight: 600; letter-spacing: -0.005em; }
+.wm-agent { display: inline-flex; align-items: center; gap: 7px; color: var(--muted); font-size: var(--fs-sm); }
+.wm-does { max-width: 64ch; margin: 4px 0 0; color: var(--text); font-size: var(--fs-sm); line-height: 1.55; }
 .wm-human-note { margin: 6px 0 0; color: var(--hitl-text); font-size: var(--fs-xs); font-weight: 600; line-height: 1.45; }
 
-.wm-note { margin: 18px 0 0; padding-top: 14px; border-top: 1px solid var(--line); color: var(--muted); font-size: var(--fs-sm); }
+.wm-nums { display: flex; flex-wrap: wrap; gap: 4px 0; margin: 10px 0 0; }
+.wm-nums > div { display: flex; align-items: baseline; gap: 6px; padding: 0 14px; border-left: 1px solid var(--line); }
+.wm-nums > div:first-child { padding-left: 0; border-left: 0; }
+.wm-nums dt { color: var(--muted); font-size: var(--fs-xs); font-weight: 500; white-space: nowrap; }
+.wm-nums dd { margin: 0; color: var(--text-strong); font-size: var(--fs-sm); font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.wm-step.human .wm-nums > div:first-child dd { color: var(--hitl-text); }
+
+.wm-note { margin: 16px 0 0; color: var(--muted); font-size: var(--fs-sm); }
+
+/* ---- 4. The reasoning path ----------------------------------------------------------------- */
+
+.wm-reason {
+  display: grid;
+  grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+  gap: 28px 40px;
+  padding: 32px;
+  border: 1px solid var(--band-line);
+  border-radius: calc(var(--r-lg) + 4px);
+  background:
+    radial-gradient(60% 80% at 0% 0%, rgba(127, 209, 172, 0.12), transparent 60%),
+    radial-gradient(50% 70% at 100% 100%, rgba(166, 227, 111, 0.06), transparent 60%),
+    var(--band);
+  color: var(--band-text);
+  box-shadow: var(--shadow-lift);
+}
+.wm-reason-side { min-width: 0; }
+.wm-reason-kicker { display: inline-flex; align-items: center; gap: 8px; margin: 0 0 10px; color: var(--band-accent); font-size: var(--fs-sm); font-weight: 600; }
+.wm-reason-kicker::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+.wm .wm-reason h2 { margin: 0; font-family: var(--font-display); font-variation-settings: var(--display-soft); color: var(--band-strong); font-size: clamp(1.625rem, 1.2rem + 1.2vw, 2.25rem); font-weight: 520; letter-spacing: -0.02em; line-height: 1.1; text-wrap: balance; }
+.wm-reason-lead { max-width: 46ch; margin: 14px 0 0; color: var(--band-muted); font-size: var(--fs-md); line-height: 1.6; }
+.wm-reason-pick { display: grid; gap: 6px; max-width: 24rem; margin-top: 22px; }
+.wm-reason-pick > span { color: var(--band-muted); font-size: var(--fs-xs); font-weight: 600; }
+.wm-reason-pick select { width: 100%; min-width: 0; max-width: 100%; min-height: 40px; text-overflow: ellipsis; padding: 8px 36px 8px 12px; border: 1px solid var(--band-line); border-radius: var(--r-sm); background: var(--band-raised) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='none' stroke='%237FD1AC' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2.5 4.5 6 8l3.5-3.5'/%3E%3C/svg%3E") no-repeat right 12px center; color: var(--band-strong); font: 500 var(--fs-sm) / 1.3 var(--mono); appearance: none; cursor: pointer; }
+.wm-reason-pick select:hover { border-color: var(--band-accent); }
+.wm-reason-pick select:focus-visible { outline: 2px solid var(--band-accent); outline-offset: 2px; }
+.wm-reason-facts { display: grid; grid-template-columns: repeat(3, auto); justify-content: start; gap: 4px 28px; margin: 22px 0 0; }
+.wm-reason-facts dt { color: var(--band-muted); font-size: var(--fs-xs); font-weight: 500; }
+.wm-reason-facts dd { margin: 2px 0 0; color: var(--band-strong); font-family: var(--font-display); font-variation-settings: var(--display-soft); font-size: var(--fs-xl); font-weight: 520; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+.wm-tape { min-width: 0; max-height: 34rem; overflow-y: auto; padding: 4px 18px 4px 0; border-radius: var(--r-md); scrollbar-color: var(--band-line) transparent; }
+.wm-tape:focus-visible { outline: 2px solid var(--band-accent); outline-offset: 4px; }
+.wm-tape ol { margin: 0; padding: 0; list-style: none; }
+.wm-tape-empty { margin: 0; color: var(--band-muted); }
+.wm-tline { display: grid; grid-template-columns: 2rem minmax(0, 1fr) auto; gap: 2px 12px; padding: 12px 0; border-bottom: 1px solid var(--band-line); opacity: 0; transform: translateY(6px); transition: opacity 360ms var(--ease), transform 360ms var(--ease); }
+.wm-tline.is-in { opacity: 1; transform: none; }
+.wm-tline:last-child { border-bottom: 0; }
+.wm-tline-n { padding-top: 1px; color: var(--band-muted); font-family: var(--mono); font-size: var(--fs-xs); font-weight: 500; }
+.wm-tline-main { min-width: 0; }
+.wm-tline-head { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 10px; margin: 0; }
+.wm-tline-head strong { color: var(--band-strong); font-size: var(--fs-sm); font-weight: 600; }
+.wm-tline-agent { color: var(--band-muted); font-size: var(--fs-xs); }
+.wm-tline-why { margin: 4px 0 0; color: var(--band-text); font-size: var(--fs-sm); line-height: 1.5; }
+.wm-tline-out { margin: 3px 0 0; color: var(--band-muted); font-family: var(--mono); font-size: var(--fs-xs); line-height: 1.5; overflow-wrap: anywhere; }
+.wm-tline-out::before { content: "→ "; color: var(--band-accent); }
+.wm-tline-meta { display: grid; justify-items: end; align-content: start; gap: 2px; color: var(--band-muted); font-family: var(--mono); font-size: var(--fs-xs); white-space: nowrap; }
+.wm-tline-state { display: inline-flex; align-items: center; gap: 4px; color: var(--band-accent); font-family: var(--font); font-weight: 600; }
+.wm-tline.t-held .wm-tline-state { color: var(--band-hitl); }
+.wm-tline.t-failed .wm-tline-state { color: var(--band-danger); }
+.wm-tline.t-hollow .wm-tline-state, .wm-tline.t-pending .wm-tline-state { color: var(--band-muted); }
+
+/* ---- Calm: quiet mode or reduced motion draws the end state ------------------------------- */
+
+:root[data-quiet="on"] .wm-kicker::before,
+:root[data-quiet="on"] .wm-node .wm-dot::after { animation: none; display: none; }
+:root[data-quiet="on"] .wm-node::before, :root[data-quiet="on"] .wm-dot, :root[data-quiet="on"] .wm-tline { transition: none; }
+@media (prefers-reduced-motion: reduce) {
+  .wm-kicker::before, .wm-node .wm-dot::after, .wm-step:target { animation: none; }
+  .wm-node .wm-dot::after { display: none; }
+  .wm-node::before, .wm-dot, .wm-tline { transition: none; }
+  .wm-dot:hover { transform: none; }
+}
+
+/* ---- Narrower screens ---------------------------------------------------------------------- */
 
 @media (max-width: 1099px) {
-  .wm-step { grid-template-columns: 36px minmax(0, 1fr); row-gap: 10px; }
-  .wm-nums { grid-column: 2; grid-template-columns: repeat(3, minmax(0, 7rem)); }
-  .wm-nums > div:first-child { padding-left: 0; border-left: 0; }
+  .wm-phase-grid { grid-template-columns: minmax(0, 1fr); }
+  .wm-reason { grid-template-columns: minmax(0, 1fr); }
+  .wm-tape { max-height: none; overflow: visible; padding-right: 0; }
 }
-@media (max-width: 600px) {
-  .wm-figures { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .wm-panel { padding: 16px; }
-  .wm-step { grid-template-columns: 30px minmax(0, 1fr); column-gap: 12px; }
-  .wm-step::before { left: 14px; }
-  .wm-n { width: 30px; height: 30px; font-size: var(--fs-xs); }
-  .wm .wm-phase-title { margin-left: 42px; }
-  .wm-phase-title::before { left: -28px; }
-  .wm-nums { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+@media (max-width: 899px) {
+  .wm .wm-figures { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+/* Phones and narrow tablets: the line wraps after Assign, six stops a row, Approval first in the
+   second row; each row's line starts and ends at a stop. */
+@media (max-width: 759px) {
+  .wm { --wm-dot: 34px; --wm-tag: 22px; }
+  .wm .wm-route { padding: 18px 16px 16px; }
+  .wm-line { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+  .wm-node.row-end::before { right: 50%; background-size: min(100%, calc(var(--fill, 0) * 200%)) 100%; }
+  .wm-node.row-start::before { left: 50%; background-size: max(0%, calc((var(--fill, 0) - 0.5) * 200%)) 100%; }
+  .wm-dot { font-size: var(--fs-xs); }
+  .wm-node-label { align-items: flex-start; min-height: 2.5em; font-size: 11px; font-stretch: var(--narrow-stretch); }
+  .wm-node-label .wm-fibre { display: none; }
+  .wm .wm-seg-title { margin: 10px 3px 0; font-size: 11px; font-stretch: var(--narrow-stretch); }
+  .wm-node.row-start .wm-wait-tag { left: 2px; transform: none; }
+  .wm-caption { flex-direction: column; gap: 4px; min-height: 5.25rem; }
+  .wm-card { padding: 16px 16px 6px; }
+  .wm-reason { padding: 22px 18px; gap: 22px; }
+  .wm-reason-facts { display: flex; flex-wrap: wrap; gap: 8px 22px; }
+  .wm-reason-facts dd { font-size: var(--fs-lg); }
+  .wm-tline { grid-template-columns: 1.75rem minmax(0, 1fr); }
+  .wm-tline-meta { grid-column: 2; grid-auto-flow: column; justify-content: start; justify-items: start; gap: 12px; margin-top: 4px; }
+}
+/* The smallest phones: a long name breaks at its soft hyphen (SHY_LABEL in the page). */
+@media (max-width: 400px) {
+  .wm { --wm-dot: 30px; }
+  .wm .wm-route { padding-inline: 12px; }
+  .wm-node-label { display: block; font-size: 10.5px; hyphens: manual; }
 }

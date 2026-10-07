@@ -454,7 +454,7 @@ summary.sd-step-line:hover .sd-step-sum { color: var(--text-strong); }
 /* ---------------------------------------------------------------- knowledge base */
 .sd-kb.sd-split { grid-template-columns: minmax(17rem, 24rem) minmax(0, 1fr); }
 .sd-article { min-width: 0; }
-.sd-article-title { margin: 0 0 var(--s2); font-family: var(--font-display); font-stretch: var(--title-stretch); color: var(--text-strong); font-size: var(--fs-xl); font-weight: 700; letter-spacing: -0.015em; line-height: 1.2; text-wrap: balance; }
+.sd-article-title { margin: 0 0 var(--s2); font-family: var(--font-display); font-variation-settings: var(--display-soft); font-stretch: var(--title-stretch); color: var(--text-strong); font-size: var(--fs-xl); font-weight: 600; letter-spacing: -0.015em; line-height: 1.2; text-wrap: balance; }
 .sd-article-facts { margin-bottom: var(--s4); }
 .sd-article-summary { margin: 0 0 var(--s4); max-width: 65ch; color: var(--muted); font-size: var(--fs-base); line-height: 1.5; }
 .sd-md { max-width: 68ch; color: var(--text); font-size: var(--fs-base); line-height: 1.6; }
@@ -489,7 +489,7 @@ summary.sd-step-line:hover .sd-step-sum { color: var(--text-strong); }
 }
 .sd-gate { min-width: 0; }
 .sd-gate-label { color: var(--muted); font-size: var(--fs-md); font-weight: 500; }
-.sd-gate-value { margin-top: var(--s1); font-family: var(--font-display); font-variant-numeric: tabular-nums; color: var(--text-strong); font-size: var(--fs-2xl); font-weight: 600; line-height: 1.1; letter-spacing: -0.02em; }
+.sd-gate-value { margin-top: var(--s1); font-family: var(--font-display); font-variation-settings: var(--display-soft); font-variant-numeric: tabular-nums; color: var(--text-strong); font-size: var(--fs-2xl); font-weight: 560; line-height: 1.1; letter-spacing: -0.02em; }
 .sd-gate.big .sd-gate-value { font-size: clamp(2.25rem, 4vw, 3.25rem); }
 .sd-gatebar { position: relative; height: 8px; margin: var(--s3) 0 var(--s2); border-radius: 4px; background: var(--surface-sunk); }
 .sd-gatebar-fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 4px; background: var(--text-strong); }
@@ -510,7 +510,7 @@ summary.sd-step-line:hover .sd-step-sum { color: var(--text-strong); }
 }
 .sd-metric { min-width: 0; }
 .sd-metric-label { color: var(--muted); font-size: var(--fs-sm); font-weight: 500; }
-.sd-metric-value { margin-top: 2px; font-family: var(--font-display); font-variant-numeric: tabular-nums; color: var(--text-strong); font-size: var(--fs-xl); font-weight: 600; line-height: 1.15; letter-spacing: -0.015em; }
+.sd-metric-value { margin-top: 2px; font-family: var(--font-display); font-variation-settings: var(--display-soft); font-variant-numeric: tabular-nums; color: var(--text-strong); font-size: var(--fs-xl); font-weight: 560; line-height: 1.15; letter-spacing: -0.015em; }
 .sd-metric-means { margin: var(--s1) 0 0; color: var(--muted-dim); font-size: var(--fs-xs); line-height: 1.45; }
 
 .sd-ev-grid { display: grid; grid-template-columns: minmax(0, 24rem) minmax(0, 1fr); gap: var(--s4); align-items: start; }

@@ -21,7 +21,7 @@ export const THEME_LABEL: Record<ThemePref, string> = {
   night: "Night",
 };
 
-const THEME_COLOR: Record<Theme, string> = { day: "#F7F8FA", night: "#13161C" };
+const THEME_COLOR: Record<Theme, string> = { day: "#FBF9F5", night: "#10201A" };
 
 export function readThemePref(): ThemePref {
   try {
