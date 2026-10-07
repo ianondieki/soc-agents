@@ -340,7 +340,7 @@ function Route({
           <h2 id="wm-route-title">
             {run ? (
               <>
-                {ticket || runName(run)}
+                {ticket ? <span className="wm-route-ticket">{ticket}</span> : runName(run)}
                 {incident?.site_name && <span className="wm-route-site"> at {incident.site_name}</span>}
               </>
             ) : (
@@ -656,7 +656,7 @@ function Reasoning({
           <dl className="wm-reason-facts">
             <div>
               <dt>Ticket</dt>
-              <dd>{ticket || "none"}</dd>
+              <dd className={ticket ? "wm-mono" : undefined}>{ticket || "none"}</dd>
             </div>
             <div>
               <dt>Priority</dt>

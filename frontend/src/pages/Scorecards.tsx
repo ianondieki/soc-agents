@@ -11,6 +11,7 @@ import {
   isPeriod,
   mayCompute,
   periodWords,
+  recentMonths,
   statusView,
   termsView,
   type ComputeResult,
@@ -67,6 +68,15 @@ type Session = { display_name?: string; role?: string } | null;
 export default function Scorecards({ session }: { session: Session }) {
   const role = (session?.role || "").trim();
   const [filters, setFilters] = useState<PickerValue>({ vendor: "", period: "", status: "ALL" });
+  // The compute tools start open on a desktop and folded on a phone, where six full-width
+  // controls would otherwise push the first card a screen down.
+  const [wideToolbar] = useState(() => {
+    try {
+      return window.matchMedia("(min-width: 761px)").matches;
+    } catch {
+      return true;
+    }
+  });
   const [rows, setRows] = useState<Scorecard[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [listFailure, setListFailure] = useState<{ view: FailureView; detail: string } | null>(null);
@@ -246,20 +256,21 @@ export default function Scorecards({ session }: { session: Session }) {
           </button>
         </div>
         {mayCompute(role) && (
-          <div className="sc-compute">
-            <span className="sc-compute-title" id="sc-compute-title">
+          <details className="sc-compute" open={wideToolbar}>
+            <summary className="sc-compute-title" id="sc-compute-title">
               Compute an ended month
-            </span>
+            </summary>
             <div className="sc-compute-row" role="group" aria-labelledby="sc-compute-title">
               <label>
                 <span>Month</span>
-                <input
-                  type="month"
-                  value={computePeriod}
-                  disabled={computing}
-                  onChange={(e) => setComputePeriod(e.target.value)}
-                  title="Blank: the last month that has ended"
-                />
+                <select value={computePeriod} disabled={computing} onChange={(e) => setComputePeriod(e.target.value)}>
+                  <option value="">The last month that ended</option>
+                  {recentMonths(12, true, computePeriod).map((p) => (
+                    <option key={p} value={p}>
+                      {periodWords(p)}
+                    </option>
+                  ))}
+                </select>
               </label>
               <label>
                 <span>Vendor</span>
@@ -283,7 +294,7 @@ export default function Scorecards({ session }: { session: Session }) {
               </button>
               <span className="sc-compute-note">Makes working papers only; it never publishes or sends anything.</span>
             </div>
-          </div>
+          </details>
         )}
         {computeResult && (
           <div className="sc-result" role="status">

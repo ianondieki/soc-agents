@@ -264,7 +264,7 @@ html[data-quiet="on"] .ld-live.live .ld-live-dot::after { animation: none; }
 .ld-hero { padding-top: 56px; }
 .ld-hero > .ld-wrap {
   display: grid;
-  grid-template-columns: minmax(0, 11fr) minmax(0, 13fr);
+  grid-template-columns: minmax(0, 25fr) minmax(0, 23fr);
   gap: 40px var(--ld-gap);
   /* The dial sits on the headline block's centre line, not hung from its top edge. */
   align-items: center;
@@ -275,7 +275,7 @@ html[data-quiet="on"] .ld-live.live .ld-live-dot::after { animation: none; }
      display size a step below the token's cap. Its tracking is kept above -0.02em so the word
      spaces stay open at 72 px. */
   font-family: var(--font-display); font-variation-settings: var(--display-soft);
-  font-size: min(var(--fs-display), 4.25rem);
+  font-size: min(var(--fs-display), 4rem);
   font-stretch: 94%;
   color: var(--text-strong);
   font-weight: 600;
@@ -301,7 +301,7 @@ html[data-quiet="on"] .ld-live.live .ld-live-dot::after { animation: none; }
 .ld-dial-stage { display: flex; justify-content: center; width: 100%; }
 .ld-dial { display: block; overflow: visible; }
 .ld-dial-track { fill: none; stroke: var(--line-strong); stroke-width: 1.5; }
-.ld-dial-bar { stroke: var(--line-strong); stroke-width: 6; stroke-linecap: round; }
+.ld-dial-bar { stroke: var(--line-strong); stroke-width: 6; stroke-linecap: round; opacity: 0.72; }
 .ld-dial-bar.hitl { stroke: var(--hitl-line); }
 .ld-dial-arc { fill: none; stroke: var(--accent); stroke-width: 3; stroke-linecap: round; stroke-dasharray: 1000 1000; stroke-dashoffset: 0; }
 .ld-dial-arc.sweep { animation: ld-dial-sweep linear forwards; }
@@ -351,7 +351,7 @@ html[data-quiet="on"] .ld-dial * { animation: none !important; }
 .ld-dial-key li { display: inline-flex; align-items: center; gap: 8px; }
 .ld-dial-key svg { width: 22px; height: 10px; overflow: visible; }
 .ld-dial-key .k-arc { fill: none; stroke: var(--accent); stroke-width: 2.5; stroke-linecap: round; }
-.ld-dial-key .k-bar { stroke: var(--line-strong); stroke-width: 5; stroke-linecap: round; }
+.ld-dial-key .k-bar { stroke: var(--fibre-1); stroke-width: 5; stroke-linecap: round; opacity: 0.72; }
 .ld-dial-key .k-hitl { fill: var(--bg); stroke: var(--hitl); stroke-width: 2; }
 @media (max-width: 480px) { .ld-dial-key .ld-key-bars { display: none; } }
 
@@ -370,7 +370,9 @@ html[data-quiet="on"] .ld-dial * { animation: none !important; }
 
 /* ----------------------------------------------------------------- sections */
 .ld-section { margin-top: 104px; scroll-margin-top: 72px; }
-.ld-section > .ld-wrap { border-top: 1px solid var(--line); padding-top: 44px; }
+/* The hairline over a section spans the content, not the gutters (a pseudo inset by the gutter). */
+.ld-section > .ld-wrap { position: relative; padding-top: 44px; }
+.ld-section > .ld-wrap::before { content: ""; position: absolute; top: 0; left: var(--ld-gutter); right: var(--ld-gutter); height: 1px; background: var(--line); }
 /* The title on the left and its one-paragraph lead on the right, both hung from the section's
    rule, so a long lead never leaves the title floating low with air above it. */
 .ld-section-head {
@@ -883,3 +885,6 @@ html[data-quiet="on"] .ld-dial * { animation: none !important; }
   .ld-foot-cta { padding: 28px 18px; border-radius: 22px; }
   .ld-handover { padding: 16px; }
 }
+
+/* The aurora fades out at its foot and sides instead of ending in a box. */
+.ld-hero::before { -webkit-mask-image: radial-gradient(120% 90% at 50% 0%, #000 45%, transparent 100%); mask-image: radial-gradient(120% 90% at 50% 0%, #000 45%, transparent 100%); }

@@ -189,3 +189,7 @@
   .scd-act { grid-template-columns: minmax(0, 1fr); }
   .scd-act > .btn { margin-top: 0; justify-self: start; }
 }
+
+/* "Compute an ended month" is a disclosure: open on a desktop, folded on a phone. */
+.sc-compute > summary.sc-compute-title { display: flex; align-items: center; min-height: 32px; margin-bottom: 0; cursor: pointer; }
+.sc-compute[open] > summary.sc-compute-title { margin-bottom: 8px; }

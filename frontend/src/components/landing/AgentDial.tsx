@@ -1,6 +1,7 @@
 import { useEffect, useId, useState } from "react";
 import { LIFECYCLE_NODES, fmtMs, fmtWait, normaliseStatus, stepsByNode, type NodeStatus, type RailStep } from "../../lib/agents";
 import { useQuietMode } from "../../realtime/RealtimeContext";
+import { fibreColour, fibreOf } from "../../lib/fibre";
 import { useWidth } from "./useWidth";
 
 /**
@@ -206,7 +207,22 @@ export default function AgentDial({ run, counts, ticket, tookMs, empty }: DialPr
               const len = (barMax * count) / maxCount;
               const a = pt(c, cy, R - nodeR - 4, n.deg);
               const b = pt(c, cy, R - nodeR - 4 - len, n.deg);
-              return <line key={`b${n.id}`} x1={a.x} y1={a.y} x2={b.x} y2={b.y} className={"ld-dial-bar" + (n.id === "HITL" ? " hitl" : "")} />;
+              // Each bar wears its agent's fibre colour (identity, as everywhere an agent is drawn);
+              // white and black take the theme's fibre outline so they read on the card. Approval
+              // keeps the violet that means a person decides.
+              const f = fibreOf(n.id);
+              const stroke = n.id === "HITL" || !f ? undefined : f.outlined ? "var(--fibre-outline)" : fibreColour(f);
+              return (
+                <line
+                  key={`b${n.id}`}
+                  x1={a.x}
+                  y1={a.y}
+                  x2={b.x}
+                  y2={b.y}
+                  className={"ld-dial-bar" + (n.id === "HITL" ? " hitl" : "")}
+                  style={stroke ? { stroke } : undefined}
+                />
+              );
             })}
 
           <g key={groupKey}>

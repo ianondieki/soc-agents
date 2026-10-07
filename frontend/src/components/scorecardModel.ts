@@ -767,6 +767,35 @@ export function periodWords(period: string | null | undefined): string {
   return MONTHS[Number(p.slice(5, 7)) - 1] + " " + p.slice(0, 4);
 }
 
+/**
+ * The months to offer in a picker, newest first, as `YYYY-MM` in EAT: the current month and the
+ * `count - 1` before it, or only months that have ended (`endedOnly`). A value already chosen that
+ * is not among them (an older month from a link) is kept, so a picker never drops its own value.
+ */
+export function recentMonths(count: number, endedOnly: boolean, keep?: string, now: Date = new Date()): string[] {
+  const eat = new Date(now.getTime() + 3 * 3600_000);
+  let y = eat.getUTCFullYear();
+  let m = eat.getUTCMonth() + 1;
+  const out: string[] = [];
+  if (endedOnly) {
+    m -= 1;
+    if (m === 0) {
+      m = 12;
+      y -= 1;
+    }
+  }
+  for (let i = 0; i < count; i++) {
+    out.push(`${y}-${String(m).padStart(2, "0")}`);
+    m -= 1;
+    if (m === 0) {
+      m = 12;
+      y -= 1;
+    }
+  }
+  if (keep && isPeriod(keep) && !out.includes(keep)) out.push(keep);
+  return out;
+}
+
 // --------------------------------------------------------------------------------- failures
 
 export type FailureView = {

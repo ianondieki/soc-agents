@@ -283,3 +283,14 @@
   .wm .wm-route { padding-inline: 12px; }
   .wm-node-label { display: block; font-size: 10.5px; hyphens: manual; }
 }
+
+/* A ticket number is an identifier: Mono, as everywhere else, even inside a display title. */
+.wm-route-ticket, .wm-reason-facts dd.wm-mono { font-family: var(--mono); font-variation-settings: normal; font-weight: 600; letter-spacing: -0.01em; }
+.wm-reason-facts dd.wm-mono { font-size: var(--fs-lg); }
+/* Before the tape types itself out, its lines are skeletons, not an empty slab. */
+.wm-tline { opacity: 1; transform: none; }
+.wm-tline > * { transition: opacity 360ms var(--ease); }
+.wm-tline:not(.is-in) > * { opacity: 0; }
+.wm-tline { position: relative; }
+.wm-tline:not(.is-in)::after { content: ""; position: absolute; top: 16px; left: calc(2rem + 12px); right: 0; height: 12px; border-radius: 6px; background: linear-gradient(90deg, rgba(127, 209, 172, 0.10), rgba(127, 209, 172, 0.18), rgba(127, 209, 172, 0.10)); }
+@media (max-width: 759px) { .wm-tline:not(.is-in)::after { left: calc(1.75rem + 12px); } }

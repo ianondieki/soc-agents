@@ -94,10 +94,26 @@ const arrowsToWords = (s: unknown) => String(s ?? "").replace(/\s*→\s*/g, " to
 function tidyValue(value: string): string {
   let s = arrowsToWords(value);
   s = s.replace(/\s+([A-Za-z_]+)=/g, ", $1 ");
-  if (/^\d{5,}$/.test(s) && !s.startsWith("0")) s = Number(s).toLocaleString("en-KE");
+  // A count of five figures or more reads with separators, alone or in a phrase ("450000 to P2").
+  s = s.replace(/(^|[\s(])([1-9]\d{4,})(?=$|[\s,)])/g, (_m, pre: string, n: string) => pre + Number(n).toLocaleString("en-KE"));
   s = s.replace(/^true\b/, "yes").replace(/^false\b/, "no");
   if (/^[a-z]+(?:_[a-z]+)+$/.test(s)) s = humanEnum(s.toUpperCase());
   return s;
+}
+
+/** The rationale keys whose values are vendor codes ("primary=EGYPRO", "pool=['EGYPRO', ...]"). */
+const VENDOR_FACTS: ReadonlySet<string> = new Set(["primary", "pool", "owner", "msp", "vendor"]);
+
+/** "egypro, egypro_remote" or "['EGYPRO', 'EGYPRO_REMOTE']" -> "Egypro, Egypro Remote": vendor codes as
+ *  names, the way the owner reads everywhere else. */
+function vendorList(value: string): string {
+  return String(value ?? "")
+    .replace(/[[\]'"]/g, "")
+    .split(",")
+    .map((v) => v.trim())
+    .filter(Boolean)
+    .map((v) => ownerName(v.toUpperCase().replace(/\s+/g, "_")).replace(/\b([a-z])/g, (c) => c.toUpperCase()))
+    .join(", ");
 }
 
 /** "MW,4G" → "MW, 4G": the technology list as written, with room to read it. */
@@ -131,7 +147,7 @@ function Why({ title, text }: { title: string; text: string | null | undefined }
           {facts.map((f, k) => (
             <Fragment key={f.key + k}>
               <dt>{f.label}</dt>
-              <dd>{tidyValue(f.value)}</dd>
+              <dd>{VENDOR_FACTS.has(f.key) ? vendorList(f.value) : tidyValue(f.value)}</dd>
             </Fragment>
           ))}
         </dl>

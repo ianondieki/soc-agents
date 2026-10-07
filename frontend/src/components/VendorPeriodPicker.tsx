@@ -1,5 +1,5 @@
 import { humanEnum } from "../lib/agents";
-import { isPeriod, SCORECARD_STATUSES } from "./scorecardModel";
+import { isPeriod, periodWords, recentMonths, SCORECARD_STATUSES } from "./scorecardModel";
 
 /**
  * `VendorPeriodPicker` (spec §7.10): the three filters `GET /scorecards` takes, which are
@@ -45,20 +45,20 @@ export default function VendorPeriodPicker({
       </label>
       <label>
         <span>Month (EAT)</span>
-        <input
-          type="month"
-          value={value.period}
+        {/* A list of real months, not a bare month field (which shows "--------- ----" empty). */}
+        <select
+          value={periodBad ? "" : value.period}
           disabled={disabled}
-          placeholder="YYYY-MM"
-          aria-invalid={periodBad || undefined}
           onChange={(e) => onChange({ ...value, period: e.target.value })}
-        />
+        >
+          <option value="">Every month</option>
+          {recentMonths(18, false, value.period).map((p) => (
+            <option key={p} value={p}>
+              {periodWords(p)}
+            </option>
+          ))}
+        </select>
       </label>
-      {value.period && (
-        <button className="btn vpp-clear" disabled={disabled} onClick={() => onChange({ ...value, period: "" })}>
-          Every month
-        </button>
-      )}
       <label>
         <span>Status</span>
         <select
