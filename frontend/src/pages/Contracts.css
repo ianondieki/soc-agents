@@ -63,3 +63,9 @@
   .ct-search-row .btn { flex: none; }
 }
 .ct-more { padding: 10px 0 2px; border-top: 1px solid var(--line); }
+
+/* The search lane's state, in words under the figures (the strip keeps to numbers). */
+.ct-state { display: flex; flex-wrap: wrap; gap: 4px 18px; margin: calc(-1 * var(--s2)) 0 var(--s4); color: var(--muted); font-size: var(--fs-sm); }
+.ct-state .ok { color: var(--ok); font-weight: 600; }
+.ct-state .bad { color: var(--danger-text); font-weight: 600; }
+.ct-figures { grid-template-columns: repeat(2, minmax(0, 1fr)); max-width: 44rem; }

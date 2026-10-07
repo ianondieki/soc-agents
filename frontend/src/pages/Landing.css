@@ -887,3 +887,7 @@ html[data-quiet="on"] .ld-dial * { animation: none !important; }
 
 /* The aurora fades out at its foot and sides instead of ending in a box. */
 .ld-hero::before { -webkit-mask-image: radial-gradient(120% 90% at 50% 0%, #000 45%, transparent 100%); mask-image: radial-gradient(120% 90% at 50% 0%, #000 45%, transparent 100%); }
+
+/* A phone's dial: the ticket alone in the ring, a size down; each node ringed in its fibre. */
+.ld-dial.compact .ld-dial-ticket.tight { font-size: 15px; }
+.ld-dial.compact .ld-dial-node { stroke-width: 2.5; }

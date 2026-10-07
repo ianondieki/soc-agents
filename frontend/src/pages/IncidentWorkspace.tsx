@@ -116,6 +116,18 @@ function vendorList(value: string): string {
     .join(", ");
 }
 
+/** "Power grid fail at Test Kayole HUB 4922": the alarm in words and the site, as the story's
+ *  headline. Falls back to the stored summary when the alarm code is missing. */
+function storyTitle(inc: any): string {
+  // The alarm code: its own field, else the one the stored description opens with
+  // ("POWER_GRID_FAIL at Test Kayole HUB 4922").
+  const alarm = String(inc?.alarm_code || "").trim() || (/^([A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+)\b/.exec(String(inc?.description || ""))?.[1] ?? "");
+  const site = String(inc?.site_name || inc?.site_id || "").trim();
+  if (!alarm) return String(inc?.title || "");
+  const words = humanEnum(alarm);
+  return `${words.charAt(0).toUpperCase()}${words.slice(1)}${site ? ` at ${site}` : ""}`;
+}
+
 /** "MW,4G" → "MW, 4G": the technology list as written, with room to read it. */
 const techList = (v: unknown) =>
   String(v ?? "")
@@ -627,7 +639,10 @@ function Workspace({ id, session, profile }: { id: string | undefined; session: 
             <h2 id="iw-story-title" className="panel-title">
               What happened
             </h2>
-            <p className="iw-story-title">{inc.title}</p>
+            {/* The headline in words (the alarm and the site); the stored summary, with its
+                category tag, stays under it in the mono face, as written. */}
+            <p className="iw-story-title">{storyTitle(inc)}</p>
+            {inc.title && <p className="iw-story-raw">{inc.title}</p>}
             <dl className="iw-story-facts">
               <div>
                 <dt>Likely cause</dt>

@@ -365,7 +365,9 @@ function Nearby({ step }: { step: Step }) {
   );
 }
 
-/** The step the verdict turns on: the one that starts open. */
+/** The step the verdict turns on, open when a person still has to act on the case (an action
+ *  waiting for approval, an escalation, a reopened case). A routine, finished case (answered,
+ *  action taken, closed) starts with every step folded: each line already says what it did. */
 function pivotSeq(detail: CaseDetail): number | null {
   const c = detail.complaint;
   const steps = detail.steps;
@@ -374,16 +376,9 @@ function pivotSeq(detail: CaseDetail): number | null {
   // The follow-up agent's step is what a reopened or restored case turns on.
   if (c.escalation?.reason_code === "still_down_after_restore" && (c.status === "escalated" || c.status === "in_progress"))
     return last((s) => s.agent === "followup" && s.action === "still_down_reported") ?? last((s) => s.agent === "followup");
-  if (c.status === "closed") return last((s) => s.agent === "followup");
+  if (c.status === "closed") return null;
   if (c.status === "awaiting_approval") return last((s) => s.agent === "action" && s.action === "called_tool" && (s.detail as any)?.status === "needs_approval") ?? find((s) => s.agent === "escalation");
-  if (c.status === "escalated" || c.status === "in_progress" || c.status === "resolved") return last((s) => s.agent === "escalation") ?? last((s) => s.agent === "human");
-  if (c.status === "answered") return last((s) => s.agent === "resolver");
-  if (c.status === "action_taken") {
-    return (
-      last((s) => s.agent === "action" && s.action === "called_tool" && !["lookup_account", "update_ticket"].includes(String((s.detail as any)?.tool))) ??
-      last((s) => s.agent === "action")
-    );
-  }
+  if (c.status === "escalated" || c.status === "in_progress") return last((s) => s.agent === "escalation") ?? last((s) => s.agent === "human");
   return null;
 }
 

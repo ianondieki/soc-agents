@@ -83,6 +83,14 @@ function usePrefersReducedMotion(): boolean {
   return reduced;
 }
 
+/** The fibre colour of a node's ring on a phone; white and black take the theme's outline. */
+function fibreRing(node: string): string | undefined {
+  if (node === "HITL") return "var(--hitl)"; // Approval wears the violet that means a person decides
+  const f = fibreOf(node);
+  if (!f) return undefined;
+  return f.outlined ? "var(--fibre-outline)" : fibreColour(f);
+}
+
 export default function AgentDial({ run, counts, ticket, tookMs, empty }: DialProps) {
   const [ref, measured] = useWidth<HTMLDivElement>();
   const uid = useId();
@@ -119,6 +127,8 @@ export default function AgentDial({ run, counts, ticket, tookMs, empty }: DialPr
   const endDeg = endIdx * 30;
   const approval = nodes[6];
   const held = approval.kind === "waiting";
+  // A ring too small for three lines inside it (a phone): the ticket alone, a size down.
+  const tight = compact && R < 150;
   const vPad = (compact ? 46 : 58) + (held ? 20 : 0);
   const H = Math.round(2 * (R + vPad));
   const cy = H / 2;
@@ -249,7 +259,12 @@ export default function AgentDial({ run, counts, ticket, tookMs, empty }: DialPr
                     cy={p.y}
                     r={n.kind === "waiting" ? nodeR + 1 : nodeR}
                     className={`ld-dial-node ${n.kind}${lights ? " will-light" : ""}`}
-                    style={lights ? { animationDelay: `${delay}ms` } : undefined}
+                    style={{
+                      ...(lights ? { animationDelay: `${delay}ms` } : {}),
+                      // A phone has no room for the bars, so each node wears its agent's fibre as a
+                      // ring instead (Approval keeps its violet while it waits).
+                      ...(compact && n.kind !== "waiting" ? { stroke: fibreRing(n.id) } : {}),
+                    }}
                   />
                 </g>
               );
@@ -293,13 +308,17 @@ export default function AgentDial({ run, counts, ticket, tookMs, empty }: DialPr
 
           {run ? (
             <g>
-              <text x={c} y={cy + (compact ? 4 : 6)} textAnchor="middle" className="ld-dial-ticket">
+              <text x={c} y={cy + (tight ? 5 : compact ? 4 : 6)} textAnchor="middle" className={"ld-dial-ticket" + (tight ? " tight" : "")}>
                 {ticket ?? "Ticket"}
               </text>
-              <text x={c} y={cy + (compact ? 22 : 30)} textAnchor="middle" className="ld-dial-took">
-                the agents took <tspan className="n">{fmtMs(tookMs)}</tspan>
-              </text>
-              {stateLine.text && (
+              {/* A small ring keeps the ticket only (the facts under the dial say the rest), unless
+                  the run waits for a person or failed: that line stays. */}
+              {!tight && (
+                <text x={c} y={cy + (compact ? 22 : 30)} textAnchor="middle" className="ld-dial-took">
+                  the agents took <tspan className="n">{fmtMs(tookMs)}</tspan>
+                </text>
+              )}
+              {stateLine.text && (!tight || stateLine.tone) && (
                 <text x={c} y={cy + (compact ? 38 : 50)} textAnchor="middle" className={"ld-dial-state" + (stateLine.tone ? ` ${stateLine.tone}` : "")}>
                   {stateLine.text}
                 </text>

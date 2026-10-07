@@ -164,7 +164,7 @@ export default function Agents({ tick = 0 }: { tick?: number }) {
           <dd>{steps ? fmtInt(steps.failed) : "—"}</dd>
         </div>
         <div className={steps?.waiting_hitl ? "hitl" : undefined}>
-          <dt>Waiting for a person</dt>
+          <dt>Agent steps held for a person</dt>
           <dd>{steps ? fmtInt(steps.waiting_hitl) : "—"}</dd>
         </div>
         <div>

@@ -312,3 +312,6 @@
 @media (max-width: 480px) {
   .sc-vs-row { grid-template-columns: 5.5rem minmax(0, 1fr) 4rem; gap: var(--s2); }
 }
+
+/* The steps table sits on the bare canvas, so its sticky header paints the canvas, not a card. */
+.showcase .sc-steps thead th { background: var(--bg); }

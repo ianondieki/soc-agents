@@ -179,15 +179,13 @@ export default function Contracts() {
               <dt>Clauses indexed</dt>
               <dd>{listed ? clauses.toLocaleString() : "—"}</dd>
             </div>
-            <div className={status.llm.cited_answers ? "ok" : undefined}>
-              <dt>Answers</dt>
-              <dd className="ct-figure-word">{status.llm.cited_answers ? "Cited by the model" : "Clause list only"}</dd>
-            </div>
-            <div className={status.fts5_available ? undefined : "bad"}>
-              <dt>Clause search</dt>
-              <dd className="ct-figure-word">{status.fts5_available ? "Ready" : "Unavailable"}</dd>
-            </div>
           </dl>
+          <p className="ct-state">
+            <span className={status.fts5_available ? "ok" : "bad"}>
+              Clause search {status.fts5_available ? "is ready" : "is unavailable"}
+            </span>
+            <span>{status.llm.cited_answers ? "Answers are cited by the model" : "Answers list the matching clauses only"}</span>
+          </p>
           <p
             className="ct-how"
             title={`Corpus about ${corpus?.est_tokens.toLocaleString()} tokens (chars/4 estimate) against a ${corpus?.ceiling_tokens.toLocaleString()}-token line. ${
