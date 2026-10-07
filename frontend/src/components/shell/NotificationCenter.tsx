@@ -63,17 +63,53 @@ const FILTERS: { key: Filter; label: string }[] = [
   { key: "agent", label: "Agents" },
 ];
 
-/** "just now", "12 min ago", "3 h ago", "2 days ago". */
+const EAT_MS = 3 * 3600_000;
+/** The EAT calendar day of an instant, as a day number. */
+const eatDay = (ms: number) => Math.floor((ms + EAT_MS) / 86_400_000);
+
+/** "just now", "12 min ago", "3 h ago" (the same day in Nairobi), "yesterday", "2 days ago": the
+ *  day words count calendar days in EAT, so 27 hours ago at 00:30 is "2 days ago", not "yesterday". */
 function ago(iso: string | null, now: number): string {
   const t = iso ? Date.parse(iso) : NaN;
   if (!Number.isFinite(t)) return "";
   const min = Math.max(0, Math.round((now - t) / 60000));
   if (min < 1) return "just now";
   if (min < 60) return `${min} min ago`;
-  const h = Math.round(min / 60);
-  if (h < 24) return `${h} h ago`;
-  const d = Math.round(h / 24);
-  return d === 1 ? "yesterday" : `${d} days ago`;
+  const days = eatDay(now) - eatDay(t);
+  if (days <= 0) return `${Math.round(min / 60)} h ago`;
+  return days === 1 ? "yesterday" : `${days} days ago`;
+}
+
+/** A row of the list: one item, or the decisions of one kind folded into a single row. */
+type Row = { item: any; members: any[] };
+
+/** Waiting decisions of the same kind fold into one row (37 broadcast cards are one thing to
+ *  do: open Approvals), placed where its newest card would be; everything else stays a row. */
+function foldDecisions(items: any[]): Row[] {
+  const byType = new Map<string, any[]>();
+  for (const it of items) {
+    if (it.kind !== "approval_waiting") continue;
+    const k = String(it.task_type || "");
+    byType.set(k, [...(byType.get(k) || []), it]);
+  }
+  const rows: Row[] = [];
+  const placed = new Set<string>();
+  for (const it of items) {
+    if (it.kind === "approval_waiting") {
+      const k = String(it.task_type || "");
+      const members = byType.get(k) || [it];
+      if (members.length < 2) {
+        rows.push({ item: it, members: [it] });
+        continue;
+      }
+      if (placed.has(k)) continue;
+      placed.add(k);
+      rows.push({ item: { ...members[0], id: `grp:${k}`, folded: members.length }, members });
+      continue;
+    }
+    rows.push({ item: it, members: [it] });
+  }
+  return rows;
 }
 
 /** What an item says: its title, one line under it, and where it leads (null: nowhere this role
@@ -83,6 +119,14 @@ function wordsOf(it: any, profile: any, role: string): { title: string; meta: st
   const region = it.region_code ? regionName(it.region_code, profile) : "";
   const ticket = it.incident_number || "";
   const toTicket = it.incident_id ? `/incidents/${it.incident_id}` : "/incidents";
+  if (it.folded) {
+    const kind = labelFor(it.task_type).toLowerCase();
+    return {
+      title: `${it.folded} ${kind} cards wait for a decision`,
+      meta: it.incident_number ? `Newest: ${it.incident_number} at ${site}` : "Open Approvals to work through them",
+      href: "/hitl",
+    };
+  }
   switch (it.kind) {
     case "p1_open":
       return { title: `P1 opened at ${site}`, meta: [ticket, region].filter(Boolean).join(", "), href: toTicket };
@@ -237,8 +281,9 @@ export default function NotificationCenter({
     setRead(next);
     saveRead(readKey, next);
   };
-  const openItem = (it: any, href: string | null) => {
-    const next = { until: read.until, ids: [...read.ids.filter((x) => x !== it.id), it.id] };
+  const openItem = (members: any[], href: string | null) => {
+    const ids = members.map((m) => m.id);
+    const next = { until: read.until, ids: [...read.ids.filter((x) => !ids.includes(x)), ...ids] };
     setRead(next);
     saveRead(readKey, next);
     if (!href) return;
@@ -248,7 +293,7 @@ export default function NotificationCenter({
 
   const counts = { all: items.length, alarm: 0, person: 0, agent: 0 } as Record<Filter, number>;
   for (const it of items) if (it.group in counts) counts[it.group as Group] += 1;
-  const shown = useMemo(() => (filter === "all" ? items : items.filter((it) => it.group === filter)), [items, filter]);
+  const shown = useMemo(() => foldDecisions(filter === "all" ? items : items.filter((it) => it.group === filter)), [items, filter]);
   const badge = unread.length > 99 ? "99+" : String(unread.length);
   const label = unread.length ? `Notifications, ${unread.length} unread` : "Notifications";
 
@@ -322,13 +367,13 @@ export default function NotificationCenter({
             </p>
           ) : (
             <ul className="inbox-list">
-              {shown.map((it) => {
+              {shown.map(({ item: it, members }) => {
                 const w = wordsOf(it, profile, role);
                 const Icon = GROUP_ICON[it.kind] || Bell;
-                const fresh = isUnread(it);
+                const fresh = members.some(isUnread);
                 return (
                   <li key={it.id}>
-                    <button type="button" className={"inbox-item g-" + it.group + (fresh ? " is-unread" : "")} onClick={() => openItem(it, w.href)}>
+                    <button type="button" className={"inbox-item g-" + it.group + (fresh ? " is-unread" : "")} onClick={() => openItem(members, w.href)}>
                       <span className="inbox-icon" aria-hidden="true">
                         <Icon size={16} strokeWidth={2} />
                       </span>

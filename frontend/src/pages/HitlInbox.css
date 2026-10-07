@@ -699,3 +699,15 @@
 /* The empty pill column of a card with no priority: a quiet dash where the pill would be. */
 .hitl-pill-slot { display: inline-flex; align-items: center; justify-content: center; flex: none; min-width: 2.25rem; height: 20px; }
 .hitl-pill-slot::before { content: ""; width: 10px; height: 2px; border-radius: 1px; background: var(--line-strong); }
+
+/* A planned-maintenance card's mark in the pill's column: a calendar in a quiet chip. */
+.hitl-kind-chip { display: inline-flex; align-items: center; justify-content: center; flex: none; min-width: 2.25rem; height: 20px; border-radius: 999px; background: var(--surface-raised); box-shadow: inset 0 0 0 1px var(--line-strong); color: var(--muted); }
+/* The pill's column holds the calendar chip or the quiet dash too, in every layout. */
+.hitl-row > .hitl-kind-chip, .hitl-row > .hitl-pill-slot { grid-column: 1; justify-self: start; }
+.hitl-queue .hitl-row > .hitl-kind-chip, .hitl-queue .hitl-row > .hitl-pill-slot { grid-area: pill; margin-top: 1px; }
+/* In the side queue an incident-less card says where and when on up to two lines, then its
+   type, like every other row, instead of one clipped line that starts the same each time. */
+.hitl-queue .hitl-row-subject { display: -webkit-box; white-space: normal; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.hitl-queue .hitl-row-subject + .hitl-row-type { display: block; }
+/* The one button under a phone's first few queue rows. */
+.hitl-show-all { justify-content: center; width: 100%; margin-top: var(--s2); }

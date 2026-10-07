@@ -33,6 +33,7 @@ import { useRealtimeState } from "../realtime/RealtimeContext";
 import type { NocEvent } from "../realtime/renderers";
 import "./HitlInbox.css";
 import CountUp from "../components/CountUp";
+import { CalendarClock } from "lucide-react";
 
 /**
  * The shared approval queue.
@@ -546,6 +547,15 @@ export default function HitlInbox({ session, tick, profile }: { session: any; ti
   // A wide screen sets the open card beside the queue (every card one row, the open one marked);
   // narrower, the open card sits in the queue between its rows, as one column.
   const wide = useNarrow("(min-width: 1360px)");
+  // Narrow screens stack the queue under the open card: the first few rows, then one button for
+  // the rest, so a phone is not a 4,000 px column of rows.
+  const [showAllNarrow, setShowAllNarrow] = useState(false);
+  const NARROW_PEEK = 6;
+  const shownNarrow = (() => {
+    if (showAllNarrow || display.length <= NARROW_PEEK + 1) return display;
+    const openAt = display.findIndex((e) => e.id === openId);
+    return display.slice(0, Math.max(NARROW_PEEK, openAt + 1));
+  })();
 
   /**
    * One card's slot: the open card (the decision) or its one-line row. Every slot carries the
@@ -764,16 +774,21 @@ export default function HitlInbox({ session, tick, profile }: { session: any; ti
 
       {showList && !wide && (
         <div className="hitl-list" ref={listRef}>
-          {display.map((entry, i) => {
+          {shownNarrow.map((entry, i) => {
             const open = entry.id === openId;
-            const rowBefore = i > 0 && display[i - 1].id !== openId;
-            const rowAfter = i < display.length - 1 && display[i + 1].id !== openId;
+            const rowBefore = i > 0 && shownNarrow[i - 1].id !== openId;
+            const rowAfter = i < shownNarrow.length - 1 && shownNarrow[i + 1].id !== openId;
             return slotFor(
               entry,
               open,
               slotClass([open ? "is-open" : "is-row", !open && !rowBefore && "run-start", !open && !rowAfter && "run-end", !!entry.decided?.folding && "folding"])
             );
           })}
+          {shownNarrow.length < display.length && (
+            <button type="button" className="btn hitl-show-all" onClick={() => setShowAllNarrow(true)}>
+              Show all {display.length} waiting
+            </button>
+          )}
         </div>
       )}
 
@@ -838,6 +853,12 @@ const QueueRow = memo(function QueueRow({
   const pill = priority ? (
     <span className={`pill ${priority}`} title={priorityTitle(priority)}>
       {priority}
+    </span>
+  ) : /^APPROVE_(SCHEDULE|MAINTENANCE_WINDOW)$/.test(String(t.task_type || "")) ? (
+    // Planned work has no priority: a calendar mark in the pill's column says what it is.
+    <span className="hitl-kind-chip" title="Planned maintenance: a sign-off, not a fault">
+      <CalendarClock size={13} strokeWidth={2} aria-hidden="true" />
+      <span className="sr-only">Planned maintenance</span>
     </span>
   ) : (
     <span className="hitl-pill-slot" aria-hidden="true" />

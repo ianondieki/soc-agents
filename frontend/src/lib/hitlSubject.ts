@@ -27,9 +27,12 @@ export function hitlSubject(task: unknown): string {
   if (type === "APPROVE_MAINTENANCE_WINDOW" || isPlainObject(payload.window)) {
     const win: Record<string, unknown> = isPlainObject(payload.window) ? payload.window : {};
     // The scope is an enum ("SITE", "REGION"); the ref after it is an identifier and stays as written.
-    const scope = [humanEnum(text(win.scope)), text(win.scope_ref)].filter(Boolean).join(" ");
+    const ref = text(win.scope_ref);
+    const scope = text(win.scope);
     const starts = text(win.starts_at_eat);
-    return joinParts("Maintenance window", scope, eat(starts));
+    const where = ref ? (scope && scope !== "SITE" ? `${humanEnum(scope)} ${ref}` : ref) : humanEnum(scope);
+    // The row and the card already name the type ("Maintenance window"): lead with where and when.
+    return [where || "Maintenance window", starts && `from ${eat(starts)}`].filter(Boolean).join(", ");
   }
 
   if (type === "APPROVE_SCHEDULE" || isPlainObject(payload.task)) {
@@ -37,11 +40,9 @@ export function hitlSubject(task: unknown): string {
     const what = text(job.task_type) ? humanizeType(job.task_type) : "";
     const site = text(job.site_id);
     const due = text(job.due_at_eat);
-    return joinParts(
-      "Maintenance schedule",
-      [what, site && `at ${site}`].filter(Boolean).join(" "),
-      due && `due ${eat(due)}`,
-    );
+    // Lead with the site and the work, so twelve schedule cards do not all start the same.
+    const lead = [site, what && what.toLowerCase()].filter(Boolean).join(", ") || "Maintenance schedule";
+    return [lead, due && `due ${eat(due)}`].filter(Boolean).join(", ");
   }
 
   // A burst of complaints about a place with no ticket (docs/CLOSE_THE_LOOP.md §3).

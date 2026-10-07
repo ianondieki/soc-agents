@@ -239,6 +239,27 @@ export const TASK_TYPES: Readonly<Record<string, TaskTypeSpec>> = {
     reasonRequired: true,
     known: true,
   },
+  // services/maintenance.py: the two gates of planned work. The schedule signs off the
+  // programme (this work, this site, this date, this assignee); the window signs off going
+  // ahead on the night. An approved schedule never takes a site off air on its own.
+  APPROVE_SCHEDULE: {
+    label: "Maintenance schedule",
+    effect: "Approving signs off this work, at this site, on this date. It is not permission to take the site off air: the night has its own window card.",
+    check: "Right work, right site, right date, and someone named to do it?",
+    channels: false,
+    reasonRequired: true,
+    known: true,
+    approvedEffect: () => "The work is scheduled and the calendar invite can go out. The site stays on air until its window is approved.",
+  },
+  APPROVE_MAINTENANCE_WINDOW: {
+    label: "Maintenance window",
+    effect: "Approving lets this window be scheduled to take the scope below off air on the night. The rain check and the overlap check run again when it is scheduled.",
+    check: "Regulator reference in hand where needed, customer notice out, weather safe, and no other crew booked on the same site?",
+    channels: false,
+    reasonRequired: true,
+    known: true,
+    approvedEffect: () => "The window can be scheduled. Scheduling re-checks the rain and any overlapping window first.",
+  },
   // docs/CLOSE_THE_LOOP.md §1 and §5: the restore notice to the customers of one outage.
   APPROVE_CUSTOMER_UPDATE: {
     label: "Customer update",
@@ -925,6 +946,8 @@ export function factsFor(task: unknown, incident: unknown): Fact[] {
   pushFact(facts, "Owner", owner);
   if (msp && msp.trim().toLowerCase() !== owner.trim().toLowerCase()) pushFact(facts, "Vendor", msp);
 
+  maintenanceFacts(facts, payload as Record<string, unknown>);
+
   // "Goes to": who the approved message reaches, in the floor's words ("regional office (RNIO),
   // field engineer, vendor (MSP), management"). The check line names this fact.
   const audiences = own(payload, "audiences");
@@ -933,6 +956,83 @@ export function factsFor(task: unknown, incident: unknown): Fact[] {
   }
 
   return facts;
+}
+
+/** The payload keys a maintenance card already says in its facts (or that only the raw payload
+ *  needs: ids, the calendar preview, the server's own warning, which the effect line words). */
+const MAINTENANCE_KEYS = [
+  "task",
+  "window",
+  "warning",
+  "rain_guard",
+  "rain_season_flag",
+  "standard_ref",
+  "assignee_token",
+  "ics_preview",
+  "ca_approval_ref",
+  "ca_approval_required",
+  "customer_notice_sent_at",
+  "notice_days_policy",
+  "tasks",
+  "overlapping_windows",
+];
+
+/**
+ * A maintenance card's facts (services/maintenance.py payloads). The schedule: the work, the
+ * site, when it is due, the standard it follows and who does it. The window: the scope, its
+ * start and end in EAT, the rain check, the regulator's reference, the customer notice and any
+ * window it overlaps. A missing fact is left out; the ones that change the decision carry the
+ * attention dot.
+ */
+function maintenanceFacts(facts: Fact[], payload: Record<string, unknown>): void {
+  const job = isPlainObject(own(payload, "task")) ? (own(payload, "task") as Record<string, unknown>) : null;
+  const win = isPlainObject(own(payload, "window")) ? (own(payload, "window") as Record<string, unknown>) : null;
+  if (job) {
+    pushFact(facts, "Work", job.task_type ? humanizeType(job.task_type) : "");
+    if (!facts.some((f) => f.label === "Site code")) pushFact(facts, "Site code", firstString(job.site_id), { mono: true });
+    pushFact(facts, "Due", firstString(job.due_at_eat));
+    pushFact(facts, "Standard", firstString(own(payload, "standard_ref"), job.standard_ref), { mono: true });
+    const who = firstString(own(payload, "assignee_token"), job.assignee_token, job.proposed_assignee_token);
+    pushFact(facts, "Assignee", who || "not named yet", who ? undefined : { attention: "warn" });
+  }
+  if (win) {
+    const scope = firstString(win.scope);
+    pushFact(facts, "Scope", scope ? humanEnum(scope).replace(/^./, (c) => c.toUpperCase()) : "");
+    pushFact(facts, scope === "SITE" ? "Site code" : "Scope ref", firstString(win.scope_ref), { mono: true });
+    pushFact(facts, "Starts", firstString(win.starts_at_eat));
+    pushFact(facts, "Ends", firstString(win.ends_at_eat));
+    const guard = isPlainObject(own(payload, "rain_guard")) ? (own(payload, "rain_guard") as Record<string, unknown>) : null;
+    if (guard) {
+      const verdict = firstString(guard.verdict);
+      const blocking = guard.blocking === true;
+      const words = blocking
+        ? "storm forecast: scheduling refuses without a named override"
+        : /RAIN_SEASON/.test(verdict)
+          ? "rain season and no forecast: treat as adverse"
+          : /CLEAR/.test(verdict)
+            ? "forecast clear"
+            : humanEnum(verdict);
+      pushFact(facts, "Rain check", words, blocking ? { attention: "danger" } : /RAIN_SEASON/.test(verdict) ? { attention: "warn" } : undefined);
+    }
+    const caRef = firstString(own(payload, "ca_approval_ref"), win.ca_approval_ref);
+    const caNeeded = own(payload, "ca_approval_required") === true || win.ca_approval_required === true;
+    if (caRef) pushFact(facts, "Regulator reference", caRef, { mono: true });
+    else if (caNeeded) pushFact(facts, "Regulator reference", "needed before scheduling", { attention: "danger" });
+    const notice = firstString(own(payload, "customer_notice_sent_at"), win.customer_notice_sent_at);
+    const days = firstNumber(own(payload, "notice_days_policy"));
+    pushFact(
+      facts,
+      "Customer notice",
+      notice ? `sent ${notice.replace("T", " ").slice(0, 16)}` : `not sent yet${days != null ? ` (policy: ${days} days ahead)` : ""}`,
+      notice ? undefined : { attention: "warn" },
+    );
+    const overlaps = own(payload, "overlapping_windows");
+    if (Array.isArray(overlaps) && overlaps.length) {
+      pushFact(facts, "Overlapping windows", String(overlaps.length), { attention: "danger" });
+    }
+    const tasks = own(payload, "tasks");
+    if (Array.isArray(tasks) && tasks.length) pushFact(facts, "Work in the window", String(tasks.length));
+  }
 }
 
 /**
@@ -955,6 +1055,7 @@ export function extraEntries(task: unknown, facts: Fact[]): PayloadEntry[] {
   if (assignee && assignee === shown("Owner")) skip.add("assignee");
   // A recognised type shows the alert elsewhere; an unknown one keeps every field it carries.
   if (specFor(own(t, "task_type")).known && typeof own(payload, "alert_id") === "string") skip.add("alert_id");
+  if (isPlainObject(own(payload, "task")) || isPlainObject(own(payload, "window"))) for (const k of MAINTENANCE_KEYS) skip.add(k);
   return payloadEntries(payload, skip);
 }
 
