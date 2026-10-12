@@ -69,7 +69,7 @@ from noc_agents.orchestrator import outbox
 from noc_agents.services.clock import fmt_eat
 from noc_agents.services.lifecycle import NOT_OPEN_STATUSES
 from noc_agents.services.alerts import build_alert
-from noc_agents.services.hitl import envelope_payload
+from noc_agents.services.hitl import envelope_payload, sync_incident_hitl_scalars
 from noc_agents.services.notify import dispatch_handover_email
 from noc_agents.services.shifts import current_shift
 
@@ -84,6 +84,39 @@ _FALSE = {"0", "false", "no", "off"}
 HANDOVER_TASK_TYPE = HitlTaskType.APPROVE_HANDOVER.value
 #: ``hitl_tasks.entity_type`` for these rows: what the task is really about (§7.5).
 HANDOVER_ENTITY_TYPE = "handover"
+#: The reason on a handover card a newer one for the same shift replaces.
+SUPERSEDED = "Superseded: a newer handover for this shift was prepared, so this one will not be sent."
+
+
+def supersede_open_handovers(session: Session, cfg: OperatorConfig, shift_id: str) -> list[str]:
+    """Close every still-open handover card of ``shift_id`` before a new one is raised, so a shift
+    hands over once: preparing it again used to leave both cards open, and approving both sent the
+    email twice. Each one moves to REJECTED with ``SUPERSEDED`` as its reason and its HELD email is
+    suppressed. Conditional UPDATEs, so a card decided meanwhile is left as it was decided."""
+    ids = list(
+        session.scalars(
+            select(HitlTaskRow.id).where(
+                HitlTaskRow.operator_id == cfg.operator_id,
+                HitlTaskRow.task_type == HANDOVER_TASK_TYPE,
+                HitlTaskRow.entity_type == HANDOVER_ENTITY_TYPE,
+                HitlTaskRow.entity_id == shift_id,
+                HitlTaskRow.status.in_(("PENDING", "CLAIMED")),
+            )
+        )
+    )
+    if not ids:
+        return []
+    session.execute(
+        update(HitlTaskRow)
+        .where(HitlTaskRow.id.in_(ids), HitlTaskRow.status.in_(("PENDING", "CLAIMED")))
+        .values(status="REJECTED", resolved_by="handover", resolved_at=utcnow(), reason=SUPERSEDED)
+    )
+    session.execute(
+        update(OutboxRow)
+        .where(OutboxRow.hitl_task_id.in_(ids), OutboxRow.status == outbox.HELD)
+        .values(status=outbox.SUPPRESSED, last_error=f"handover_superseded: {SUPERSEDED}", updated_at=utcnow())
+    )
+    return ids
 #: The raiser. A principal-shaped string that can never equal a human's name, so the
 #: raiser ≠ approver rule (§6.5) never blocks the supervisor who pressed the button.
 HANDOVER_RAISER = "agent:ShiftHandoverAgent"
@@ -344,6 +377,14 @@ def queue_handover(
             ),
         }
 
+    # One handover per shift waits at a time: the newest replaces any still open (and their anchors'
+    # scalars follow, since a card they carried has closed).
+    superseded = supersede_open_handovers(session, cfg, shift_id)
+    if superseded:
+        for inc_id in set(session.scalars(select(HitlTaskRow.incident_id).where(HitlTaskRow.id.in_(superseded)))):
+            row = session.get(IncidentRow, inc_id) if inc_id else None
+            if row is not None:
+                sync_incident_hitl_scalars(session, row)
     task = HitlTaskRow(
         id=new_id(),
         incident_id=anchor.id,
@@ -393,6 +434,7 @@ def queue_handover(
         "outbox_id": row.id,
         "status": row.status,
         "blocked_reason": None,
+        "superseded": superseded,
     }
 
 

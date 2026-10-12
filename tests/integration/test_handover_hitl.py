@@ -420,6 +420,24 @@ def test_a_shift_ending_with_only_restored_tickets_still_hands_them_over(client,
     assert sent == []
 
 
+def test_preparing_the_handover_again_supersedes_the_card_still_waiting(client, sent):
+    """One shift hands over once: the second preparation closes the first card (rejected, with
+    the reason) and suppresses its held email, so approving the old card is a 409 and only the
+    newest can go out."""
+    client.post("/api/v1/events", json=HUB_EVENT)
+    first = client.post("/api/v1/shifts/handover").json()["hitl"]
+    second = client.post("/api/v1/shifts/handover").json()["hitl"]
+    assert first["task_id"] and second["task_id"] and first["task_id"] != second["task_id"]
+    assert second["superseded"] == [first["task_id"]]
+    old = _read(lambda s: s.get(HitlTaskRow, first["task_id"]))
+    assert old.status == "REJECTED" and "Superseded" in (old.reason or "")
+    assert _read(lambda s: s.get(OutboxRow, first["outbox_id"]).status) == "SUPPRESSED"
+    assert client.post(f"/api/v1/hitl/{first['task_id']}/approve", json={"resolved_by": "Duty Manager B"}).status_code == 409
+    waiting = [t for t in client.get("/api/v1/hitl/pending").json() if t["task_type"] == "APPROVE_HANDOVER"]
+    assert [t["id"] for t in waiting] == [second["task_id"]]
+    assert sent == []
+
+
 def _renumber(incident_id: str, number: str) -> None:
     """Give a ticket a number in another style, as a database from before inc9 holds them."""
     session = get_session()
