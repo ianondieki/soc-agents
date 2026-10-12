@@ -5,6 +5,7 @@ import { api } from "../api";
 import ContractsDrawer from "../components/ContractsDrawer";
 import LaneOff from "../components/LaneOff";
 import { humanEnum } from "../lib/agents";
+import { statusOf } from "../lib/apiError";
 import { fmtDate } from "../lib/time";
 import "./Contracts.css";
 
@@ -74,6 +75,11 @@ function rolesWords(roles: string[]): string {
 /** Search results shown until asked for the rest. */
 const HITS_SHOWN = 8;
 
+/** `api/routers/contracts.MAX_QUESTION_CHARS`: a longer clause search is refused with a 422. The
+ *  input's maxLength counts UTF-16 units, never fewer than the server's characters, so it holds. */
+const SEARCH_MAX = 2000;
+const SEARCH_TOO_LONG = `A search can be up to ${SEARCH_MAX.toLocaleString()} characters. Shorten it and search again.`;
+
 type Hit = {
   clause_id: string;
   contract_title: string;
@@ -131,9 +137,9 @@ export default function Contracts() {
       setHits(res.hits || []);
       setAllHits(false);
       if (res.reason) setSearchNote(res.reason);
-    } catch {
+    } catch (e) {
       setHits([]);
-      setSearchNote("Search failed. The rest of this page is unaffected.");
+      setSearchNote(statusOf(e) === 422 ? SEARCH_TOO_LONG : "Search failed. The rest of this page is unaffected.");
     } finally {
       setSearching(false);
     }
@@ -232,6 +238,7 @@ export default function Contracts() {
                   <input
                     aria-label="Search clause text and headings"
                     value={q}
+                    maxLength={SEARCH_MAX}
                     onChange={(e) => setQ(e.target.value)}
                     placeholder="Restoration time for a rural site"
                   />
