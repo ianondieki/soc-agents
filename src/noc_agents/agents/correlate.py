@@ -22,7 +22,20 @@ def run(state: IncidentState, ctx: RunContext) -> StepResult:
     cfg, session, event = ctx.cfg, ctx.session, state.event
     window = int((cfg.correlation or {}).get("window_minutes", 15))
     cutoff = utcnow() - timedelta(minutes=window)
-    existing = session.scalar(
+    # The same fault on a ticket that is still open folds into it, however old the ticket is:
+    # a second storm over sites still down must not open a second ticket each. The window is
+    # for a ticket already restored (a site flapping straight after it came back), which still
+    # absorbs a repeat for that long instead of a new ticket opening on every flap.
+    still_open = session.scalar(
+        select(IncidentRow)
+        .where(
+            IncidentRow.operator_id == cfg.operator_id,
+            IncidentRow.correlation_fingerprint == state.fingerprint,
+            IncidentRow.status.not_in(["RESTORED", "CLOSED", "CANCELLED"]),
+        )
+        .order_by(IncidentRow.created_at.desc())
+    )
+    existing = still_open or session.scalar(
         select(IncidentRow)
         .where(
             IncidentRow.operator_id == cfg.operator_id,
@@ -33,6 +46,7 @@ def run(state: IncidentState, ctx: RunContext) -> StepResult:
         .order_by(IncidentRow.created_at.desc())
     )
     if existing:
+        within = existing.created_at is not None and existing.created_at >= cutoff
         existing.updated_at = utcnow()
         if event.child_sites_down:
             existing.child_sites_down = max(existing.child_sites_down or 0, event.child_sites_down)
@@ -48,7 +62,11 @@ def run(state: IncidentState, ctx: RunContext) -> StepResult:
         return StepResult(
             status=SHORT_CIRCUIT,
             output_summary=f"merged into {existing.incident_number}",
-            rationale=f"Duplicate within {window}m window — idempotent merge",
+            rationale=(
+                f"Duplicate within {window}m window — idempotent merge"
+                if within
+                else f"Same fault on {existing.incident_number}, still open — idempotent merge"
+            ),
             tools=[{"name": "find_open_by_fingerprint", "ok": True, "latency_ms": 2}],
             incident=existing,
             event_type="incident.merged",

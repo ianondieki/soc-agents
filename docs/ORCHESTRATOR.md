@@ -204,8 +204,10 @@ latest `WAITING_HITL` run and finalises it. Step rows are left exactly as they w
 
 Only `CORRELATE` returns it, for the two cases where no new ticket should exist:
 
-- **Merge** — an open incident with the same fingerprint inside the correlation window
-  (default 15 minutes). The duplicate gets a work note; the existing incident is returned.
+- **Merge** — an incident with the same fingerprint that is still open (not restored, closed or
+  cancelled), however old; or, failing that, one restored inside the correlation window (default
+  15 minutes), so a site flapping straight after it came back does not open a ticket per flap.
+  The duplicate gets a work note; the existing incident is returned.
   Terminal event `incident.merged` (`agents/correlate.py:35-56`).
 - **Cascade child** — a non-HUB site whose parent HUB already has an open major. The parent's
   `child_sites_down` is incremented and a note added; the *parent* is returned. Terminal event
