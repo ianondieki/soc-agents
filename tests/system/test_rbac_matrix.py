@@ -441,6 +441,9 @@ EXEMPT: dict[tuple[str, str], str] = {
     (P, "/api/v1/support/track/still-down"): "the Track page's 'still down' button: the same matching, 404 and "
                                              "limits as /track; allowed only within 72 h of the restore SMS and "
                                              "once a day, and it only reopens the customer's own complaint",
+    (G, "/api/v1/public/status"): "the customer's service status page: each region's state in a closed "
+                                  "vocabulary, services affected, counties and approved planned works; no "
+                                  "ticket, site, id, subscriber count, vendor or engineer (services.public_status)",
 }
 #: Mounted sub-applications, which are not routes and carry no ``require_role``: whatever the
 #: mounted app serves is served on its own terms. Each one needs a reason here, or the

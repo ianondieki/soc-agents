@@ -30,6 +30,7 @@ from noc_agents.api.routers import (
     outbox_admin,
     pir,
     productivity,
+    public,
     regulatory,
     scorecards,
     signals,
@@ -62,6 +63,8 @@ ROUTERS: tuple[APIRouter, ...] = (
     support.router,
     # The notification centre's inbox (the bell in the top bar)
     notifications.router,
+    # The customer's service status page (open, public-safe aggregates only)
+    public.router,
 )
 
 __all__ = ["ROUTERS"]
