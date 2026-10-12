@@ -34,7 +34,7 @@ import { useRealtimeState } from "../realtime/RealtimeContext";
 import type { NocEvent } from "../realtime/renderers";
 import "./HitlInbox.css";
 import CountUp from "../components/CountUp";
-import { CalendarClock } from "lucide-react";
+import { ArrowRightLeft, CalendarClock } from "lucide-react";
 
 /**
  * The shared approval queue.
@@ -863,6 +863,12 @@ const QueueRow = memo(function QueueRow({
     <span className={`pill ${priority}`} title={priorityTitle(priority)}>
       {priority}
     </span>
+  ) : t.task_type === "APPROVE_HANDOVER" ? (
+    // A handover is about the shift: its mark, not the anchor ticket's priority.
+    <span className="hitl-kind-chip" title="Shift handover: the outgoing shift's pack for the next shift">
+      <ArrowRightLeft size={13} strokeWidth={2} aria-hidden="true" />
+      <span className="sr-only">Shift handover</span>
+    </span>
   ) : /^APPROVE_(SCHEDULE|MAINTENANCE_WINDOW)$/.test(String(t.task_type || "")) ? (
     // Planned work has no priority: a calendar mark in the pill's column says what it is.
     <span className="hitl-kind-chip" title="Planned maintenance: a sign-off, not a fault">
@@ -886,8 +892,10 @@ const QueueRow = memo(function QueueRow({
       </div>
     );
   }
-  const siteId = typeof t.site_id === "string" && t.site_id ? t.site_id : typeof incident?.site_id === "string" ? incident.site_id : "";
-  const siteName = typeof incident?.site_name === "string" ? incident.site_name : "";
+  // A handover's anchor ticket is for scoping only: its site is not what the card is about.
+  const handover = t.task_type === "APPROVE_HANDOVER";
+  const siteId = handover ? "" : typeof t.site_id === "string" && t.site_id ? t.site_id : typeof incident?.site_id === "string" ? incident.site_id : "";
+  const siteName = handover ? "" : typeof incident?.site_name === "string" ? incident.site_name : "";
   const claimed = typeof t.claimed_by === "string" && t.claimed_by ? t.claimed_by : "";
   const mins = ageMinutes(t.created_at);
   const late = markLate && ladderBreached(mins, t.priority, t.claimed_by);

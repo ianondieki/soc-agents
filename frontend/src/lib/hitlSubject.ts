@@ -19,6 +19,8 @@ import { eatWords } from "./time";
  */
 export function hitlSubject(task: unknown): string {
   const t: Record<string, unknown> = isPlainObject(task) ? task : {};
+  // A handover is about the shift, not the ticket it is anchored to for scoping.
+  if (text(t.task_type) === "APPROVE_HANDOVER") return handoverSubject(t);
   const incident = text(t.incident_number) || text(t.incident_id);
   if (incident) return incident;
 
@@ -64,7 +66,23 @@ export function hitlSubject(task: unknown): string {
  */
 export function hitlSubjectIsIncident(task: unknown): boolean {
   const t: Record<string, unknown> = isPlainObject(task) ? task : {};
+  if (text(t.task_type) === "APPROVE_HANDOVER") return false;
   return Boolean(text(t.incident_number) || text(t.incident_id));
+}
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+/** "Day shift handover, Mon 12 Oct" from the card's shift id ("safaricom:2026-10-12:DAY"). */
+function handoverSubject(t: Record<string, unknown>): string {
+  const payload: Record<string, unknown> = isPlainObject(t.proposed_payload) ? t.proposed_payload : {};
+  const sid = text(payload.shift_id);
+  const m = /:(\d{4})-(\d{2})-(\d{2}):(DAY|NIGHT)$/i.exec(sid);
+  const kind = (m ? m[4] : text(payload.shift)).toUpperCase() === "NIGHT" ? "Night" : "Day";
+  if (!m) return `${kind} shift handover`;
+  const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  const wd = WEEKDAYS[new Date(Date.UTC(y, mo - 1, d)).getUTCDay()];
+  return `${kind} shift handover, ${wd} ${d} ${MONTHS[mo - 1] ?? ""}`.trim();
 }
 
 function eat(when: string): string {

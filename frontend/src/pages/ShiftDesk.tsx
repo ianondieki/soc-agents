@@ -45,6 +45,9 @@ export default function ShiftDesk({ tick, profile, metrics }: { tick: number; pr
   const [handover, setHandover] = useState<any>(null);
   const [handoverBusy, setHandoverBusy] = useState(false);
   const [handoverError, setHandoverError] = useState("");
+  // This shift's handover card still waiting on Approvals, read back after a reload or from
+  // another desk, so the page never offers "Prepare the handover" as if none existed.
+  const [waitingCard, setWaitingCard] = useState<{ id: string; created_at: string } | null>(null);
   // Below 1100 px the handover comes before the ledger, so a prepared one is seen at once.
   const stacked = useNarrow("(max-width: 1099px)");
   const now = useMinute();
@@ -65,6 +68,23 @@ export default function ShiftDesk({ tick, profile, metrics }: { tick: number; pr
       live = false;
     };
   }, [tick, retry]);
+
+  const shiftKey = String(profile?.shift_id || "");
+  useEffect(() => {
+    if (!shiftKey) return;
+    let live = true;
+    api
+      .hitl()
+      .then((tasks: any[]) => {
+        if (!live || !Array.isArray(tasks)) return;
+        const mine = tasks.find((t) => t?.task_type === "APPROVE_HANDOVER" && t?.proposed_payload?.shift_id === shiftKey);
+        setWaitingCard(mine ? { id: String(mine.id), created_at: String(mine.created_at || "") } : null);
+      })
+      .catch(() => undefined); // a role the inbox refuses: the panel stays as it was
+    return () => {
+      live = false;
+    };
+  }, [shiftKey, tick, handover]);
 
   const generateHandover = async () => {
     setHandoverBusy(true);
@@ -203,6 +223,11 @@ export default function ShiftDesk({ tick, profile, metrics }: { tick: number; pr
       </h2>
       {handover ? (
         <Handover h={handover} profile={profile} />
+      ) : waitingCard ? (
+        <p className="sd-due">
+          A handover for this shift, prepared at <span className="mono">{fmtHM(waitingCard.created_at)}</span> EAT, is waiting on{" "}
+          <Link to={`/hitl?task=${encodeURIComponent(waitingCard.id)}`}>Approvals</Link>. Preparing it again replaces that card.
+        </p>
       ) : (
         <>
           <ol className="sd-steps">
@@ -222,7 +247,7 @@ export default function ShiftDesk({ tick, profile, metrics }: { tick: number; pr
       )}
       <div className="sd-actions">
         <button className="btn primary" disabled={handoverBusy} aria-busy={handoverBusy || undefined} onClick={generateHandover}>
-          {handoverBusy ? "Preparing the handover…" : handover ? "Prepare it again" : "Prepare the handover"}
+          {handoverBusy ? "Preparing the handover…" : handover || waitingCard ? "Prepare it again" : "Prepare the handover"}
         </button>
       </div>
     </section>

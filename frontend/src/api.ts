@@ -32,7 +32,12 @@ export const api = {
   incident: (id: string) => req<any>(`/api/v1/incidents/${id}`),
   workflow: (id: string) => req<any>(`/api/v1/incidents/${id}/workflow`),
   timeline: (id: string) => req<any[]>(`/api/v1/incidents/${id}/timeline`),
-  hitl: () => req<any[]>("/api/v1/hitl/pending"),
+  // A handover card hangs off an anchor ticket for scoping only (services/handover.anchor_incident):
+  // it is about the shift, so it carries no priority of its own (never a "P2" card, never in the P2 count).
+  hitl: () =>
+    req<any[]>("/api/v1/hitl/pending").then((rows) =>
+      Array.isArray(rows) ? rows.map((t) => (t?.task_type === "APPROVE_HANDOVER" ? { ...t, priority: null } : t)) : rows
+    ),
   claim: (id: string, who: string) =>
     req(`/api/v1/hitl/${id}/claim`, { method: "POST", body: JSON.stringify({ resolved_by: who }) }),
   /**

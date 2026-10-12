@@ -193,9 +193,11 @@ export const TASK_TYPES: Readonly<Record<string, TaskTypeSpec>> = {
     label: "Shift handover",
     effect: "Approving lets the handover pack leave the NOC and closes the outgoing shift.",
     check: "Every open P1/P2 accounted for, and nothing in the pack that should not be shared.",
-    channels: true,
+    // The email's subject and body are on the card as written (below the facts), not as channel drafts.
+    channels: false,
     reasonRequired: true,
     known: true,
+    approvedEffect: () => "The handover email goes to the incoming shift.",
   },
   APPROVE_EXEC_BRIEF: {
     label: "Exec brief",
@@ -898,6 +900,9 @@ export function factsFor(task: unknown, incident: unknown): Fact[] {
   const inc = isPlainObject(incident) ? incident : {};
   const payload = isPlainObject(own(t, "proposed_payload")) ? own(t, "proposed_payload") : {};
   const facts: Fact[] = [];
+  // A handover is about the shift. Its anchor ticket only scopes the card (services/handover.py
+  // anchor_incident), so its site, subscribers and owner are not this decision's facts.
+  if (own(t, "task_type") === "APPROVE_HANDOVER") return handoverFacts(payload as Record<string, unknown>);
 
   // Name and code are separate facts: the code is an identifier (mono), the name is prose.
   const siteId = firstString(own(inc, "site_id"), own(t, "site_id"));
@@ -960,6 +965,27 @@ export function factsFor(task: unknown, incident: unknown): Fact[] {
 
 /** The payload keys a maintenance card already says in its facts (or that only the raw payload
  *  needs: ids, the calendar preview, the server's own warning, which the effect line words). */
+/** The keys handoverFacts shows, so the payload list below the facts does not repeat them. */
+const HANDOVER_KEYS = ["shift_id", "shift", "watch_count", "open_total", "awaiting_close", "anchor_incident_number", "envelope"];
+
+/** A handover card's facts: which shift, what it hands over, and the ticket it is filed under. */
+function handoverFacts(payload: Record<string, unknown>): Fact[] {
+  const facts: Fact[] = [];
+  const sid = firstString(own(payload, "shift_id"));
+  const m = /:(\d{4}-\d{2}-\d{2}):(DAY|NIGHT)$/i.exec(sid);
+  // "Day shift, Mon 5 Oct": the shift's date in the console's words (eatWords, time dropped).
+  const day = m ? eatWords(`${m[1]} 00:00`).split(",")[0] : "";
+  pushFact(facts, "Shift", m ? `${m[2].toUpperCase() === "NIGHT" ? "Night" : "Day"} shift, ${day}` : human(firstString(own(payload, "shift"))));
+  const watch = firstNumber(own(payload, "watch_count"));
+  if (watch != null) pushFact(facts, "On the watchlist", String(watch), watch > 0 ? { attention: "warn" } : undefined);
+  const open = firstNumber(own(payload, "open_total"));
+  if (open != null) pushFact(facts, "Open tickets", String(open));
+  const restored = firstNumber(own(payload, "awaiting_close"));
+  if (restored != null && restored > 0) pushFact(facts, "Restored, to close", String(restored));
+  pushFact(facts, "Filed under", firstString(own(payload, "anchor_incident_number")), { mono: true });
+  return facts;
+}
+
 const MAINTENANCE_KEYS = [
   "task",
   "window",
@@ -1056,6 +1082,7 @@ export function extraEntries(task: unknown, facts: Fact[]): PayloadEntry[] {
   // A recognised type shows the alert elsewhere; an unknown one keeps every field it carries.
   if (specFor(own(t, "task_type")).known && typeof own(payload, "alert_id") === "string") skip.add("alert_id");
   if (isPlainObject(own(payload, "task")) || isPlainObject(own(payload, "window"))) for (const k of MAINTENANCE_KEYS) skip.add(k);
+  if (own(t, "task_type") === "APPROVE_HANDOVER") for (const k of HANDOVER_KEYS) skip.add(k);
   return payloadEntries(payload, skip);
 }
 
