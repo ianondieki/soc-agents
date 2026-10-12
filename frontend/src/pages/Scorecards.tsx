@@ -153,8 +153,11 @@ export default function Scorecards({ session }: { session: Session }) {
       setComputeResult(res);
       reload();
     } catch (e) {
-      const detail = detailOf(e, "");
-      setComputeFailure({ view: failureView(statusOf(e), "compute", detail), detail });
+      // A request that never reached the server has no sentence of its own, only the browser's
+      // "Failed to fetch"; the headline and its line already say what happened.
+      const status = statusOf(e);
+      const detail = status == null ? "" : detailOf(e, "");
+      setComputeFailure({ view: failureView(status, "compute", detail), detail });
     } finally {
       setComputing(false);
     }

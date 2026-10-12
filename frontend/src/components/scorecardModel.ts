@@ -983,6 +983,16 @@ export function failureView(status: number | null, where: FailureWhere, detail =
       return { kind: "unavailable", title: "Terms unavailable", body: "The SLA terms file is missing or unversioned, so nothing was computed." };
     return { kind: "unavailable", title: "Service unavailable", body: "The server could not serve this request. Its own sentence below names the cause." };
   }
+  // Compute is an act, not a load: say what failed and why, in words. No status means the
+  // request never reached the server (the browser's "Failed to fetch").
+  if (compute) {
+    const title = "Couldn't compute the scorecard";
+    if (status == null)
+      return { kind: "error", title, body: "The server could not be reached, so nothing was computed. Check the connection, then compute again." };
+    if (status >= 500)
+      return { kind: "error", title, body: "The server failed while computing, so nothing was computed. Try again; if it fails again, the server log has the cause." };
+    return { kind: "error", title, body: "The server did not compute the scorecard, so nothing changed. Its own sentence below says why." };
+  }
   return { kind: "error", title: "Could not load", body: "The request failed. The rest of the page is unaffected." };
 }
 
