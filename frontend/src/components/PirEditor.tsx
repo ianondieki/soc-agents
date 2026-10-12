@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import BlamelessHint from "./BlamelessHint";
 import { humanEnum } from "../lib/agents";
-import { detailOf, isStatus } from "../lib/apiError";
+import { detailOf, isStatus, statusOf } from "../lib/apiError";
 import { IconCheck, IconDot } from "../lib/icons";
 import { fmtDate, fmtDateTime } from "../lib/time";
 
@@ -164,6 +164,26 @@ function dueWords(due: string, closed: boolean): { words: string; overdue: boole
   return { words: late + " day" + (late === 1 ? "" : "s") + " overdue", overdue: true };
 }
 
+/** A failed write, as the chip and the words beside it. */
+type Failure = { chip: string; text: string };
+
+/**
+ * A 4xx is the server refusing what was sent: "rejected", with its own sentence. A 5xx, or a
+ * request that never arrived, refused nothing; it failed, and wearing "rejected" would send
+ * the reviewer to rewrite text that was fine.
+ */
+function failureOf(e: unknown, fallback: string, done: "saved" | "added" | "updated" | "queued"): Failure {
+  const s = statusOf(e);
+  if (s != null && s < 500) return { chip: "rejected", text: detailOf(e, fallback) };
+  return {
+    chip: "not " + done,
+    text:
+      s == null
+        ? "The server could not be reached, so nothing was " + done + ". Try again."
+        : "The server failed, so nothing was " + done + ". Try again.",
+  };
+}
+
 function minutes(value: number | null | undefined): string {
   if (value == null) return "—";
   return Math.round(value) + " min";
@@ -194,7 +214,7 @@ export default function PirEditor({
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [saveNote, setSaveNote] = useState<string | null>(null);
-  const [saveError, setSaveError] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<Failure | null>(null);
   const [blameless, setBlameless] = useState(false);
 
   const [reviewer, setReviewer] = useState("");
@@ -208,7 +228,7 @@ export default function PirEditor({
     owner_token: "",
     due_date: "",
   });
-  const [actionError, setActionError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<Failure | null>(null);
 
   const adopt = useCallback((row: Pir) => {
     setPir(row);
@@ -281,9 +301,9 @@ export default function PirEditor({
       setSaveNote("Saved");
       onChanged?.();
     } catch (e) {
-      const detail = detailOf(e, "The review could not be saved.");
-      setSaveError(detail);
-      if (isStatus(e, 422) && BLAMELESS_RE.test(detail)) setBlameless(true);
+      const failure = failureOf(e, "The review could not be saved.", "saved");
+      setSaveError(failure);
+      if (isStatus(e, 422) && BLAMELESS_RE.test(failure.text)) setBlameless(true);
     } finally {
       setBusy(false);
     }
@@ -316,7 +336,7 @@ export default function PirEditor({
     if (!pir) return;
     setActionError(null);
     if (!newAction.description.trim() || !newAction.owner_token.trim() || !newAction.due_date) {
-      setActionError("An action item needs a description, a role-token owner and a due date.");
+      setActionError({ chip: "not added", text: "An action item needs a description, a role-token owner and a due date." });
       return;
     }
     setBusy(true);
@@ -330,7 +350,7 @@ export default function PirEditor({
       setNewAction({ type: "prevent", priority: "P1", description: "", owner_token: "", due_date: "" });
       onChanged?.();
     } catch (e) {
-      setActionError(detailOf(e, "The action item was not added."));
+      setActionError(failureOf(e, "The action item was not added.", "added"));
     } finally {
       setBusy(false);
     }
@@ -345,7 +365,7 @@ export default function PirEditor({
       adopt(await api.pir(pir.id));
       onChanged?.();
     } catch (e) {
-      setActionError(detailOf(e, "The action item was not updated."));
+      setActionError(failureOf(e, "The action item was not updated.", "updated"));
     } finally {
       setBusy(false);
     }
@@ -364,7 +384,7 @@ export default function PirEditor({
       );
       adopt(await api.pir(pir.id));
     } catch (e) {
-      setSaveError(detailOf(e, "The draft could not be queued."));
+      setSaveError(failureOf(e, "The draft could not be queued.", "queued"));
     } finally {
       setBusy(false);
     }
@@ -504,9 +524,9 @@ export default function PirEditor({
 
       {saveError && (
         <div className="pir-error">
-          <span className="chip warn">rejected</span>
+          <span className="chip warn">{saveError.chip}</span>
           <div>
-            <div>{saveError}</div>
+            <div>{saveError.text}</div>
             {blameless && (
               <div className="muted" style={{ marginTop: "0.3rem" }}>
                 Nothing was saved. Edit <strong>root causes</strong> or{" "}
@@ -639,8 +659,8 @@ export default function PirEditor({
       )}
       {actionError && (
         <div className="pir-error">
-          <span className="chip warn">rejected</span>
-          <div>{actionError}</div>
+          <span className="chip warn">{actionError.chip}</span>
+          <div>{actionError.text}</div>
         </div>
       )}
 
