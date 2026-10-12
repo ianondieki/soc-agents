@@ -54,7 +54,10 @@ function spanWords(ms: number): string {
  * children_down=0" reads "Est. 180,000 users, region Rift Valley, critical site". A count of child
  * sites down is said only when it is not zero. The stored text is untouched.
  */
-function impactWords(text: string): string {
+function impactWords(text: string, childrenNow?: unknown): string {
+  // The summary is written once, when the ticket opens; child sites keep falling under a HUB
+  // afterwards, so the live count wins over the one frozen in the text.
+  const live = typeof childrenNow === "number" && Number.isFinite(childrenNow) ? String(childrenNow) : null;
   const parts = String(text)
     .split(";")
     .map((p) => p.trim())
@@ -63,7 +66,10 @@ function impactWords(text: string): string {
       const cls = /^class\s+([A-Z_]+)$/i.exec(p);
       if (cls) return `${humanEnum(cls[1].toUpperCase())} site`;
       const kids = /^children_down\s*=\s*(\d+)$/i.exec(p);
-      if (kids) return Number(kids[1]) ? `${kids[1]} child ${kids[1] === "1" ? "site" : "sites"} down` : "";
+      if (kids) {
+        const n = live ?? kids[1];
+        return Number(n) ? `${n} child ${n === "1" ? "site" : "sites"} down` : "";
+      }
       return arrowsToWords(p);
     })
     .filter(Boolean);
@@ -695,7 +701,7 @@ function Workspace({ id, session, profile, tick }: { id: string | undefined; ses
               </div>
               <div>
                 <dt>Impact</dt>
-                <dd>{inc.impact_summary ? impactWords(inc.impact_summary) : dash}</dd>
+                <dd>{inc.impact_summary ? impactWords(inc.impact_summary, inc.child_sites_down) : dash}</dd>
               </div>
               {inc.access_notes && (
                 <div>

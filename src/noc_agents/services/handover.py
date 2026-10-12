@@ -402,6 +402,7 @@ def queue_handover(
         "body": package.get("body"),
         "watch_count": package.get("watch_count"),
         "open_total": package.get("open_total"),
+        "awaiting_close": package.get("awaiting_close"),
         "anchor_incident_number": anchor.incident_number,
         "envelope": envelope_payload(alert),  # the key services.hitl.stored_envelope reads
     }
