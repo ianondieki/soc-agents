@@ -643,6 +643,12 @@ def _human_step(session: Session, row: SupportComplaintRow, action: str, summary
     session.flush()
 
 
+def _sentence(text: str) -> str:
+    """``text`` with its full stop, unless it already ends in one: a person's name often does
+    ("Achieng O."), and "Claimed by Achieng O.." reads as a typo on every case it touches."""
+    return text if text.endswith((".", "!", "?")) else f"{text}."
+
+
 def _set_status(row: SupportComplaintRow, status: str, now: datetime) -> None:
     row.status = status
     row.outcome = OUTCOME_FOR_STATUS.get(status, row.outcome)
@@ -683,7 +689,7 @@ def claim(session: Session, row: SupportComplaintRow, *, actor: str, now: dateti
             raise DeskConflict(f"only an escalated case can be claimed (this one is {row.status})")
         row.claimed_by, row.claimed_at = actor, now
         _set_status(row, "in_progress", now)
-        _human_step(session, row, "claimed", f"Claimed by {actor}.", {"claimed_by": actor}, now)
+        _human_step(session, row, "claimed", _sentence(f"Claimed by {actor}"), {"claimed_by": actor}, now)
         _finish(session, row, emit_events, claimed_by=actor)
 
 
@@ -708,7 +714,7 @@ def resolve_case(session: Session, row: SupportComplaintRow, *, actor: str, repl
         row.reply, row.resolved_by, row.resolved_at = text, actor, now
         _set_status(row, "resolved", now)
         session.add(SupportMessageRow(complaint_id=row.id, author="staff", name=actor, body=text, at=now))
-        _human_step(session, row, "resolved", f"Resolved by {actor}.", {"resolved_by": actor, "note": clean(note) or None}, now)
+        _human_step(session, row, "resolved", _sentence(f"Resolved by {actor}"), {"resolved_by": actor, "note": clean(note) or None}, now)
         _finish(session, row, emit_events)
 
 
@@ -757,7 +763,7 @@ def approve(session: Session, row: SupportComplaintRow, tool_call_id: str, *, ac
         call.result_json = json.dumps(outcome.result, default=str)
         call.subject_ref = outcome.subject_ref
         result = outcome.result or {}
-        note = {"status": "action_taken", "note": actions.ticket_note(call.tool, result) + f" Approved by {actor}."}
+        note = {"status": "action_taken", "note": actions.ticket_note(call.tool, result) + " " + _sentence(f"Approved by {actor}")}
         session.add(_call_row(row.id, "update_ticket", note, run_tool("update_ticket", env, note), now))
         row.reply = actions.success_reply(call.tool, result, text=row.body, name=_greeting(row.customer_name),
                                           ref=row.ref, msisdn_masked=row.msisdn_masked)

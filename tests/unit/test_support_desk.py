@@ -251,6 +251,31 @@ def test_claim_then_resolve(session, clean_hub):
     assert [e["type"] for e in clean_hub.recent(10)] == ["support.updated", "support.updated"]
 
 
+def test_a_name_that_ends_in_a_full_stop_is_not_given_a_second_one(session):
+    """"Claimed by Achieng O.." read as a typo on every case an initialled name touched. The
+    stored detail keeps the name exactly as given; only the sentence around it changes."""
+    row = _file(session, "Someone did a SIM swap on my line", "0700001245").complaint
+    desk.claim(session, row, actor="Achieng O.")
+    desk.resolve_case(session, row, actor="Achieng O.", reply="We blocked the swap and restored your line.")
+    steps = {s["action"]: s for s in _detail(session, row)["steps"] if s["agent"] == "human"}
+    assert steps["claimed"]["summary"] == "Claimed by Achieng O."
+    assert steps["resolved"]["summary"] == "Resolved by Achieng O."
+    assert steps["claimed"]["detail"]["claimed_by"] == "Achieng O."
+    assert steps["resolved"]["detail"]["resolved_by"] == "Achieng O."
+
+    parked, call = _parked(session)
+    desk.approve(session, parked, call.id, actor="Achieng O.", ctx=CTX)
+    ticket = _detail(session, parked)["tool_calls"][-1]
+    assert ticket["tool"] == "update_ticket" and ticket["args"]["note"].endswith(" Approved by Achieng O.")
+
+
+def test_a_plain_name_still_ends_its_sentence(session):
+    row = _file(session, "Someone did a SIM swap on my line", "0700001245").complaint
+    desk.claim(session, row, actor="Amina")
+    steps = [s for s in _detail(session, row)["steps"] if s["agent"] == "human"]
+    assert steps[-1]["summary"] == "Claimed by Amina."
+
+
 def test_only_a_case_with_a_person_can_be_claimed_or_resolved(session):
     answered = _file(session, "How do I activate roaming?", "0711000901").complaint
     with pytest.raises(desk.DeskConflict):
