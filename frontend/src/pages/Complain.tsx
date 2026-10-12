@@ -5,6 +5,8 @@ import PublicFrame from "../components/support/PublicFrame";
 import {
   BODY_MAX,
   BODY_MIN,
+  charCount,
+  cleanText,
   customerSteps,
   errorDetail,
   fieldErrors,
@@ -103,7 +105,8 @@ export default function Complain() {
   }, [errors.form]);
 
   const phoneProblem = msisdnProblem(msisdn);
-  const bodyLen = body.trim().length;
+  // Counted as the server counts: characters (an emoji is one) after whitespace is collapsed.
+  const bodyLen = charCount(body);
 
   const fill = (ex: Example) => {
     setBody(ex.text);
@@ -117,7 +120,7 @@ export default function Complain() {
     if (sending) return;
     const next: Errors = {};
     if (bodyLen < BODY_MIN) next.body = bodyLen === 0 ? "Tell us what went wrong." : `Add a little more: at least ${BODY_MIN} characters.`;
-    if (bodyLen > BODY_MAX) next.body = `Keep it under ${BODY_MAX.toLocaleString("en-KE")} characters.`;
+    if (bodyLen > BODY_MAX) next.body = `Keep it to ${BODY_MAX.toLocaleString("en-KE")} characters or fewer.`;
     if (phoneProblem) next.msisdn = phoneProblem;
     setErrors(next);
     if (next.body) {
@@ -131,7 +134,8 @@ export default function Complain() {
     setSending(true);
     try {
       const a = await supportApi.register({
-        body: body.trim(),
+        // The cleaned text is what the server stores, so what was counted is what is checked.
+        body: cleanText(body),
         msisdn: msisdn.trim(),
         ...(name.trim() ? { name: name.trim() } : {}),
         ...(account.trim() ? { account_ref: account.trim() } : {}),

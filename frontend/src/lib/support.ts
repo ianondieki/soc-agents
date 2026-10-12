@@ -369,34 +369,72 @@ export const isLaneOff = (e: unknown): boolean => statusOfError(e) === 404;
 /** A fetch that never reached the server. */
 export const isNetworkError = (e: unknown): boolean => !isSupportApiError(e) && e instanceof TypeError;
 
-/** FastAPI's `{"detail": …}`, as one sentence; the pydantic list joined, or the fallback. */
+/** FastAPI's `{"detail": …}`, as one sentence; the pydantic list in plain words, or the fallback. */
 export function errorDetail(e: unknown, fallback = "The request failed."): string {
   if (!isSupportApiError(e)) return e instanceof Error && e.message ? e.message : fallback;
   const b: any = e.body;
   const d = b && typeof b === "object" ? b.detail : null;
   if (typeof d === "string" && d.trim()) return capFirst(d.trim());
   if (Array.isArray(d)) {
-    const lines = d
-      .map((x: any) => (typeof x?.msg === "string" ? x.msg.replace(/^Value error,\s*/i, "") : ""))
-      .filter(Boolean);
+    const lines = [...new Set(d.map((x: any) => plainIssue(x, true)).filter(Boolean))];
     if (lines.length) return capFirst(lines.join("; "));
   }
   return fallback;
 }
 
-/** The pydantic errors of a 422 by field: `{ msisdn: "…", body: "…" }`. */
+/** The pydantic errors of a 422 by field, each a plain sentence: `{ msisdn: "…", body: "…" }`. */
 export function fieldErrors(e: unknown): Record<string, string> {
   const out: Record<string, string> = {};
   if (!isSupportApiError(e) || e.status !== 422) return out;
   const d = (e.body as any)?.detail;
   if (!Array.isArray(d)) return out;
   for (const x of d) {
-    const loc = Array.isArray(x?.loc) ? x.loc.filter((p: unknown) => p !== "body") : [];
-    const field = String(loc[0] ?? "");
-    const msg = typeof x?.msg === "string" ? x.msg.replace(/^Value error,\s*/i, "") : "";
-    if (field && msg && !out[field]) out[field] = capFirst(msg);
+    const field = issueField(x);
+    const msg = plainIssue(x, false);
+    if (field && msg && !out[field]) out[field] = `${capFirst(msg)}.`;
   }
   return out;
+}
+
+/** A 422's field names, as a person filling the form would say them. */
+const FIELD_WORD: Record<string, string> = {
+  body: "your message",
+  reply: "the reply",
+  reason: "the reason",
+  note: "the note",
+  msisdn: "the phone number",
+  name: "your name",
+  account_ref: "the account number",
+  subject: "the subject",
+};
+
+/** The field a pydantic error is about: `loc` is `["body", "<field>"]`, and the field may itself be "body". */
+function issueField(x: any): string {
+  const loc: unknown[] = Array.isArray(x?.loc) ? x.loc : [];
+  const where = loc.length > 1 && ["body", "query", "path"].includes(String(loc[0]));
+  return String((where ? loc[1] : loc[0]) ?? "");
+}
+
+/**
+ * One pydantic error as a plain clause, without its full stop. FastAPI's own words ("String
+ * should have at least 5 characters", "Value error, msisdn must be…") are for developers; a
+ * person reads the limit. `named` puts the field first, for a message shown away from it.
+ */
+function plainIssue(x: any, named: boolean): string {
+  const field = issueField(x);
+  const what = named ? FIELD_WORD[field] ?? "" : "";
+  const msg = typeof x?.msg === "string" ? x.msg.replace(/^Value error,\s*/i, "") : "";
+  const n = (v: unknown) => Number(v).toLocaleString("en-KE");
+  if (x?.type === "missing") return `${what || "this"} is required`;
+  if (field === "msisdn") return KENYAN_NUMBER.replace(/\.$/, "");
+  // The body validator's own minimum ("body must be at least 5 characters of text") reads the same.
+  const min = x?.type === "string_too_short" ? x?.ctx?.min_length : /at least (\d+) characters/i.exec(msg)?.[1];
+  if (min != null) {
+    if (Number(min) <= 1) return `${what || "this"} can't be empty`;
+    return `${what ? `${what} is too short: ` : "add a little more: "}at least ${n(min)} characters`;
+  }
+  if (x?.type === "string_too_long") return `${what ? `${what} is too long: ` : ""}keep it to ${n(x?.ctx?.max_length)} characters or fewer`;
+  return msg;
 }
 
 function capFirst(s: string): string {
@@ -1119,6 +1157,12 @@ export function msisdnProblem(raw: string): string | null {
 
 export const BODY_MIN = 5;
 export const BODY_MAX = 4000;
+
+/** `support/text.clean`: NFKC, whitespace collapsed, trimmed; the form the server stores. */
+export const cleanText = (raw: string): string => String(raw ?? "").normalize("NFKC").replace(/\s+/g, " ").trim();
+
+/** Characters as the server counts them: code points of the cleaned text, so an emoji is one. */
+export const charCount = (raw: string): number => Array.from(cleanText(raw)).length;
 
 // ------------------------------------------------------------------- close the loop: words
 
