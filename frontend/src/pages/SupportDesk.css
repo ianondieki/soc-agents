@@ -412,8 +412,9 @@ summary.sd-step-line:hover .sd-step-sum { color: var(--text-strong); }
 .sd-decide-text { margin: 0; max-width: 75ch; color: var(--text); font-size: var(--fs-md); line-height: 1.5; }
 .sd-decide-text strong { color: var(--text-strong); }
 .sd-label { display: block; margin-top: var(--s1); color: var(--muted); font-size: var(--fs-xs); font-weight: 500; }
-/* A field's label with its counter on the right, as wide as the field under it. */
-.sd-label-row { display: flex; align-items: baseline; justify-content: space-between; gap: var(--s3); max-width: 75ch; margin-top: var(--s1); }
+/* A field's label with its counter on the right, as wide as the field under it (the field's
+   font size, so its 75ch is the same width). */
+.sd-label-row { display: flex; align-items: baseline; justify-content: space-between; gap: var(--s3); max-width: 75ch; margin-top: var(--s1); font-size: var(--fs-md); }
 .sd-label-row .sd-label { margin-top: 0; }
 .sd-count { color: var(--muted-dim); font-size: var(--fs-xs); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .sd-count.full { color: var(--danger-text); font-weight: 600; }
