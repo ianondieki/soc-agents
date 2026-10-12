@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import unicodedata
+
 from datetime import datetime
 from typing import Any
 
@@ -40,9 +42,10 @@ class SessionIn(BaseModel):
     @classmethod
     def _display_name(cls, value: str) -> str:
         """Stripped, and never blank: the name is recorded as the actor on what this client
-        does ("Resolved by    ." was a whitespace name), so an empty one is a 422."""
+        does ("Resolved by    ." was a whitespace name), so one with nothing visible in it --
+        spaces, or only zero-width and other format characters -- is a 422."""
         name = value.strip()
-        if not name:
+        if not any(not ch.isspace() and unicodedata.category(ch)[0] not in ("C", "Z") for ch in name):
             raise ValueError("display_name must not be blank")
         return name
 

@@ -1200,11 +1200,11 @@ def test_a_zero_width_space_reviewer_through_the_api_is_a_400_and_publish_stays_
     for name in ("\u200b", "\ufeff", "\u200d\u200d", "\u200bsystem", "system", "12345"):
         r = client.post(f"/api/v1/scorecards/{card_id}/shadow-review", json={"rationale": "looked", "reviewed_by": name})
         assert r.status_code == 400 and "visible human name" in r.text, repr(name)
-    # a session whose own display name is invisible cannot review either
+    # a session whose own display name is invisible cannot review either: since the role switcher
+    # refuses a name with nothing visible in it, such a session cannot even be set up
     for session_name in ("\u200b", "\u3000", "\x0b", "\u2003"):
-        _as(client, "duty_manager", session_name)
-        r = client.post(f"/api/v1/scorecards/{card_id}/shadow-review", json={"rationale": "looked"})
-        assert r.status_code == 400 and "visible human name" in r.text, repr(session_name)
+        refused = client.post("/api/v1/session", json={"display_name": session_name, "role": "duty_manager"})
+        assert refused.status_code == 422, repr(session_name)
     _as(client, "duty_manager", "Grace Mwangi")
     assert client.post(f"/api/v1/scorecards/{card_id}/publish", json={"reason": "go"}).status_code == 409
     detail = client.get(f"/api/v1/scorecards/{card_id}").json()
