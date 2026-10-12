@@ -1,15 +1,36 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import threading
 from collections import deque
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Any
 
 
 def _utc_iso() -> str:
     return datetime.now(timezone.utc).replace(tzinfo=None).isoformat() + "Z"
+
+
+def _json_default(value: Any) -> Any:
+    """What a payload may carry that JSON cannot: instants become ``...Z`` strings (naive values
+    are stored UTC, like every instant in this schema), sets become lists, anything else its text."""
+    if isinstance(value, datetime):
+        aware = value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+        return aware.astimezone(timezone.utc).replace(tzinfo=None).isoformat(timespec="seconds") + "Z"
+    if isinstance(value, date):
+        return value.isoformat()
+    if isinstance(value, (set, frozenset)):
+        return sorted(value, key=str)
+    return str(value)
+
+
+def json_safe(data: dict[str, Any]) -> dict[str, Any]:
+    """The envelope as plain JSON values. Done once, at publish: every socket and SSE stream
+    sends what is in the history, so one producer handing over a datetime would otherwise fail
+    every send of that frame, and since reconnects replay it, keep every console offline."""
+    return json.loads(json.dumps(data, default=_json_default))
 
 
 @dataclass
@@ -95,7 +116,7 @@ class EventHub:
         """Fan out from sync code (threadpool or loop thread). Never raises."""
         with self._lock:
             self._seq += 1
-            data = HistoryRecord(event.to_dict(), self._seq)
+            data = HistoryRecord(json_safe(event.to_dict()), self._seq)
             self._history.append(data)
         frame = {"seq": data.seq, "event": data}
         try:

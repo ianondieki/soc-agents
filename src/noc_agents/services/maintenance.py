@@ -112,7 +112,7 @@ from noc_agents.realtime.commit_hook import buffer_event
 from noc_agents.realtime.hub import RealtimeEvent
 from noc_agents.scheduler import JobCard, JobResult
 from noc_agents.services import sites as site_catalogue
-from noc_agents.services.clock import eat_tz, fmt_eat, to_eat, z_utc
+from noc_agents.services.clock import eat_tz, fmt_eat, iso_z, to_eat, z_utc
 from noc_agents.services.clock_events import Interval, effective_intervals
 from noc_agents.services.hitl import is_raiser
 
@@ -1240,8 +1240,9 @@ def _announce(session: Session, window: MaintenanceWindowRow, change: str, extra
                 "status": window.status,
                 "scope": window.scope,
                 "scope_ref": window.scope_ref,
-                "starts_at": z_utc(window.starts_at),
-                "ends_at": z_utc(window.ends_at),
+                # Strings, not z_utc() datetimes: this goes over the socket as JSON.
+                "starts_at": iso_z(window.starts_at),
+                "ends_at": iso_z(window.ends_at),
                 **(extra or {}),
             },
         ),
