@@ -70,11 +70,11 @@ function headline(state: State, affected: Region[], total: number): { title: str
     case "MAJOR":
       return { title: "There is a major outage", lead: `Customers in ${worst} may have no service.${also} Our engineers are on it.` };
     case "PARTIAL":
-      return { title: "Some customers have a disrupted service", lead: `In ${worst}.${also} Our engineers are working on it.` };
+      return { title: "Some customers have a disrupted service", lead: `Service in ${worst} is partly down.${also} Our engineers are working on it.` };
     case "MINOR":
-      return { title: "A few customers may notice problems", lead: `In ${worst}. Most services are working; we are fixing the rest.` };
+      return { title: "A few customers may notice problems", lead: `Some customers in ${worst} may notice problems. Most services are working, and we are fixing the rest.` };
     case "MAINTENANCE":
-      return { title: "Planned work is under way", lead: `In ${worst}. Service comes back when the work ends.` };
+      return { title: "Planned work is under way", lead: `Planned work is running in ${worst}. Service comes back when the work ends.` };
     default:
       return {
         title: "All services are running normally",

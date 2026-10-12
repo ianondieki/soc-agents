@@ -4,7 +4,8 @@ import { PowerOff } from "lucide-react";
 /**
  * The one way a feature lane says it is switched off. Spec §7.10: "off" must never look
  * like "empty", so every flagged lane (PIRs, maintenance, scorecards, contracts) shows this
- * same panel (a power-off icon, "Switched off", the title) instead of four different sentences.
+ * same panel (a power-off icon and the title, which says the lane is off) instead of four
+ * different sentences. No "Switched off" tag over the title: the title already says it.
  *
  * Written for a manager watching the demo: the title names the lane ("Post-incident reviews
  * are off in this demo"), and one sentence says what the flag would turn on. `children` is
@@ -18,7 +19,6 @@ export default function LaneOff({ title, flag, children }: { title: string; flag
         <PowerOff size={22} strokeWidth={1.75} />
       </span>
       <div className="lane-off-text">
-        <span className="lane-off-tag">Switched off</span>
         <h2 className="panel-kicker">{title}</h2>
         <p className="lane-off-body">
           Turn on <code>{flag}</code> to {children ?? "switch this lane on"}.

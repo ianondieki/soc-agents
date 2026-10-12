@@ -26,13 +26,14 @@
 /* ------------------------------------------------------------------ header */
 .cp-top { --mark-cut: var(--bg); position: sticky; top: 0; z-index: 20; background: var(--bg); border-bottom: 1px solid var(--line); }
 .cp-top > .cp-wrap { display: flex; align-items: center; justify-content: space-between; gap: var(--s4); height: 56px; }
-.cp-brand { display: inline-flex; align-items: center; gap: 10px; color: var(--text-strong); font-size: var(--fs-base); font-weight: 600; letter-spacing: -0.01em; white-space: nowrap; }
+.cp-brand { display: inline-flex; align-items: center; gap: 10px; min-height: 44px; color: var(--text-strong); font-size: var(--fs-base); font-weight: 600; letter-spacing: -0.01em; white-space: nowrap; }
 .cp-brand:hover { text-decoration: none; }
 .cp-top-actions { display: flex; align-items: center; gap: var(--s2); }
 .cp-quiet-link { padding: 6px 8px; border-radius: var(--r-sm); color: var(--muted); font-size: var(--fs-sm); font-weight: 500; white-space: nowrap; }
 /* A narrow phone keeps the header to one line: the mark stays (the link has its own name). */
 @media (max-width: 420px) { .cp-brand > span { display: none; } }
 .cp-quiet-link:hover { color: var(--text-strong); text-decoration: none; background: var(--surface-raised); }
+.cp-quiet-link[aria-current="page"] { color: var(--text-strong); }
 .cp-icon-btn {
   display: inline-grid;
   place-items: center;

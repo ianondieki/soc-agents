@@ -139,7 +139,7 @@ function wordsOf(it: any, profile: any, role: string): { title: string; meta: st
     const kind = labelFor(it.task_type).toLowerCase();
     return {
       title: `${it.folded} ${kind} cards wait for a decision`,
-      meta: it.incident_number ? `Newest: ${it.incident_number} at ${site}` : "Open Approvals to work through them",
+      meta: it.incident_number && it.task_type !== "APPROVE_HANDOVER" ? `Newest: ${it.incident_number} at ${site}` : "Open Approvals to work through them",
       href: "/hitl",
     };
   }
@@ -149,12 +149,15 @@ function wordsOf(it: any, profile: any, role: string): { title: string; meta: st
     case "restore_breached":
       return { title: `Restore time passed at ${site}`, meta: [ticket, it.priority].filter(Boolean).join(", "), href: toTicket };
     case "restore_due_soon": {
-      // Counted down from the deadline itself; the list re-renders on its own clock.
-      const left = it.due_at ? Math.max(0, Math.ceil((Date.parse(it.due_at) - Date.now()) / 60000)) : null;
-      const when = left == null || !Number.isFinite(left) ? "within the hour" : left < 1 ? "now" : `in ${left} min`;
+      // Counted down from the deadline itself, in the same words as Mission control's band
+      // (components/DueSoon.leftWords): whole minutes left, rounded down.
+      const left = it.due_at ? Math.floor((Date.parse(it.due_at) - Date.now()) / 60000) : null;
+      const when = left == null || !Number.isFinite(left) ? "within the hour" : left < 1 ? "in under a minute" : `in ${left} min`;
       return { title: `Restore due ${when} at ${site}`, meta: [ticket, it.priority].filter(Boolean).join(", "), href: toTicket };
     }
     case "approval_waiting":
+      // A handover hangs off an anchor ticket for scoping only: it is about the shift.
+      if (it.task_type === "APPROVE_HANDOVER") return { title: "The shift handover waits for a decision", meta: "Open Approvals to sign it off", href: "/hitl" };
       return {
         title: `${labelFor(it.task_type)} waits for a decision`,
         meta: ticket ? `${ticket} at ${site}` : "Not about one ticket",

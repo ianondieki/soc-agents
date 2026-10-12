@@ -225,8 +225,8 @@ export default function ShiftDesk({ tick, profile, metrics }: { tick: number; pr
         <Handover h={handover} profile={profile} />
       ) : waitingCard ? (
         <p className="sd-due">
-          A handover for this shift, prepared at <span className="mono">{fmtHM(waitingCard.created_at)}</span> EAT, is waiting on{" "}
-          <Link to={`/hitl?task=${encodeURIComponent(waitingCard.id)}`}>Approvals</Link>. Preparing it again replaces that card.
+          A handover for this shift, prepared at <span className="mono">{fmtHM(waitingCard.created_at)}</span> EAT, is waiting on
+          Approvals. Preparing it again replaces that card.
         </p>
       ) : (
         <>
@@ -246,6 +246,11 @@ export default function ShiftDesk({ tick, profile, metrics }: { tick: number; pr
         </p>
       )}
       <div className="sd-actions">
+        {waitingCard && !handover && (
+          <Link className="btn" to={`/hitl?task=${encodeURIComponent(waitingCard.id)}`}>
+            Open it in Approvals
+          </Link>
+        )}
         <button className="btn primary" disabled={handoverBusy} aria-busy={handoverBusy || undefined} onClick={generateHandover}>
           {handoverBusy ? "Preparing the handover…" : handover || waitingCard ? "Prepare it again" : "Prepare the handover"}
         </button>

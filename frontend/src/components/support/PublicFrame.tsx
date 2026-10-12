@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { BrandMark } from "../shell/BrandMark";
 import ThemeToggle from "./ThemeToggle";
 import "../../pages/Complain.css";
@@ -12,6 +12,7 @@ import "../../pages/Complain.css";
  */
 /** `wide`: a page that lists rather than asks (the status page) takes a wider column than a form. */
 export default function PublicFrame({ children, wide = false }: { children: ReactNode; wide?: boolean }) {
+  const { pathname } = useLocation();
   return (
     <div className={"cp" + (wide ? " wide" : "")}>
       <a className="skip-link" href="#main">
@@ -24,7 +25,7 @@ export default function PublicFrame({ children, wide = false }: { children: Reac
             <span>Kenya NOC Support</span>
           </Link>
           <div className="cp-top-actions">
-            <Link className="cp-quiet-link" to="/status">
+            <Link className="cp-quiet-link" to="/status" aria-current={pathname === "/status" ? "page" : undefined}>
               Service status
             </Link>
             <Link className="cp-quiet-link" to="/">

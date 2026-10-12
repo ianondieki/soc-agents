@@ -592,6 +592,7 @@ function Block({
   siteNames: Record<string, string>;
 }) {
   const headId = useId();
+  const metaId = useId();
   const [showRoutine, setShowRoutine] = useState(false);
   const display = useMemo(() => mergeIdentical(rows), [rows]);
   const routine = useMemo(() => display.filter((d) => isRoutine(d.entry)), [display]);
@@ -608,12 +609,14 @@ function Block({
 
   let prevTime = "";
   return (
-    <section className="audit-block" aria-labelledby={headId}>
+    // Named by its title and its time range: several blocks can share a title ("Scorecard"), and
+    // each region on a page needs a name of its own.
+    <section className="audit-block" aria-labelledby={`${headId} ${metaId}`}>
       <header className="audit-head">
         <h3 id={headId} className="audit-head-title" tabIndex={-1}>
           <BlockTitle block={block} incident={incident} parent={parent} site={block.kind === "record" || block.kind === "job" ? siteOf(rows) : null} siteNames={siteNames} />
         </h3>
-        <p className="audit-head-meta">
+        <p className="audit-head-meta" id={metaId}>
           <span>{rangeText(rows)}</span>
           {block.kind === "folded" && block.runs > 1 && <span>{block.runs} alarms</span>}
           <span>{countWord(rows)}</span>

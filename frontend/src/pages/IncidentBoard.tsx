@@ -127,6 +127,7 @@ export default function IncidentBoard({ tick, profile }: { tick: number; profile
     if (query) next.set("q", query);
     else next.delete("q");
     if (rawRegion && !region) next.delete("region");
+    else if (region && next.get("region") !== region) next.set("region", region); // "cst" reads "CST", as the select shows
     if (next.toString() !== params.toString()) setParams(next, { replace: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- params/setParams follow the address
   }, [query, rawRegion, region]);

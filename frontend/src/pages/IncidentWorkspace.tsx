@@ -860,6 +860,8 @@ function Workspace({ id, session, profile, tick }: { id: string | undefined; ses
                   placeholder={ticketClosed ? "A note for the record (the ticket is closed)…" : "Work note until closure…"}
                 />
               </label>
+              {/* A closed ticket takes notes for the record only: no vendor progress, no restore. */}
+              {!ticketClosed && (
               <details className="iw-vendor-fields">
                 <summary>Vendor update (optional)</summary>
                 <div className="iw-vendor-grid">
@@ -887,6 +889,8 @@ function Workspace({ id, session, profile, tick }: { id: string | undefined; ses
                   </label>
                 </div>
               </details>
+              )}
+              {!ticketClosed && (
               <label className="check">
                 <input
                   type="checkbox"
@@ -896,6 +900,7 @@ function Workspace({ id, session, profile, tick }: { id: string | undefined; ses
                 />
                 Mark service restored
               </label>
+              )}
               {/* Said while the box is ticked: that is when posting the note restores the ticket. */}
               {markRestored && restoreTells && (
                 <p id="restore-tells" className={"ic-consequence" + (tellWaits ? " hitl" : "")}>
@@ -913,8 +918,8 @@ function Workspace({ id, session, profile, tick }: { id: string | undefined; ses
             <div className="iw-act-more">
               {ticketClosed ? (
                 <p className="ic-consequence">
-                  {`This ticket is ${String(inc.status).toLowerCase()}`}
-                  {inc.closed_at ? ` since ${fmtDateTime(inc.closed_at)}` : ""}. Reopen it before reassigning or closing again.
+                  {`${String(inc.status).toUpperCase() === "CANCELLED" ? "Cancelled" : "Closed"}${inc.closed_at ? ` on ${fmtDateTime(inc.closed_at)}` : ""}. `}
+                  A closed ticket cannot be reassigned or closed again; a note above is still kept on its record.
                 </p>
               ) : (
               <div className="note-form-actions">
