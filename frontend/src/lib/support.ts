@@ -1144,15 +1144,19 @@ export function customerSteps(d: CaseDetail): CustomerStep[] {
 
 // ----------------------------------------------------------------------------- the form
 
-/** Kenyan mobile numbers: 07XXXXXXXX, 01XXXXXXXX, +2547…, +2541…, 2547…, 2541…; spaces and dashes allowed. */
+/**
+ * Kenyan mobile numbers, exactly as `support/text.normalise_msisdn` takes them: 07XXXXXXXX,
+ * 01XXXXXXXX, +2547…, 2541…, or the nine digits alone (712345678); spaces, dashes, dots and
+ * brackets allowed ("(0712) 345 678", "0712.345.678"). Anything the server would refuse is
+ * refused here first, and nothing it takes is.
+ */
 const KENYAN_NUMBER = "Enter a Kenyan mobile number, like 0712 345 678.";
+const MSISDN_SEPARATORS = /[\s\-().]/g;
+const MSISDN = /^(?:\+?254|0)?[71][0-9]{8}$/;
 
 export function msisdnProblem(raw: string): string | null {
-  const s = raw.replace(/[\s-]/g, "");
-  if (!s) return KENYAN_NUMBER;
-  if (/^0[17]\d{8}$/.test(s)) return null;
-  if (/^\+?254[17]\d{8}$/.test(s)) return null;
-  return KENYAN_NUMBER;
+  const s = raw.replace(MSISDN_SEPARATORS, "");
+  return s && MSISDN.test(s) ? null : KENYAN_NUMBER;
 }
 
 export const BODY_MIN = 5;
