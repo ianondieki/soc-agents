@@ -214,6 +214,32 @@ def test_a_failed_run_is_an_agent_item_with_its_step_and_a_short_error(tmp_db):
     assert len(it["error"]) == svc.ERROR_CHARS and it["error"].endswith("…")
 
 
+def test_a_restore_clock_running_out_within_the_hour_warns_before_the_breach(tmp_db):
+    """The warning while there is still time: an open ticket due in the next hour, with the
+    deadline itself on the item so the bell can count down to it."""
+    _, session = tmp_db
+    soon = _incident(session, priority="P3", restore_due=utcnow() + timedelta(minutes=30))
+    _incident(session, priority="P3", restore_due=utcnow() + timedelta(minutes=svc.DUE_SOON_MINUTES + 30))
+    _incident(session, priority="P3", status="RESTORED", restore_due=utcnow() + timedelta(minutes=20))
+    _incident(session, operator_id="airtel", number="ATL-INC-7", priority="P3", restore_due=utcnow() + timedelta(minutes=10))
+    session.commit()
+    out = svc.notifications(session)
+    due = [it for it in out["items"] if it["kind"] == "restore_due_soon"]
+    assert [it["id"] for it in due] == [f"due:{soon.id}"]
+    assert due[0]["group"] == "alarm" and TIMESTAMP_Z.match(due[0]["due_at"])
+    assert due[0]["at"] <= out["generated_at"] < due[0]["due_at"]
+    assert out["counts"]["alarm"] == 1
+
+
+def test_once_the_clock_has_run_out_it_is_a_breach_not_a_warning(tmp_db):
+    _, session = tmp_db
+    late = _incident(session, priority="P3", restore_due=utcnow() - timedelta(minutes=5))
+    session.commit()
+    kinds = {it["kind"]: it for it in svc.notifications(session)["items"]}
+    assert "restore_due_soon" not in kinds
+    assert kinds["restore_breached"]["id"] == f"sla:{late.id}" and TIMESTAMP_Z.match(kinds["restore_breached"]["due_at"])
+
+
 def test_the_limit_cuts_the_items_but_not_the_counts(tmp_db):
     _, session = tmp_db
     for i in range(5):

@@ -14,6 +14,11 @@ state instead, so the inbox after a reload says what it said before it:
 ``restore_breached``
     An open ticket whose restore clock (``sla_restore_due``) ran out inside the window and is
     not restored yet.
+``restore_due_soon``
+    An open ticket whose restore clock runs out within the next ``DUE_SOON_MINUTES``: the warning
+    before the breach, while there is still time to act. Stamped with the moment it entered that
+    hour (``due_at`` minus the hour), so it sorts with the rest; the window does not apply, since
+    it looks forward. ``due_at`` carries the deadline itself, so the bell counts down to it.
 ``approval_waiting``
     A card still waiting for a decision (PENDING or CLAIMED), however long ago it was raised: a
     card a day old is more urgent than a new one, not less, so the window does not apply. A signed-in
@@ -51,6 +56,8 @@ DEFAULT_WINDOW_HOURS = 24
 MAX_WINDOW_HOURS = 24 * 7
 DEFAULT_LIMIT = 50
 MAX_LIMIT = 200
+#: How far ahead a restore deadline raises its warning.
+DUE_SOON_MINUTES = 60
 
 #: Every item carries exactly these keys (pinned by tests/unit/test_notifications.py).
 ITEM_KEYS: tuple[str, ...] = (
@@ -68,12 +75,14 @@ ITEM_KEYS: tuple[str, ...] = (
     "graph",
     "node",
     "error",
+    "due_at",
 )
 
 #: Which tab of the inbox each kind belongs to: an alarm, a person's decision, an agent.
 GROUP_OF: dict[str, str] = {
     "p1_open": "alarm",
     "restore_breached": "alarm",
+    "restore_due_soon": "alarm",
     "approval_waiting": "person",
     "run_failed": "agent",
 }
@@ -194,8 +203,34 @@ def _breach_items(session: Session, since: datetime, now: datetime, limit: int) 
         IncidentRow.status.not_in(_NOT_OPEN),
     )
     rows = session.scalars(breached.order_by(IncidentRow.sla_restore_due.desc()).limit(limit))
-    items = [_item("restore_breached", inc.sla_restore_due, f"sla:{inc.id}", **_incident_facts(inc)) for inc in rows]
+    items = [
+        _item("restore_breached", inc.sla_restore_due, f"sla:{inc.id}", due_at=iso_z(inc.sla_restore_due), **_incident_facts(inc))
+        for inc in rows
+    ]
     return _count(session, breached), items
+
+
+def _due_soon_items(session: Session, now: datetime, limit: int) -> tuple[int, list[dict[str, Any]]]:
+    """Restore clocks that run out within the next hour on tickets still open, soonest first."""
+    soon = timedelta(minutes=DUE_SOON_MINUTES)
+    due = _owned(IncidentRow).where(
+        IncidentRow.sla_restore_due.is_not(None),
+        IncidentRow.sla_restore_due > now,
+        IncidentRow.sla_restore_due <= now + soon,
+        IncidentRow.status.not_in(_NOT_OPEN),
+    )
+    rows = session.scalars(due.order_by(IncidentRow.sla_restore_due.asc()).limit(limit))
+    items = [
+        _item(
+            "restore_due_soon",
+            inc.sla_restore_due - soon,
+            f"due:{inc.id}",
+            due_at=iso_z(inc.sla_restore_due),
+            **_incident_facts(inc),
+        )
+        for inc in rows
+    ]
+    return _count(session, due), items
 
 
 def _card_items(
@@ -270,12 +305,13 @@ def notifications(
 
     p1_count, p1 = _p1_items(session, since, now)
     breach_count, breaches = _breach_items(session, since, now, limit)
+    due_count, due_soon = _due_soon_items(session, now, limit)
     card_count, cards, waiting_by_type = _card_items(session, incidents, role, authenticated, limit)
     run_count, runs = _failed_run_items(session, incidents, since, limit)
 
-    counts = {"alarm": p1_count + breach_count, "person": card_count, "agent": run_count}
+    counts = {"alarm": p1_count + breach_count + due_count, "person": card_count, "agent": run_count}
     # Newest first; the id breaks a tie so the order is stable between two reads.
-    items = sorted([*p1, *breaches, *cards, *runs], key=lambda it: (it["at"] or "", it["id"]), reverse=True)
+    items = sorted([*p1, *breaches, *due_soon, *cards, *runs], key=lambda it: (it["at"] or "", it["id"]), reverse=True)
     return {
         "generated_at": iso_z(now),
         "window_hours": window_hours,
