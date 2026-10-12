@@ -369,8 +369,15 @@ export default function ScorecardDetail({
                   <small>Left empty, {who} is recorded.</small>
                 </label>
 
+                {/* Review and publish are forms, so Enter in their field submits, as elsewhere. */}
                 {actions.review.show && (
-                  <div className="scd-act">
+                  <form
+                    className="scd-act"
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      if (!busy && actions.review.enabled && rationale.trim()) void act("review");
+                    }}
+                  >
                     <label className="scd-field">
                       <span>Shadow review: what did you check?</span>
                       <input
@@ -382,14 +389,20 @@ export default function ScorecardDetail({
                       />
                       <small>Records that you inspected this first card. It does not publish it.</small>
                     </label>
-                    <button className="btn primary" disabled={busy || !actions.review.enabled || !rationale.trim()} onClick={() => act("review")}>
+                    <button type="submit" className="btn primary" disabled={busy || !actions.review.enabled || !rationale.trim()}>
                       Record shadow review
                     </button>
-                  </div>
+                  </form>
                 )}
 
                 {actions.publish.show && (
-                  <div className="scd-act">
+                  <form
+                    className="scd-act"
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      if (!busy && actions.publish.enabled && reason.trim()) void act("publish");
+                    }}
+                  >
                     <label className="scd-field">
                       <span>Publish: why release it?</span>
                       <input
@@ -404,10 +417,10 @@ export default function ScorecardDetail({
                           "The vendor may then see it and the dispute window starts. It cannot be recomputed afterwards. Nothing is sent to anyone."}
                       </small>
                     </label>
-                    <button className="btn good" disabled={busy || !actions.publish.enabled || !reason.trim()} onClick={() => act("publish")}>
+                    <button type="submit" className="btn good" disabled={busy || !actions.publish.enabled || !reason.trim()}>
                       Publish to vendor
                     </button>
-                  </div>
+                  </form>
                 )}
 
                 {actions.finalise.show && (
