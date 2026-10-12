@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { Search, X } from "lucide-react";
 import LaneOff from "../components/LaneOff";
 import CaseList from "../components/support/CaseList";
@@ -78,6 +78,8 @@ function runErrorText(e: unknown): string {
 
 export default function SupportDesk({ session, tick = 0, profile }: { session: any; tick?: number; profile?: any }) {
   const [params, setParams] = useSearchParams();
+  const location = useLocation();
+  const navigate = useNavigate();
   const tab: Tab = isTab(params.get("tab")) ? (params.get("tab") as Tab) : "queue";
   const caseParam = params.get("case");
   const incidentParam = params.get("incident");
@@ -237,11 +239,19 @@ export default function SupportDesk({ session, tick = 0, profile }: { session: a
     next.delete("case");
     setParams(next, { replace: true });
   };
+  // On a phone the case replaces the list, so opening one is a step that browser Back undoes;
+  // the entry is marked so "Back to the list" steps back too, rather than stacking a second
+  // list entry. On a wide screen both stay in view and a pick only changes the selection.
   const selectCase = (id: string | null) => {
+    if (!id && (location.state as { fromList?: boolean } | null)?.fromList) {
+      navigate(-1);
+      return;
+    }
     const next = new URLSearchParams(params);
     if (id) next.set("case", id);
     else next.delete("case");
-    setParams(next, { replace: true });
+    if (id && stacked && !caseParam) setParams(next, { state: { fromList: true } });
+    else setParams(next, { replace: true });
   };
 
   const onTabKey = (e: KeyboardEvent<HTMLDivElement>) => {
@@ -491,12 +501,14 @@ function QueueView(p: QueueViewProps) {
   const filtered = p.filters.q || p.filters.status || p.filters.route || p.filters.category || p.incident;
   const caseCol = useRef<HTMLDivElement>(null);
   // A case a person picked scrolls to its top; the one the page opened on its own does not move
-  // the view. "Back" returns focus to the row that was open.
+  // the view. Leaving a case, by "Back to the list" or the browser's Back, returns focus to the
+  // row that was open.
   const picked = useRef(false);
   const backTo = useRef<string | null>(null);
   const [scrollKey, setScrollKey] = useState(0);
 
   useEffect(() => {
+    if (p.selectedId) backTo.current = p.selectedId;
     if (p.selectedId && picked.current) {
       picked.current = false;
       caseCol.current?.scrollIntoView({ block: "start" });
@@ -515,10 +527,7 @@ function QueueView(p: QueueViewProps) {
     picked.current = true;
     p.onSelect(id);
   };
-  const back = () => {
-    backTo.current = p.selectedId;
-    p.onSelect(null);
-  };
+  const back = () => p.onSelect(null);
 
   if (p.state === "loading" && !p.all.length) {
     return (
