@@ -21,6 +21,8 @@
 .settings-field { display: grid; gap: 5px; min-width: 0; color: var(--muted); font-size: var(--fs-xs); font-weight: 500; }
 .settings-field input, .settings-field select { width: 100%; min-width: 0; }
 .settings-field small { color: var(--muted); font-size: var(--fs-xs); font-weight: 400; line-height: 1.4; }
+.settings-field small.settings-invalid { color: var(--danger-text); font-weight: 600; }
+.settings-field input[aria-invalid="true"] { border-color: var(--danger); }
 .settings-you-act { display: flex; align-items: center; gap: 10px; margin-top: 21px; }
 .settings-saved { color: var(--ok); font-size: var(--fs-sm); font-weight: 600; }
 

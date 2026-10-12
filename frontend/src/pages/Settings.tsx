@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useId, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { CloudLightning, Search, Server, Wifi, Zap, RadioTower, type LucideIcon } from "lucide-react";
 import { Link } from "react-router-dom";
 import { api } from "../api";
@@ -181,6 +181,8 @@ function Failed({ text, detail }: { text: string; detail?: string }) {
 }
 
 type Fail = { text: string; detail: string } | null;
+
+const NAME_NEEDED = "Enter your name. It is recorded as the person who acted.";
 const toFail = (e: unknown): Fail => ({ text: failText(e), detail: e instanceof Error ? e.message : String(e) });
 
 /**
@@ -257,6 +259,9 @@ function Settings({
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [saveFail, setSaveFail] = useState<Fail>(null);
+  const [nameProblem, setNameProblem] = useState<string | null>(null);
+  const nameRef = useRef<HTMLInputElement>(null);
+  const nameErrId = useId();
   // The session often answers after this page has mounted: the fields follow it when it does.
   useEffect(() => {
     if (session?.display_name) setName(session.display_name);
@@ -297,15 +302,29 @@ function Settings({
   }, [loadSites, loadEmail]);
 
   const saveSession = async () => {
+    // The name is recorded as the person who acted, so a blank one would sign acts as nobody
+    // ("Resolved by    ."); the server refuses it too (422).
+    const display = name.trim();
+    if (!display) {
+      setNameProblem(NAME_NEEDED);
+      setSaved(false);
+      nameRef.current?.focus();
+      return;
+    }
+    setNameProblem(null);
     setSaving(true);
     setSaved(false);
     setSaveFail(null);
     try {
-      const s = await api.setSession({ display_name: name, role });
+      const s = await api.setSession({ display_name: display, role });
       onSession(s);
+      setName(display);
       setSaved(true);
     } catch (e) {
-      setSaveFail(toFail(e));
+      if (statusOf(e) === 422) {
+        setNameProblem(NAME_NEEDED);
+        nameRef.current?.focus();
+      } else setSaveFail(toFail(e));
     } finally {
       setSaving(false);
     }
@@ -394,10 +413,34 @@ function Settings({
               A demo switch, not a sign-in. It sets the name recorded as the person who acted, and what the role-aware
               screens show you.
             </p>
-            <div className="settings-you">
+            {/* A form, so Enter in the name field saves, as the other forms do. */}
+            <form
+              className="settings-you"
+              noValidate
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (!saving) void saveSession();
+              }}
+            >
               <label className="settings-field">
                 <span>Your name</span>
-                <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Display name" aria-label="Display name" />
+                <input
+                  ref={nameRef}
+                  value={name}
+                  onChange={(e) => {
+                    setName(e.target.value);
+                    if (nameProblem && e.target.value.trim()) setNameProblem(null);
+                  }}
+                  placeholder="Display name"
+                  aria-label="Display name"
+                  aria-invalid={!!nameProblem || undefined}
+                  aria-describedby={nameProblem ? nameErrId : undefined}
+                />
+                {nameProblem && (
+                  <small id={nameErrId} className="settings-invalid">
+                    {nameProblem}
+                  </small>
+                )}
               </label>
               <label className="settings-field">
                 <span>Role</span>
@@ -417,14 +460,14 @@ function Settings({
               </label>
               {/* The one primary action on the page. */}
               <div className="settings-you-act">
-                <button className="btn primary" onClick={saveSession} disabled={saving}>
+                <button type="submit" className="btn primary" disabled={saving}>
                   {saving ? "Saving…" : "Save"}
                 </button>
                 <span role="status" className="settings-saved">
                   {saved && !saving ? "Saved" : ""}
                 </span>
               </div>
-            </div>
+            </form>
             {saveFail && <Failed text={`Couldn't save: ${saveFail.text}`} detail={saveFail.detail} />}
           </section>
 
