@@ -949,6 +949,23 @@ def test_publish_succeeds_with_a_named_reviewer_and_a_p1_action(client, on):
     assert body["published_at"] and body["reviewed_at"]
 
 
+def test_a_wont_do_p1_is_not_the_urgent_action_a_user_affecting_outage_needs(client, on):
+    """WONT_DO records a decision not to act. A review whose only P1 is won't-do produced no
+    urgent action, so it is still blocked; the same P1 done counts, as an open one does."""
+    _inc_id, pir_id = _seed_via_api()
+    action = _create_action(client, pir_id, priority="P1")
+    moved = client.patch(f"/api/v1/pir/{pir_id}/actions/{action['id']}", json={"status": "WONT_DO"})
+    assert moved.status_code == 200, moved.text
+    response = client.post(f"/api/v1/pir/{pir_id}/publish", json={"reviewer": "Grace Wanjiru"})
+    assert response.status_code == 422
+    assert "P0 or P1" in response.json()["detail"]
+
+    moved = client.patch(f"/api/v1/pir/{pir_id}/actions/{action['id']}", json={"status": "DONE"})
+    assert moved.status_code == 200, moved.text
+    response = client.post(f"/api/v1/pir/{pir_id}/publish", json={"reviewer": "Grace Wanjiru"})
+    assert response.status_code == 200, response.text
+
+
 def test_an_outage_that_affected_nobody_may_publish_without_an_urgent_action(client, on):
     """The rule is conditioned on ``impact.users_affected > 0``. A maintenance-window blip
     that reached no subscriber does not need a P0 to be worth writing down."""

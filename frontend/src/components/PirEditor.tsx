@@ -112,7 +112,7 @@ const PUBLISH_GATES: { match: RegExp; title: string; fix: string }[] = [
   {
     match: /P0 or P1 action item/i,
     title: "No P0/P1 action item, and subscribers were affected",
-    fix: "A user-affecting outage that produced no urgent action produced no learning. Add at least one P0 or P1 action item below.",
+    fix: "A user-affecting outage that produced no urgent action produced no learning. Add at least one P0 or P1 action item below; one marked won't do does not count.",
   },
   {
     match: BLAMELESS_RE,

@@ -834,6 +834,8 @@ def publish_blockers(session: Session, pir: PostIncidentReviewRow, *, reviewer: 
       is a document nobody owns.
     * **≥ 1 P0/P1 action item when ``impact.users_affected > 0``.** Straight from the SRE
       workbook: a user-affecting outage that produced no urgent action produced no learning.
+      An item marked ``WONT_DO`` does not count: it records a decision *not* to act, so a
+      review whose only urgent action is won't-do still has none.
     * **Blameless text.** The PATCH route validates on the way in, but text can also arrive
       from the LLM draft path, so the gate is re-applied at the moment it becomes permanent.
     * **Not ``NOT_REQUIRED``.** A review that was ruled unnecessary cannot be published; if
@@ -854,10 +856,13 @@ def publish_blockers(session: Session, pir: PostIncidentReviewRow, *, reviewer: 
     except (TypeError, ValueError):
         users = 0
     if users > 0:
-        priorities = {(a.priority or "").upper() for a in action_items(session, pir)}
+        priorities = {
+            (a.priority or "").upper() for a in action_items(session, pir) if (a.status or "").upper() != "WONT_DO"
+        }
         if not (priorities & BLOCKING_ACTION_PRIORITIES):
             blockers.append(
-                "a user-affecting outage needs at least one P0 or P1 action item before the review can be published"
+                "a user-affecting outage needs at least one P0 or P1 action item that is not won't-do "
+                "before the review can be published"
             )
     inc = session.get(IncidentRow, pir.incident_id)
     if inc is not None:
