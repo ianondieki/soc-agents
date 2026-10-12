@@ -100,6 +100,11 @@ export default function CasePane({ id, who, tick, stacked, onBack, onChanged, ti
   const headRef = useRef<HTMLHeadingElement>(null);
   const receiptRef = useRef<HTMLParagraphElement>(null);
   const articleRef = useRef<HTMLElement>(null);
+  const buttonsRef = useRef<HTMLDivElement>(null);
+  // Set before the first await, so a second click that lands before React re-renders the
+  // disabled button is dropped rather than sent (a double-click sent two claims).
+  const inFlight = useRef(false);
+  const wasBusy = useRef(false);
 
   const load = useCallback(() => {
     const mine = ++asked.current;
@@ -156,6 +161,25 @@ export default function CasePane({ id, who, tick, stacked, onBack, onChanged, ti
     });
   }, [detail]);
 
+  // A button disabled mid-flight drops focus to the page. When the action comes back without
+  // moving focus itself (a failure), focus returns to the decision's buttons, or the head.
+  useEffect(() => {
+    if (busy) {
+      wasBusy.current = true;
+      return;
+    }
+    if (!wasBusy.current) return;
+    wasBusy.current = false;
+    window.requestAnimationFrame(() => {
+      if (focusAfter.current) return; // a reload is on its way and places focus itself
+      const at = document.activeElement;
+      if (at && at !== document.body && articleRef.current?.contains(at) && !(at as HTMLButtonElement).disabled) return;
+      const next = buttonsRef.current?.querySelector<HTMLButtonElement>("button:not(:disabled)");
+      if (next) next.focus();
+      else headRef.current?.focus({ preventScroll: true });
+    });
+  }, [busy]);
+
   const apply = (d: CaseDetail) => {
     setDetail(d);
     shownId.current = d.complaint.id;
@@ -163,6 +187,8 @@ export default function CasePane({ id, who, tick, stacked, onBack, onChanged, ti
   };
 
   const run = async (what: Busy, fn: () => Promise<CaseDetail>, said: string, then: "reply" | "receipt") => {
+    if (inFlight.current) return;
+    inFlight.current = true;
     setBusy(what);
     setError(null);
     try {
@@ -173,8 +199,13 @@ export default function CasePane({ id, who, tick, stacked, onBack, onChanged, ti
       setAnnounce(said);
     } catch (e) {
       setError(actionError(e));
-      if (statusOfError(e) === 409 || statusOfError(e) === 404) load();
+      if (statusOfError(e) === 409 || statusOfError(e) === 404) {
+        // The case moved on: the reloaded view takes focus on its head, not a stale button.
+        focusAfter.current = "receipt";
+        load();
+      }
     } finally {
+      inFlight.current = false;
       setBusy("");
     }
   };
@@ -469,23 +500,23 @@ export default function CasePane({ id, who, tick, stacked, onBack, onChanged, ti
               {error}
             </div>
           )}
-          <div className="sd-buttons">
+          <div className="sd-buttons" ref={buttonsRef}>
             {c.status === "escalated" && (
-              <button type="button" className="btn primary" onClick={claim} aria-disabled={busy ? true : undefined}>
+              <button type="button" className="btn primary" onClick={claim} disabled={!!busy} aria-busy={busy === "claim" || undefined}>
                 {busy === "claim" ? "Claiming…" : "Claim this case"}
               </button>
             )}
             {c.status === "in_progress" && (
-              <button type="button" className="btn primary" onClick={resolve} aria-disabled={busy ? true : undefined}>
+              <button type="button" className="btn primary" onClick={resolve} disabled={!!busy} aria-busy={busy === "resolve" || undefined}>
                 {busy === "resolve" ? "Resolving…" : "Resolve and send the reply"}
               </button>
             )}
             {c.status === "awaiting_approval" && held && (
               <>
-                <button type="button" className="btn primary" onClick={() => approve(held)} aria-disabled={busy ? true : undefined}>
+                <button type="button" className="btn primary" onClick={() => approve(held)} disabled={!!busy} aria-busy={busy === "approve" || undefined}>
                   {busy === "approve" ? "Approving…" : "Approve and run it"}
                 </button>
-                <button type="button" className="btn danger" onClick={() => reject(held)} aria-disabled={busy ? true : undefined}>
+                <button type="button" className="btn danger" onClick={() => reject(held)} disabled={!!busy} aria-busy={busy === "reject" || undefined}>
                   {busy === "reject" ? "Rejecting…" : rejectArmed ? "Reject with this reason" : "Reject"}
                 </button>
               </>

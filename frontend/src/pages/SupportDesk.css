@@ -428,7 +428,7 @@ summary.sd-step-line:hover .sd-step-sum { color: var(--text-strong); }
 }
 .sd-actions.live { border-top-color: var(--hitl-line); }
 .sd-buttons { display: flex; flex-wrap: wrap; gap: var(--s2) var(--s3); }
-.sd-buttons .btn[aria-disabled="true"] { opacity: 0.6; cursor: progress; }
+.sd-buttons .btn:disabled, .sd-buttons .btn[aria-disabled="true"] { opacity: 0.6; cursor: progress; }
 .sd-error {
   margin: 0 0 var(--s2);
   padding: var(--s2) var(--s3);
