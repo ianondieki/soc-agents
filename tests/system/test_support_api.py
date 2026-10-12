@@ -238,10 +238,12 @@ def test_reject_sends_the_case_back(client):
 # ------------------------------------------------------------------------- evals and seed
 
 
-def test_evals_latest_is_404_until_a_run_then_the_run(client):
+def test_evals_latest_is_204_until_a_run_then_the_run(client):
     """The flow and the report's internal consistency -- not model quality, which is the gate
-    test's job (tests/unit/test_support_evals.py)."""
-    assert client.get(f"{BASE}/evals/latest").status_code == 404
+    test's job (tests/unit/test_support_evals.py). Before the first run the answer is 204 No
+    Content: nothing yet, which is not a missing route (a 404 there was a console error)."""
+    empty = client.get(f"{BASE}/evals/latest")
+    assert empty.status_code == 204 and empty.content == b""
     run = client.post(f"{BASE}/evals/run")
     assert run.status_code == 200
     report = run.json()

@@ -251,15 +251,18 @@ def support_metrics(hours: int = Query(0, ge=0, le=24 * 366, description="hours 
         session.close()
 
 
-@_lane.get("/evals/latest", dependencies=[Depends(require_role(*SUPPORT_READERS))])
-def latest_eval() -> dict[str, Any]:
+@_lane.get("/evals/latest", dependencies=[Depends(require_role(*SUPPORT_READERS))], response_model=None)
+def latest_eval() -> dict[str, Any] | Response:
+    """The newest eval report, or 204 No Content before the first run (POST /evals/run).
+    "Nothing yet" is a normal state of a fresh deployment, not a missing route: a 404 here was
+    logged as a failed request by every browser that opened the front page or the desk."""
     session = get_session()
     try:
         report = evals.latest_report(session, _operator_id())
     finally:
         session.close()
     if report is None:
-        raise HTTPException(404, "no eval run on record yet; POST /api/v1/support/evals/run")
+        return Response(status_code=204)
     return report
 
 

@@ -366,6 +366,11 @@ export const isSupportApiError = (e: unknown): e is SupportApiError => e instanc
 export const statusOfError = (e: unknown): number | null => (isSupportApiError(e) ? e.status : null);
 /** `404` on every route is the lane switched off (`SUPPORT_DESK_ENABLED=false`). */
 export const isLaneOff = (e: unknown): boolean => statusOfError(e) === 404;
+
+/** A sentence ends with one full stop, even when it ends in a name that has its own ("Achieng O."). */
+function endSentence(s: string): string {
+  return /[.!?]$/.test(s.trim()) ? s.trim() : `${s.trim()}.`;
+}
 /** A fetch that never reached the server. */
 export const isNetworkError = (e: unknown): boolean => !isSupportApiError(e) && e instanceof TypeError;
 
@@ -712,9 +717,9 @@ export function stepSentence(step: Step, titles: Record<string, string> = {}): s
       return `Sent to a person: ${reasonWord(d.reason_code)}${ev}.`;
     }
     case "human/claimed":
-      return `Claimed by ${d.claimed_by ?? "a person"}.`;
+      return endSentence(`Claimed by ${d.claimed_by ?? "a person"}`);
     case "human/resolved":
-      return `Resolved by ${d.resolved_by ?? "a person"}${d.note ? `: ${String(d.note)}` : ""}.`;
+      return endSentence(`Resolved by ${d.resolved_by ?? "a person"}${d.note ? `: ${String(d.note)}` : ""}`);
     case "human/approved":
       return `${d.decided_by ?? d.approved_by ?? "A person"} approved ${toolPhrase(d.tool)}${d.tool ? "" : " the held call"}.`;
     case "human/rejected":

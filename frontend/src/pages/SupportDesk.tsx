@@ -128,8 +128,9 @@ export default function SupportDesk({ session, tick = 0, profile }: { session: a
     supportApi
       .evalsLatest()
       .then((r) => {
-        setEvals(r);
-        setEvalsState("ok");
+        // 204 (no run yet) arrives as null: the same "no report yet" state a lane-off 404 gives.
+        setEvals(r ?? null);
+        setEvalsState(r ? "ok" : "missing");
         setEvalsError(null);
       })
       .catch((e) => {

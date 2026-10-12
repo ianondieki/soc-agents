@@ -1,5 +1,6 @@
 import type { ComputeResult, Scorecard, TransitionResult, Vendor } from "./scorecardModel";
 import { computeQuery, listQuery } from "./scorecardModel";
+import { laneOffFor } from "../lib/lanes";
 
 /**
  * The scorecard routes (`api/routers/scorecards.py`, spec §7.6.3) and `GET /vendors` for the
@@ -14,6 +15,9 @@ import { computeQuery, listQuery } from "./scorecardModel";
  * Every route answers 404 while `SCORECARDS_ENABLED` is off (the shipped default).
  */
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
+  // The lane switched off answers 404 here, without a request the browser logs (lib/lanes.ts).
+  const off = await laneOffFor(path);
+  if (off) throw new Error(`404: ${JSON.stringify({ detail: `the ${off} lane is off on this deployment` })}`);
   const r = await fetch(path, {
     headers: { "Content-Type": "application/json", ...(init?.headers || {}) },
     ...init,

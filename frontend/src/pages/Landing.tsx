@@ -56,6 +56,8 @@ function isMissing(e: unknown): boolean {
 async function getJson<T>(path: string): Promise<T> {
   const r = await fetch(path, { headers: { Accept: "application/json" } });
   if (!r.ok) throw new Error(`${r.status}: ${r.statusText}`);
+  // 204: nothing yet (no eval run on a fresh deployment), read as "missing" like a 404.
+  if (r.status === 204) throw new Error("404: nothing yet");
   return (await r.json()) as T;
 }
 
