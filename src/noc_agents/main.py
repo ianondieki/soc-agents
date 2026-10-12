@@ -102,6 +102,7 @@ from noc_agents.services.hitl import (
     suppress_held_outbox,
     sync_incident_hitl_scalars,
     transition_open_task,
+    withdraw_open_broadcasts,
 )
 from noc_agents.services.clock import to_utc
 from noc_agents.services.lifecycle import (
@@ -647,6 +648,20 @@ def close_inc(
     session = get_session()
     try:
         row = _get_owned(session, IncidentRow, incident_id, what="incident")
+        if row.status in TERMINAL_STATUSES:
+            # A second close is a true no-op: closed_at, the notes and the customers' messages are
+            # left as the first close wrote them (it used to overwrite closed_at and add a note).
+            return {"ok": True, "already": row.status.lower(), "incident": incident_out(row).model_dump(), "withdrawn_cards": []}
+        # A closed ticket's outage broadcast must never go out: settle its open card first (the
+        # withdrawal may roll the session back if a decision won the card, so it runs before the close).
+        withdrawn = withdraw_open_broadcasts(session, row, by=actor)
+        row = _get_owned(session, IncidentRow, incident_id, what="incident")
+        if withdrawn:
+            _cancel_pending_broadcasts(session, row.id)
+            _finish_waiting_run(session, row, "CANCELLED", error="Ticket closed before the broadcast decision")
+            session.add(
+                WorkNoteRow(incident_id=row.id, author=actor, author_role="NOC", body=withdrawn[0].reason, source="hitl")
+            )
         close_incident(
             session,
             row,
@@ -657,7 +672,16 @@ def close_inc(
         # Tells whoever no notice reached, and raises a held-back update again (docs/CLOSE_THE_LOOP.md 7.1).
         _support_followup(session, row, trigger="close", actor=actor, note=body.resolution_summary or None)
         session.commit()
-        return {"ok": True, "incident": incident_out(row).model_dump()}
+        for t in withdrawn:
+            hub.publish_sync(
+                RealtimeEvent(
+                    type="hitl.rejected",
+                    operator_id=row.operator_id,
+                    incident_id=row.id,
+                    payload={"task_id": t.id, "reason": t.reason, "task_type": t.task_type, "incident_number": row.incident_number},
+                )
+            )
+        return {"ok": True, "incident": incident_out(row).model_dump(), "withdrawn_cards": [t.id for t in withdrawn]}
     finally:
         session.close()
 
@@ -739,6 +763,8 @@ def reassign_inc(incident_id: str, body: ReassignIn) -> dict:
     session = get_session()
     try:
         row = _get_owned(session, IncidentRow, incident_id, what="incident")
+        if row.status in TERMINAL_STATUSES:
+            raise HTTPException(409, f"incident is {row.status.lower()}; reopen it before reassigning")
         reassign_incident(
             session,
             row,
@@ -1173,6 +1199,11 @@ def hitl_approve(
         _may_act_on_or_403(principal, t)  # §9.3 by card type: planning, management, ...
         _not_the_raiser_or_403(t, actor)
         gating = t.task_type == GATING_TASK_TYPE
+        if gating and t.incident_id:
+            ticket = session.get(IncidentRow, t.incident_id)
+            if ticket is not None and ticket.status in TERMINAL_STATUSES:
+                # A card left open on a ticket closed before this fix: its outage message is stale.
+                raise HTTPException(409, f"the ticket is {ticket.status.lower()}, so its outage broadcast cannot go out; reject the card instead")
         priority = body.overrides.get("priority")
         if gating and priority and priority not in VALID_PRIORITIES:
             raise HTTPException(400, f"priority override must be one of {', '.join(VALID_PRIORITIES)}")

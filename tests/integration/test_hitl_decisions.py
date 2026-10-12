@@ -323,13 +323,45 @@ def test_generic_only_incident_reports_its_own_decision(client, gated):
     assert (after["requires_hitl"], after["hitl_state"]) == (False, "REJECTED")  # gating task decides
 
 
-def test_close_keeps_scalars_consistent_with_open_task(client, gated):
+def test_close_withdraws_the_open_broadcast_card_and_keeps_scalars_consistent(client, gated):
+    """A closed ticket's outage broadcast must never go out. Closing settles the open card as
+    REJECTED (nothing sent) with the reason on it, finishes the waiting run and cancels the
+    drafts; the card can no longer be approved or rejected (the cancel-on-close once deferred)."""
     inc, ab_id = gated
     r = client.post(f"/api/v1/incidents/{inc['id']}/close", json={"closed_by": "Supervisor A"})
     assert r.status_code == 200
+    assert r.json()["withdrawn_cards"] == [ab_id]
     closed = r.json()["incident"]
     assert closed["status"] == "CLOSED"
-    assert (closed["requires_hitl"], closed["hitl_state"]) == (True, "PENDING")  # task still open (cancel-on-close deferred)
-    assert client.post(f"/api/v1/hitl/{ab_id}/reject", json={**SUPERVISOR, "reason": "closed"}).status_code == 200
-    after = _incident(client, inc["id"])
-    assert (after["status"], after["requires_hitl"], after["hitl_state"]) == ("CLOSED", False, "REJECTED")
+    assert (closed["requires_hitl"], closed["hitl_state"]) == (False, "REJECTED")
+    task = _read(lambda s: s.get(HitlTaskRow, ab_id))
+    assert task.status == "REJECTED" and "ticket was closed" in (task.reason or "")
+    assert _broadcast_statuses(inc["id"]) <= {"CANCELLED"}
+    assert client.post(f"/api/v1/hitl/{ab_id}/approve", json=SUPERVISOR).status_code == 409
+    assert client.post(f"/api/v1/hitl/{ab_id}/reject", json={**SUPERVISOR, "reason": "closed"}).status_code == 409
+    assert all(t["id"] != ab_id for t in client.get("/api/v1/hitl/pending").json())
+
+
+def test_closing_a_closed_ticket_is_a_no_op_that_writes_nothing(client, gated):
+    inc, _ = gated
+    assert client.post(f"/api/v1/incidents/{inc['id']}/close", json={"closed_by": "Supervisor A"}).status_code == 200
+    first = _read(lambda s: s.get(IncidentRow, inc["id"]).closed_at)
+    notes = _read(lambda s: len(s.scalars(select(WorkNoteRow).where(WorkNoteRow.incident_id == inc["id"])).all()))
+    again = client.post(f"/api/v1/incidents/{inc['id']}/close", json={"closed_by": "Supervisor B"})
+    assert again.status_code == 200 and again.json()["already"] == "closed"
+    assert _read(lambda s: s.get(IncidentRow, inc["id"]).closed_at) == first
+    assert _read(lambda s: len(s.scalars(select(WorkNoteRow).where(WorkNoteRow.incident_id == inc["id"])).all())) == notes
+
+
+def test_reassigning_a_closed_ticket_is_409_and_a_restored_one_stays_restored(client, gated):
+    inc, _ = gated
+    body = {"by": "Supervisor A", "reason": "wrong pool", "assignee_type": "MSP", "assignee_name": "Camusat", "msp_name": "Camusat"}
+    assert client.post(f"/api/v1/incidents/{inc['id']}/restore", json={"note": "site back"}).status_code == 200
+    moved = client.post(f"/api/v1/incidents/{inc['id']}/reassign", json=body)
+    assert moved.status_code == 200
+    assert moved.json()["incident"]["status"] == "RESTORED"
+    assert moved.json()["incident"]["assignee_name"] == "Camusat"
+    assert client.post(f"/api/v1/incidents/{inc['id']}/close", json={"closed_by": "Supervisor A"}).status_code == 200
+    refused = client.post(f"/api/v1/incidents/{inc['id']}/reassign", json=body)
+    assert refused.status_code == 409
+    assert _incident(client, inc["id"])["status"] == "CLOSED"

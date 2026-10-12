@@ -286,10 +286,11 @@ def reassign_incident(
     inc.msp_name = msp_name
     if fe_name:
         inc.fe_name = fe_name
-    if assignee_type == "MSP":
-        inc.status = IncidentStatus.AWAITING_VENDOR.value
-    else:
-        inc.status = IncidentStatus.ASSIGNED.value
+    # A new owner moves an open ticket to that owner's queue. A restored ticket stays restored:
+    # the service is back, and reassigning it (to close it, or to own a follow-up) must not
+    # reopen it. Closed tickets never get here (the route answers 409).
+    if inc.status not in NOT_OPEN_STATUSES:
+        inc.status = IncidentStatus.AWAITING_VENDOR.value if assignee_type == "MSP" else IncidentStatus.ASSIGNED.value
     inc.updated_at = utcnow()
     session.add(
         WorkNoteRow(

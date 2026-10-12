@@ -389,6 +389,11 @@ function Workspace({ id, session, profile, tick }: { id: string | undefined; ses
       setNoteMsg({ tone: "danger", text: "Write the note before posting it." });
       return;
     }
+    // The API would clamp 150 to 100 and drop "abc" without a word; say so here instead.
+    if (mspPct.trim() && (!/^\d{1,3}$/.test(mspPct.trim()) || Number(mspPct) > 100)) {
+      setNoteMsg({ tone: "danger", text: "Percent complete is a whole number from 0 to 100." });
+      return;
+    }
     setNoteBusy(true);
     setNoteMsg(null);
     try {
@@ -423,12 +428,16 @@ function Workspace({ id, session, profile, tick }: { id: string | undefined; ses
     setCloseBusy(true);
     setActionMsg(null);
     try {
-      await api.close(id, {
+      const res: any = await api.close(id, {
         closed_by: who,
         resolution_code: "CLOSED_NORMAL",
-        resolution_summary: "Closed from Mission Control",
+        resolution_summary: `Closed from the ticket page by ${who}`,
       });
-      setActionMsg({ tone: "ok", text: "Ticket closed." });
+      const withdrawn = Array.isArray(res?.withdrawn_cards) ? res.withdrawn_cards.length : 0;
+      setActionMsg({
+        tone: "ok",
+        text: withdrawn ? "Ticket closed. Its broadcast card was withdrawn, so nothing was sent." : "Ticket closed.",
+      });
       load();
     } catch (e: any) {
       setActionMsg({ tone: "danger", text: `Couldn't close the ticket: ${detailOf(e)}` });
@@ -514,6 +523,8 @@ function Workspace({ id, session, profile, tick }: { id: string | undefined; ses
   // §7.1: an update held back at restore is raised again when the ticket closes.
   const closeOpen = noticeOpen || cust?.notice?.state === "held_back";
   const isRestored = !!inc.restored_at || ["RESTORED", "CLOSED"].includes(String(inc.status || "").toUpperCase());
+  // Closed or cancelled: reassign and close are refused (409), so they are not offered.
+  const ticketClosed = ["CLOSED", "CANCELLED"].includes(String(inc.status || "").toUpperCase());
   const tellWaits = noticeWaitsForPerson(inc.priority, profile?.autonomy_level, toTell);
   const tellTail = `${toTell} ${toTell === 1 ? "customer" : "customers"} service is back${tellWaits ? ", after a supervisor approves" : ""}.`;
   const restoreTells = toTell > 0 && noticeOpen ? `Restoring tells ${tellTail}` : "";
@@ -547,7 +558,7 @@ function Workspace({ id, session, profile, tick }: { id: string | undefined; ses
     ["Failure time", fmtDateTime(inc.failure_time)],
     ["Escalated", fmtDateTime(inc.escalated_at)],
     ["Expected resolution", fmtDateTime(inc.expected_resolution_at)],
-    ["Vendor", inc.responsible_msp || inc.msp_name || dash],
+    ["Vendor", ownerName(inc.msp_name || inc.responsible_msp) || dash],
     ["Field engineer", inc.fe_name ? <span className="mono wrap">{inc.fe_name}</span> : dash],
     ["Radio OEM", humanEnum(inc.radio_oem) || dash],
     ["Vendor TT ref", inc.vendor_tt_ref ? <span className="mono wrap">{inc.vendor_tt_ref}</span> : dash],
@@ -562,7 +573,9 @@ function Workspace({ id, session, profile, tick }: { id: string | undefined; ses
   const ended = parseInstant(inc.restored_at) || parseInstant(inc.closed_at);
   const due = parseInstant(inc.sla_restore_due);
   const late = !isRestored && !!due && due.getTime() < nowMs;
-  const ownerWord = ownerName(inc.responsible_msp || inc.assignee_name || inc.msp_name) || dash;
+  // Who holds the ticket now: a reassignment changes the assignee and the vendor, never the
+  // contract's responsible vendor, so that field comes last.
+  const ownerWord = ownerName(inc.assignee_name || inc.msp_name || inc.responsible_msp) || dash;
   const tone = statusTone(inc.status);
   const place = [regionName(inc.region_code, profile), inc.county].filter(Boolean).join(", ");
   const decisionWord = waiting ? "Waiting" : decided ? capFirst(humanStatus(hitlState)) : inc.requires_hitl ? capFirst(humanStatus(hitlState)) || "Needed" : "Not needed";
@@ -837,7 +850,7 @@ function Workspace({ id, session, profile, tick }: { id: string | undefined; ses
                   aria-label="Work note"
                   value={note}
                   onChange={(e) => setNote(e.target.value)}
-                  placeholder="Work note until closure…"
+                  placeholder={ticketClosed ? "A note for the record (the ticket is closed)…" : "Work note until closure…"}
                 />
               </label>
               <details className="iw-vendor-fields">
@@ -891,12 +904,18 @@ function Workspace({ id, session, profile, tick }: { id: string | undefined; ses
             </div>
 
             <div className="iw-act-more">
+              {ticketClosed ? (
+                <p className="ic-consequence">
+                  {`This ticket is ${String(inc.status).toLowerCase()}`}
+                  {inc.closed_at ? ` since ${fmtDateTime(inc.closed_at)}` : ""}. Reopen it before reassigning or closing again.
+                </p>
+              ) : (
               <div className="note-form-actions">
                 {!reassigning && (
                   <button
                     className="btn"
                     onClick={() => {
-                      setReassignMsp(inc.msp_name || "Camusat");
+                      setReassignMsp(ownerName(inc.msp_name) || "Camusat");
                       setReassignReason("");
                       setActionMsg(null);
                       setReassigning(true);
@@ -909,7 +928,8 @@ function Workspace({ id, session, profile, tick }: { id: string | undefined; ses
                   {closeBusy ? "Closing…" : "Close ticket"}
                 </button>
               </div>
-              {closeTells && !reassigning && <p className={"ic-consequence" + (tellWaits ? " hitl" : "")}>{closeTells}</p>}
+              )}
+              {closeTells && !reassigning && !ticketClosed && <p className={"ic-consequence" + (tellWaits ? " hitl" : "")}>{closeTells}</p>}
               {reassigning && (
                 <div className="note-form" role="group" aria-label="Reassign to another vendor">
                   <label>

@@ -663,6 +663,39 @@ def _reviewed_audiences(previous: NocAlert | None, inc: IncidentRow, cfg: Operat
 # --- reject: nothing HELD for this incident may ever be claimed ---------------------------------
 
 
+#: Why a broadcast card closed by its ticket's closure says what it says (card, timeline, audit).
+WITHDRAWN_ON_CLOSE = "Withdrawn: the ticket was closed before anyone decided, so the outage broadcast was not sent."
+
+
+def withdraw_open_broadcasts(session: Session, inc: IncidentRow, *, by: str) -> list[HitlTaskRow]:
+    """Settle the open broadcast cards of a ticket that is being closed: a closed ticket's outage
+    message must never go out. Each card moves to REJECTED (the "nothing was sent" outcome) with
+    ``WITHDRAWN_ON_CLOSE`` as its reason, and any HELD outbox row raised by that card is suppressed.
+
+    Call it before the close itself: ``transition_open_task`` rolls the session back when a
+    concurrent decision won the card, and nothing of the close must be pending then.
+    """
+    tasks = session.scalars(
+        select(HitlTaskRow).where(
+            HitlTaskRow.incident_id == inc.id,
+            HitlTaskRow.task_type == GATING_TASK_TYPE,
+            HitlTaskRow.status.in_(OPEN_TASK_STATUSES),
+        )
+    ).all()
+    done = [
+        t
+        for t in tasks
+        if transition_open_task(session, t, "REJECTED", resolved_by=by, resolved_at=utcnow(), reason=WITHDRAWN_ON_CLOSE)
+    ]
+    if done:
+        session.execute(
+            update(OutboxRow)
+            .where(OutboxRow.hitl_task_id.in_([t.id for t in done]), OutboxRow.status == outbox.HELD)
+            .values(status=outbox.SUPPRESSED, last_error=f"hitl_withdrawn: {WITHDRAWN_ON_CLOSE}", updated_at=utcnow())
+        )
+    return done
+
+
 def suppress_held_outbox(session: Session, incident_id: str, *, reason: str) -> int:
     """HELD outbox rows of the incident → SUPPRESSED (§6.5 reject). Returns the count.
 
