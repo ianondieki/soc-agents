@@ -512,7 +512,9 @@ function Workspace({ id, session, profile, tick }: { id: string | undefined; ses
 
   const hitlState = String(inc.hitl_state || "").toUpperCase();
   const waiting = Boolean(inc.requires_hitl) && hitlState === "PENDING";
-  const decided = Boolean(inc.requires_hitl) && (hitlState === "APPROVED" || hitlState === "REJECTED");
+  // Decided is the state, not the flag: once a card is decided requires_hitl goes false (no card is
+  // open), and reading the flag here showed every decided ticket as "Not needed".
+  const decided = hitlState === "APPROVED" || hitlState === "REJECTED";
   // The site class word the backend gives, only when it says something: never "standard", and
   // never a priority's own word on a ticket of another priority ("P1 critical" and "P2 major" are
   // what those words mean on this floor, so a P2 never reads "Critical site").
