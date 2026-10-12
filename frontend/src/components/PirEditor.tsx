@@ -605,8 +605,15 @@ export default function PirEditor({
         </div>
       )}
 
+      {/* A form, so Enter in the description or owner field adds the action, as elsewhere. */}
       {!published && (
-        <div className="pir-action-form">
+        <form
+          className="pir-action-form"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (!busy) void addAction();
+          }}
+        >
           <select
             aria-label="Action type"
             value={newAction.type}
@@ -652,10 +659,10 @@ export default function PirEditor({
             disabled={busy}
             onChange={(e) => setNewAction((a) => ({ ...a, due_date: e.target.value }))}
           />
-          <button className="btn" disabled={busy} onClick={addAction}>
+          <button type="submit" className="btn" disabled={busy}>
             Add action
           </button>
-        </div>
+        </form>
       )}
       {actionError && (
         <div className="pir-error">
@@ -698,7 +705,13 @@ export default function PirEditor({
             one per attempt. With sign-in enabled the signed-in user is recorded as the reviewer and
             the name typed here is ignored.
           </p>
-          <div className="form-row">
+          <form
+            className="form-row"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!busy && !dirty) void publish();
+            }}
+          >
             <input
               aria-label="Reviewer (a person's name, not a role label)"
               placeholder="Reviewer (a person's name, not a role label)"
@@ -715,7 +728,7 @@ export default function PirEditor({
               onChange={(e) => setRationale(e.target.value)}
               style={{ minWidth: "18rem" }}
             />
-            <button className="btn good" disabled={busy || dirty} onClick={publish}>
+            <button type="submit" className="btn good" disabled={busy || dirty}>
               Publish review
             </button>
             {dirty && (
@@ -723,7 +736,7 @@ export default function PirEditor({
                 <IconDot /> Unsaved edits: save first
               </span>
             )}
-          </div>
+          </form>
           {publishError && (
             <div className="pir-blockers">
               <div className="pir-blockers-head">
