@@ -18,6 +18,7 @@ import { useQuietMode, useSuppressedCount, useTickerEvents } from "../realtime/R
 import { hitlSubject } from "../lib/hitlSubject";
 import { isOpenTicket } from "../lib/ticket";
 import { useNewest } from "../lib/newest";
+import DueSoon from "../components/DueSoon";
 
 /** One figure of the strip. Colour only when the number is worth a look; zero stays quiet. The
  *  figure rolls to a new value and its cell glows once when it changes (calm: it just changes). */
@@ -429,6 +430,9 @@ function MissionControl({
           </p>
         )}
       </div>
+
+      {/* The warning before the breach: only when a restore deadline falls within the hour. */}
+      <DueSoon incidents={incidents} />
 
       <LiveRunPanel
         runs={runsLoad === "ok" || runsLoad === "stale" ? runs : null}

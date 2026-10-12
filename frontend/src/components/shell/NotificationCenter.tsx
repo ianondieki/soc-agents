@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FocusEvent } from "react";
 import { useNavigate } from "react-router-dom";
-import { Bell, Bot, CheckCheck, Siren, TimerOff, UserRoundCheck, type LucideIcon } from "lucide-react";
+import { AlarmClock, Bell, Bot, CheckCheck, Siren, TimerOff, UserRoundCheck, type LucideIcon } from "lucide-react";
 import { api } from "../../api";
 import { nodeLabel, regionName } from "../../lib/agents";
 import { labelFor } from "../../lib/hitl";
@@ -55,7 +55,13 @@ function saveRead(key: string, r: ReadState): void {
   }
 }
 
-const GROUP_ICON: Record<string, LucideIcon> = { p1_open: Siren, restore_breached: TimerOff, approval_waiting: UserRoundCheck, run_failed: Bot };
+const GROUP_ICON: Record<string, LucideIcon> = {
+  p1_open: Siren,
+  restore_breached: TimerOff,
+  restore_due_soon: AlarmClock,
+  approval_waiting: UserRoundCheck,
+  run_failed: Bot,
+};
 const FILTERS: { key: Filter; label: string }[] = [
   { key: "all", label: "All" },
   { key: "alarm", label: "Alarms" },
@@ -78,6 +84,14 @@ function ago(iso: string | null, now: number): string {
   const days = eatDay(now) - eatDay(t);
   if (days <= 0) return `${Math.round(min / 60)} h ago`;
   return days === 1 ? "yesterday" : `${days} days ago`;
+}
+
+/** Restore deadlines still ahead go first, soonest first: they are the only items that get worse
+ *  by the minute and can still be prevented. Everything else keeps the server's newest-first order. */
+function pinWarnings(items: any[]): any[] {
+  const due = (it: any) => Date.parse(it.due_at) || Number.POSITIVE_INFINITY;
+  const warnings = items.filter((it) => it.kind === "restore_due_soon").sort((a, b) => due(a) - due(b));
+  return warnings.length ? [...warnings, ...items.filter((it) => it.kind !== "restore_due_soon")] : items;
 }
 
 /** A row of the list: one item, or the decisions of one kind folded into a single row. */
@@ -134,6 +148,12 @@ function wordsOf(it: any, profile: any, role: string): { title: string; meta: st
       return { title: `P1 opened at ${site}`, meta: [ticket, region].filter(Boolean).join(", "), href: toTicket };
     case "restore_breached":
       return { title: `Restore time passed at ${site}`, meta: [ticket, it.priority].filter(Boolean).join(", "), href: toTicket };
+    case "restore_due_soon": {
+      // Counted down from the deadline itself; the list re-renders on its own clock.
+      const left = it.due_at ? Math.max(0, Math.ceil((Date.parse(it.due_at) - Date.now()) / 60000)) : null;
+      const when = left == null || !Number.isFinite(left) ? "within the hour" : left < 1 ? "now" : `in ${left} min`;
+      return { title: `Restore due ${when} at ${site}`, meta: [ticket, it.priority].filter(Boolean).join(", "), href: toTicket };
+    }
     case "approval_waiting":
       return {
         title: `${labelFor(it.task_type)} waits for a decision`,
@@ -305,7 +325,7 @@ export default function NotificationCenter({
   }
   const waitingByType: Record<string, number> = data?.waiting_by_type && typeof data.waiting_by_type === "object" ? data.waiting_by_type : {};
   const shown = useMemo(
-    () => foldDecisions(filter === "all" ? items : items.filter((it) => it.group === filter), waitingByType),
+    () => foldDecisions(pinWarnings(filter === "all" ? items : items.filter((it) => it.group === filter)), waitingByType),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- waitingByType is derived from `data`, which `items` follows
     [items, filter, data]
   );
@@ -388,14 +408,15 @@ export default function NotificationCenter({
                 const fresh = members.some(isUnread);
                 return (
                   <li key={it.id}>
-                    <button type="button" className={"inbox-item g-" + it.group + (fresh ? " is-unread" : "")} onClick={() => openItem(members, w.href)}>
+                    <button type="button" className={"inbox-item g-" + it.group + (it.kind === "restore_due_soon" ? " is-warning" : "") + (fresh ? " is-unread" : "")} onClick={() => openItem(members, w.href)}>
                       <span className="inbox-icon" aria-hidden="true">
                         <Icon size={16} strokeWidth={2} />
                       </span>
                       <span className="inbox-text">
                         <span className="inbox-title">{w.title}</span>
                         {w.meta && <span className="inbox-meta">{w.meta}</span>}
-                        <span className="inbox-when">{ago(it.at, now)}</span>
+                        {/* A warning says its own time ("due in 20 min"); an age beside it would only confuse. */}
+                        {it.kind !== "restore_due_soon" && <span className="inbox-when">{ago(it.at, now)}</span>}
                       </span>
                       {fresh && (
                         <span className="inbox-dot">
@@ -408,7 +429,7 @@ export default function NotificationCenter({
               })}
             </ul>
           )}
-          <p className="inbox-foot">From the last {data?.window_hours ?? 24} hours; a decision that is still waiting stays here whatever its age.</p>
+          <p className="inbox-foot">From the last {data?.window_hours ?? 24} hours. A decision still waiting stays here whatever its age, and a restore deadline due within the hour comes first.</p>
         </div>
       )}
     </>

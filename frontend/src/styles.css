@@ -1043,6 +1043,20 @@ button.chip:active { background: var(--surface-sunk); }
 .kpi-strip > .kpis { margin-bottom: 0; }
 .kpi-strip.stale .kpi .value { color: var(--muted-dim); }
 .kpis-note { margin: var(--s2) 0 0; padding: 0 var(--s1); font-size: var(--fs-sm); }
+/* Mission control's warning before the breach (components/DueSoon.tsx): a band in the watch
+   colour, the tickets soonest first, each a row that opens the ticket. Shown only when needed. */
+.due-soon { margin: 0 0 var(--s5); padding: var(--s4) var(--s5); border: 1px solid var(--warn-line); border-radius: var(--r-lg); background: linear-gradient(90deg, var(--warn-soft), transparent 70%), var(--surface); }
+.due-soon-title { display: flex; align-items: center; gap: 10px; margin: 0 0 var(--s3); color: var(--text-strong); font-family: var(--font-display); font-variation-settings: var(--display-soft); font-size: var(--fs-md); font-weight: 600; line-height: 1.3; }
+.due-soon-title > svg { flex: none; color: var(--warn); }
+.due-soon-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr)); gap: var(--s2); margin: 0; padding: 0; list-style: none; }
+.due-soon-row { display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-areas: "pill site" "pill left"; column-gap: var(--s3); row-gap: 2px; align-items: center; min-height: 44px; padding: var(--s2) var(--s3); border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface); color: var(--text); }
+.due-soon-row:hover { border-color: var(--warn-line); text-decoration: none; background: var(--surface-raised); }
+.due-soon-row > .pill { grid-area: pill; }
+.due-soon-site { grid-area: site; min-width: 0; overflow: hidden; color: var(--text-strong); font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.due-soon-left { grid-area: left; font-size: var(--fs-sm); font-variant-numeric: tabular-nums; }
+.due-soon-left strong { color: var(--warn); font-weight: 600; }
+.due-soon-more { margin: var(--s3) 0 0; color: var(--muted); font-size: var(--fs-sm); }
+@media (max-width: 600px) { .due-soon { padding: var(--s3) var(--s4); } }
 /* Phones: tighter tiles, the figure one step down, so seven figures take two screens' worth less. */
 @media (max-width: 600px) {
   .kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); }
@@ -2595,6 +2609,8 @@ td.num { text-align: right; font-family: var(--mono); font-variant-numeric: tabu
 .inbox-icon { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 10px; background: var(--danger-soft); color: var(--danger-text); }
 .inbox-item.g-person .inbox-icon { background: var(--hitl-soft); color: var(--hitl-text); }
 .inbox-item.g-agent .inbox-icon { background: color-mix(in oklab, var(--warn) 16%, transparent); color: var(--warn); }
+/* A restore deadline still ahead: a warning in the watch colour, not yet the breach's red. */
+.inbox-item.is-warning .inbox-icon { background: var(--warn-soft); color: var(--warn); }
 .inbox-text { display: grid; gap: 2px; min-width: 0; }
 .inbox-title { color: var(--text); font-size: var(--fs-md); font-weight: 500; line-height: 1.35; }
 .inbox-item.is-unread .inbox-title { color: var(--text-strong); font-weight: 600; }
