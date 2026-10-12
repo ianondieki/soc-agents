@@ -314,6 +314,8 @@ export default function SupportDesk({ session, tick = 0, profile }: { session: a
   }
 
   const resolvedCount = (metrics?.auto_resolved ?? 0) + (metrics?.action_completed ?? 0);
+  // With no cases there is no rate: a dash, never "0% of 0".
+  const noCases = !!metrics && !(metrics.total > 0);
   const personNow = metrics ? metrics.escalated + metrics.awaiting_approval : null;
   const wrongGate = evals ? gateFor(evals, "wrong_escalation_rate") : null;
   const wrongHas = !!wrongGate && typeof wrongGate.value === "number";
@@ -329,8 +331,10 @@ export default function SupportDesk({ session, tick = 0, profile }: { session: a
       <div className="kpis sd-kpis" aria-label="The desk today">
         <div className="kpi">
           <div className="label">Resolved by agents</div>
-          <div className={"value" + (metrics ? (resolvedCount === 0 ? " zero" : "") : " zero")}>{metrics ? pct(metrics.resolution_rate) : "—"}</div>
-          <div className="sd-kpi-sub">{metrics ? `${resolvedCount} of ${metrics.total} ${metrics.total === 1 ? "case" : "cases"}` : "loading"}</div>
+          <div className={"value" + (metrics && !noCases && resolvedCount > 0 ? "" : " zero")}>{metrics && !noCases ? pct(metrics.resolution_rate) : "—"}</div>
+          <div className="sd-kpi-sub">
+            {!metrics ? "loading" : noCases ? "No cases yet" : `${resolvedCount} of ${metrics.total} ${metrics.total === 1 ? "case" : "cases"}`}
+          </div>
         </div>
         <div className="kpi">
           <div className="label">With a person</div>
@@ -369,9 +373,13 @@ export default function SupportDesk({ session, tick = 0, profile }: { session: a
       <p className="sd-kpis-line" aria-label="The desk today">
         {metrics ? (
           <>
-            <span>
-              Agents resolved <span className="mono">{resolvedCount}</span> of <span className="mono">{metrics.total}</span>
-            </span>
+            {noCases ? (
+              <span>No cases yet</span>
+            ) : (
+              <span>
+                Agents resolved <span className="mono">{resolvedCount}</span> of <span className="mono">{metrics.total}</span>
+              </span>
+            )}
             <span className={personNow ? "hitl" : undefined}>
               <span className="mono">{personNow ?? 0}</span> with a person
             </span>
