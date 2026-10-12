@@ -225,10 +225,14 @@ export type StatusView = {
  * Only then does a PUBLISHED summary say anything about the window, and it says it through
  * `windowWords`, the same words as the countdown tile, so the two cannot disagree. Without a
  * clock, the summary makes no claim about the window.
+ *
+ * `shadowReviewedBy` is the card's own field: a SHADOW card stays SHADOW after its review, so
+ * the summary says whether the review is still owed or already recorded, as `cardActions` does.
  */
 export function statusView(
   status: string | null | undefined,
   clock?: { nowMs: number; windowEndsMs: number | null },
+  shadowReviewedBy?: string | null,
 ): StatusView {
   const s = (status || "").trim().toUpperCase();
   switch (s) {
@@ -249,8 +253,7 @@ export function statusView(
         chip: "chip hitl",
         watermark: "SHADOW",
         released: false,
-        summary:
-          "This is the first period for this vendor under these terms (§7.6.2). Only duty managers, management and admins can see it. It cannot be published until a named human records a shadow review.",
+        summary: shadowSummary(shadowReviewedBy),
       };
     case "WITHHELD":
       return {
@@ -291,6 +294,14 @@ export function statusView(
         summary: "This build does not recognise this status. It is shown exactly as the server sent it.",
       };
   }
+}
+
+function shadowSummary(reviewedBy?: string | null): string {
+  const first =
+    "This is the first period for this vendor under these terms (§7.6.2). Only duty managers, management and admins can see it.";
+  const by = (reviewedBy || "").trim();
+  if (by) return `${first} ${by} recorded its shadow review, so a duty manager or an admin can now publish it.`;
+  return `${first} It cannot be published until a named human records a shadow review.`;
 }
 
 function publishedSummary(clock?: { nowMs: number; windowEndsMs: number | null }): string {

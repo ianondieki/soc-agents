@@ -164,7 +164,7 @@ export default function ScorecardDetail({
   }
 
   const windowEnds = parseInstant(card.dispute_window_ends_at)?.getTime() ?? null;
-  const sv = statusView(card.status, { nowMs: now, windowEndsMs: windowEnds });
+  const sv = statusView(card.status, { nowMs: now, windowEndsMs: windowEnds }, card.shadow_reviewed_by);
   const terms = termsView(card);
   const gate = gateView(card.data_quality);
   const actions = cardActions(card, role, now, windowEnds);
