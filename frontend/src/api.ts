@@ -1,8 +1,13 @@
 import { noteFailure, noteResponse } from "./realtime/apiHealth";
+import { laneOffFor } from "./lib/lanes";
 
 const BASE = "";
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
+  // A lane this deployment does not run answers 404 here, the answer its page already reads as
+  // "switched off", instead of a request the browser would log as a failed resource.
+  const off = await laneOffFor(path);
+  if (off) throw new Error(`404: ${JSON.stringify({ detail: `the ${off} lane is off on this deployment` })}`);
   let r: Response;
   try {
     r = await fetch(`${BASE}${path}`, {

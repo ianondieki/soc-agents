@@ -266,6 +266,27 @@ def profile() -> dict[str, Any]:
         # No "email" block here (§7.0.5): it carried the configured mailbox and
         # the demo recipient list, and /api/v1/profile is unauthenticated.
         # GET /api/v1/email/status still serves it for the Settings page.
+        # Which feature lanes this deployment runs (on/off only): a page whose lane is off says
+        # so without first calling a route that can only answer 404, which every browser logs
+        # as a red console error on every visit.
+        "lanes": _lanes(),
+    }
+
+
+def _lanes() -> dict[str, bool]:
+    """The lane switches, read at call time like every flag (imported here: the lanes import main's
+    neighbours, and nothing at module level may depend on them)."""
+    from noc_agents.services.contracts import contracts_enabled
+    from noc_agents.services.maintenance import maintenance_enabled
+    from noc_agents.services.pir import pir_enabled
+    from noc_agents.services.vendors import lane_enabled as scorecards_enabled
+
+    return {
+        "scorecards": scorecards_enabled(),
+        "pir": pir_enabled(),
+        "contracts": contracts_enabled(),
+        "maintenance": maintenance_enabled(),
+        "support": support_desk_enabled(),
     }
 
 

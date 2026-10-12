@@ -32,6 +32,7 @@ import {
 } from "./lib/demo";
 import { detailOf } from "./lib/apiError";
 import { isOpenTicket } from "./lib/ticket";
+import { setLanes } from "./lib/lanes";
 import { WAITING_WORD, autonomyMeaning, humanAutonomy, humanEnum, regionName } from "./lib/agents";
 import {
   applyDisplay,
@@ -283,7 +284,13 @@ export default function App() {
       });
   }, []);
   const loadIdentity = useCallback(() => {
-    api.profile().then(setProfile).catch(() => undefined);
+    api
+      .profile()
+      .then((p) => {
+        setLanes(p?.lanes); // before the pages' lane requests are let through (lib/lanes.ts)
+        setProfile(p);
+      })
+      .catch(() => setLanes(null));
     api.session().then(setSession).catch(() => undefined);
   }, []);
 
