@@ -333,6 +333,25 @@ def test_sessions_are_per_client_not_one_global_dict(make_client):
         assert a.get("/api/v1/session").json()["role"] == "shift_supervisor"  # unchanged
 
 
+def test_a_blank_display_name_is_refused_and_a_padded_one_is_stripped(make_client):
+    """The switcher's name is recorded as the actor ("Resolved by Achieng O."). A blank or
+    whitespace name was stored and then recorded as "Resolved by    ."; it is a 422 now, and
+    the stored session is left as it was."""
+    client = make_client("blank-name")
+    assert client.post("/api/v1/session", json={"display_name": "Duty", "role": "duty_manager"}).status_code == 200
+    for blank in ("", "   ", "\t\n"):
+        r = client.post("/api/v1/session", json={"display_name": blank, "role": "noc_analyst"})
+        assert r.status_code == 422, blank
+    assert client.get("/api/v1/session").json()["display_name"] == "Duty"
+    assert client.get("/api/v1/session").json()["role"] == "duty_manager"
+
+    r = client.post("/api/v1/session", json={"display_name": "  Achieng O.  ", "role": "duty_manager"})
+    assert r.status_code == 200
+    assert r.json()["display_name"] == "Achieng O."
+    # Leaving the name out keeps the default, as before.
+    assert client.post("/api/v1/session", json={"role": "noc_analyst"}).json()["display_name"] == "NOC Analyst"
+
+
 def test_profile_no_longer_leaks_the_email_block(make_client):
     client = make_client("profile")
     body = client.get("/api/v1/profile").json()

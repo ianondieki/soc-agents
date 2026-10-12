@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class EventIngest(BaseModel):
@@ -35,6 +35,16 @@ class SessionIn(BaseModel):
     role: str = "noc_analyst"
     region_filter: str | None = None
     msp_filter: str | None = None
+
+    @field_validator("display_name")
+    @classmethod
+    def _display_name(cls, value: str) -> str:
+        """Stripped, and never blank: the name is recorded as the actor on what this client
+        does ("Resolved by    ." was a whitespace name), so an empty one is a 422."""
+        name = value.strip()
+        if not name:
+            raise ValueError("display_name must not be blank")
+        return name
 
 
 class NoteIn(BaseModel):
