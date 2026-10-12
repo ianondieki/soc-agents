@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
-import { Search } from "lucide-react";
+import { Download, Search } from "lucide-react";
 import { api } from "../api";
 import { MPESA_TITLE, humanEnum, humanStatus, ownerName, priorityTitle, regionName } from "../lib/agents";
 import { useNarrow } from "../lib/layout";
 import { parseInstant } from "../lib/time";
 import { useMinute } from "../lib/useMinute";
+import { downloadCsv, eatStamp, toCsv } from "../lib/csv";
 import "./IncidentBoard.css";
 
 /** The regions offered when the operator profile has none of its own. */
@@ -176,6 +177,26 @@ export default function IncidentBoard({ tick, profile }: { tick: number; profile
 
   const viewWord = view === "all" ? "" : `${STATES.find((s) => s.key === view)?.label.toLowerCase()} `;
 
+  // The view on screen, as a spreadsheet: the same tickets in the same order, times in EAT.
+  const [saved, setSaved] = useState("");
+  useEffect(() => setSaved(""), [view, priority, region, query]);
+  const exportView = () => {
+    const header = [
+      "Ticket", "Priority", "Status", "Site", "Site code", "Region", "Owner", "Opened (EAT)",
+      "Restore due (EAT)", "Restored (EAT)", "M-PESA at risk", "Subscribers affected", "Child sites down",
+    ];
+    const body = shown.map((i) => [
+      i.incident_number, i.priority, humanStatus(i.status).replace(/^./, (c) => c.toUpperCase()), i.site_name, i.site_id, regionName(i.region_code, profile),
+      ownerName(i.assignee_name), eatStamp(i.created_at), eatStamp(i.sla_restore_due), eatStamp(i.restored_at),
+      i.mpesa_risk ? "yes" : "no", typeof i.users_affected === "number" ? i.users_affected : "",
+      typeof i.child_sites_down === "number" ? i.child_sites_down : "",
+    ]);
+    const parts = ["incidents", view, priority, region].filter(Boolean).map((s) => s.toLowerCase());
+    const name = `${parts.join("-")}-${eatStamp(now).replace(" ", "_").replace(":", "")}.csv`;
+    downloadCsv(name, toCsv(header, body));
+    setSaved(`${shown.length} ${shown.length === 1 ? "ticket" : "tickets"} saved as ${name}`);
+  };
+
   return (
     <div className="ib">
       <div className="page-head">
@@ -183,7 +204,22 @@ export default function IncidentBoard({ tick, profile }: { tick: number; profile
           <h1>Incident board</h1>
           <p className="lead">Every ticket, worst first and oldest first. Open one for the full record.</p>
         </div>
+        <div className="page-actions">
+          <button
+            type="button"
+            className="btn"
+            onClick={exportView}
+            disabled={rows === null || shown.length === 0}
+            title="The tickets in this view, in this order, as a spreadsheet file (times in EAT)"
+          >
+            <Download size={16} strokeWidth={2} aria-hidden="true" />
+            Download CSV
+          </button>
+        </div>
       </div>
+      <p className="ib-saved" role="status">
+        {saved}
+      </p>
 
       <div className="ib-toolbar">
         <div className="seg ib-states" role="group" aria-label="Which tickets">

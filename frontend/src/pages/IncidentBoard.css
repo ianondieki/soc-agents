@@ -141,3 +141,8 @@
    code mid-word: a site code half shown is a site code misread. */
 .ib-sub { flex-wrap: wrap; row-gap: 2px; white-space: normal; }
 .ib-sub > span { overflow: visible; white-space: nowrap; }
+
+/* The line that says what the CSV download saved; empty (and no height) until then. */
+.ib-saved { margin: calc(-1 * var(--s3)) 0 var(--s3); color: var(--muted); font-size: var(--fs-sm); }
+/* Kept in the page when empty (a live region must exist before it speaks), with no room taken. */
+.ib-saved:empty { margin: 0; }
