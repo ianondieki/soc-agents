@@ -265,14 +265,16 @@ function Skeleton({ rows, label }: { rows: number; label: string }) {
 /**
  * One incident. Keyed by the id in the URL, so moving from one ticket to another starts from
  * a clean page (no fields, forms or messages carried over) and an answer that arrives for the
- * ticket just left is dropped with the instance that asked for it.
+ * ticket just left is dropped with the instance that asked for it. `tick` is the shell's fallback
+ * clock: it moves while the live stream is down and once when it reconnects (the frames in between
+ * were missed), so the open ticket reloads then too.
  */
-export default function IncidentWorkspace({ session, profile }: { session: any; profile?: any }) {
+export default function IncidentWorkspace({ session, profile, tick = 0 }: { session: any; profile?: any; tick?: number }) {
   const { id } = useParams();
-  return <Workspace key={id || ""} id={id} session={session} profile={profile} />;
+  return <Workspace key={id || ""} id={id} session={session} profile={profile} tick={tick} />;
 }
 
-function Workspace({ id, session, profile }: { id: string | undefined; session: any; profile?: any }) {
+function Workspace({ id, session, profile, tick }: { id: string | undefined; session: any; profile?: any; tick: number }) {
   // Defect #26: this page reloads when an event names *this* incident (or when
   // an unrecognised event forces a full resync), not on every WS frame.
   const rev = useIncidentRevision(id);
@@ -362,7 +364,7 @@ function Workspace({ id, session, profile }: { id: string | undefined; session: 
       .catch(mine(() => setBrief("")));
   }, [id]);
 
-  useEffect(load, [load, rev]);
+  useEffect(load, [load, rev, tick]);
 
   const creating = useMemo(() => pickCreatingRun(runs), [runs]);
   const absorbed = useMemo(() => countAbsorbed(runs), [runs]);

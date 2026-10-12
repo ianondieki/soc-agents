@@ -10,6 +10,7 @@ import { humanEnum, regionName } from "../lib/agents";
 import { labelFor } from "../lib/hitl";
 import { fmtEAT, fmtHM, parseInstant } from "../lib/time";
 import { useMinute } from "../lib/useMinute";
+import { useNewest } from "../lib/newest";
 import { useRealtimeState } from "../realtime/RealtimeContext";
 import "./Wallboard.escalation.css";
 
@@ -179,12 +180,17 @@ export default function Wallboard({
   const [lastOk, setLastOk] = useState<Date | null>(null);
   const [stale, setStale] = useState(false);
   const [retry, setRetry] = useState(0);
+  // The poll, the revision and a retry can overlap: only the newest answer goes on the glass.
+  const rowsTurn = useNewest();
+  const redTurn = useNewest();
 
   useEffect(() => {
-    const load = () =>
-      api
+    const load = () => {
+      const fresh = rowsTurn();
+      return api
         .incidents()
         .then((all) => {
+          if (!fresh()) return;
           setRows(
             all.filter((i) => ["P1", "P2"].includes(i.priority) && !["CLOSED", "CANCELLED"].includes(i.status)).sort(wallOrder)
           );
@@ -193,15 +199,18 @@ export default function Wallboard({
         })
         // A failed poll leaves the last good rows on the glass rather than blanking the
         // wall, and raises the "Not updating" chip.
-        .catch(() => setStale(true));
+        .catch(() => fresh() && setStale(true));
+    };
     // The ladder's red state rides on the pending inbox. A role the inbox refuses (403), or
     // the ladder being off (no card ever carries the mark), both leave the wall exactly as it
     // was: the last good list stays, and an empty list shows nothing extra.
-    const loadRed = () =>
-      api
+    const loadRed = () => {
+      const fresh = redTurn();
+      return api
         .hitl()
-        .then((tasks) => setRed(redCards(Array.isArray(tasks) ? tasks : [])))
+        .then((tasks) => fresh() && setRed(redCards(Array.isArray(tasks) ? tasks : [])))
         .catch(() => undefined);
+    };
     // A tick later, so a mount React undoes at once (its development double mount) asks nothing.
     const first = window.setTimeout(() => {
       load();
@@ -218,7 +227,7 @@ export default function Wallboard({
       window.clearTimeout(first);
       window.clearInterval(id);
     };
-  }, [rev, retry]);
+  }, [rev, retry, rowsTurn, redTurn]);
 
   const list = rows || [];
 

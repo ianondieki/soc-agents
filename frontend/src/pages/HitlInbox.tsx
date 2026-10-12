@@ -28,6 +28,7 @@ import { hitlSubject, hitlSubjectIsIncident } from "../lib/hitlSubject";
 import { IconDot } from "../lib/icons";
 import { useNarrow } from "../lib/layout";
 import { fmtHM } from "../lib/time";
+import { useMinute } from "../lib/useMinute";
 import { confirmCue } from "../lib/feedback";
 import { useRealtimeState } from "../realtime/RealtimeContext";
 import type { NocEvent } from "../realtime/renderers";
@@ -524,13 +525,18 @@ export default function HitlInbox({ session, tick, profile }: { session: any; ti
     slot?.querySelector<HTMLElement>(".hitl-card h2")?.focus({ preventScroll: true });
   }, [openId]);
 
-  const summary = useMemo(() => queueSummary(tasks), [tasks]);
+  // The waits are counted from the clock, so the figures and the rows move on the minute even when
+  // no card changes (nothing else on the page ticks).
+  const minute = useMinute().getTime();
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- `minute` is the clock the ages read
+  const summary = useMemo(() => queueSummary(tasks), [tasks, minute]);
   // The escalation ladder's watch colour on a row's wait says "this one is late". When most cards
   // are late it says nothing about any one of them, so it is said once, on the oldest wait.
   const mostlyLate = useMemo(() => {
     const late = tasks.filter((t) => ladderBreached(ageMinutes(t?.created_at), t?.priority, t?.claimed_by)).length;
     return tasks.length > 1 && late > tasks.length / 2;
-  }, [tasks]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `minute` is the clock the ages read
+  }, [tasks, minute]);
   const showList = loaded && display.length > 0;
   // The figures over the queue: how many wait, the urgent ones, how many nobody holds yet.
   const figures = useMemo(() => {
@@ -627,6 +633,7 @@ export default function HitlInbox({ session, tick, profile }: { session: any; ti
               markLate={!mostlyLate}
               selected={selected}
               onOpen={openCard}
+              minute={minute}
             />
           )}
         </CardBoundary>
@@ -835,6 +842,8 @@ const QueueRow = memo(function QueueRow({
   selected = false,
   onOpen,
 }: {
+  /** The clock the wait is read against: a new minute re-renders the memoised row. */
+  minute?: number;
   id: string;
   task: any;
   incident: any;

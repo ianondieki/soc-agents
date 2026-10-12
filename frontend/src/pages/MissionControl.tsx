@@ -17,6 +17,7 @@ import { TICKER_MAX } from "../realtime/feed";
 import { useQuietMode, useSuppressedCount, useTickerEvents } from "../realtime/RealtimeContext";
 import { hitlSubject } from "../lib/hitlSubject";
 import { isOpenTicket } from "../lib/ticket";
+import { useNewest } from "../lib/newest";
 
 /** One figure of the strip. Colour only when the number is worth a look; zero stays quiet. The
  *  figure rolls to a new value and its cell glows once when it changes (calm: it just changes). */
@@ -239,41 +240,46 @@ function MissionControl({
   // A failed refetch after a good answer keeps the rows ("stale"); only a list that never
   // loaded shows the error with its Retry.
   const failed = (l: Load): Load => (l === "ok" || l === "stale" ? "stale" : "error");
-  const loadIncidents = useCallback(
-    () =>
-      api
-        .incidents()
-        .then((rows) => {
-          setIncidents(rows);
-          setIncLoad("ok");
-        })
-        .catch(() => setIncLoad(failed)),
-    []
-  );
-  const loadHitl = useCallback(
-    () =>
-      api
-        .hitl()
-        .then((rows) => {
-          setHitl(rows);
-          setHitlLoad("ok");
-        })
-        .catch(() => setHitlLoad(failed)),
-    []
+  // Only the newest request of each list may write (lib/newest.ts): flushes overlap in a storm.
+  const incTurn = useNewest();
+  const hitlTurn = useNewest();
+  const runsTurn = useNewest();
+  const loadIncidents = useCallback(() => {
+    const fresh = incTurn();
+    return api
+      .incidents()
+      .then((rows) => {
+        if (!fresh()) return;
+        setIncidents(rows);
+        setIncLoad("ok");
+      })
+      .catch(() => fresh() && setIncLoad(failed));
+  }, [incTurn]);
+  const loadHitl = useCallback(() => {
+    const fresh = hitlTurn();
+    return api
+      .hitl()
+      .then((rows) => {
+        if (!fresh()) return;
+        setHitl(rows);
+        setHitlLoad("ok");
+      })
+      .catch(() => fresh() && setHitlLoad(failed));
+  }, [hitlTurn]
   );
   // One /runs request feeds both the run list and the live rail (LiveRunPanel keeps the
   // lifecycle runs), instead of one each.
-  const loadRuns = useCallback(
-    () =>
-      api
-        .runs()
-        .then((rows) => {
-          setRuns(rows);
-          setRunsLoad("ok");
-        })
-        .catch(() => setRunsLoad(failed)),
-    []
-  );
+  const loadRuns = useCallback(() => {
+    const fresh = runsTurn();
+    return api
+      .runs()
+      .then((rows) => {
+        if (!fresh()) return;
+        setRuns(rows);
+        setRunsLoad("ok");
+      })
+      .catch(() => fresh() && setRunsLoad(failed));
+  }, [runsTurn]);
 
   const loadLists = () => {
     loadIncidents();

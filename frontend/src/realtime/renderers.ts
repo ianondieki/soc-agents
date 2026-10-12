@@ -160,11 +160,11 @@ export const RENDERERS: Readonly<Record<string, RendererSpec>> = {
     why: "(not emitted today) a field changes on one incident — the open workspace reloads, the board does not",
   },
   "incident.note": {
-    slices: [],
+    slices: ["incidents", "metrics"],
     incidentScoped: true,
     ticker: true,
     critical: false,
-    why: "a work note lands on one incident; only that workspace's timeline changes",
+    why: "a work note lands on one incident; both restore paths publish this frame, so the row can leave the open board (restored is not open) and the first vendor note moves the silent-vendor count; operator- and vendor-paced, never storm volume",
   },
 
   // ---- agent run / step stream: the storm volume ---------------------------

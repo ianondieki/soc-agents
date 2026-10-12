@@ -756,7 +756,7 @@ export default function App() {
                 path="/incidents"
                 element={<IncidentBoard tick={revisions.incidents + manualTick} profile={profile} />}
               />
-              <Route path="/incidents/:id" element={<IncidentWorkspace session={session} profile={profile} />} />
+              <Route path="/incidents/:id" element={<IncidentWorkspace session={session} profile={profile} tick={manualTick} />} />
               <Route path="/hitl" element={<HitlInbox session={session} tick={revisions.hitl + manualTick} profile={profile} />} />
               <Route path="/shift" element={<ShiftDesk tick={revisions.ledger + manualTick} profile={profile} metrics={metrics} />} />
               <Route path="/agents" element={<Agents tick={revisions.runs + manualTick} />} />
