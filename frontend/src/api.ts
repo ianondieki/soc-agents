@@ -24,6 +24,8 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
     const t = await r.text();
     throw new Error(`${r.status}: ${t}`);
   }
+  // 204 No Content: "nothing yet" (a ticket without a brief), never a body to parse.
+  if (r.status === 204) return null as T;
   return r.json();
 }
 

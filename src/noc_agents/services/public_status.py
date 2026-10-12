@@ -158,13 +158,16 @@ def public_status(session: Session, *, now: datetime | None = None) -> dict[str,
         starts = [r.outage_start_at or r.created_at for r in mine if (r.outage_start_at or r.created_at)]
         restored = [r.restored_at for r in restored_rows if r.region_code == code and r.restored_at]
         cfg = op.regions[code]
+        # Only counties of this region: a ticket's county is free data from the site record, and a
+        # public page must never place an outage outside the region it lists it under.
+        own_counties = {str(c).casefold() for c in (getattr(cfg, "counties", None) or [])}
         regions.append(
             {
                 "region_code": code,
                 "label": getattr(cfg, "label", code),
                 "state": _state_of({r.priority for r in mine}, code in under_works),
                 "services": [s for s in SERVICES if s in services],
-                "counties": sorted({r.county for r in mine if r.county}),
+                "counties": sorted({r.county for r in mine if r.county and (not own_counties or r.county.casefold() in own_counties)}),
                 "since": iso_z(min(starts)) if starts else None,
                 "restored_at": iso_z(max(restored)) if restored else None,
             }

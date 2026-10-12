@@ -413,3 +413,21 @@ def test_closing_with_an_open_card_keeps_the_withdrawal_in_the_audit_trail(clien
     inc, ab_id = gated
     assert client.post(f"/api/v1/incidents/{inc['id']}/close", json={"closed_by": "Supervisor A"}).status_code == 200
     assert [r[0] for r in _person_rows()] == ["hitl.withdrawn", "incident.closed"]
+
+
+def test_a_ticket_without_a_brief_answers_204_and_a_foreign_or_missing_one_404(client, gated):
+    """No brief yet is a normal state of a ticket (204, nothing to parse), not a missing route:
+    the 404 was a console error on every such ticket page. A ticket that is not there is 404."""
+    from noc_agents.db.models import IncidentBriefRow
+
+    inc, _ = gated
+
+    def drop(s):
+        for b in s.scalars(select(IncidentBriefRow).where(IncidentBriefRow.incident_id == inc["id"])):
+            s.delete(b)
+        s.commit()
+
+    _read(drop)
+    empty = client.get(f"/api/v1/briefs/{inc['id']}")
+    assert empty.status_code == 204 and empty.content == b""
+    assert client.get("/api/v1/briefs/00000000-0000-0000-0000-000000000000").status_code == 404

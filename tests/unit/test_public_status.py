@@ -229,6 +229,14 @@ def test_counties_are_the_open_tickets_counties_sorted_and_distinct(page):
     assert page.region()["counties"] == ["Kilifi", "Mombasa"]
 
 
+def test_a_county_outside_the_region_is_never_named_under_it(page):
+    """A ticket's county comes from the site record; a public page must not say "around Nairobi"
+    under the Coast because one record is wrong."""
+    page.incident(county="Mombasa")
+    page.incident(county="Nairobi")
+    assert page.region()["counties"] == ["Mombasa"]
+
+
 # ---------------------------------------------------------------- planned works
 
 

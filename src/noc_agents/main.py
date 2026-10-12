@@ -1427,8 +1427,11 @@ def hitl_reject(
 
 
 # An incident read (the published brief for one incident), so the incident tuple.
-@app.get("/api/v1/briefs/{incident_id}", dependencies=[Depends(require_role(*INCIDENT_READERS))])
-def get_brief(incident_id: str) -> dict:
+@app.get("/api/v1/briefs/{incident_id}", dependencies=[Depends(require_role(*INCIDENT_READERS))], response_model=None)
+def get_brief(incident_id: str) -> dict | Response:
+    """The ticket's brief; 204 No Content for a ticket of this operator that has none yet (a normal
+    state, not a missing route: the 404 was a console error on every such ticket page). A ticket
+    that is not this operator's, or does not exist, is still the same 404."""
     session = get_session()
     try:
         b = session.scalar(
@@ -1437,7 +1440,9 @@ def get_brief(incident_id: str) -> dict:
             .order_by(IncidentBriefRow.updated_at.desc())
         )
         if not b:
-            raise HTTPException(404, "brief not found")
+            if session.scalar(_owned(IncidentRow).where(IncidentRow.id == incident_id)) is None:
+                raise HTTPException(404, "brief not found")
+            return Response(status_code=204)
         return {"incident_id": incident_id, "body": b.body, "updated_at": b.updated_at}
     finally:
         session.close()
