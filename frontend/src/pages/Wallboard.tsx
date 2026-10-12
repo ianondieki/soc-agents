@@ -409,7 +409,7 @@ export default function Wallboard({
         {/* Counted over the tickets still down, the base the figures above use (restored ones are not open). */}
         {dropDecision && down.length > 0 && (
           <p className="wb-note hitl">
-            Decision waiting on {down.filter(decisionOf).length} of {down.length} open tickets
+            Decision waiting on {down.filter(decisionOf).length} of {down.length} open P1 and P2 tickets
           </p>
         )}
         {dropLate && down.length > 0 && (

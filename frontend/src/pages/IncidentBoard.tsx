@@ -101,7 +101,11 @@ export default function IncidentBoard({ tick, profile }: { tick: number; profile
   const [params, setParams] = useSearchParams();
   const view: StateKey = (STATES.find((s) => s.key === params.get("state"))?.key as StateKey) || "open";
   const priority = PRIORITIES.includes(String(params.get("p") || "").toUpperCase()) ? String(params.get("p")).toUpperCase() : "";
-  const region = String(params.get("region") || "").toUpperCase().slice(0, 16);
+  // A region the operator profile does not have (a typo, an old link) is no filter at all; it is
+  // dropped from the address below rather than emptying the board under an "All regions" select.
+  const known = profile?.regions && typeof profile.regions === "object" ? Object.keys(profile.regions) : null;
+  const rawRegion = String(params.get("region") || "").toUpperCase().slice(0, 16);
+  const region = !known || known.includes(rawRegion) ? rawRegion : "";
   const setParam = (key: string, value: string, fallback = "") => {
     const next = new URLSearchParams(params);
     if (!value || value === fallback) next.delete(key);
@@ -116,6 +120,16 @@ export default function IncidentBoard({ tick, profile }: { tick: number; profile
     const t = window.setTimeout(() => setQuery(settle(text)), SEARCH_DEBOUNCE_MS);
     return () => window.clearTimeout(t);
   }, [text]);
+  // The settled search and a valid region live in the address too, so a reload or a shared link
+  // shows this board (a cleared box used to leave the old ?q= behind, and come back on reload).
+  useEffect(() => {
+    const next = new URLSearchParams(params);
+    if (query) next.set("q", query);
+    else next.delete("q");
+    if (rawRegion && !region) next.delete("region");
+    if (next.toString() !== params.toString()) setParams(next, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- params/setParams follow the address
+  }, [query, rawRegion, region]);
   const nav = useNavigate();
   const narrow = useNarrow();
   const now = useMinute();

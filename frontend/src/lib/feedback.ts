@@ -238,7 +238,11 @@ let remaining = 0;
 let nextSignalId = 1;
 
 function canVibrate(): boolean {
-  return typeof navigator !== "undefined" && typeof navigator.vibrate === "function";
+  if (typeof navigator === "undefined" || typeof navigator.vibrate !== "function") return false;
+  // Chrome refuses vibrate() before the person has touched the page and logs "Blocked call to
+  // navigator.vibrate" for each try; an alarm before any tap stays visual (and audible) only.
+  const activation = (navigator as Navigator & { userActivation?: { hasBeenActive: boolean } }).userActivation;
+  return activation ? activation.hasBeenActive : true;
 }
 function stopVibration(): void {
   try {

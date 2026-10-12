@@ -28,6 +28,7 @@ import { parseRationale } from "../lib/audit";
 import { IconAlert, IconCheck, IconDot, IconPause } from "../lib/icons";
 import EarlierAtThisSite from "../components/EarlierAtThisSite";
 import ContractsDrawer from "../components/ContractsDrawer";
+import { laneIsOff } from "../lib/lanes";
 import RegulatoryCountdown from "../components/RegulatoryCountdown";
 import StopClockPanel from "../components/StopClockPanel";
 import { fmtDateTime, fmtHM, parseInstant } from "../lib/time";
@@ -989,7 +990,8 @@ function Workspace({ id, session, profile, tick }: { id: string | undefined; ses
           {/* Contract clause lookup (spec 7.8), scoped to THIS incident: the drawer passes
               incidentId so the allow-set is derived from the incident's vendor and the
               asker's role. It cannot widen that scope. Self-contained and advisory. */}
-          <ContractsDrawer incidentId={inc.id} flush />
+          {/* Not offered at all where the contracts lane is off (it could only say so after asking). */}
+          {!laneIsOff("contracts") && <ContractsDrawer incidentId={inc.id} flush />}
         </aside>
       </div>
     </div>
