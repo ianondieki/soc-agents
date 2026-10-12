@@ -16,7 +16,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
-from noc_agents.db.models import AgentRunRow, BroadcastRow, HitlTaskRow, IncidentRow, WorkNoteRow, get_session, utcnow
+from noc_agents.db.models import AgentRunRow, AuditRow, BroadcastRow, HitlTaskRow, IncidentRow, WorkNoteRow, get_session, utcnow
 from noc_agents.realtime.hub import hub
 
 HUB_EVENT = {
@@ -365,3 +365,51 @@ def test_reassigning_a_closed_ticket_is_409_and_a_restored_one_stays_restored(cl
     refused = client.post(f"/api/v1/incidents/{inc['id']}/reassign", json=body)
     assert refused.status_code == 409
     assert _incident(client, inc["id"])["status"] == "CLOSED"
+
+
+# --- people's decisions reach the Audit trail ------------------------------------------------
+
+
+def _person_rows() -> list[tuple[str, str, str, str]]:
+    def read(s):
+        rows = s.scalars(select(AuditRow).where(AuditRow.action.in_([
+            "hitl.claimed", "hitl.approved", "hitl.rejected", "hitl.withdrawn",
+            "incident.closed", "incident.reassigned", "incident.restored",
+        ])).order_by(AuditRow.ts)).all()
+        return [(r.action, r.actor, r.rationale, r.payload_json) for r in rows]
+
+    return _read(read)
+
+
+def test_every_decision_a_person_makes_is_kept_in_the_audit_trail(client, gated):
+    """Every card says "Reason (kept in the Audit trail)": the claim, the decision, the close,
+    the reassignment and the restore each leave a row naming the person, the ticket and why."""
+    inc, ab_id = gated
+    assert client.post(f"/api/v1/hitl/{ab_id}/claim", json=SUPERVISOR).status_code == 200
+    assert client.post(f"/api/v1/hitl/{ab_id}/approve", json={**SUPERVISOR, "reason": "verified on NMS"}).status_code == 200
+    body = {"by": "Supervisor A", "reason": "wrong pool", "assignee_type": "MSP", "assignee_name": "Camusat", "msp_name": "Camusat"}
+    assert client.post(f"/api/v1/incidents/{inc['id']}/reassign", json=body).status_code == 200
+    assert client.post(f"/api/v1/incidents/{inc['id']}/restore", json={"note": "mains back"}).status_code == 200
+    assert client.post(f"/api/v1/incidents/{inc['id']}/close", json={"closed_by": "Supervisor A"}).status_code == 200
+
+    rows = _person_rows()
+    assert [r[0] for r in rows] == ["hitl.claimed", "hitl.approved", "incident.reassigned", "incident.restored", "incident.closed"]
+    assert rows[1][1] == "Supervisor A" and rows[1][2] == "verified on NMS"
+    assert all(inc["id"] in r[3] for r in rows), "each row files under its ticket"
+    audit = client.get("/api/v1/audit").json()
+    assert any(r["action"] == "hitl.approved" and r.get("incident_id") == inc["id"] for r in audit)
+
+
+def test_a_rejection_and_a_withdrawal_are_kept_and_a_phone_number_in_a_reason_is_not(client, gated):
+    inc, ab_id = gated
+    reason = "caller on 0712345678 says it is back"
+    assert client.post(f"/api/v1/hitl/{ab_id}/reject", json={**SUPERVISOR, "reason": reason}).status_code == 200
+    [(action, actor, why, _)] = _person_rows()
+    assert (action, actor) == ("hitl.rejected", "Supervisor A")
+    assert "0712345678" not in why and "says it is back" in why
+
+
+def test_closing_with_an_open_card_keeps_the_withdrawal_in_the_audit_trail(client, gated):
+    inc, ab_id = gated
+    assert client.post(f"/api/v1/incidents/{inc['id']}/close", json={"closed_by": "Supervisor A"}).status_code == 200
+    assert [r[0] for r in _person_rows()] == ["hitl.withdrawn", "incident.closed"]

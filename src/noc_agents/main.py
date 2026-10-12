@@ -71,6 +71,7 @@ from noc_agents.graph.pipeline import drain_after_commit, drain_outbox, process_
 from noc_agents.graph.workflow_nodes import WORKFLOW_EDGES, graph_status_map
 from noc_agents.llm.assist import analyse_incident, draft_exec_brief
 from noc_agents.llm.client import llm_status
+from noc_agents.llm.redaction import scrub_contacts
 from noc_agents.orchestrator.registry import agent_catalog
 from noc_agents.orchestrator.runner import GRAPH_NAME as LIFECYCLE_GRAPH
 from noc_agents.realtime.hub import RealtimeEvent, hub
@@ -671,6 +672,11 @@ def close_inc(
         )
         # Tells whoever no notice reached, and raises a held-back update again (docs/CLOSE_THE_LOOP.md 7.1).
         _support_followup(session, row, trigger="close", actor=actor, note=body.resolution_summary or None)
+        for t in withdrawn:
+            _audit_person(session, actor, "hitl.withdrawn", "hitl_task", t.id, t.reason or "", task_type=t.task_type,
+                          incident_id=row.id, incident_number=row.incident_number)
+        _audit_person(session, actor, "incident.closed", "incident", row.id, row.resolution_summary or "",
+                      incident_id=row.id, incident_number=row.incident_number, resolution_code=row.resolution_code)
         session.commit()
         for t in withdrawn:
             hub.publish_sync(
@@ -738,6 +744,8 @@ def restore_inc(
             restored_at=at,
         )
         _support_followup(session, row, trigger="restore", actor=principal.display_name, note=note)
+        _audit_person(session, principal.display_name, "incident.restored", "incident", row.id, note,
+                      incident_id=row.id, incident_number=row.incident_number)
         session.commit()
         hub.publish_sync(
             RealtimeEvent(
@@ -765,6 +773,7 @@ def reassign_inc(incident_id: str, body: ReassignIn) -> dict:
         row = _get_owned(session, IncidentRow, incident_id, what="incident")
         if row.status in TERMINAL_STATUSES:
             raise HTTPException(409, f"incident is {row.status.lower()}; reopen it before reassigning")
+        before = row.assignee_name
         reassign_incident(
             session,
             row,
@@ -775,6 +784,8 @@ def reassign_inc(incident_id: str, body: ReassignIn) -> dict:
             by=body.by,
             reason=body.reason,
         )
+        _audit_person(session, body.by, "incident.reassigned", "incident", row.id, body.reason,
+                      incident_id=row.id, incident_number=row.incident_number, from_owner=before, to_owner=row.assignee_name)
         session.commit()
         return {"ok": True, "incident": incident_out(row).model_dump()}
     finally:
@@ -1140,6 +1151,25 @@ def _finish_waiting_run(session, inc: IncidentRow, status: str, error: str | Non
     return run
 
 
+def _audit_person(session, actor: str, action: str, entity_type: str, entity_id: str, rationale: str = "", **facts) -> None:
+    """A person's decision in the Audit trail, beside the agents' steps: an approval, a rejection,
+    a claim, a close, a reassignment or a restore. Every card promises "Reason (kept in the Audit
+    trail)"; this keeps it. ``incident_id`` in ``facts`` files the row under its ticket there. The
+    reason is a person's free text, so contact details are scrubbed first (§9.5: no MSISDN or
+    address in an audit payload); the decision itself is unchanged by that."""
+    session.add(
+        AuditRow(
+            operator_id=_settings().operator.operator_id,
+            actor=(actor or "unknown")[:128],
+            action=action,
+            entity_type=entity_type,
+            entity_id=str(entity_id)[:64],
+            rationale=(scrub_contacts(rationale or "") or "")[:4000],
+            payload_json=json.dumps({k: v for k, v in facts.items() if v is not None}, default=str),
+        )
+    )
+
+
 def _cancel_pending_broadcasts(session, incident_id: str) -> int:
     rows = session.scalars(
         select(BroadcastRow).where(BroadcastRow.incident_id == incident_id, BroadcastRow.status == "PENDING_HITL")
@@ -1172,6 +1202,8 @@ def hitl_claim(
         inc = session.get(IncidentRow, t.incident_id) if t.incident_id else None  # v8: see hitl_pending
         if inc:
             sync_incident_hitl_scalars(session, inc)  # every task writer derives the scalars (C3)
+        _audit_person(session, actor, "hitl.claimed", "hitl_task", t.id, "", task_type=t.task_type,
+                      incident_id=t.incident_id, incident_number=inc.incident_number if inc else None)
         session.commit()
         hub.publish_sync(
             RealtimeEvent(
@@ -1215,6 +1247,8 @@ def hitl_approve(
         _transition_or_409(session, t, "APPROVED", resolved_by=actor, resolved_at=decided_at, reason=body.reason)
         inc = session.get(IncidentRow, t.incident_id) if t.incident_id else None  # v8: see hitl_pending
         incident_number = inc.incident_number if inc else None
+        _audit_person(session, actor, "hitl.approved", "hitl_task", t.id, body.reason or "", task_type=t.task_type,
+                      incident_id=t.incident_id, incident_number=incident_number, overrides=body.overrides or None)
         if inc:
             if gating:  # only the broadcast gate releases the held drafts and finishes the run
                 _apply_overrides(inc, body.overrides)
@@ -1308,6 +1342,8 @@ def hitl_reject(
         )
         inc = session.get(IncidentRow, t.incident_id) if t.incident_id else None  # v8: see hitl_pending
         incident_number = inc.incident_number if inc else None
+        _audit_person(session, actor, "hitl.rejected", "hitl_task", t.id, body.reason, task_type=t.task_type,
+                      incident_id=t.incident_id, incident_number=incident_number)
         finished: dict | None = None  # agent.run.finished payload, published after the commit
         if inc:
             if t.task_type == GATING_TASK_TYPE:  # the broadcast will never go out: finalise drafts and run

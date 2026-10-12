@@ -75,6 +75,14 @@ const ACTION_WORDS: Record<string, string> = {
   "redaction.miss": "Redaction miss",
   "retention.purge": "Retention purge",
   "upload.rejected": "Upload rejected",
+  // A person's decisions (main._audit_person).
+  "hitl.claimed": "Card claimed",
+  "hitl.approved": "Card approved",
+  "hitl.rejected": "Card rejected",
+  "hitl.withdrawn": "Card withdrawn",
+  "incident.closed": "Ticket closed",
+  "incident.reassigned": "Ticket reassigned",
+  "incident.restored": "Service restored",
 };
 
 /** "scorecard.period_computed" → "Scorecard period computed". */
@@ -125,6 +133,7 @@ export function outcomeOf(action: string | null | undefined): Outcome | null {
   const a = String(action ?? "").toLowerCase();
   if (/waiting_hitl|approval_requested|awaiting/.test(a)) return { word: "Waiting for a decision", tone: "hitl", icon: "pause" };
   if (/cancel/.test(a)) return { word: "Cancelled", tone: "warn", icon: "alert" };
+  if (/withdrawn/.test(a)) return { word: "Withdrawn", tone: "warn", icon: "alert" };
   if (/reject/.test(a)) return { word: "Rejected", tone: "danger", icon: "alert" };
   if (/fail|error|\.miss$/.test(a)) return { word: "Failed", tone: "danger", icon: "alert" };
   if (/escalat|wallboard_red/.test(a)) return { word: "Escalated", tone: "warn", icon: "alert" };
