@@ -91,20 +91,28 @@ export default function ShiftDesk({ tick, profile, metrics }: { tick: number; pr
   const pct = total > 0 ? Math.round((elapsed / total) * 100) : 0;
   const left = win.end.getTime() - now.getTime();
 
-  // The ledger in shifts: one group per date and shift, newest first, as the API orders it.
+  // The ledger in shifts, newest first as the API orders it: one group per shift, named by the day
+  // it began. A night shift runs across midnight, so a row written at 07:00 belongs to the night
+  // that began the evening before, not to that calendar day.
   const groups = useMemo(() => {
     const out: Array<{ key: string; label: string; rows: any[] }> = [];
+    const byKey = new Map<string, { key: string; label: string; rows: any[] }>();
     for (const r of ledger || []) {
       const at = parseInstant(r.row_written_at);
-      const word = String(r.shift_type || "").toUpperCase() === "NIGHT" ? "Night" : "Day";
-      const label = `${word} shift, ${at ? dayOf(at) : "undated"}`;
-      const key = `${at ? dayOf(at) : ""}|${r.shift_type}`;
-      const last = out[out.length - 1];
-      if (last && last.key === key) last.rows.push(r);
-      else out.push({ key, label, rows: [r] });
+      const night = String(r.shift_type || "").toUpperCase() === "NIGHT";
+      const kind = night ? "night" : "day";
+      const began = at ? shiftWindow(profile?.shift_hours?.[kind] || DEFAULT_HOURS[kind], at).start : null;
+      const key = `${began ? began.toISOString() : "undated"}|${kind}`;
+      const group = byKey.get(key);
+      if (group) group.rows.push(r);
+      else {
+        const made = { key, label: `${night ? "Night" : "Day"} shift, ${began ? dayOf(began) : "undated"}`, rows: [r] };
+        byKey.set(key, made);
+        out.push(made);
+      }
     }
     return out;
-  }, [ledger]);
+  }, [ledger, profile]);
   const thisShift = (ledger || []).filter((r) => {
     const at = parseInstant(r.row_written_at);
     return at && at.getTime() >= win.start.getTime() && at.getTime() < win.end.getTime();
@@ -343,6 +351,12 @@ function Handover({ h, profile }: { h: any; profile?: any }) {
         <span>
           <strong>{h?.open_total ?? 0}</strong> open
         </span>
+        {/* Restored but not closed: not open, but still the incoming shift's to close or reopen. */}
+        {Number(h?.awaiting_close) > 0 && (
+          <span>
+            <strong>{h.awaiting_close}</strong> restored, to close
+          </span>
+        )}
       </p>
       {/* The watchlist scrolls when long, so it takes focus: a keyboard can scroll it too. */}
       {rows.length > 0 ? (

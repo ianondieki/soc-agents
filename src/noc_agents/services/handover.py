@@ -113,6 +113,18 @@ def open_incidents(session: Session, cfg: OperatorConfig) -> list[IncidentRow]:
     return sorted(rows, key=lambda r: (order.get(r.priority, 9), r.created_at))
 
 
+def awaiting_close(session: Session, cfg: OperatorConfig) -> list[IncidentRow]:
+    """Tickets restored but not closed, oldest restore first: not open (``NOT_OPEN_STATUSES``),
+    but still the incoming shift's to close or reopen, so the package lists them on their own and
+    one may anchor the handover when nothing else is open."""
+    rows = session.scalars(
+        select(IncidentRow)
+        .where(IncidentRow.operator_id == cfg.operator_id, IncidentRow.status == "RESTORED")
+        .order_by(IncidentRow.restored_at.asc(), IncidentRow.created_at.asc())
+    ).all()
+    return list(rows)
+
+
 def watchlist(open_rows: list[IncidentRow]) -> list[IncidentRow]:
     """The rows the package prints: priority failures, else the ten oldest open tickets."""
     watch = [r for r in open_rows if r.priority in ("P1", "P2") or r.mpesa_risk or r.problem_id]
@@ -132,7 +144,8 @@ def anchor_incident(session: Session, cfg: OperatorConfig) -> IncidentRow | None
     NOT_QUEUED. It is a **scoping** anchor (see the module docstring), not the subject.
     """
     watch = watchlist(open_incidents(session, cfg))
-    for row in watch:
+    # A shift that ends with only restored tickets still hands them over (to close or reopen).
+    for row in [*watch, *awaiting_close(session, cfg)]:
         if _ENVELOPE_NUMBER.match(row.incident_number or ""):
             return row
     return None
@@ -143,6 +156,7 @@ def build_handover(session: Session, cfg: OperatorConfig) -> dict:
     now = datetime.now(tz)
     st = current_shift(cfg, now)
     open_rows = open_incidents(session, cfg)
+    restored = awaiting_close(session, cfg)
 
     watch = watchlist(open_rows)
 
@@ -169,6 +183,20 @@ def build_handover(session: Session, cfg: OperatorConfig) -> dict:
             f"{r.site_id} | {r.site_type} | {r.region_code} | {r.failure_domain} | "
             f"{r.assignee_name} | {r.status} | {'Y' if r.mpesa_risk else 'N'}"
         )
+    if restored:
+        lines.extend(
+            [
+                "",
+                "RESTORED, AWAITING CLOSE (confirm with the customer side, then close or reopen):",
+                "Restored | INC | Pri | Site | Region | Owner",
+                "-" * 100,
+            ]
+        )
+        for r in restored:
+            lines.append(
+                f"{fmt_eat(r.restored_at, '%Y-%m-%d %H:%M') if r.restored_at else '-'} | {r.incident_number} | "
+                f"{r.priority} | {r.site_id} | {r.region_code} | {r.assignee_name}"
+            )
     lines.extend(
         [
             "",
@@ -187,6 +215,7 @@ def build_handover(session: Session, cfg: OperatorConfig) -> dict:
         "shift": st,
         "watch_count": len(watch),
         "open_total": len(open_rows),
+        "awaiting_close": len(restored),
         "n_p1": n_p1,
         "n_p2": n_p2,
         "incidents": [
@@ -285,7 +314,7 @@ def queue_handover(
     than queueing a row nobody could ever release.
     """
     anchor = anchor_incident(session, cfg)
-    if anchor is None and watchlist(open_incidents(session, cfg)):
+    if anchor is None and (watchlist(open_incidents(session, cfg)) or awaiting_close(session, cfg)):
         # Tickets are open, but none is numbered in the style the alert envelope accepts.
         return {
             "required": True,

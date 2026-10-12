@@ -401,6 +401,25 @@ def test_with_nothing_open_the_handover_fails_closed(client, sent):
     assert sent == []
 
 
+def test_a_shift_ending_with_only_restored_tickets_still_hands_them_over(client, sent):
+    """Restored is not open (NOT_OPEN_STATUSES), but a restored ticket is still the incoming
+    shift's to close or reopen. With nothing else open, it anchors the handover card and the
+    package lists it under its own heading instead of the route answering NOT_QUEUED."""
+    inc = client.post("/api/v1/events", json=HUB_EVENT).json()["incident"]
+    client.post(f"/api/v1/incidents/{inc['id']}/restore", json={"note": "site back on mains"})
+    assert _read(lambda s: s.get(IncidentRow, inc["id"]).status) == "RESTORED"
+
+    ho = client.post("/api/v1/shifts/handover").json()
+
+    assert ho["open_total"] == 0 and ho["watch_count"] == 0
+    assert ho["awaiting_close"] == 1
+    assert "RESTORED, AWAITING CLOSE" in ho["body"] and inc["incident_number"] in ho["body"]
+    assert ho["hitl"]["task_id"], ho["hitl"]
+    task = _read(lambda s: s.get(HitlTaskRow, ho["hitl"]["task_id"]))
+    assert task.incident_id == inc["id"]
+    assert sent == []
+
+
 def _renumber(incident_id: str, number: str) -> None:
     """Give a ticket a number in another style, as a database from before inc9 holds them."""
     session = get_session()
