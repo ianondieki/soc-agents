@@ -90,7 +90,8 @@ def _run(session, *, operator_id="safaricom", status="FAILED", incident_id=None,
 def test_an_empty_inbox_answers_with_zeros(tmp_db):
     _, session = tmp_db
     out = svc.notifications(session)
-    assert set(out) == {"generated_at", "window_hours", "since", "counts", "total", "items"}
+    assert set(out) == {"generated_at", "window_hours", "since", "counts", "total", "waiting_by_type", "items"}
+    assert out["waiting_by_type"] == {}
     assert out["counts"] == {"alarm": 0, "person": 0, "agent": 0}
     assert out["total"] == 0 and out["items"] == []
     assert out["window_hours"] == svc.DEFAULT_WINDOW_HOURS
@@ -229,6 +230,25 @@ def test_the_limit_is_applied_in_sql_and_keeps_the_newest_failed_runs(tmp_db):
     out = svc.notifications(session, limit=3)
     assert out["counts"]["agent"] == 6 and out["total"] == 6
     assert [it["id"] for it in out["items"]] == [f"run:{r.id}" for r in runs[:3]]
+
+
+def test_waiting_by_type_counts_every_card_however_many_items_the_limit_keeps(tmp_db):
+    """The bell folds waiting cards of one type into one row ("12 broadcast approval cards
+    wait"). That number must be the queue's, not the page of items the limit kept."""
+    _, session = tmp_db
+    mine = _incident(session, created=utcnow() - timedelta(hours=1))
+    for _ in range(12):
+        session.add(HitlTaskRow(operator_id="safaricom", incident_id=mine.id, task_type="APPROVE_BROADCAST", status="PENDING"))
+    for _ in range(3):
+        session.add(HitlTaskRow(operator_id="safaricom", task_type="APPROVE_SCHEDULE", status="CLAIMED"))
+    session.add(HitlTaskRow(operator_id="safaricom", task_type="APPROVE_SCHEDULE", status="APPROVED"))
+    theirs = _incident(session, created=utcnow() - timedelta(hours=1), operator_id="airtel", number="ATL-INC-9")
+    session.add(HitlTaskRow(operator_id="airtel", incident_id=theirs.id, task_type="APPROVE_BROADCAST", status="PENDING"))
+    session.commit()
+    out = svc.notifications(session, limit=4)
+    assert len(out["items"]) == 4
+    assert out["waiting_by_type"] == {"APPROVE_BROADCAST": 12, "APPROVE_SCHEDULE": 3}
+    assert sum(out["waiting_by_type"].values()) == out["counts"]["person"] == 15
 
 
 # ======================================================================================

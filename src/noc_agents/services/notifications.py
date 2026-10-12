@@ -19,6 +19,7 @@ state instead, so the inbox after a reload says what it said before it:
     card a day old is more urgent than a new one, not less, so the window does not apply. A signed-in
     principal sees only the card types §9.3 lets that role decide (``hitl_deciders``), exactly as
     ``/api/v1/hitl/pending`` filters; the demo (AUTH_DISABLED) sees every card, as that route does.
+    ``waiting_by_type`` counts them per card type before the limit.
 ``run_failed``
     An agent run that FAILED inside the window: the step it stopped at and its error summary.
 
@@ -199,11 +200,18 @@ def _breach_items(session: Session, since: datetime, now: datetime, limit: int) 
 
 def _card_items(
     session: Session, incidents: dict[str, IncidentRow | None], role: str | None, authenticated: bool, limit: int
-) -> tuple[int, list[dict[str, Any]]]:
-    """Every card still waiting for a decision, whatever its age; a signed-in role sees its own kinds."""
+) -> tuple[int, list[dict[str, Any]], dict[str, int]]:
+    """Every card still waiting for a decision, whatever its age; a signed-in role sees its own kinds.
+    Also how many wait of each type, counted in SQL before the limit, so the bell's folded row
+    ("17 broadcast approval cards wait") says the real number however many items the limit cut."""
     waiting = _owned(HitlTaskRow).where(HitlTaskRow.status.in_(_WAITING))
     if authenticated:
         waiting = waiting.where(_decidable_by(role))
+    typed = waiting.subquery()
+    by_type = {
+        str(task_type): int(n)
+        for task_type, n in session.execute(select(typed.c.task_type, func.count()).group_by(typed.c.task_type))
+    }
     items = [
         _item(
             "approval_waiting",
@@ -215,7 +223,7 @@ def _card_items(
         )
         for task in session.scalars(waiting.order_by(HitlTaskRow.created_at.desc()).limit(limit))
     ]
-    return _count(session, waiting), items
+    return _count(session, waiting), items, by_type
 
 
 def _short_error(summary: str | None) -> str | None:
@@ -262,7 +270,7 @@ def notifications(
 
     p1_count, p1 = _p1_items(session, since, now)
     breach_count, breaches = _breach_items(session, since, now, limit)
-    card_count, cards = _card_items(session, incidents, role, authenticated, limit)
+    card_count, cards, waiting_by_type = _card_items(session, incidents, role, authenticated, limit)
     run_count, runs = _failed_run_items(session, incidents, since, limit)
 
     counts = {"alarm": p1_count + breach_count, "person": card_count, "agent": run_count}
@@ -274,5 +282,6 @@ def notifications(
         "since": iso_z(since),
         "counts": counts,
         "total": sum(counts.values()),
+        "waiting_by_type": dict(sorted(waiting_by_type.items())),
         "items": items[:limit],
     }

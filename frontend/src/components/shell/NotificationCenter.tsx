@@ -85,7 +85,7 @@ type Row = { item: any; members: any[] };
 
 /** Waiting decisions of the same kind fold into one row (37 broadcast cards are one thing to
  *  do: open Approvals), placed where its newest card would be; everything else stays a row. */
-function foldDecisions(items: any[]): Row[] {
+function foldDecisions(items: any[], waitingByType: Record<string, number> = {}): Row[] {
   const byType = new Map<string, any[]>();
   for (const it of items) {
     if (it.kind !== "approval_waiting") continue;
@@ -98,13 +98,15 @@ function foldDecisions(items: any[]): Row[] {
     if (it.kind === "approval_waiting") {
       const k = String(it.task_type || "");
       const members = byType.get(k) || [it];
-      if (members.length < 2) {
+      // The queue's own count when the server gives it: the limit may have cut the items.
+      const waiting = Math.max(members.length, Number(waitingByType[k]) || 0);
+      if (waiting < 2) {
         rows.push({ item: it, members: [it] });
         continue;
       }
       if (placed.has(k)) continue;
       placed.add(k);
-      rows.push({ item: { ...members[0], id: `grp:${k}`, folded: members.length }, members });
+      rows.push({ item: { ...members[0], id: `grp:${k}`, folded: waiting }, members });
       continue;
     }
     rows.push({ item: it, members: [it] });
@@ -203,6 +205,8 @@ export default function NotificationCenter({
       alive.current = false;
       window.clearInterval(every);
       if (pending.current != null) window.clearTimeout(pending.current);
+      // A remount (React's development double mount, or a route change) must be free to schedule.
+      pending.current = null;
     };
   }, [load]);
   useEffect(() => {
@@ -291,9 +295,20 @@ export default function NotificationCenter({
     nav(href);
   };
 
+  // The tabs count what the server counted before its limit; the items are only the newest page.
   const counts = { all: items.length, alarm: 0, person: 0, agent: 0 } as Record<Filter, number>;
   for (const it of items) if (it.group in counts) counts[it.group as Group] += 1;
-  const shown = useMemo(() => foldDecisions(filter === "all" ? items : items.filter((it) => it.group === filter)), [items, filter]);
+  const served = data?.counts;
+  if (served && typeof served === "object") {
+    for (const g of ["alarm", "person", "agent"] as const) if (typeof served[g] === "number") counts[g] = Math.max(counts[g], served[g]);
+    counts.all = Math.max(items.length, counts.alarm + counts.person + counts.agent);
+  }
+  const waitingByType: Record<string, number> = data?.waiting_by_type && typeof data.waiting_by_type === "object" ? data.waiting_by_type : {};
+  const shown = useMemo(
+    () => foldDecisions(filter === "all" ? items : items.filter((it) => it.group === filter), waitingByType),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- waitingByType is derived from `data`, which `items` follows
+    [items, filter, data]
+  );
   const badge = unread.length > 99 ? "99+" : String(unread.length);
   const label = unread.length ? `Notifications, ${unread.length} unread` : "Notifications";
 
