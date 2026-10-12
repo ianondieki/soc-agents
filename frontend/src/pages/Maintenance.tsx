@@ -15,6 +15,7 @@ import {
 import { api } from "../api";
 import LaneOff from "../components/LaneOff";
 import { humanEnum, regionName } from "../lib/agents";
+import { detailOf } from "../lib/apiError";
 import { IconDot } from "../lib/icons";
 import { fmtDate, parseInstant } from "../lib/time";
 import "./Maintenance.css";
@@ -163,7 +164,9 @@ export default function Maintenance({ tick, profile }: { tick: number; profile?:
   const [rain, setRain] = useState<Record<string, RainGuard>>({});
   const [off, setOff] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
-  const [note, setNote] = useState<string | null>(null);
+  // One line over the page: an action's outcome, or a failed refresh. A refresh's error clears on
+  // the next good load; an action's outcome stays until the next action.
+  const [note, setNote] = useState<{ tone: "ok" | "danger"; text: string; from: "load" | "action" } | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [failed, setFailed] = useState(false);
   const [allTasks, setAllTasks] = useState(false);
@@ -180,6 +183,7 @@ export default function Maintenance({ tick, profile }: { tick: number; profile?:
         setOff(false);
         setLoaded(true);
         setFailed(false);
+        setNote((n) => (n?.from === "load" ? null : n));
         // The rain guard's verdict lives on each window's own record, not on the list.
         for (const x of list) {
           if (x.status !== "PROPOSED" && x.status !== "SCHEDULED") continue;
@@ -195,7 +199,7 @@ export default function Maintenance({ tick, profile }: { tick: number; profile?:
         // 404 is the whole lane being off, which is the shipped default — not a failure.
         if (String(e.message || "").startsWith("404")) setOff(true);
         else {
-          setNote(String(e.message || e));
+          setNote({ tone: "danger", text: `Couldn't refresh the maintenance plan: ${detailOf(e)}`, from: "load" });
           setFailed(true);
         }
       });
@@ -222,11 +226,11 @@ export default function Maintenance({ tick, profile }: { tick: number; profile?:
     setNote(null);
     try {
       await fn();
-      setNote(`${sentence(what)}.`);
+      setNote({ tone: "ok", text: `${sentence(what)}.`, from: "action" });
     } catch (e: any) {
       // The server distinguishes "nobody approved this", "the Authority has not written
       // back", "there is a storm" and "another crew is already booked". Show its words.
-      setNote(String(e.message || e));
+      setNote({ tone: "danger", text: detailOf(e), from: "action" });
     } finally {
       setBusy(null);
       load();
@@ -327,8 +331,8 @@ export default function Maintenance({ tick, profile }: { tick: number; profile?:
       )}
 
       {note && (
-        <div className="panel mt-note" role="status">
-          {note}
+        <div className={`panel mt-note ${note.tone}`} role={note.tone === "danger" ? "alert" : "status"}>
+          {note.text}
         </div>
       )}
 

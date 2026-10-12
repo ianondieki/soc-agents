@@ -12,6 +12,7 @@
 .mt-figures > .bad dd { color: var(--danger); }
 
 .mt-note { margin-bottom: var(--s3); color: var(--text); font-size: var(--fs-sm); }
+.mt-note.danger { border-color: var(--danger-line); color: var(--danger-text); }
 .mt-panel { padding: 18px 20px 8px; }
 .mt-panel + .mt-panel { margin-top: var(--s4); }
 .mt-panel .panel-head { margin-bottom: 4px; }
