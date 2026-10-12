@@ -1161,6 +1161,8 @@ export function msisdnProblem(raw: string): string | null {
 
 export const BODY_MIN = 5;
 export const BODY_MAX = 4000;
+/** `RejectIn.reason` in `api/routers/support.py`. */
+export const REASON_MAX = 500;
 
 /** `support/text.clean`: NFKC, whitespace collapsed, trimmed; the form the server stores. */
 export const cleanText = (raw: string): string => String(raw ?? "").normalize("NFKC").replace(/\s+/g, " ").trim();

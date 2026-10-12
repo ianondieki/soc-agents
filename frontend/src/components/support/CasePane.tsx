@@ -4,10 +4,14 @@ import { ArrowLeft, AtSign, Bot, Globe, MessageSquare, Phone, Smartphone, UserRo
 import { humanStatus } from "../../lib/agents";
 import { IconCheck } from "../../lib/icons";
 import {
+  BODY_MAX,
   BODY_MIN,
   CATEGORY_WORD,
   CHANNEL_WORD,
   LANGUAGE_WORD,
+  REASON_MAX,
+  charCount,
+  cleanText,
   errorDetail,
   fmtAge,
   fmtDue,
@@ -62,10 +66,24 @@ function actionError(e: unknown): string {
   if (s === 409) return "Somebody else got there first; the case has moved on. The view below is the latest.";
   if (s === 404) return "This case is gone; nothing was changed.";
   if (s === 403) return `Not permitted: ${errorDetail(e, "your role cannot decide this case")}`;
-  if (s === 422 || s === 400) return errorDetail(e, "The API refused the request.");
+  if (s === 422 || s === 400) return withStop(errorDetail(e, "The API refused the request."));
   if (s != null && s >= 500) return "The API failed on that request. Nothing was decided; try again.";
   if (isNetworkError(e)) return "The API is unreachable. Nothing was decided; try again.";
   return errorDetail(e);
+}
+
+/** The 422 reads as a sentence; errorDetail gives a clause when it came from pydantic. */
+function withStop(s: string): string {
+  return /[.!?]$/.test(s) ? s : `${s}.`;
+}
+
+/** "120 of 4,000": how much of the server's limit a field uses, counted as the server counts. */
+function Count({ id, used, max }: { id: string; used: number; max: number }) {
+  return (
+    <span id={id} className={"sd-count" + (used >= max ? " full" : "")}>
+      {used.toLocaleString("en-KE")} of {max.toLocaleString("en-KE")}
+    </span>
+  );
 }
 
 function urgencyTone(u: string): string {
@@ -259,7 +277,8 @@ export default function CasePane({ id, who, tick, stacked, onBack, onChanged, ti
 
   const claim = () => run("claim", () => supportApi.claim(c.id), `Claimed ${c.ref}. Write a reply, then resolve it.`, "reply");
   const resolve = () => {
-    if (reply.trim().length < BODY_MIN) {
+    const n = charCount(reply);
+    if (n < BODY_MIN || n > BODY_MAX) {
       setMissing("reply");
       replyRef.current?.focus();
       return;
@@ -274,7 +293,7 @@ export default function CasePane({ id, who, tick, stacked, onBack, onChanged, ti
       window.requestAnimationFrame(() => reasonRef.current?.focus());
       return;
     }
-    if (!reason.trim()) {
+    if (!cleanText(reason)) {
       setMissing("reason");
       reasonRef.current?.focus();
       return;
@@ -286,6 +305,7 @@ export default function CasePane({ id, who, tick, stacked, onBack, onChanged, ti
   const replyId = `${uid}-reply`;
   const noteId = `${uid}-note`;
   const msgId = `${uid}-msg`;
+  const replyLen = charCount(reply);
   const decided = c.status === "resolved" || (c.status === "action_taken" && !!approvedCall);
 
   return (
@@ -425,25 +445,31 @@ export default function CasePane({ id, who, tick, stacked, onBack, onChanged, ti
                 closes the case
                 {heldOnEscalation ? `; ${toolPhrase(heldOnEscalation)} the agent held is not run` : ""}.
               </p>
-              <label htmlFor={replyId} className="sd-label">
-                Reply to the customer
-              </label>
+              <div className="sd-label-row">
+                <label htmlFor={replyId} className="sd-label">
+                  Reply to the customer
+                </label>
+                <Count id={`${replyId}-count`} used={replyLen} max={BODY_MAX} />
+              </div>
               <textarea
                 id={replyId}
                 ref={replyRef}
                 className="sd-reply"
                 rows={3}
                 value={reply}
+                maxLength={BODY_MAX}
                 onChange={(e) => {
                   setReply(e.target.value);
-                  if (missing === "reply" && e.target.value.trim().length >= BODY_MIN) setMissing("");
+                  if (missing === "reply" && charCount(e.target.value) >= BODY_MIN) setMissing("");
                 }}
                 aria-invalid={missing === "reply" || undefined}
-                aria-describedby={missing === "reply" ? msgId : undefined}
+                aria-describedby={`${replyId}-count${missing === "reply" ? ` ${msgId}` : ""}`}
               />
               {missing === "reply" && (
                 <p id={msgId} className="sd-invalid">
-                  Write the reply the customer will receive, at least {BODY_MIN} characters.
+                  {replyLen > BODY_MAX
+                    ? `Keep the reply to ${BODY_MAX.toLocaleString("en-KE")} characters or fewer.`
+                    : `Write the reply the customer will receive, at least ${BODY_MIN} characters.`}
                 </p>
               )}
               <label htmlFor={noteId} className="sd-label">
@@ -461,21 +487,25 @@ export default function CasePane({ id, who, tick, stacked, onBack, onChanged, ti
               </p>
               {rejectArmed && (
                 <>
-                  <label htmlFor={reasonId} className="sd-label">
-                    Reason for rejecting (kept on the case)
-                  </label>
+                  <div className="sd-label-row">
+                    <label htmlFor={reasonId} className="sd-label">
+                      Reason for rejecting (kept on the case)
+                    </label>
+                    <Count id={`${reasonId}-count`} used={charCount(reason)} max={REASON_MAX} />
+                  </div>
                   <textarea
                     id={reasonId}
                     ref={reasonRef}
                     className="sd-reply"
                     rows={2}
                     value={reason}
+                    maxLength={REASON_MAX}
                     onChange={(e) => {
                       setReason(e.target.value);
-                      if (missing === "reason" && e.target.value.trim()) setMissing("");
+                      if (missing === "reason" && cleanText(e.target.value)) setMissing("");
                     }}
                     aria-invalid={missing === "reason" || undefined}
-                    aria-describedby={missing === "reason" ? msgId : undefined}
+                    aria-describedby={`${reasonId}-count${missing === "reason" ? ` ${msgId}` : ""}`}
                   />
                   {missing === "reason" && (
                     <p id={msgId} className="sd-invalid">
