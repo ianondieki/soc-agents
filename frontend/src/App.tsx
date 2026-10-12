@@ -68,6 +68,7 @@ const Landing = lazy(() => import("./pages/Landing"));
 const SupportDesk = lazy(() => import("./pages/SupportDesk"));
 const Complain = lazy(() => import("./pages/Complain"));
 const Track = lazy(() => import("./pages/Track"));
+const Status = lazy(() => import("./pages/Status"));
 // The guide bar is closed on almost every first paint: its chunk arrives beside the page's,
 // behind its own null fallback, instead of in the shell.
 const DemoGuide = lazy(() => import("./components/DemoGuide"));
@@ -506,7 +507,7 @@ export default function App() {
   const isWall = loc.pathname.startsWith("/wallboard");
   const isLanding = loc.pathname === "/";
   // The public support pages (the complaint form and Track my complaint) have their own frame.
-  const isComplain = loc.pathname.startsWith("/complain") || loc.pathname === "/track";
+  const isComplain = loc.pathname.startsWith("/complain") || loc.pathname === "/track" || loc.pathname === "/status";
   const org = profile?.display_name ? String(profile.display_name).replace(" (demo profile)", "") : "Connecting…";
   const autonomy = humanAutonomy(profile?.autonomy_level);
   const shift = profile?.shift ? String(profile.shift).toLowerCase() : "day";
@@ -529,6 +530,7 @@ export default function App() {
             <Route path="/" element={<Landing profile={profile} metrics={metrics} runsRev={revisions.runs + manualTick} />} />
             <Route path="/complain" element={<Complain />} />
             <Route path="/track" element={<Track />} />
+            <Route path="/status" element={<Status />} />
           </Routes>
         </Suspense>
       </RealtimeProvider>

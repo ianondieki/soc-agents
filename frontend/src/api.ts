@@ -26,6 +26,8 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 export const api = {
   profile: () => req<any>("/api/v1/profile"),
   metrics: () => req<any>("/api/v1/metrics/summary"),
+  // The customer's service status page (open): region states, services, planned work.
+  publicStatus: () => req<any>("/api/v1/public/status"),
   incidents: (qs = "") => req<any[]>(`/api/v1/incidents${qs}`),
   incident: (id: string) => req<any>(`/api/v1/incidents/${id}`),
   workflow: (id: string) => req<any>(`/api/v1/incidents/${id}/workflow`),

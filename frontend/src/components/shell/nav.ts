@@ -50,6 +50,7 @@ export const NAV_GROUPS: NavGroupDef[] = [
       { to: "/support", label: "Support desk", keywords: "complaints cases refunds evals outages customers" },
       { to: "/complain", label: "Complaint form", keywords: "customer send complaint public" },
       { to: "/track", label: "Track a complaint", keywords: "reference status customer public" },
+      { to: "/status", label: "Service status", keywords: "public status page outage customers network regions planned work" },
     ],
   },
   {
