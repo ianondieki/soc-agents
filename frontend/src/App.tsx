@@ -106,27 +106,25 @@ function PageSkeleton() {
 const TABLET_QUERY = "(max-width: 1099px)";
 const PHONE_QUERY = "(max-width: 760px)";
 
-/** "NOC Analyst" -> "NA"; "Grace Wanjiru" -> "GW". */
+/** "NOC Analyst" -> "NA"; "Grace Wanjiru" -> "GW"; "Wanjiru 😀" -> "W". Each word's first letter or
+ *  digit, a whole code point, so an emoji is never cut to half a surrogate pair. */
 function initialsOf(name: string): string {
   const parts = String(name || "")
     .trim()
     .split(/\s+/)
+    .map((w) => /[\p{L}\p{N}]/u.exec(w)?.[0] ?? "")
     .filter(Boolean);
   if (!parts.length) return "?";
-  const first = parts[0][0] || "";
-  const last = parts.length > 1 ? parts[parts.length - 1][0] || "" : "";
+  const first = parts[0];
+  const last = parts.length > 1 ? parts[parts.length - 1] : "";
   return (first + last).toUpperCase();
 }
 
-/** "noc_analyst" -> "NOC analyst", "shift_supervisor" -> "Shift supervisor". */
+/** "noc_analyst" -> "NOC analyst", "msp_coordinator" -> "MSP coordinator": the role as the pages
+ *  say it (humanEnum keeps the floor's acronyms), first letter up. */
 function roleLabel(role: string): string {
-  const words = String(role || "")
-    .split(/[_\s]+/)
-    .filter(Boolean)
-    .map((w) => (w.toLowerCase() === "noc" ? "NOC" : w.toLowerCase()));
-  if (!words.length) return "";
-  if (words[0] !== "NOC") words[0] = words[0][0].toUpperCase() + words[0].slice(1);
-  return words.join(" ");
+  const words = humanEnum(String(role || "").trim().toUpperCase());
+  return words ? words[0].toUpperCase() + words.slice(1) : "";
 }
 
 const SCROLLERS = ".list, .ticker, .table-scroll, .hitl-channel-body, .hitl-field-pre, .panel, .pre";
