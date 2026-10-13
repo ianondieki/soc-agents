@@ -90,6 +90,8 @@
 .st-week thead th { padding-bottom: 2px; }
 .st-week th { color: var(--muted); font-size: var(--fs-xs); font-weight: 500; text-align: center; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .st-week thead th:last-child { color: var(--text-strong); font-weight: 650; }
+.st-week-wd, .st-week-dn { display: block; line-height: 1.25; }
+.st-week-dn { font-size: var(--fs-xs); opacity: 0.85; }
 .st-week tbody th { padding-right: var(--s2); color: var(--text); font-size: var(--fs-sm); font-weight: 550; text-align: left; white-space: normal; line-height: 1.25; }
 .st-week-corner { width: 9.5rem; }
 .st-day {
@@ -118,7 +120,8 @@
 @media (max-width: 600px) {
   .st { gap: var(--s6); }
   .st-week { border-spacing: 3px; margin: -3px; }
-  .st-week-corner { width: 5.75rem; }
+  .st-week-corner { width: 5rem; }
+  .st-week thead th { font-size: 0.6875rem; letter-spacing: -0.01em; }
   .st-week tbody th { font-size: var(--fs-xs); }
   .st-day { height: 26px; border-radius: 6px; }
   .st-hero { padding: var(--s5) var(--s4); }

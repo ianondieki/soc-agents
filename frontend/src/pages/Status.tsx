@@ -154,12 +154,12 @@ function regionNote(r: Region, nowMs: number): string {
   return sentence[0].toUpperCase() + sentence.slice(1) + ".";
 }
 
-/** "Mon 12" for a calendar date ("2026-10-12"); "Today" for today's. */
-function dayHead(date: string, today: string): { short: string; long: string } {
+/** A column head for a calendar date ("2026-10-12"): "Mon" over "12", or "Today" over its date. */
+function dayHead(date: string, today: string): { top: string; num: number; long: string } {
   const [y, m, d] = date.split("-").map(Number);
   const t = new Date(Date.UTC(y, m - 1, d));
   const long = `${WEEKDAYS[t.getUTCDay()]} ${d} ${MONTHS[m - 1]}`;
-  return date === today ? { short: "Today", long: `today, ${long}` } : { short: `${WEEKDAYS[t.getUTCDay()]} ${d}`, long };
+  return date === today ? { top: "Today", num: d, long: `today, ${long}` } : { top: WEEKDAYS[t.getUTCDay()], num: d, long };
 }
 
 /** "45 min", "5 h", "2 h 30 min". */
@@ -200,7 +200,8 @@ function WeekTable({ rows, regions, nowMs }: { rows: DayRow[]; regions: Region[]
               const h = dayHead(d, today);
               return (
                 <th key={d} scope="col" abbr={h.long}>
-                  {h.short}
+                  <span className="st-week-wd">{h.top}</span>
+                  <span className="st-week-dn">{h.num}</span>
                 </th>
               );
             })}
