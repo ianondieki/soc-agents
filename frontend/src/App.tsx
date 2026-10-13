@@ -1,4 +1,5 @@
 import { Link, Route, Routes, useLocation, useNavigate } from "react-router-dom";
+import { trackPresence } from "./lib/away";
 import { Presentation, UserRoundCheck } from "lucide-react";
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { api } from "./api";
@@ -204,6 +205,8 @@ function prefersReducedMotion(): boolean {
 const RAIL_SETTLE_MS = 1400;
 
 export default function App() {
+  // When this person last had the console open, for Mission control's catch-up (lib/away.ts).
+  useEffect(() => trackPresence(), []);
   const [profile, setProfile] = useState<any>(null);
   const [metrics, setMetrics] = useState<any>(null);
   const [session, setSession] = useState<any>({ display_name: "NOC Analyst", role: "noc_analyst" });

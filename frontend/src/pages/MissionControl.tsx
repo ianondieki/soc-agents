@@ -19,6 +19,7 @@ import { hitlSubject } from "../lib/hitlSubject";
 import { isOpenTicket } from "../lib/ticket";
 import { useNewest } from "../lib/newest";
 import DueSoon from "../components/DueSoon";
+import WhileAway from "../components/WhileAway";
 
 /** One figure of the strip. Colour only when the number is worth a look; zero stays quiet. The
  *  figure rolls to a new value and its cell glows once when it changes (calm: it just changes). */
@@ -432,6 +433,7 @@ function MissionControl({
       </div>
 
       {/* The warning before the breach: only when a restore deadline falls within the hour. */}
+      <WhileAway incidents={incLoad === "ok" ? incidents : null} />
       <DueSoon incidents={incidents} />
 
       <LiveRunPanel
