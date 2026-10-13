@@ -14,6 +14,15 @@ complaint is filed. So it carries only what an operator would put on a public st
     Maintenance windows a person has approved (``SCHEDULED``) that end after now and start
     within ``PLANNED_DAYS``: when, and where at region level (a single-site window names its
     county, never the site).
+``history``
+    The last ``HISTORY_DAYS`` days in Nairobi time, oldest first, per region: the worst state
+    each day saw, from every service-affecting ticket whose outage overlapped the day (a
+    cancelled ticket was no outage and is left out). The same ladder as ``state``.
+``recent``
+    Disruptions restored in the last ``HISTORY_DAYS`` days, newest first: region, state,
+    services, counties of the region, when it began and when service came back. Top-level
+    tickets only (a cascade child is part of its parent's outage); restored outages in one
+    region whose times overlap are one row. At most ``RECENT_MAX``.
 
 Never on this payload: a site, site code, ticket number or id, subscriber count, vendor,
 engineer, alarm text or note. Service codes come from a closed vocabulary (``SERVICES``), so
@@ -24,9 +33,10 @@ nothing a ticket carries in free text reaches it. Read-only, and every query goe
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from typing import Any
 
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from noc_agents.api.deps import _owned, _settings
@@ -55,6 +65,12 @@ REGION_KEYS: tuple[str, ...] = (
     "restored_at",
 )
 PLANNED_KEYS: tuple[str, ...] = ("starts_at", "ends_at", "scope", "region_code", "label", "county")
+#: How many days of history the page shows, and how many restored disruptions it lists.
+HISTORY_DAYS = 7
+RECENT_MAX = 10
+RECENT_KEYS: tuple[str, ...] = ("region_code", "label", "state", "services", "counties", "started_at", "restored_at")
+#: Kenya keeps UTC+3 all year.
+_EAT = timedelta(hours=3)
 
 
 def _naive_utc(dt: datetime) -> datetime:
@@ -96,6 +112,88 @@ def _window_regions(win: MaintenanceWindowRow, codes: list[str]) -> tuple[str, l
     if site is None or site.region_code.upper() not in codes:
         return "LOCAL", [], None
     return "LOCAL", [site.region_code.upper()], site.county or None
+
+
+def _eat_day_bounds(day: date) -> tuple[datetime, datetime]:
+    """One Nairobi calendar day as naive UTC [start, end)."""
+    start = datetime.combine(day, time()) - _EAT
+    return start, start + timedelta(days=1)
+
+
+def _region_counties(cfg: Any, rows: list[IncidentRow]) -> list[str]:
+    own = {str(c).casefold() for c in (getattr(cfg, "counties", None) or [])}
+    return sorted({r.county for r in rows if r.county and (not own or r.county.casefold() in own)})
+
+
+def _history(session: Session, codes: list[str], now: datetime) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """``history`` and ``recent`` (see the module docstring)."""
+    op = _settings().operator
+    today = (now + _EAT).date()
+    days = [today - timedelta(days=n) for n in range(HISTORY_DAYS - 1, -1, -1)]
+    since, _ = _eat_day_bounds(days[0])
+    began = func.coalesce(IncidentRow.outage_start_at, IncidentRow.created_at)
+    rows = session.scalars(
+        _owned(IncidentRow).where(
+            IncidentRow.service_affecting.is_(True),
+            IncidentRow.region_code.in_(codes),
+            IncidentRow.status != "CANCELLED",
+            began < now,
+            or_(IncidentRow.restored_at.is_(None), IncidentRow.restored_at >= since),
+        )
+    ).all()
+
+    def span(r: IncidentRow) -> tuple[datetime, datetime]:
+        start = r.outage_start_at or r.created_at
+        if r.restored_at is not None:
+            end = r.restored_at
+        elif r.status in NOT_OPEN_STATUSES and r.closed_at is not None:
+            end = r.closed_at
+        else:
+            end = now
+        return start, end
+
+    history = []
+    for code in codes:
+        mine = [r for r in rows if r.region_code == code]
+        out = []
+        for day in days:
+            lo, hi = _eat_day_bounds(day)
+            seen = {r.priority for r in mine if span(r)[0] < hi and span(r)[1] > lo}
+            out.append({"date": day.isoformat(), "state": _state_of(seen, False)})
+        history.append({"region_code": code, "days": out})
+
+    # One row per disruption a customer lived through: restored outages in one region whose
+    # times overlap are one disruption (the worst state, every service, the whole span).
+    done = sorted(
+        (r for r in rows if r.restored_at is not None and r.restored_at <= now and not r.parent_incident_id),
+        key=lambda r: (r.region_code, span(r)[0]),
+    )
+    groups: list[list[IncidentRow]] = []
+    for r in done:
+        last = groups[-1] if groups else None
+        if last and last[0].region_code == r.region_code and span(r)[0] <= max(x.restored_at for x in last):
+            last.append(r)
+        else:
+            groups.append([r])
+    groups.sort(key=lambda g: max(x.restored_at for x in g), reverse=True)
+    recent = []
+    for g in groups[:RECENT_MAX]:
+        cfg = op.regions[g[0].region_code]
+        services: set[str] = set()
+        for r in g:
+            services |= _services(r)
+        recent.append(
+            {
+                "region_code": g[0].region_code,
+                "label": getattr(cfg, "label", g[0].region_code),
+                "state": _state_of({r.priority for r in g}, False),
+                "services": [x for x in SERVICES if x in services],
+                "counties": _region_counties(cfg, g),
+                "started_at": iso_z(min(span(r)[0] for r in g)),
+                "restored_at": iso_z(max(r.restored_at for r in g)),
+            }
+        )
+    return history, recent
 
 
 def public_status(session: Session, *, now: datetime | None = None) -> dict[str, Any]:
@@ -160,24 +258,26 @@ def public_status(session: Session, *, now: datetime | None = None) -> dict[str,
         cfg = op.regions[code]
         # Only counties of this region: a ticket's county is free data from the site record, and a
         # public page must never place an outage outside the region it lists it under.
-        own_counties = {str(c).casefold() for c in (getattr(cfg, "counties", None) or [])}
         regions.append(
             {
                 "region_code": code,
                 "label": getattr(cfg, "label", code),
                 "state": _state_of({r.priority for r in mine}, code in under_works),
                 "services": [s for s in SERVICES if s in services],
-                "counties": sorted({r.county for r in mine if r.county and (not own_counties or r.county.casefold() in own_counties)}),
+                "counties": _region_counties(cfg, mine),
                 "since": iso_z(min(starts)) if starts else None,
                 "restored_at": iso_z(max(restored)) if restored else None,
             }
         )
 
     worst = min((STATES.index(r["state"]) for r in regions), default=STATES.index("NORMAL"))
+    history, recent = _history(session, codes, now)
     return {
         "generated_at": iso_z(now),
         "operator_display_name": str(op.display_name).replace(" (demo profile)", ""),
         "state": STATES[worst],
         "regions": regions,
         "planned": planned,
+        "history": history,
+        "recent": recent,
     }

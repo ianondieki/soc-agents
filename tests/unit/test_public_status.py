@@ -22,7 +22,7 @@ from noc_agents.realtime.hub import hub
 from noc_agents.services import public_status as ps
 
 TIMESTAMP_Z = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
-TOP_KEYS = ["generated_at", "operator_display_name", "state", "regions", "planned"]
+TOP_KEYS = ["generated_at", "operator_display_name", "state", "regions", "planned", "history", "recent"]
 #: Both operator profiles use CST, so an isolation leak would merge silently here.
 SHARED = "CST"
 SITE = "SFC-RFT-HUB-NKR"  # catalogued: Nakuru Rift HUB, Nakuru county, RFT
@@ -49,6 +49,8 @@ class Page:
         affecting: bool = True,
         county: str | None = "Mombasa",
         restored_at: datetime | None = None,
+        began: datetime | None = None,
+        parent: str | None = None,
     ) -> str:
         self._n += 1
         number = f"{'INC' if operator == 'safaricom' else 'AIR'}{self._n:06d}"
@@ -72,9 +74,11 @@ class Page:
                     users_affected=123456,
                     fe_name="FE-SECRET-01",
                     msp_name="SecretVendor",
-                    created_at=_now() - timedelta(hours=1),
-                    updated_at=_now() - timedelta(hours=1),
+                    created_at=began or _now() - timedelta(hours=1),
+                    updated_at=began or _now() - timedelta(hours=1),
+                    outage_start_at=began,
                     restored_at=restored_at,
+                    parent_incident_id=parent,
                     correlation_fingerprint=f"fp-{self._n}",
                 )
             )
@@ -300,3 +304,94 @@ def test_another_operators_tickets_and_windows_never_move_this_page(page):
     assert body["state"] == "NORMAL"
     assert page.region()["state"] == "NORMAL"
     assert body["planned"] == []
+
+
+# ---------------------------------------------------------------- the last seven days
+
+
+def _eat_today():
+    return (datetime.utcnow() + timedelta(hours=3)).date()
+
+
+def _day(body: dict, code: str, days_ago: int) -> str:
+    row = next(h for h in body["history"] if h["region_code"] == code)
+    return next(d["state"] for d in row["days"] if d["date"] == (_eat_today() - timedelta(days=days_ago)).isoformat())
+
+
+def test_history_has_seven_days_for_every_region_ending_today(page):
+    body = page.get()
+    assert [h["region_code"] for h in body["history"]] == [r["region_code"] for r in body["regions"]]
+    for row in body["history"]:
+        dates = [d["date"] for d in row["days"]]
+        assert len(dates) == ps.HISTORY_DAYS
+        assert dates[-1] == _eat_today().isoformat()
+        assert dates == sorted(dates)
+        assert {d["state"] for d in row["days"]} == {"NORMAL"}
+    assert body["recent"] == []
+
+
+def test_an_open_ticket_marks_today_with_its_state(page):
+    page.incident(priority="P1")
+    body = page.get()
+    assert _day(body, SHARED, 0) == "MAJOR"
+    assert _day(body, "MTK", 0) == "NORMAL"
+
+
+def test_a_restored_outage_marks_its_day_and_is_listed_at_region_level(page):
+    began = _now() - timedelta(days=2)
+    number = page.incident(priority="P2", status="CLOSED", began=began, restored_at=began + timedelta(hours=3), mpesa=True)
+    body = page.get()
+    assert _day(body, SHARED, 2) == "PARTIAL" or _day(body, SHARED, 3) == "PARTIAL"
+    assert _day(body, SHARED, 0) == "NORMAL"
+    assert len(body["recent"]) == 1
+    row = body["recent"][0]
+    assert list(row) == list(ps.RECENT_KEYS)
+    assert row["region_code"] == SHARED and row["state"] == "PARTIAL"
+    assert row["services"] == ["VOICE", "DATA", "MPESA"]
+    assert TIMESTAMP_Z.match(row["started_at"]) and TIMESTAMP_Z.match(row["restored_at"])
+    blob = json.dumps(body["recent"])
+    for secret in (number, "SECRET-SITE", "Hidden Tower", "PRIVATE ALARM TEXT", "SecretVendor", "123456"):
+        assert secret not in blob, secret
+
+
+def test_a_cancelled_ticket_was_no_outage(page):
+    page.incident(priority="P1", status="CANCELLED", began=_now() - timedelta(days=1))
+    assert _day(page.get(), SHARED, 1) == "NORMAL"
+
+
+def test_a_cascade_child_is_part_of_its_parents_outage_not_a_row_of_its_own(page):
+    began = _now() - timedelta(days=1)
+    page.incident(priority="P2", status="CLOSED", began=began, restored_at=began + timedelta(hours=2))
+    page.incident(priority="P4", status="CLOSED", began=began, restored_at=began + timedelta(hours=2), parent="parent-id")
+    assert len(page.get()["recent"]) == 1
+
+
+def test_nothing_older_than_the_window_is_shown(page):
+    began = _now() - timedelta(days=ps.HISTORY_DAYS + 3)
+    page.incident(priority="P1", status="CLOSED", began=began, restored_at=began + timedelta(hours=2))
+    body = page.get()
+    assert body["recent"] == []
+    assert all(d["state"] == "NORMAL" for h in body["history"] for d in h["days"])
+
+
+def test_another_operators_outages_never_reach_this_history(page):
+    began = _now() - timedelta(days=1)
+    page.incident(priority="P1", operator="airtel", status="CLOSED", began=began, restored_at=began + timedelta(hours=1))
+    body = page.get()
+    assert body["recent"] == []
+    assert _day(body, SHARED, 1) == "NORMAL"
+
+
+def test_overlapping_outages_in_one_region_are_one_disruption(page):
+    began = _now() - timedelta(days=1)
+    page.incident(priority="P3", status="CLOSED", began=began, restored_at=began + timedelta(hours=2), services=["SMS"])
+    page.incident(priority="P1", status="CLOSED", began=began + timedelta(hours=1), restored_at=began + timedelta(hours=4),
+                  services=["VOICE"], county="Kilifi")
+    page.incident(priority="P2", status="CLOSED", began=began + timedelta(hours=6), restored_at=began + timedelta(hours=7))
+    recent = page.get()["recent"]
+    assert len(recent) == 2
+    merged = recent[1]
+    assert merged["state"] == "MAJOR"
+    assert merged["services"] == ["VOICE", "SMS"]
+    assert merged["counties"] == ["Kilifi", "Mombasa"]
+    assert merged["restored_at"] < recent[0]["restored_at"]
