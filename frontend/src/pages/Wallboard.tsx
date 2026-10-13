@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { MapPin, Timer, UsersRound, Wrench } from "lucide-react";
+import { Link } from "react-router-dom";
 import { api } from "../api";
 import CardBoundary from "../components/CardBoundary";
 import RiskStrip from "../components/RiskStrip";
@@ -563,7 +564,7 @@ export default function Wallboard({
           );
         })}
         {overflow && (
-          <a className="wb-card wb-more" href="/incidents">
+          <Link className="wb-card wb-more" to="/incidents">
             <span className="wb-more-n">+{hidden.length} more</span>
             <span className="wb-more-what">
               {hiddenDown > 0
@@ -571,11 +572,11 @@ export default function Wallboard({
                 : `${hiddenRestored} restored ${hiddenRestored === 1 ? "ticket" : "tickets"}`}
             </span>
             <span className="wb-more-where">On the Incident board</span>
-          </a>
+          </Link>
         )}
       </div>
       <p className="wb-foot" ref={footRef}>
-        <a href="/mission">Back to Mission control</a>
+        <Link to="/mission">Back to Mission control</Link>
       </p>
     </div>
   );

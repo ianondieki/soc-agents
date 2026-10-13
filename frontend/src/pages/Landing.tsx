@@ -277,11 +277,11 @@ export default function Landing({ profile, metrics, runsRev }: { profile: any; m
       </a>
       <header className={"ld-top" + (scrolled ? " is-scrolled" : "")}>
         <div className="ld-wrap ld-top-row">
-          <a className="ld-brand" href="/" aria-label="Kenya NOC Mission Control, front page">
+          <Link className="ld-brand" to="/" aria-label="Kenya NOC Mission Control, front page">
             <BrandMark size={28} />
             <span className="ld-brand-name">Kenya NOC</span>
             <span className="ld-brand-sub">Mission Control</span>
-          </a>
+          </Link>
           <nav className="ld-topnav" aria-label="Sections">
             {SECTIONS.map((s) => (
               <a key={s.id} href={`#${s.id}`} className={section === s.id ? "is-active" : undefined} aria-current={section === s.id ? "location" : undefined}>

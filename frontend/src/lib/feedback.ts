@@ -265,6 +265,9 @@ export function cuesAllowedHere(pathname: string): boolean {
 }
 function here(): string {
   try {
+    // The demo build routes by hash ("#/hitl"); the normal build by path.
+    const hash = window.location.hash;
+    if (hash.startsWith("#/")) return hash.slice(1).split(/[?#]/)[0];
     return window.location.pathname;
   } catch {
     return "/mission";
