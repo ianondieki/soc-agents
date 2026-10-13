@@ -36,12 +36,27 @@ interface Planned {
   label: string | null;
   county: string | null;
 }
+interface DayRow {
+  region_code: string;
+  days: { date: string; state: State }[];
+}
+interface Restored {
+  region_code: string;
+  label: string;
+  state: State;
+  services: Service[];
+  counties: string[];
+  started_at: string;
+  restored_at: string;
+}
 interface Payload {
   generated_at: string;
   operator_display_name: string;
   state: State;
   regions: Region[];
   planned: Planned[];
+  history?: DayRow[];
+  recent?: Restored[];
 }
 
 const REFRESH_MS = 60_000;
@@ -124,6 +139,12 @@ function sinceWords(value: string | null, nowMs: number): string {
   return day === today ? `since ${fmtHM(value)}` : `since ${day}, ${fmtHM(value)}`;
 }
 
+/** "at 15:38 EAT" today, "on Mon 12 Oct at 15:38 EAT" on an earlier day. */
+function restoredWords(value: string, nowMs: number): string {
+  const day = eatDay(value);
+  return day === eatDay(new Date(nowMs).toISOString()) ? `at ${fmtHM(value)} EAT` : `on ${day} at ${fmtHM(value)} EAT`;
+}
+
 /** Where and since when, in one sentence: "Around Kilifi and Mombasa, since 14:05." */
 function regionNote(r: Region, nowMs: number): string {
   if (r.state === "MAINTENANCE") return "Planned work is under way here.";
@@ -131,6 +152,94 @@ function regionNote(r: Region, nowMs: number): string {
   if (!parts.length) return "Our engineers are working on it.";
   const sentence = parts.join(", ");
   return sentence[0].toUpperCase() + sentence.slice(1) + ".";
+}
+
+/** "Mon 12" for a calendar date ("2026-10-12"); "Today" for today's. */
+function dayHead(date: string, today: string): { short: string; long: string } {
+  const [y, m, d] = date.split("-").map(Number);
+  const t = new Date(Date.UTC(y, m - 1, d));
+  const long = `${WEEKDAYS[t.getUTCDay()]} ${d} ${MONTHS[m - 1]}`;
+  return date === today ? { short: "Today", long: `today, ${long}` } : { short: `${WEEKDAYS[t.getUTCDay()]} ${d}`, long };
+}
+
+/** "45 min", "5 h", "2 h 30 min". */
+function lastedWords(fromIso: string, toIso: string): string {
+  const a = parseInstant(fromIso)?.getTime();
+  const b = parseInstant(toIso)?.getTime();
+  if (a == null || b == null || b < a) return "";
+  const min = Math.max(1, Math.round((b - a) / 60_000));
+  if (min < 60) return `${min} min`;
+  const h = Math.floor(min / 60);
+  const rest = min % 60;
+  return rest ? `${h} h ${rest} min` : `${h} h`;
+}
+
+/** "Mon 12 Oct, 10:05 to 15:05 EAT", or across midnight "Mon 12 Oct, 22:10 to Tue 13 Oct, 01:40 EAT". */
+function spanWords(fromIso: string, toIso: string): string {
+  const startDay = eatDay(fromIso);
+  const endDay = eatDay(toIso);
+  const end = endDay === startDay ? fmtHM(toIso) : `${endDay}, ${fmtHM(toIso)}`;
+  return `${startDay}, ${fmtHM(fromIso)} to ${end} EAT`;
+}
+
+/** The seven days as a table: a row per region, a column per day, the worst state in each cell
+ *  as a word for screen readers and a mark beside the colour for everyone else. */
+function WeekTable({ rows, regions, nowMs }: { rows: DayRow[]; regions: Region[]; nowMs: number }) {
+  const today = new Date(nowMs + 3 * 3_600_000).toISOString().slice(0, 10);
+  const labelOf = new Map(regions.map((r) => [r.region_code, r.label] as const));
+  const dates = rows[0]?.days.map((d) => d.date) ?? [];
+  return (
+    <div className="st-week-wrap">
+      <table className="st-week" aria-describedby="st-week-key">
+        <thead>
+          <tr>
+            <th scope="col" className="st-week-corner">
+              <span className="sr-only">Region</span>
+            </th>
+            {dates.map((d) => {
+              const h = dayHead(d, today);
+              return (
+                <th key={d} scope="col" abbr={h.long}>
+                  {h.short}
+                </th>
+              );
+            })}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.region_code}>
+              <th scope="row">{labelOf.get(row.region_code) ?? row.region_code}</th>
+              {row.days.map((d) => {
+                const { word, icon: Icon } = STATE[d.state];
+                return (
+                  <td key={d.date}>
+                    <span className={`st-day ${d.state.toLowerCase()}`} title={`${word}, ${dayHead(d.date, today).long}`}>
+                      {d.state !== "NORMAL" && <Icon size={13} strokeWidth={2.4} aria-hidden />}
+                      <span className="sr-only">{word}</span>
+                    </span>
+                  </td>
+                );
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <ul className="st-week-key" id="st-week-key" aria-label="What the marks mean">
+        {(["NORMAL", "MINOR", "PARTIAL", "MAJOR"] as State[]).map((k) => {
+          const { word, icon: Icon } = STATE[k];
+          return (
+            <li key={k}>
+              <span className={`st-day ${k.toLowerCase()}`} aria-hidden="true">
+                {k !== "NORMAL" && <Icon size={13} strokeWidth={2.4} />}
+              </span>
+              {word}
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
 }
 
 function StateChip({ state }: { state: State }) {
@@ -261,7 +370,7 @@ export default function Status() {
                     </div>
                     {r.state === "NORMAL" ? (
                       <p className="st-region-note">
-                        {r.restored_at ? `Every service is working. Service was restored at ${fmtHM(r.restored_at)} EAT.` : "Every service is working."}
+                        {r.restored_at ? `Every service is working. Service was restored ${restoredWords(r.restored_at, nowMs)}.` : "Every service is working."}
                       </p>
                     ) : (
                       <>
@@ -285,6 +394,52 @@ export default function Status() {
                 ))}
               </ul>
             </section>
+
+            {data.history && data.history.length > 0 && (
+              <section className="st-section" aria-labelledby="st-week-title">
+                <h2 id="st-week-title">The last seven days</h2>
+                <WeekTable rows={data.history} regions={regions} nowMs={nowMs} />
+              </section>
+            )}
+
+            {data.recent && (
+              <section className="st-section" aria-labelledby="st-recent-title">
+                <h2 id="st-recent-title">Restored in the last seven days</h2>
+                {data.recent.length === 0 ? (
+                  <p className="st-empty">No disruptions in the last seven days.</p>
+                ) : (
+                  <ul className="st-recent">
+                    {data.recent.map((r) => (
+                      <li key={`${r.region_code}-${r.started_at}-${r.restored_at}`}>
+                        <div className="st-recent-head">
+                          <h3>
+                            {r.label}
+                            {r.counties.length > 0 && <span className="st-recent-where">, around {listWords(r.counties)}</span>}
+                          </h3>
+                          <StateChip state={r.state} />
+                        </div>
+                        <p className="st-recent-when">
+                          {spanWords(r.started_at, r.restored_at)}. {lastedWords(r.started_at, r.restored_at) && <>Service was out for {lastedWords(r.started_at, r.restored_at)}.</>}
+                        </p>
+                        {r.services.length > 0 && (
+                          <ul className="st-services" aria-label={`Affected in ${r.label}`}>
+                            {r.services.map((sv) => {
+                              const { word, icon: Icon } = SERVICE[sv];
+                              return (
+                                <li key={sv}>
+                                  <Icon size={14} strokeWidth={2} aria-hidden />
+                                  {word}
+                                </li>
+                              );
+                            })}
+                          </ul>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </section>
+            )}
 
             <section className="st-section" aria-labelledby="st-planned">
               <h2 id="st-planned">Planned work</h2>

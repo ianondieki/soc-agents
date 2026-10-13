@@ -80,8 +80,47 @@
 .st-planned-when { color: var(--text-strong); font-weight: 600; font-variant-numeric: tabular-nums; }
 .st-planned-where { margin-top: 2px !important; color: var(--muted); font-size: var(--fs-sm); }
 
+/* ------------------------------------------------------------------ the last seven days */
+.st-week-wrap { display: flex; flex-direction: column; gap: var(--s3); min-width: 0; }
+.st-week { width: 100%; border-collapse: separate; border-spacing: 4px; table-layout: fixed; margin: -4px; }
+/* Not the console's data-table look (styles.css `table`): no sticky header, rule or hover here. */
+.st-week th, .st-week td { position: static; height: auto; padding: 0; border: 0; background: none; vertical-align: middle; }
+.st-week tbody tr { height: auto; }
+.st-week tbody tr:hover td { background: none; }
+.st-week thead th { padding-bottom: 2px; }
+.st-week th { color: var(--muted); font-size: var(--fs-xs); font-weight: 500; text-align: center; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.st-week thead th:last-child { color: var(--text-strong); font-weight: 650; }
+.st-week tbody th { padding-right: var(--s2); color: var(--text); font-size: var(--fs-sm); font-weight: 550; text-align: left; white-space: normal; line-height: 1.25; }
+.st-week-corner { width: 9.5rem; }
+.st-day {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 30px;
+  border-radius: 7px;
+  background: var(--ok-soft);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--ok) 28%, transparent);
+}
+.st-day.minor, .st-day.partial { background: var(--warn-soft); color: var(--warn); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--warn) 55%, transparent); }
+.st-day.major { background: var(--danger-soft); color: var(--danger-text); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--danger) 60%, transparent); }
+.st-week-key { display: flex; flex-wrap: wrap; gap: var(--s2) var(--s4); color: var(--muted); font-size: var(--fs-xs); }
+.st-week-key li { display: inline-flex; align-items: center; gap: 6px; }
+.st-week-key .st-day { width: 22px; height: 18px; border-radius: 5px; }
+
+/* ------------------------------------------------------------------ restored */
+.st-recent { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--surface); }
+.st-recent > li { display: flex; flex-direction: column; gap: var(--s2); padding: var(--s4); min-width: 0; }
+.st-recent > li + li { border-top: 1px solid var(--line); }
+.st-recent-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--s3); }
+.st-recent-where { font-family: var(--font); font-weight: 400; color: var(--muted); font-size: var(--fs-sm); }
+.st-recent-when { color: var(--text); font-size: var(--fs-sm); font-variant-numeric: tabular-nums; }
+
 @media (max-width: 600px) {
   .st { gap: var(--s6); }
+  .st-week { border-spacing: 3px; margin: -3px; }
+  .st-week-corner { width: 5.75rem; }
+  .st-week tbody th { font-size: var(--fs-xs); }
+  .st-day { height: 26px; border-radius: 6px; }
   .st-hero { padding: var(--s5) var(--s4); }
   .st-actions .cp-btn { flex: 1 1 auto; justify-content: center; }
 }
