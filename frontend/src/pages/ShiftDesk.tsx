@@ -10,6 +10,7 @@ import { fmtHM, parseInstant } from "../lib/time";
 import { useMinute } from "../lib/useMinute";
 import "./ShiftDesk.css";
 import { DEFAULT_HOURS, shiftAt, shiftWindow } from "../lib/shift";
+import { IS_DEMO } from "../lib/demoMode";
 
 /** The ledger stores "SFC-RFT-HUB-NKR Nakuru Rift HUB": the site code, a space, the site name. */
 function splitSite(site: unknown): { code: string; name: string } {
@@ -265,7 +266,7 @@ export default function ShiftDesk({ tick, profile, metrics }: { tick: number; pr
           <h1>Shift desk</h1>
           <p className="lead">This shift at a glance, the ledger of every ticket, and the handover to the next shift.</p>
         </div>
-        {xlsx && (
+        {xlsx && !IS_DEMO && (
           <div className="page-actions">
             <a className="btn" href={xlsx} download>
               <Download size={16} strokeWidth={1.75} aria-hidden="true" />

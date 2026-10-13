@@ -7,6 +7,7 @@ import { useNarrow } from "../lib/layout";
 import { parseInstant } from "../lib/time";
 import { useMinute } from "../lib/useMinute";
 import { downloadCsv, eatStamp, toCsv } from "../lib/csv";
+import { IS_DEMO } from "../lib/demoMode";
 import "./IncidentBoard.css";
 
 /** The regions offered when the operator profile has none of its own. */
@@ -219,6 +220,7 @@ export default function IncidentBoard({ tick, profile }: { tick: number; profile
           <h1>Incident board</h1>
           <p className="lead">Every ticket, worst first and oldest first. Open one for the full record.</p>
         </div>
+        {!IS_DEMO && (
         <div className="page-actions">
           <button
             type="button"
@@ -231,6 +233,7 @@ export default function IncidentBoard({ tick, profile }: { tick: number; profile
             Download CSV
           </button>
         </div>
+        )}
       </div>
       <p className="ib-saved" role="status">
         {saved}

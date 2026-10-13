@@ -80,9 +80,17 @@ function preloadRouteChunk(): Plugin {
   };
 }
 
-export default defineConfig({
-  plugins: [react(), preloadRouteChunk()],
+export default defineConfig(({ mode }) => {
+  // `vite build --mode demo`: the public demo (src/demo, docs/DEMO_BUILD.md). Relative asset
+  // paths, because the page may be served from any path; no route preloader, which reads the
+  // path to pick a page and writes absolute /assets links.
+  const demo = mode === "demo";
+  return {
+  base: demo ? "./" : "/",
+  define: demo ? { "import.meta.env.VITE_DEMO": JSON.stringify("1") } : {},
+  plugins: demo ? [react()] : [react(), preloadRouteChunk()],
   build: {
+    outDir: demo ? "dist-demo" : "dist",
     // Every browser the floor runs (Chromium, Firefox 115+, Safari 17+) supports modulepreload
     // natively; an older one only loses the early fetch, so the polyfill is not shipped.
     modulePreload: { polyfill: false },
@@ -118,4 +126,5 @@ export default defineConfig({
       },
     },
   },
+  };
 });
