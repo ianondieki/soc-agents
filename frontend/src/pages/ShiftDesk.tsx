@@ -11,6 +11,8 @@ import { useMinute } from "../lib/useMinute";
 import "./ShiftDesk.css";
 import { DEFAULT_HOURS, shiftAt, shiftWindow } from "../lib/shift";
 import { IS_DEMO } from "../lib/demoMode";
+import CopyText from "../components/CopyText";
+import { shiftSummary } from "../lib/sitrep";
 
 /** The ledger stores "SFC-RFT-HUB-NKR Nakuru Rift HUB": the site code, a space, the site name. */
 function splitSite(site: unknown): { code: string; name: string } {
@@ -69,6 +71,28 @@ export default function ShiftDesk({ tick, profile, metrics }: { tick: number; pr
       live = false;
     };
   }, [tick, retry]);
+
+  // The tickets and the waiting cards, for the shift summary the group gets.
+  const [tickets, setTickets] = useState<any[] | null>(null);
+  const [waitingCards, setWaitingCards] = useState<number | null>(null);
+  useEffect(() => {
+    let live = true;
+    api
+      .incidents()
+      .then((rows) => {
+        if (live && Array.isArray(rows)) setTickets(rows);
+      })
+      .catch(() => undefined); // the summary waits for the next tick
+    api
+      .hitl()
+      .then((rows) => {
+        if (live && Array.isArray(rows)) setWaitingCards(rows.length);
+      })
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, [tick, handover]);
 
   const shiftKey = String(profile?.shift_id || "");
   useEffect(() => {
@@ -217,6 +241,23 @@ export default function ShiftDesk({ tick, profile, metrics }: { tick: number; pr
     </section>
   );
 
+  const summaryPanel =
+    tickets && waitingCards != null ? (
+      <CopyText
+        title="Shift summary for the group"
+        lead="The shift so far as a message for the NOC WhatsApp group: counts, then every open ticket."
+        label="Copy the summary"
+        text={shiftSummary({
+          shiftName: `${shift === "night" ? "Night" : "Day"} shift, ${dayOf(win.start)}`,
+          nowMs: now.getTime(),
+          incidents: tickets,
+          waiting: waitingCards,
+          sinceMs: win.start.getTime(),
+          regionLabel: (code) => profile?.regions?.[code]?.label || code,
+        })}
+      />
+    ) : null;
+
   const handoverPanel = (
     <section className="panel sd-handover" aria-labelledby="sd-handover-title">
       <h2 id="sd-handover-title" className="panel-title">
@@ -331,12 +372,16 @@ export default function ShiftDesk({ tick, profile, metrics }: { tick: number; pr
         {stacked ? (
           <>
             {handoverPanel}
+            {summaryPanel}
             {ledgerPanel}
           </>
         ) : (
           <>
             {ledgerPanel}
-            {handoverPanel}
+            <div className="sd-side">
+              {handoverPanel}
+              {summaryPanel}
+            </div>
           </>
         )}
       </div>

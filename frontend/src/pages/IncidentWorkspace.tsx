@@ -36,6 +36,8 @@ import { confirmCue } from "../lib/feedback";
 import { useMinute } from "../lib/useMinute";
 import "./IncidentWorkspace.css";
 import { useIncidentRevision } from "../realtime/RealtimeContext";
+import CopyText from "../components/CopyText";
+import { ticketUpdate } from "../lib/sitrep";
 import IncidentCustomersPanel, { useIncidentCustomers } from "../components/support/IncidentCustomers";
 import { noticeWaitsForPerson } from "../lib/support";
 
@@ -233,6 +235,19 @@ function timelineHead(t: any): { title: string; sub: string; state: ReactNode; h
     sub: "",
     state: t.status ? <span className="muted">{humanStatus(t.status)}</span> : null,
   };
+}
+
+/** The newest note a person (not an agent) wrote, for the group update. */
+function latestPersonNote(timeline: any[] | null): { at: unknown; by: string; text: string } | null {
+  let best: { at: unknown; by: string; text: string; ms: number } | null = null;
+  for (const t of timeline || []) {
+    if (String(t?.kind) !== "note" || typeof t.detail !== "string") continue;
+    const head = timelineHead(t);
+    const ms = parseInstant(t.ts)?.getTime();
+    if (!head.human || ms == null) continue;
+    if (!best || ms > best.ms) best = { at: t.ts, by: head.title, text: t.detail, ms };
+  }
+  return best && { at: best.at, by: best.by, text: best.text };
 }
 
 /** A timeline detail: a stored rationale reads as its sentence and facts; anything else as written. */
@@ -992,6 +1007,18 @@ function Workspace({ id, session, profile, tick }: { id: string | undefined; ses
             </h2>
             {brief ? <div className="pre iw-brief">{brief}</div> : <p className="muted">No brief yet. The briefing agent writes one for P1 and P2 tickets.</p>}
           </section>
+
+          <CopyText
+            title="Update for the group"
+            lead="This ticket as a message for the regional WhatsApp group, as it stands now."
+            label="Copy the update"
+            text={ticketUpdate({
+              inc,
+              nowMs,
+              regionLabel: profile?.regions?.[inc.region_code]?.label,
+              latestNote: latestPersonNote(timeline),
+            })}
+          />
 
           {/* Stop clock / SCC (§7.6.3, §7.10): reason mandatory before open. Renders nothing while
               SCORECARDS_ENABLED is off; owns its fetch and swallows its own failures. */}

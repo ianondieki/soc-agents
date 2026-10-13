@@ -27,6 +27,7 @@
 
 /* ---- Ledger and handover --------------------------------------------------------------------- */
 .sd-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, 380px); gap: var(--s4); align-items: start; }
+.sd-side { display: flex; flex-direction: column; gap: var(--s4); min-width: 0; }
 .sd-handover { position: sticky; top: calc(var(--topbar-h) + var(--s4)); }
 
 /* One group per shift: its name and date, then the timeline. */
