@@ -76,6 +76,10 @@ cd frontend; npm install; cd ..
 powershell -ExecutionPolicy Bypass -File .\scripts\run_all.ps1
 ```
 
+**A link anyone can open:** `bash scripts/demo/build.sh` builds a copy of the console that runs
+with no server, replaying a recording of this backend (`frontend/dist-demo`, any static host).
+How it works: `docs/DEMO_BUILD.md`.
+
 **Showing it to managers:** press **Guided demo** in the top bar (five steps: storm, ticket,
 approval, handover, numbers) and finish on **/showcase**, the page that reads the live
 productivity numbers. Script and talking points: `docs/MANAGER_DEMO.md`. Where the project
@@ -183,6 +187,7 @@ set OPERATOR_PROFILE=airtel   # Windows PowerShell: $env:OPERATOR_PROFILE="airte
 - `RESEARCH_NOC_MULTI_AGENT.md` — industry research  
 - **`docs/STATUS.md`** — where the project is, in plain language  
 - **`docs/MANAGER_DEMO.md`** — the ten-minute manager demo script and the questions you will get  
+- **`docs/DEMO_BUILD.md`** — the public demo build: a recorded backend replayed in the browser  
 - `docs/UI_WALKTHROUGH.md` — 5-minute team demo script  
 - **`docs/GAP_ANALYSIS_AND_ROADMAP.md`** — flaws found + hardening log + Phase B/C roadmap  
 - **`docs/SUPPORT_DESK.md`** — the customer support desk: flow, API, escalation policy, evals  
