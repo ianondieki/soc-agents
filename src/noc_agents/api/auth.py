@@ -174,7 +174,11 @@ def read_session(token: str | None, secret: str | None = None) -> dict[str, Any]
     payload_b64, _, sig = token.partition(".")
     if not payload_b64 or not sig:
         return None
-    if not hmac.compare_digest(_sign(payload_b64, key), sig):  # constant time
+    try:
+        # a non-ASCII cookie makes encode()/compare_digest() raise; that is "not ours", not a 500
+        if not hmac.compare_digest(_sign(payload_b64, key).encode("ascii"), sig.encode("ascii")):  # constant time
+            return None
+    except UnicodeEncodeError:
         return None
     try:
         claims = json.loads(_b64d(payload_b64).decode("utf-8"))
@@ -185,7 +189,8 @@ def read_session(token: str | None, secret: str | None = None) -> dict[str, Any]
     exp = claims.get("exp")
     if exp is not None:
         try:
-            if float(exp) < time.time():
+            exp_s = float(exp)
+            if exp_s != exp_s or exp_s < time.time():  # NaN never compares less; treat as expired
                 return None
         except (TypeError, ValueError):
             return None

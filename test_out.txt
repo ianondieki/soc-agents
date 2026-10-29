@@ -1,0 +1,70 @@
+........................................................................ [  1%]
+........................................................................ [  3%]
+........................................................................ [  5%]
+........................................................................ [  7%]
+........................................................................ [  9%]
+........................................................................ [ 11%]
+........................................................................ [ 13%]
+........................................................................ [ 15%]
+........................................................................ [ 17%]
+........................................................................ [ 18%]
+........................................................................ [ 20%]
+........................................................................ [ 22%]
+........................................................................ [ 24%]
+........................................................................ [ 26%]
+........................................................................ [ 28%]
+........................................................................ [ 30%]
+......F
+================================== FAILURES ===================================
+_ test_hashed_assets_are_immutable_the_shell_revalidates_and_fonts_keep_a_week _
+
+app_with = <function app_with.<locals>.build at 0x00000245C2FBBB00>
+tmp_path = WindowsPath('C:/Users/PC/AppData/Local/Temp/pytest-of-PC/pytest-1156/test_hashed_assets_are_immutab0')
+
+    def test_hashed_assets_are_immutable_the_shell_revalidates_and_fonts_keep_a_week(app_with, tmp_path):
+        main = app_with(_fake_dist(tmp_path))
+        with TestClient(main.app) as client:
+            asset = client.get("/assets/index-AbC123xy.js", headers={"Accept-Encoding": "gzip"})
+            assert asset.status_code == 200
+            assert asset.headers["cache-control"] == IMMUTABLE
+            assert asset.headers["content-encoding"] == "gzip"
+            assert asset.text.startswith("export const rows")
+    
+            # A revalidation that hits answers 304 and still says immutable.
+            again = client.get("/assets/index-AbC123xy.js", headers={"If-None-Match": asset.headers["etag"]})
+            assert again.status_code == 304
+            assert again.headers["cache-control"] == IMMUTABLE
+    
+            assert client.get("/assets/missing-00000000.js").status_code == 404
+    
+            for path in ("/", "/showcase", "/index.html"):
+                shell = client.get(path)
+                assert shell.status_code == 200
+                assert shell.headers["cache-control"] == "no-cache", path
+                assert "Kenya NOC" in shell.text
+    
+            font = client.get("/fonts/ibm-plex-sans-latin-400-normal.woff2", headers={"Accept-Encoding": "gzip"})
+            assert font.status_code == 200
+            assert font.headers["cache-control"] == "public, max-age=604800"
+>           assert "content-encoding" not in font.headers  # woff2 is compressed already
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           assert 'content-encoding' not in Headers({'cache-control': 'public, max-age=604800', 'content-type': 'application/octet-stream', 'accept-ranges': 'byte...:10 GMT', 'etag': '"148ee18c39e3f97df76a9cf58ed4a4fc"', 'vary': 'Origin, Accept-Encoding', 'content-encoding': 'gzip'})
+E            +  where Headers({'cache-control': 'public, max-age=604800', 'content-type': 'application/octet-stream', 'accept-ranges': 'byte...:10 GMT', 'etag': '"148ee18c39e3f97df76a9cf58ed4a4fc"', 'vary': 'Origin, Accept-Encoding', 'content-encoding': 'gzip'}) = <Response [200 OK]>.headers
+
+tests\unit\test_compression.py:159: AssertionError
+------------------------------ Captured log call ------------------------------
+WARNING  noc_agents.main:main.py:178 support desk: SUPPORT_HASH_KEY is not set: the support desk hashes customer numbers with the built-in development key. Set a secret value before real customer numbers are stored.
+============================== warnings summary ===============================
+.venv\Lib\site-packages\fastapi\testclient.py:1
+  C:\Users\PC\Desktop\second-brain\soc-agents\.venv\Lib\site-packages\fastapi\testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+tests/system/test_support_loop_api.py::test_track_follows_the_complaint_from_outage_to_restored_to_still_down
+  C:\Users\PC\Desktop\second-brain\soc-agents\tests\system\test_support_loop_api.py:455: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    assert timedelta(hours=3, minutes=59) <= due - _dt.utcnow() <= timedelta(hours=4, minutes=1)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ===========================
+FAILED tests/unit/test_compression.py::test_hashed_assets_are_immutable_the_shell_revalidates_and_fonts_keep_a_week
+!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!
+1 failed, 1158 passed, 2 warnings in 1709.52s (0:28:29)

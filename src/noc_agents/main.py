@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import logging
+import mimetypes
 import os
 import re
 from contextlib import asynccontextmanager
@@ -211,6 +212,9 @@ app.add_middleware(
 # text/event-stream (the SSE feed must flush frame by frame) and already-compressed bodies
 # (woff2 fonts, images, zip).
 app.add_middleware(GZipMiddleware, minimum_size=1024)
+# The exclusion matches on Content-Type, and the type comes from the OS mime table: Windows has
+# no entry for .woff2, so the font went out as application/octet-stream and got gzipped.
+mimetypes.add_type("font/woff2", ".woff2")
 
 # The RBAC allow-lists, the _actor rule and the operator-scoping helpers moved to
 # api/deps.py when Phase 4 split the API into router modules -- a router cannot import
